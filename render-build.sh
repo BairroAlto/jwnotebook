@@ -2,8 +2,11 @@
 # exit on error
 set -o errexit
 
-# Install Python dependencies
+# 1. Set this environment variable to prevent the automatic browser download
+export PLAYWRIGHT_BROWSERS_PATH=0
+
+# 2. Install Python dependencies from requirements.txt
 pip install -r requirements.txt
 
-# Install Playwright's browser binaries and their OS dependencies
+# 3. Manually run the correct installation command for browsers and OS dependencies
 playwright install --with-deps
