@@ -1009,60 +1009,46 @@ async function navigateWithUnsavedCheck(navigationAction) {
 
 // --- LÓGICA PRINCIPAL DA APLICAÇÃO ---
 
-async function validateAndCleanupBiblicalLinks() {
+  async function validateAndCleanupBiblicalLinks() {
     console.log('%cFASE 0: Iniciando limpeza de links bíblicos...', 'color: #e67e22; font-weight: bold;');
     
     const biblicalBooksPattern = BIBLICAL_BOOKS.join('|');
-    // ALTERADO: Regex de validação agora é muito mais estrita.
-    // Exige o formato "Livro C:V" e nada mais.
-    const validPattern = new RegExp(`^(${biblicalBooksPattern})\\s+\\d+:\\d+$`, 'i');
+    // ESTA É A REGEX DE VALIDAÇÃO ESTRITA: só aceita "Livro C:V" e extensões válidas (,-;)
+    const validPattern = new RegExp(`^(${biblicalBooksPattern})\\s+\\d+:\\d+[\\d,;\\- ]*$`, 'i');
 
     const links = noteContentEditor.querySelectorAll('.entity-link[data-entity-type="textobiblico"]');
     let domChanged = false;
 
     for (const link of links) {
         const currentText = link.textContent.trim();
-        const originalName = link.dataset.entityName;
-
-       if (!validPattern.test(currentText)) {
+        
+        // Se o texto dentro do link JÁ NÃO É VÁLIDO...
+        if (!validPattern.test(currentText)) {
             console.log(`%cLink inválido encontrado: "${currentText}". Revertendo para texto.`, 'color: #c0392b;');
             
-            // ==========================================================
-            // PARTE 1: COLOCAR O MARCADOR ANTES DE DESTRUIR O LINK
-            // ==========================================================
+            // Preserva a posição do cursor se ele estiver dentro do link a ser removido
             const selection = window.getSelection();
-            let markerNode = null; // Usaremos isto para encontrar o marcador depois
-
-            // Só colocamos o marcador se o cursor estiver dentro do link que vamos remover
+            let markerNode = null; 
             if (selection && selection.rangeCount > 0 && link.contains(selection.anchorNode)) {
                 const range = selection.getRangeAt(0).cloneRange();
                 markerNode = document.createElement('span');
-                markerNode.id = 'cursor-marker'; // A nossa "bandeira"
+                markerNode.id = 'cursor-marker';
                 range.insertNode(markerNode);
             }
-            // ==========================================================
 
             const textNode = document.createTextNode(link.textContent);
             link.parentNode.replaceChild(textNode, link);
             domChanged = true;
 
-            // Aciona a limpeza da referência na base de dados
-            await cleanupBiblicalEntityReference(originalName);
-
-            // =========================================================================
-            // PARTE 2: RESTAURAR O CURSOR USANDO O MARCADOR E DEPOIS REMOVÊ-LO
-            // =========================================================================
+            // Restaura o cursor na posição correta
             if (markerNode && document.body.contains(markerNode)) {
                 const newRange = document.createRange();
-                newRange.setStartBefore(markerNode); // Põe o cursor antes da "bandeira"
+                newRange.setStartBefore(markerNode);
                 newRange.collapse(true);
                 selection.removeAllRanges();
                 selection.addRange(newRange);
-                markerNode.parentNode.removeChild(markerNode); // Remove a "bandeira"
+                markerNode.parentNode.removeChild(markerNode);
             }
-            // Não precisamos de um "else" aqui, porque se o cursor não estava no link,
-            // não queremos movê-lo de todo.
-            // =========================================================================
         }
     }
 
@@ -1495,151 +1481,109 @@ function cleanupInvisibleCharacters() {
  // ===================================================================
 // FUNÇÃO SCANANDLINKENTITIES - VERSÃO COM REGEX CORRIGIDA
 // ===================================================================
-  async function scanAndLinkEntities() {
+ async function scanAndLinkEntities() {
     const logStyles = {
         header: 'color: white; background-color: #1abc9c; font-weight: bold; padding: 2px 5px; border-radius: 3px;',
         phase: 'color: #f39c12; font-weight: bold;',
-        subphase: 'color: #e67e22;',
         success: 'color: #2ecc71;',
         info: 'color: #95a5a6; font-style: italic;',
         action: 'color: #3498db;'
     };
 
     console.group('%c[Verificação] Iniciando verificação de entidades...', logStyles.header);
-    await validateAndReconcileAllEntities();
 
-    console.log('%cFASE 0: Validação de links bíblicos existentes', logStyles.phase);
-    noteContentEditor.normalize(); 
-    
+    noteContentEditor.normalize();
     const hasCleanedLinks = await validateAndCleanupBiblicalLinks();
     if (hasCleanedLinks) {
-        console.log('%c  - Links inválidos foram encontrados e removidos. A acionar gravação e a terminar verificação mais cedo.', logStyles.info);
+        console.log('%c  - Links inválidos foram removidos. A acionar gravação e a terminar verificação.', logStyles.info);
         updateSaveStatus('unsaved');
         saveNote(); 
         console.groupEnd();
         return; 
     } else {
-        console.log('%c  - Nenhum link bíblico inválido encontrado.', logStyles.info);
+        console.log('%c  - Nenhum link bíblico inválido para limpar.', logStyles.info);
     }
 
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) {
-        console.log('%c  - A verificação foi ignorada porque não há um cursor único (texto selecionado ou nenhum cursor).', logStyles.info);
+        console.log('%c  - Verificação ignorada (texto selecionado ou nenhum cursor).', logStyles.info);
         console.groupEnd();
         return;
     }
-
     const originalRange = selection.getRangeAt(0).cloneRange();
-    console.log(`%c  - Posição do cursor antes da verificação: Nó: "${originalRange.startContainer.textContent}", Posição: ${originalRange.startOffset}`, logStyles.info);
 
-    const biblicalBooksPattern = BIBLICAL_BOOKS.join('|');
-    let domModified = false;
-    const newBiblicalEntitiesToCreate = new Map();
-    const allExistingEntities = Object.values(allEntities).flat();
-
-    console.groupCollapsed('%cFASE 1: Conversão de Linguagem Natural (capítulo/versículo)', logStyles.phase);
-    const naturalLanguageRegex = new RegExp(`\\b(${biblicalBooksPattern})\\s+capítulo\\s+(\\d+)\\s+(e|,)\\s+versículo\\s+(\\d+)\\b`, 'gi');
-    let walkerPass1 = document.createTreeWalker(noteContentEditor, NodeFilter.SHOW_TEXT, null, false);
-    let nodesToProcess1 = [];
-    let node; 
-    while (node = walkerPass1.nextNode()) {
-        if (!node.parentElement.closest('a, .entity-link, .tag')) nodesToProcess1.push(node);
-    }
+    console.group('%cFASE 1: Ligação de Formato Padrão (Livro C:V)', logStyles.phase);
     
-    for (const textNode of nodesToProcess1) {
-        if (naturalLanguageRegex.test(textNode.textContent)) {
-            domModified = true;
-            naturalLanguageRegex.lastIndex = 0;
-            let match = naturalLanguageRegex.exec(textNode.textContent);
-            const standardFormat = `${match[1]} ${match[2]}:${match[4]}`;
-            const fragment = document.createDocumentFragment();
-            fragment.appendChild(document.createTextNode(textNode.textContent.slice(0, match.index)));
-            fragment.appendChild(document.createTextNode(standardFormat));
-            fragment.appendChild(document.createTextNode(textNode.textContent.slice(match.index + match[0].length)));
-            textNode.parentNode.replaceChild(fragment, textNode);
-            break; 
+    const biblicalBooksPattern = BIBLICAL_BOOKS.join('|');
+    const standardBiblicalRegex = new RegExp(`\\b((?:${biblicalBooksPattern})\\s+\\d+:\\d[\\d,;\\- ]*)\\b`, 'giu');
+    
+    console.log('%c  - Regex utilizada:', logStyles.info, standardBiblicalRegex);
+
+    let domModified = false;
+    const walker = document.createTreeWalker(noteContentEditor, NodeFilter.SHOW_TEXT);
+    const nodesToProcess = [];
+    let node;
+    while (node = walker.nextNode()) {
+        if (!node.parentElement.closest('a, .entity-link, .tag')) {
+            nodesToProcess.push(node);
         }
     }
-    console.groupEnd();
-    if (domModified) { console.groupEnd(); return; }
 
-    console.groupCollapsed('%cFASE 2: Ligação de Formato Padrão (Livro C:V)', logStyles.phase);
-    
-    // =========================================================================
-    // <<< REGEX ALTERADA PARA SER EXTREMAMENTE ESTRITA >>>
-    // Usa \b (word boundary) para garantir que a citação termina de forma limpa.
-    const standardBiblicalRegex = new RegExp(`\\b((?:${biblicalBooksPattern})\\s+\\d+:\\d+)\\b`, 'giu');
-    // =========================================================================
-
-    console.log('%c  - Regex utilizada:', logStyles.subphase, standardBiblicalRegex);
-
-    let walkerPass2 = document.createTreeWalker(noteContentEditor, NodeFilter.SHOW_TEXT, null, false);
-    let nodesToProcess2 = [];
-    while (node = walkerPass2.nextNode()) {
-        if (!node.parentElement.closest('a, .entity-link, .tag')) nodesToProcess2.push(node);
-    }
-
-    for (let i = 0; i < nodesToProcess2.length; i++) {
-        let textNode = nodesToProcess2[i];
+    for (const textNode of nodesToProcess) {
         standardBiblicalRegex.lastIndex = 0;
         let match;
         if ((match = standardBiblicalRegex.exec(textNode.textContent)) !== null) {
-            console.log(`%c  - SUCESSO! Encontrada correspondência em: "${textNode.textContent}"`, logStyles.success);
             domModified = true;
             
-            // =========================================================================
-            // <<< LÓGICA AJUSTADA PARA A NOVA REGEX >>>
-            // O grupo de captura [1] agora contém a citação completa.
             const matchedName = match[1].trim(); 
+            
+            // ===================================================================
+            // --- NOVA LÓGICA DE LIMPEZA (GATEKEEPER) ---
+            // Remove qualquer pontuação indesejada (.,;) do final do texto ANTES de o usar.
+            const cleanedName = matchedName.replace(/[.,;]+$/, '');
+            console.log(`%c  - Texto identificado: "${matchedName}". Texto a gravar: "${cleanedName}"`, logStyles.action);
+            // ===================================================================
+
             const matchStartIndex = match.index;
-            // =========================================================================
             
-            console.log(`%c  - A criar link para: "${matchedName}"`, logStyles.action);
-            
+            // Agora usamos o `cleanedName` para o `textContent` da âncora,
+            // garantindo que a pontuação desaparece visualmente.
             textNode.splitText(matchStartIndex + matchedName.length);
             let matchNode = textNode.splitText(matchStartIndex);
             const span = document.createElement('span');
             span.className = 'entity-link';
             span.dataset.entityType = 'textobiblico';
-            span.dataset.entityName = matchedName;
-            span.textContent = matchedName;
+            // Usamos o `cleanedName` para o nome da entidade e para o texto visível.
+            span.dataset.entityName = cleanedName;
+            span.textContent = cleanedName;
             matchNode.parentNode.replaceChild(span, matchNode);
             
-            let entity = allExistingEntities.find(e => e.tipo === 'textobiblico' && e.nome.toLowerCase() === matchedName.toLowerCase());
+            // Verificamos e gravamos a entidade usando o `cleanedName`.
+            const allExistingEntities = Object.values(allEntities).flat();
+            let entity = allExistingEntities.find(e => e.tipo === 'textobiblico' && e.nome.toLowerCase() === cleanedName.toLowerCase());
             if (!entity) {
-                newBiblicalEntitiesToCreate.set(matchedName.toLowerCase(), { nome: matchedName, tipo: 'textobiblico' });
+                const collectionName = ENTITY_CONFIG['textobiblico'].collection;
+                // Apenas o `cleanedName` é guardado na base de dados.
+                await addDoc(collection(db, collectionName), { 
+                    nome: cleanedName, 
+                    descricao: "", 
+                    createdAt: serverTimestamp(), 
+                    referencias: { [selectedNoteId]: true } 
+                });
+                await fetchAllEntities();
             }
-            break;
+            break; 
         }
     }
     console.groupEnd();
     
-    console.group('%cFASE 3: Operações na Base de Dados e Finalização', logStyles.phase);
     if (domModified) {
         selection.removeAllRanges();
         selection.addRange(originalRange);
-        console.groupEnd();
-        console.groupEnd();
-        return;
-    } else {
-        console.log('%c  - Nenhuma modificação no DOM nesta verificação.', logStyles.info);
+        updateSaveStatus('unsaved');
+        saveNote();
     }
     
-    if (newBiblicalEntitiesToCreate.size > 0) {
-        try {
-            const batch = writeBatch(db);
-            for (const entity of newBiblicalEntitiesToCreate.values()) {
-                const collectionName = ENTITY_CONFIG[entity.tipo]?.collection;
-                const newDocRef = doc(collection(db, collectionName));
-                batch.set(newDocRef, { nome: entity.nome, descricao: "", createdAt: serverTimestamp(), referencias: { [selectedNoteId]: true } });
-            }
-            await batch.commit();
-            await fetchAllEntities();
-        } catch (error) { console.error("  - Erro ao criar novas entidades de texto bíblico:", error); }
-    } else {
-        console.log('%c  - Nenhuma nova entidade para criar na base de dados.', logStyles.info);
-    }
-    console.groupEnd();
     console.groupEnd();
 }
 
@@ -2675,83 +2619,73 @@ async function commitEntitySelection() {
     const parentElement = currentNode.nodeType === Node.TEXT_NODE ? currentNode.parentElement : currentNode;
     const styledContainer = parentElement.closest('.entity-link, .tag');
 
-    // =========================================================================
-    // CENÁRIO 1: O cursor está DENTRO de um elemento especial
-    // =========================================================================
     if (styledContainer) {
         const isAtTheStart = range.startOffset === 0;
         const isAtTheEnd = range.startOffset === currentNode.textContent.length;
+        const isPrintableChar = (event.key.length === 1 || event.key === 'Enter') && !event.ctrlKey && !event.metaKey && !event.altKey;
 
         // =========================================================================
-        // NOVA LÓGICA "PLACEHOLDER" PARA O BACKSPACE NO INÍCIO DE UMA ENTIDADE
+        // INÍCIO DO NOVO CÓDIGO - Proteção para escrever ANTES do link
         // =========================================================================
-        if (event.key === 'Backspace' && isAtTheStart) {
-            // 1. Impedimos a ação padrão do browser para assumir o controlo.
+        if (isAtTheStart && isPrintableChar && event.key !== 'Backspace') {
+            console.groupCollapsed('%c[Proteção de Âncora] Ação detetada!', 'color: white; background-color: #e67e22; padding: 2px 5px; border-radius: 3px;');
+            console.log(`Evento: Tecla "${event.key}" premida.`);
+            console.log(`Posição: Início da âncora "${styledContainer.textContent}".`);
+            
+            // 1. Impedimos a ação padrão do navegador para assumir o controlo.
             event.preventDefault();
-            console.log('%cBACKSPACE (Placeholder): Ação detetada!', 'color: #8e44ad; font-weight: bold;');
+            console.log('%cAÇÃO: Comportamento padrão do navegador cancelado.', 'color: #c0392b;');
 
-            // 2. Guardamos o HTML da entidade e criamos um placeholder único.
-            const entityHTML = styledContainer.outerHTML;
-            const placeholderText = `__ENTITY_${Date.now()}__`;
-            const placeholderNode = document.createTextNode(placeholderText);
-            console.log(`  - Entidade guardada. Placeholder criado: ${placeholderText}`);
+            // 2. Criamos o texto que o utilizador digitou e uma "barreira" invisível.
+            const typedTextNode = document.createTextNode(event.key);
+            const zeroWidthSpace = document.createTextNode('\u200B');
+            const parent = styledContainer.parentNode;
 
-            // 3. Trocamos a entidade complexa pelo placeholder simples.
-            styledContainer.parentNode.replaceChild(placeholderNode, styledContainer);
-            console.log('  - Entidade trocada por placeholder no DOM.');
+            // 3. Inserimos o texto e a barreira ANTES da âncora.
+            parent.insertBefore(typedTextNode, styledContainer);
+            parent.insertBefore(zeroWidthSpace, styledContainer);
+            console.log('%cAÇÃO: Texto e barreira invisível inseridos ANTES da âncora.', 'color: #3498db;');
 
-            // 4. Movemos o cursor para antes do placeholder para garantir que o 'delete' funciona.
+            // 4. Movemos o cursor para o local correto (depois do texto, antes da barreira).
             const newRange = document.createRange();
-            newRange.setStart(placeholderNode, 0);
+            newRange.setStart(zeroWidthSpace, 0);
             newRange.collapse(true);
             selection.removeAllRanges();
             selection.addRange(newRange);
-
-            // 5. Agora que o DOM é "seguro", mandamos o browser executar a ação de apagar.
-            // Ele vai apagar a quebra de linha e juntar o placeholder à linha de cima.
-            document.execCommand('delete', false, null);
-            console.log("  - Comando 'delete' executado para juntar as linhas.");
-
-            // 6. Usamos setTimeout para garantir que o browser processou o 'delete' antes de nós
-            // revertermos a troca.
-            setTimeout(() => {
-                const editorHTML = noteContentEditor.innerHTML;
-                
-                // Marcador para restaurar o cursor na posição correta
-                const cursorMarker = '<span id="cursor-restore-target"></span>';
-                const finalHTML = editorHTML.replace(placeholderText, cursorMarker + entityHTML);
-                
-                noteContentEditor.innerHTML = finalHTML;
-                console.log('  - Placeholder trocado de volta pela entidade original.');
-
-                // 7. Restauramos a posição do cursor para depois da entidade.
-                const marker = document.getElementById('cursor-restore-target');
-                if (marker) {
-                    const finalRange = document.createRange();
-                    finalRange.selectNode(marker);
-                    finalRange.collapse(false); // Colapsa para o final do marcador
-                    selection.removeAllRanges();
-                    selection.addRange(finalRange);
-                    marker.remove(); // Remove o marcador
-                    console.log('  - Posição do cursor restaurada.');
-                }
-                updateSaveStatus('unsaved');
-                saveNote();
-            }, 0);
-
+            
+            console.log('%cSUCESSO: A fronteira da âncora foi protegida. O novo texto ficou fora dela.', 'color: #2ecc71; font-weight: bold;');
+            console.groupEnd();
             return; // Ação concluída.
         }
+    
 
-        // Proteção para não escrever "dentro" do final do link
+        // =========================================================================
+        // INÍCIO DA LÓGICA COM LOGS - Proteção para não escrever no final do link
+        // =========================================================================
         if (isAtTheEnd && (event.key.length === 1 || event.key === 'Enter') && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            
+            // --- LOGS ADICIONADOS ---
+            console.groupCollapsed('%c[Proteção de Âncora] Ação detetada!', 'color: white; background-color: #9b59b2; padding: 2px 5px; border-radius: 3px;');
+            console.log(`Evento: Tecla "${event.key}" premida.`);
+            console.log(`Posição: Fim da âncora "${styledContainer.textContent}".`);
+            console.log('%cAÇÃO: A inserir caractere invisível (Zero-Width Space) para criar uma barreira.', 'color: #3498db;');
+            // --- FIM DOS LOGS ---
+
             const zeroWidthSpace = document.createTextNode('\u200B');
             const parent = styledContainer.parentNode;
             parent.insertBefore(zeroWidthSpace, styledContainer.nextSibling);
+            
             const newRange = document.createRange();
             newRange.setStart(zeroWidthSpace, 1);
             newRange.collapse(true);
             selection.removeAllRanges();
             selection.addRange(newRange);
+
+            // --- LOGS ADICIONADOS ---
+            console.log('%cACÃO: Cursor movido para fora da âncora, para depois da barreira.', 'color: #f1c40f;');
+            console.log('%cSUCESSO: A fronteira da âncora foi protegida. O novo texto será escrito fora dela.', 'color: #2ecc71; font-weight: bold;');
+            console.groupEnd();
+            // --- FIM DOS LOGS ---
         }
     }
     
@@ -3125,19 +3059,16 @@ document.addEventListener('selectionchange', handleTextSelection);
     }
 });
 
-  noteContentEditor.addEventListener('keyup', (event) => {
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(event.key)) return;
-    if (isTagPopupOpen && ['Enter', ' '].includes(event.key)) return;
-    if (isEntityPopupOpen && ['Enter'].includes(event.key)) return;
-
-    // =======================================================================
-    // NOVA LÓGICA: Se a tecla "Apagar" for premida, força a reconciliação
-    // =======================================================================
-    if (event.key === 'Backspace' || event.key === 'Delete') {
-        // Executa o nosso "corretor" imediatamente, sem esperar pelo debounce.
-        validateAndReconcileAllEntities();
+ noteContentEditor.addEventListener('keyup', (event) => {
+    // Ignora teclas que não alteram o conteúdo para evitar execuções desnecessárias
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(event.key)) {
+        return;
     }
-    // =======================================================================
+    
+    // Se um dos popups de sugestão estiver aberto, não faz mais nada
+    if (isTagPopupOpen || isEntityPopupOpen) {
+        if (['Enter', ' '].includes(event.key)) return;
+    }
 
     if (event.key === 'Escape') { 
         hideTagPopup();
@@ -3145,6 +3076,7 @@ document.addEventListener('selectionchange', handleTextSelection);
         return; 
     }
 
+    // --- LÓGICA DE SUGESTÕES (permanece igual) ---
     const selection = window.getSelection();
     if (!selection.rangeCount > 0) return;
     const range = selection.getRangeAt(0);
@@ -3170,7 +3102,10 @@ document.addEventListener('selectionchange', handleTextSelection);
         hideEntityPopup();
     }
     
-     debouncedScanAndLink();
+    // --- CHAMADA UNIFICADA E SEGURA ---
+    // Apenas a nossa função debounced será responsável por analisar e criar links.
+    // Isto elimina o conflito e a instabilidade.
+    debouncedScanAndLink();
 });
 
 
