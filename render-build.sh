@@ -2,11 +2,10 @@
 # exit on error
 set -o errexit
 
-# 1. Set this environment variable to prevent the automatic browser download
-export PLAYWRIGHT_BROWSERS_PATH=0
+# 1. Install Python dependencies while forcing the environment variable
+#    directly onto the pip command. This is more reliable than using 'export'.
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pip install -r requirements.txt
 
-# 2. Install Python dependencies from requirements.txt
-pip install -r requirements.txt
-
-# 3. Manually run the correct installation command for browsers and OS dependencies
+# 2. Now that the packages are installed, manually run the correct
+#    command to install browsers and OS dependencies.
 playwright install --with-deps
