@@ -1,48 +1,63 @@
+# Ficheiro: pesquisador_api.py - VERSÃO PLAYWRIGHT
+
+import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests
-from bs4 import BeautifulSoup
-import urllib.parse
+from playwright.sync_api import sync_playwright
 import logging
+import urllib.parse
 
 logging.basicConfig(level=logging.INFO)
+
 app = Flask(__name__)
 CORS(app)
 
-def scrape_wol_verse(scripture_reference: str):
-    app.logger.info(f"A iniciar pesquisa para: '{scripture_reference}'")
+# --- Função de Scraping com Playwright ---
+def scrape_wol_verse_playwright(scripture_reference: str):
+    app.logger.info(f"A iniciar pesquisa com Playwright para: '{scripture_reference}'")
     try:
-        query = urllib.parse.quote_plus(scripture_reference)
-        url = f"https://wol.jw.org/pt/wol/l/r5/lp-t?q={query}"
-        headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        verse_container = soup.find('div', class_='pGroup')
-        if verse_container and verse_container.find('p'):
-            verse_text = verse_container.find('p').get_text(strip=True)
-            if verse_text and verse_text[0].isdigit():
-                 cleaned_text = verse_text.split(' ', 1)[-1].replace('+', '').strip()
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            
+            query = urllib.parse.quote_plus(scripture_reference)
+            url = f"https://wol.jw.org/pt/wol/l/r5/lp-t?q={query}"
+            app.logger.info(f"A navegar para: {url}")
+            
+            page.goto(url, wait_until='domcontentloaded')
+            
+            # Procura pelo container do versículo
+            verse_container = page.locator('div.pGroup p').first
+            
+            if verse_container.is_visible():
+                verse_text = verse_container.inner_text()
+                if verse_text and verse_text[0].isdigit():
+                    cleaned_text = verse_text.split(' ', 1)[-1].replace('+', '').strip()
+                else:
+                    cleaned_text = verse_text.replace('+', '').strip()
+                
+                app.logger.info(f"Texto encontrado e limpo: '{cleaned_text}'")
+                browser.close()
+                return cleaned_text
             else:
-                 cleaned_text = verse_text.replace('+', '').strip()
-            app.logger.info(f"Texto encontrado e limpo: '{cleaned_text}'")
-            return cleaned_text
-        app.logger.warning("Não foi possível encontrar o container do versículo na página.")
-        return ""
+                app.logger.warning("Container do versículo não encontrado ou não visível.")
+                browser.close()
+                return ""
     except Exception as e:
-        app.logger.error(f"Ocorreu um erro durante o scraping: {e}")
+        app.logger.error(f"Ocorreu um erro durante o scraping com Playwright: {e}")
         return ""
 
+# --- Rotas (sem alterações) ---
 @app.route('/')
 def hello_world():
-    return "<h1>Servidor JW Notebook no ar!</h1>"
+    return "<h1>Servidor JW Notebook (Playwright) no ar!</h1>"
 
 @app.route('/get-verse', methods=['GET'])
 def get_verse_route():
     scripture_ref = request.args.get('ref')
     if not scripture_ref:
         return jsonify({"error": "A referência do texto ('ref') é obrigatória."}), 400
-    verse_text = scrape_wol_verse(scripture_ref)
+    verse_text = scrape_wol_verse_playwright(scripture_ref)
     if verse_text:
         return jsonify({"text": verse_text})
     else:
