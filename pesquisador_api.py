@@ -82,3 +82,4 @@ def get_verse():
 if __name__ == '__main__':
     # O servidor vai correr no seu computador, no endereço http://127.0.0.1:5000
     app.run(debug=True, port=5000)
+    server = app
