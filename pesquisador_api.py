@@ -1,4 +1,4 @@
-# Ficheiro: pesquisador_api.py - VERSÃO FINAL E ROBUSTA
+# Ficheiro: pesquisador_api.py - VERSÃO FINAL E SIMPLIFICADA
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -10,15 +10,19 @@ import logging
 # Configuração dos logs para vermos tudo na Render
 logging.basicConfig(level=logging.INFO)
 
-# --- FUNÇÃO ESPECIALISTA (sem alterações) ---
+# 1. Cria a aplicação diretamente. O Gunicorn vai encontrar esta variável 'app'.
+app = Flask(__name__)
+
+# 2. Aplica as permissões de CORS diretamente à aplicação.
+CORS(app)
+
+# --- Função Especialista (sem alterações) ---
 def scrape_wol_verse(scripture_reference: str):
     logging.info(f"A iniciar pesquisa para: '{scripture_reference}'")
     try:
         query = urllib.parse.quote_plus(scripture_reference)
         url = f"https://wol.jw.org/pt/wol/l/r5/lp-t?q={query}"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -34,34 +38,17 @@ def scrape_wol_verse(scripture_reference: str):
         logging.error(f"Ocorreu um erro durante o scraping: {e}")
         return ""
 
-# --- ESTRUTURA DE CRIAÇÃO DA APLICAÇÃO (A GRANDE MUDANÇA) ---
-# Em vez de criar a 'app' diretamente, criamo-la dentro de uma função.
-# Isto é um padrão chamado "Application Factory" e é muito mais robusto para deploys.
-def create_app():
-    # 1. Cria a instância da aplicação
-    app = Flask(__name__)
-    
-    # 2. Configura o CORS (as permissões)
-    CORS(app)
-    
-    # 3. Define as "portas de entrada" (rotas) DENTRO da função
-    @app.route('/get-verse', methods=['GET'])
-    def get_verse_route():
-        scripture_ref = request.args.get('ref')
-        if not scripture_ref:
-            return jsonify({"error": "A referência do texto ('ref') é obrigatória."}), 400
-        verse_text = scrape_wol_verse(scripture_ref)
-        if verse_text:
-            return jsonify({"text": verse_text})
-        else:
-            return jsonify({"error": f"Não foi possível encontrar o texto para '{scripture_ref}'."}), 404
-
-    # 4. Retorna a aplicação pronta a usar
-    return app
-
-# --- PONTO DE ARRANQUE ---
-# Criamos a aplicação para que o Gunicorn a possa encontrar
-app = create_app()
+# 3. Define a "porta de entrada" (rota) diretamente na aplicação.
+@app.route('/get-verse', methods=['GET'])
+def get_verse_route():
+    scripture_ref = request.args.get('ref')
+    if not scripture_ref:
+        return jsonify({"error": "A referência do texto ('ref') é obrigatória."}), 400
+    verse_text = scrape_wol_verse(scripture_ref)
+    if verse_text:
+        return jsonify({"text": verse_text})
+    else:
+        return jsonify({"error": f"Não foi possível encontrar o texto para '{scripture_ref}'."}), 404
 
 # Este bloco só é usado quando executamos o ficheiro localmente no nosso PC
 if __name__ == '__main__':
