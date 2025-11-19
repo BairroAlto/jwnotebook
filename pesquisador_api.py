@@ -1,5 +1,3 @@
-# Ficheiro: pesquisador_api.py - VERSÃO FINAL (ESTRUTURA COMPROVADA + SCRAPING)
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -7,16 +5,10 @@ from bs4 import BeautifulSoup
 import urllib.parse
 import logging
 
-# Configuração dos logs
 logging.basicConfig(level=logging.INFO)
-
-# 1. Cria a aplicação (sabemos que esta parte funciona)
 app = Flask(__name__)
-
-# 2. Aplica o CORS (sabemos que esta parte funciona)
 CORS(app)
 
-# --- Função de Scraping ---
 def scrape_wol_verse(scripture_reference: str):
     app.logger.info(f"A iniciar pesquisa para: '{scripture_reference}'")
     try:
@@ -41,28 +33,20 @@ def scrape_wol_verse(scripture_reference: str):
         app.logger.error(f"Ocorreu um erro durante o scraping: {e}")
         return ""
 
-# --- Rotas (sabemos que esta estrutura funciona) ---
-
-# Rota principal para verificar se o servidor está vivo
 @app.route('/')
 def hello_world():
-    return "<h1>Servidor JW Notebook no ar!</h1><p>A API de pesquisa de versículos está operacional.</p>"
+    return "<h1>Servidor JW Notebook no ar!</h1>"
 
-# Rota que a nossa aplicação vai chamar
 @app.route('/get-verse', methods=['GET'])
 def get_verse_route():
     scripture_ref = request.args.get('ref')
     if not scripture_ref:
         return jsonify({"error": "A referência do texto ('ref') é obrigatória."}), 400
-    
-    # Chama a função de scraping
     verse_text = scrape_wol_verse(scripture_ref)
-    
     if verse_text:
         return jsonify({"text": verse_text})
     else:
         return jsonify({"error": f"Não foi possível encontrar o texto para '{scripture_ref}'."}), 404
-
-# --- Bloco de Execução Local (não afeta a Render) ---
+        
 if __name__ == '__main__':
     app.run(port=5000, debug=True)
