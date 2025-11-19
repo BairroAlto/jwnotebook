@@ -84,8 +84,8 @@
     .list-item:hover .item-menu-btn { display: block; }
     .item-menu-btn:hover { background-color: var(--bg-color); color: var(--text-color); }
 
-    .context-menu { position: absolute; background-color: var(--sidebar-color); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 1001; display: flex; flex-direction: column; padding: 5px; }
-    .context-menu button { background: none; border: none; color: var(--text-color); padding: 8px 15px; text-align: left; cursor: pointer; border-radius: 4px; width: 100%; }
+    .context-menu { position: absolute; background-color: var(--sidebar-color); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 1001; display: flex; flex-direction: column; padding: 5px; width: 160px;}
+    .context-menu button { background: none; border: none; color: var(--text-color); padding: 8px 15px; text-align: left; cursor: pointer; border-radius: 4px; width: 100%;  white-space: nowrap; }
     .context-menu button:hover { background-color: var(--accent-color); color: white; }
 
     .move-list { list-style: none; max-height: 40vh; overflow-y: auto; }
@@ -289,7 +289,7 @@
         border-bottom: 1px solid var(--border-color);
     }
     #references-list li:hover { background-color: var(--hover-color); }
-    .notebook-container.references-panel-visible #references-panel { flex: 0 0 500px; }
+    .notebook-container.references-panel-visible #references-panel { flex: 0 0 400px; }
 
     /* --- ESTILOS PARA O MODAL DE ÂNCORAS --- */
     #anchors-content-container .tab-content { display: none; max-height: 50vh; overflow-y: auto; }
@@ -582,11 +582,27 @@
     </div>
 
     <!-- MENU DE CONTEXTO (3 PONTOS) - Fica escondido -->
-    <div id="context-menu" class="context-menu" style="display: none;">
-        <button data-action="rename">Mudar Nome</button>
-        <button data-action="move">Mover</button>
-        <button data-action="hide">Ocultar</button>
+  <div id="context-menu" class="context-menu" style="display: none;">
+    <button data-action="rename">Mudar Nome</button>
+    <button data-action="move-position">Mover Posição</button>
+    <button data-action="move-folder">Mover de Pasta</button> 
+    <button data-action="hide">Ocultar</button>
+</div>
+
+<!-- NOVO MODAL PARA MOVER ITEM ENTRE PASTAS -->
+<div id="move-to-folder-modal" class="modal-overlay">
+    <div class="modal-content">
+        <h3>Mover para a Pasta</h3>
+        <p>Selecione a pasta de destino para "<span id="item-to-move-name"></span>".</p>
+        <ul id="folder-selection-list" class="move-list" style="max-height: 50vh;">
+            <!-- A lista de pastas será preenchida via JavaScript -->
+        </ul>
+        <div class="modal-actions">
+            <button class="modal-btn secondary" data-action="cancel">Cancelar</button>
+            <button class="modal-btn primary" id="confirm-folder-move">Mover</button>
+        </div>
     </div>
+</div>
 
     <!-- MODAL PARA MOVER ITENS -->
     <div id="move-item-modal" class="modal-overlay">
@@ -1130,6 +1146,32 @@ function updateNavigationView() {
         unsubscribeMiddlePanel = fetchAndDisplayItems(middlePanelParentId, middlePanelList, null);
     }
 }
+
+function updateMiddlePanelForFolderSelection(folderId, folderName, selectedElement) {
+    // 1. Atualiza o estado da seleção visual no painel esquerdo
+    document.querySelectorAll('#left-panel-list .list-item.selected').forEach(el => el.classList.remove('selected'));
+    selectedElement.classList.add('selected');
+
+    // 2. Atualiza o stack de navegação para refletir a nova pasta
+    if (navigationStack.length > 0) {
+        // Se já estávamos numa pasta, substituímos o último item
+        navigationStack[navigationStack.length - 1] = { id: folderId, name: folderName };
+    } else {
+        // Se estávamos na raiz, adicionamos a pasta ao stack
+        navigationStack.push({ id: folderId, name: folderName });
+    }
+    
+    // 3. Atualiza o título do painel do meio e o botão "Voltar"
+    middlePanelTitle.textContent = folderName;
+    backBtn.style.display = 'flex';
+
+    // 4. Limpa o listener antigo do painel do meio para evitar fugas de memória
+    if (unsubscribeMiddlePanel) unsubscribeMiddlePanel();
+
+    // 5. Busca e exibe os novos itens no painel do meio, sem tocar no editor
+    unsubscribeMiddlePanel = fetchAndDisplayItems(folderId, middlePanelList, null);
+}
+
 
 async function displayNote(noteId, noteElement) {
     document.querySelectorAll('#middle-panel .list-item.selected').forEach(el => el.classList.remove('selected'));
@@ -1811,6 +1853,82 @@ async function openMoveModal() {
     let items = [];
     snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
     renderMoveList(items);
+}
+
+// --- NOVA FUNÇÃO PARA GERIR O MODAL "MOVER DE PASTA" ---
+async function openMoveToFolderModal(itemContext) { // ALTERAÇÃO: Recebe o item como argumento
+    if (!itemContext) return;
+
+    const modal = document.getElementById('move-to-folder-modal');
+    const list = document.getElementById('folder-selection-list');
+    const confirmBtn = document.getElementById('confirm-folder-move');
+    const itemNameSpan = document.getElementById('item-to-move-name');
+
+    itemNameSpan.textContent = itemContext.name;
+    list.innerHTML = '<li>A carregar pastas...</li>';
+    modal.style.display = 'flex';
+
+    const q = query(collection(db, 'pastas'), where('tipo', '==', 'pasta'), where('estado', '==', 'ativa'));
+    const snapshot = await getDocs(q);
+
+    list.innerHTML = '';
+
+    const rootLi = document.createElement('li');
+    rootLi.className = 'list-item'; // CORREÇÃO: Adicionada a classe para o estilo de seleção
+    rootLi.textContent = '📁 (Pasta Principal)';
+    rootLi.dataset.folderId = 'null';
+    if (itemContext.parentId !== null) {
+        list.appendChild(rootLi);
+    }
+    
+    snapshot.forEach(doc => {
+        if (doc.id !== itemContext.id && doc.id !== itemContext.parentId) {
+            const li = document.createElement('li');
+            li.className = 'list-item'; // CORREÇÃO: Adicionada a classe para o estilo de seleção
+            li.textContent = `📁 ${doc.data().nome}`;
+            li.dataset.folderId = doc.id;
+            list.appendChild(li);
+        }
+    });
+
+    let selectedFolderId = null;
+    const handleSelection = (e) => {
+        const li = e.target.closest('li');
+        if (!li) return;
+        
+        list.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
+        li.classList.add('selected');
+        selectedFolderId = li.dataset.folderId;
+    };
+    // Usamos .onclick para substituir listeners antigos facilmente
+    list.onclick = handleSelection;
+
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+    newConfirmBtn.onclick = async () => {
+        if (selectedFolderId === null) { // Verifica se é null, não !selectedFolderId, pois 'null' como string é "truthy"
+            alert('Por favor, selecione uma pasta de destino.');
+            return;
+        }
+
+        const newParentId = selectedFolderId === 'null' ? null : selectedFolderId;
+        
+        try {
+            // CORREÇÃO: Usamos o itemContext.id que foi passado para a função
+            const itemRef = doc(db, 'pastas', itemContext.id);
+            await updateDoc(itemRef, {
+                parentId: newParentId,
+                ultimaedicao: serverTimestamp()
+            });
+
+            modal.style.display = 'none';
+            updateNavigationView();
+        } catch (error) {
+            console.error("Erro ao mover o item:", error);
+            alert("Ocorreu um erro ao mover o item.");
+        }
+    };
 }
 
 function renderMoveList(items) {
@@ -3272,14 +3390,26 @@ leftPanelList.addEventListener('click', (e) => {
     if (itemMenuBtn) { showContextMenu(e); return; }
     
     const listItem = e.target.closest('.list-item');
-    if (!listItem || listItem.dataset.type !== 'pasta') return;
+    // Ignora cliques que não são em pastas ou se a pasta já está selecionada
+    if (!listItem || listItem.dataset.type !== 'pasta' || listItem.classList.contains('selected')) {
+        return;
+    }
 
-    const action = () => {
-        if (navigationStack.length > 0) navigationStack.pop();
-        navigationStack.push({ id: listItem.dataset.id, name: listItem.dataset.name });
-        updateNavigationView();
-    };
-    navigateWithUnsavedCheck(action);
+    // --- A NOVA LÓGICA ESTÁ AQUI ---
+    // SE UMA NOTA ESTIVER ABERTA, usamos a nova função "suave" que não fecha o editor.
+    if (selectedNoteId) {
+        updateMiddlePanelForFolderSelection(listItem.dataset.id, listItem.dataset.name, listItem);
+    } 
+    // SE NENHUMA NOTA ESTIVER ABERTA, usamos a navegação padrão com reset total.
+    else {
+        const action = () => {
+            if (navigationStack.length > 0) navigationStack.pop();
+            navigationStack.push({ id: listItem.dataset.id, name: listItem.dataset.name });
+            updateNavigationView();
+        };
+        // O gatekeeper não é estritamente necessário aqui, mas é uma boa prática
+        navigateWithUnsavedCheck(action);
+    }
 });
 
 middlePanelList.addEventListener('click', (e) => {
@@ -3486,27 +3616,34 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
 document.getElementById('context-menu').addEventListener('click', async (e) => {
     const action = e.target.dataset.action;
     if (!action || !activeItemContext) return;
+
+    // Guardamos o contexto numa variável local antes que seja limpo
+    const itemContext = { ...activeItemContext };
+
     if (action === 'hide') {
-        const confirmed = await showConfirmation('Ocultar Item?', `Tem certeza que deseja ocultar "${activeItemContext.name}"?`);
+        const confirmed = await showConfirmation('Ocultar Item?', `Tem certeza que deseja ocultar "${itemContext.name}"?`);
         if (confirmed) {
-            await updateDoc(doc(db, 'pastas', activeItemContext.id), { 
+            await updateDoc(doc(db, 'pastas', itemContext.id), { 
                 estado: 'desativa',
                 ultimaedicao: serverTimestamp()
             });
         }
-    } else if (action === 'move') {
-        await openMoveModal();
+    } else if (action === 'move-position') {
+        await openMoveModal(); 
+    } else if (action === 'move-folder') { 
+        // ALTERAÇÃO: Passamos o itemContext como argumento
+        await openMoveToFolderModal(itemContext); 
     } else if (action === 'rename') {
-        const currentName = activeItemContext.name;
+        const currentName = itemContext.name;
         const newName = prompt("Mudar nome para:", currentName);
         if (newName && newName.trim() !== "" && newName !== currentName) {
-            await updateDoc(doc(db, 'pastas', activeItemContext.id), {
+            await updateDoc(doc(db, 'pastas', itemContext.id), {
                 nome: newName.trim(),
                 ultimaedicao: serverTimestamp()
             });
         }
     }
-    hideContextMenu();
+    hideContextMenu(); // Agora é seguro chamar isto, pois já passámos a informação
 });
 
 document.querySelectorAll('.modal-overlay [data-action="cancel"]').forEach(btn => {
