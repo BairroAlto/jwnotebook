@@ -1,11 +1,9 @@
 // js/firebase-config.js
-
-// Importe as funções que você precisa dos SDKs
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-app.js";
 import { getFirestore } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
+// Adicionamos a importação da Autenticação
+import { getAuth } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
 
-// A configuração do seu aplicativo da web do Firebase
-// SUBSTITUA PELAS SUAS CREDENCIAIS REAIS
 const firebaseConfig = {
   apiKey: "AIzaSyAZmDPPbqyfnP3rfrT2-xsWg92qbbL2a-0",
   authDomain: "jwnotebook.firebaseapp.com",
@@ -18,5 +16,6 @@ const firebaseConfig = {
 // Inicialize o Firebase
 const app = initializeApp(firebaseConfig);
 
-// Inicialize o Cloud Firestore e exporte-o para ser usado em outros lugares
+// Exporta o Firestore e a Autenticação
 export const db = getFirestore(app);
+export const auth = getAuth(app);
