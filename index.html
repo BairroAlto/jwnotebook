@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="pt-pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acesso - JW Notebook</title>
+    <style>
+        body { background-color: #1a1a1d; color: #f0f0f0; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .login-container { background-color: #252528; padding: 40px; border-radius: 8px; width: 100%; max-width: 400px; text-align: center; border: 1px solid #333; }
+        h2 { margin-bottom: 20px; color: #4a90e2; }
+        input { width: 100%; padding: 12px; margin-bottom: 15px; background-color: #1a1a1d; border: 1px solid #333; border-radius: 4px; color: white; font-size: 16px; box-sizing: border-box; }
+        input:focus { outline: 1px solid #4a90e2; }
+        button { width: 100%; padding: 12px; background-color: #4a90e2; border: none; color: white; font-size: 16px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 10px; }
+        button:hover { background-color: #357abd; }
+        .toggle-link { margin-top: 15px; font-size: 0.9em; color: #888; cursor: pointer; text-decoration: underline; }
+        .toggle-link:hover { color: #ccc; }
+        #error-msg { color: #e74c3c; margin-top: 10px; font-size: 0.9em; display: none; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <div class="login-container">
+        <h2 id="form-title">Login</h2>
+        
+        <!-- Campo Nome (Só aparece no Registo) -->
+        <input type="text" id="name" placeholder="Seu Nome" class="hidden">
+        
+        <input type="email" id="email" placeholder="Email">
+        <input type="password" id="password" placeholder="Senha">
+        
+        <button id="submit-btn">Entrar</button>
+        
+        <p id="toggle-mode" class="toggle-link">Não tem conta? Criar conta</p>
+        <p id="error-msg"></p>
+    </div>
+
+    <script type="module">
+        import { auth, db } from './js/firebase-config.js';
+        import { signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
+        import { doc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
+
+        const title = document.getElementById('form-title');
+        const nameInput = document.getElementById('name');
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        const submitBtn = document.getElementById('submit-btn');
+        const toggleBtn = document.getElementById('toggle-mode');
+        const errorMsg = document.getElementById('error-msg');
+
+        let isRegistering = false;
+
+        // Redireciona se já estiver logado
+        onAuthStateChanged(auth, (user) => {
+            if (user) window.location.href = "book.html";
+        });
+
+        // Alternar entre Login e Registo
+        toggleBtn.addEventListener('click', () => {
+            isRegistering = !isRegistering;
+            errorMsg.style.display = 'none';
+            if (isRegistering) {
+                title.textContent = "Criar Conta";
+                submitBtn.textContent = "Registar";
+                nameInput.classList.remove('hidden');
+                toggleBtn.textContent = "Já tem conta? Fazer Login";
+            } else {
+                title.textContent = "Login";
+                submitBtn.textContent = "Entrar";
+                nameInput.classList.add('hidden');
+                toggleBtn.textContent = "Não tem conta? Criar conta";
+            }
+        });
+
+     submitBtn.addEventListener('click', async () => {
+            const email = emailInput.value;
+            const password = passwordInput.value;
+            const name = nameInput.value;
+            
+            submitBtn.disabled = true;
+            errorMsg.style.display = 'none';
+
+            try {
+                if (isRegistering) {
+                    if(!name) throw new Error("O nome é obrigatório.");
+                    
+                    // 1. Cria Usuário na Auth
+                    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                    const user = userCredential.user;
+
+                    // 2. Grava dados na coleção 'users'
+                    // AQUI ESTÁ A ALTERAÇÃO:
+                    await setDoc(doc(db, "users", user.uid), {
+                        nome: name,
+                        email: email,
+                        ativo: true, // <--- Adiciona o campo 'ativo' como verdadeiro
+                        createdAt: serverTimestamp()
+                    });
+
+                } else {
+                    // Login Normal
+                    await signInWithEmailAndPassword(auth, email, password);
+                }
+                // O redirecionamento para book.html acontece automaticamente 
+                // por causa do onAuthStateChanged lá em cima.
+            } catch (error) {
+                console.error(error);
+                submitBtn.disabled = false;
+                errorMsg.style.display = 'block';
+                let message = error.message;
+                if(error.code === 'auth/email-already-in-use') message = "Este email já está em uso.";
+                if(error.code === 'auth/weak-password') message = "A senha deve ter pelo menos 6 caracteres.";
+                if(error.code === 'auth/invalid-credential') message = "Dados incorretos.";
+                errorMsg.textContent = message;
+            }
+        });
+    </script>
+</body>
+</html>
