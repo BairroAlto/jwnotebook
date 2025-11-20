@@ -275,10 +275,19 @@
     .notebook-container.left-panel-collapsed #left-panel #left-panel-toggle-btn { display: block; }
     
     /* --- ESTILOS PARA O PAINEL DE REFERÊNCIAS (QUARTA COLUNA) --- */
-    #references-panel {
-        flex: 0 0 0px; background-color: var(--sidebar-color); border-left: 1px solid var(--border-color);
-        padding: 20px; height: 100%; display: flex; flex-direction: column;
-        transition: flex 0.3s ease-in-out; overflow: hidden;
+   #references-panel {
+        flex: 0 0 0px; /* Largura zero */
+        width: 0;      /* Garante largura zero */
+        background-color: var(--sidebar-color);
+        /* REMOVIDO: border-left original daqui */
+        /* ALTERADO: padding mudado para 0 para não ocupar espaço quando fechado */
+        padding: 0; 
+        height: 100%; 
+        display: flex; 
+        flex-direction: column;
+        transition: all 0.3s ease-in-out; /* Transição suave para tudo */
+        overflow: hidden;
+        opacity: 0; /* Esconde visualmente o conteúdo */
     }
     #references-panel-close-btn {
         background: none; border: none; color: var(--text-muted-color); font-size: 24px; cursor: pointer;
@@ -289,7 +298,13 @@
         border-bottom: 1px solid var(--border-color);
     }
     #references-list li:hover { background-color: var(--hover-color); }
-    .notebook-container.references-panel-visible #references-panel { flex: 0 0 400px; }
+    .notebook-container.references-panel-visible #references-panel { 
+        flex: 0 0 400px; 
+        /* ADICIONADO: O padding e a borda só aparecem agora */
+        padding: 20px;
+        border-left: 1px solid var(--border-color);
+        opacity: 1;
+    }
 
     /* --- ESTILOS PARA O MODAL DE ÂNCORAS --- */
     #anchors-content-container .tab-content { display: none; max-height: 50vh; overflow-y: auto; }
@@ -451,6 +466,80 @@
     color: var(--accent-color);
 }
 
+
+/* --- Estilo para a Barra de Pesquisa nas Listas --- */
+.list-search-container {
+    padding-bottom: 10px;
+    margin-bottom: 5px;
+    border-bottom: 1px solid var(--border-color);
+    cursor: default;
+}
+
+.list-search-input {
+    width: 100%;
+    padding: 10px;
+    background-color: var(--bg-color); /* Fundo escuro */
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    color: var(--text-color);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.list-search-input:focus {
+    border-color: var(--accent-color);
+}
+
+
+/* --- Estilos para o Botão de Colapsar Painel do Meio --- */
+    #middle-panel-toggle-btn {
+        background: none;
+        border: 1px solid var(--text-muted-color);
+        color: var(--text-muted-color);
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        font-size: 18px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+        line-height: 1;
+    }
+    #middle-panel-toggle-btn:hover {
+        background-color: var(--hover-color);
+        color: var(--text-color);
+        border-color: var(--text-color);
+    }
+
+    /* --- ESTADO COLAPSADO DO PAINEL DO MEIO --- */
+    .notebook-container.middle-panel-collapsed #middle-panel {
+        flex: 0 0 50px; /* Largura reduzida para uma tira fina */
+        padding: 10px 0;
+        transition: flex 0.3s ease, padding 0.3s ease;
+        align-items: center;
+        overflow: hidden;
+    }
+
+    /* Esconde tudo no painel do meio EXCETO o cabeçalho quando colapsado */
+    .notebook-container.middle-panel-collapsed #middle-panel > *:not(.panel-header) {
+        display: none !important;
+    }
+
+    /* Dentro do cabeçalho, esconde tudo EXCETO o botão de toggle */
+    .notebook-container.middle-panel-collapsed #middle-panel .panel-header > *:not(#middle-panel-toggle-btn) {
+        display: none !important;
+    }
+
+    /* Ajusta o cabeçalho para centralizar o botão quando colapsado */
+    .notebook-container.middle-panel-collapsed #middle-panel .panel-header {
+        justify-content: center;
+        width: 100%;
+        margin-bottom: 0;
+        flex-direction: column;
+    }
 </style>
 
 
@@ -481,10 +570,13 @@
             </div>
         </aside>
 
-        <!-- PAINEL DO MEIO -->
+      <!-- PAINEL DO MEIO -->
         <main id="middle-panel">
             <div class="panel-header">
                 <button id="back-btn" title="Voltar">←</button>
+            
+                <button id="middle-panel-toggle-btn" title="Expandir/Recolher" style="margin-right: 10px;">«</button>
+                
                 <h2 id="middle-panel-title">Selecione uma pasta</h2>
                 <button id="add-item-btn" title="Adicionar item">+</button>
             </div>
@@ -771,6 +863,7 @@
     </div>
 </div>
 
+
 <!-- MODAL PARA VISUALIZAR LINK (NOVO) -->
 <div id="view-link-modal" class="modal-overlay">
     <div class="modal-content">
@@ -784,6 +877,7 @@
         </div>
     </div>
 </div>
+
 
 
 </body>
@@ -876,6 +970,7 @@ let currentSaveStatus = 'hidden';
 let isEntityPopupOpen = false;
 let currentEntityQueryRange = null;
 let activeReferenceEntity = { id: null, type: null, name: null };
+let currentTab = 'note';
 
 // --- GESTÃO DE ESTADO E CONECTIVIDADE ---
 
@@ -1108,44 +1203,175 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
     });
 }
 
-function updateNavigationView() {
+ function updateNavigationView(keepEditorOpen = false) {
     notebookContainer.classList.remove('left-panel-collapsed');
 
-    if (unsubscribeLeftPanel) unsubscribeLeftPanel();
-    if (unsubscribeMiddlePanel) unsubscribeMiddlePanel();
-    resetEditor();
+    // Limpa listeners antigos de pastas
+    if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
+    if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
+    
+    if (!keepEditorOpen) resetEditor();
 
-    const depth = navigationStack.length;
-    let leftPanelParentId = null, middlePanelParentId = null, leftPanelSelectedId = null;
+    // ============================================================
+    // MODO: LISTS
+    // ============================================================
+    if (currentTab === 'lists') {
+        leftPanelTitle.textContent = 'Categorias';
+        
+        // 1. Renderiza o Painel Esquerdo (As 4 Opções Fixas)
+        leftPanelList.innerHTML = `
+            <li class="list-item" data-type="list-category" data-id="personagem">👤 Personagens</li>
+            <li class="list-item" data-type="list-category" data-id="local">📍 Locais</li>
+            <li class="list-item" data-type="list-category" data-id="data">📅 Datas</li>
+            <li class="list-item" data-type="list-bible-root" data-id="biblia">📖 Bíblia</li>
+        `;
 
-    if (depth === 0) {
-        leftPanelTitle.textContent = 'Pastas';
-        middlePanelTitle.textContent = 'Selecione uma pasta';
-        backBtn.style.display = 'none';
-        leftPanelParentId = null;
-        middlePanelList.innerHTML = '';
-    } else {
-        const currentFolder = navigationStack[depth - 1];
-        middlePanelParentId = currentFolder.id;
-        middlePanelTitle.textContent = currentFolder.name;
-        backBtn.style.display = 'flex';
-        if (depth > 1) {
-            const parentFolder = navigationStack[depth - 2];
-            leftPanelParentId = parentFolder.id;
-            leftPanelTitle.textContent = parentFolder.name;
-            leftPanelSelectedId = currentFolder.id;
+        // 2. Gerencia o Painel do Meio com base na Navegação
+        const depth = navigationStack.length;
+
+        if (depth === 0) {
+            middlePanelTitle.textContent = 'Selecione uma categoria';
+            middlePanelList.innerHTML = '';
+            backBtn.style.display = 'none';
         } else {
-            leftPanelParentId = null;
-            leftPanelTitle.textContent = 'Pastas';
-            leftPanelSelectedId = currentFolder.id;
+            const currentContext = navigationStack[depth - 1];
+            middlePanelTitle.textContent = currentContext.name;
+            backBtn.style.display = 'flex';
+            middlePanelList.innerHTML = ''; // Limpa para preencher com novo conteúdo
+
+            // Lógica para "Personagens", "Locais", "Datas"
+          if (currentContext.type === 'list-category') {
+                const type = currentContext.id;
+                const entities = allEntities[type] || [];
+                const sortedEntities = [...entities].sort((a, b) => a.nome.localeCompare(b.nome));
+                
+                // 1. CRIA A BARRA DE PESQUISA
+                const searchLi = document.createElement('li');
+                searchLi.className = 'list-search-container';
+                
+                const searchInput = document.createElement('input');
+                searchInput.type = 'text';
+                searchInput.className = 'list-search-input';
+                searchInput.placeholder = `Filtrar ${currentContext.name}...`;
+                
+                // Lógica de Filtro em Tempo Real
+                searchInput.addEventListener('input', (e) => {
+                    const term = e.target.value.toLowerCase();
+                    // Seleciona apenas os itens de entidade (ignora a própria barra de pesquisa)
+                    const items = middlePanelList.querySelectorAll('li[data-type="entity-item"]');
+                    
+                    items.forEach(item => {
+                        const text = item.textContent.toLowerCase();
+                        // Se o termo estiver contido no texto, mostra; senão, esconde
+                        item.style.display = text.includes(term) ? 'block' : 'none';
+                    });
+                });
+
+                // Impede que o clique no input propague para o listener da lista (evita bugs de seleção)
+                searchInput.addEventListener('click', (e) => e.stopPropagation());
+
+                searchLi.appendChild(searchInput);
+                middlePanelList.appendChild(searchLi);
+
+                // 2. RENDERIZA A LISTA DE ENTIDADES
+                if (sortedEntities.length === 0) {
+                    const li = document.createElement('li');
+                    li.className = 'list-item';
+                    li.style.cursor = 'default';
+                    li.textContent = 'Nenhum item encontrado.';
+                    middlePanelList.appendChild(li);
+                } else {
+                    sortedEntities.forEach(entity => {
+                        const li = document.createElement('li');
+                        li.className = 'list-item';
+                        li.dataset.type = 'entity-item'; // Tipo para clique
+                        li.dataset.entityId = entity.id;
+                        li.dataset.entityName = entity.nome;
+                        li.dataset.entityType = entity.tipo;
+                        li.textContent = entity.nome;
+                        middlePanelList.appendChild(li);
+                    });
+                }
+            }
+
+            // Lógica para "Bíblia" (Lista de Livros)
+            else if (currentContext.type === 'list-bible-root') {
+                BIBLICAL_BOOKS.forEach(book => {
+                    const li = document.createElement('li');
+                    li.className = 'list-item';
+                    li.dataset.type = 'bible-book'; // Clicar aqui abre os textos do livro
+                    li.dataset.bookName = book;
+                    li.textContent = book;
+                    middlePanelList.appendChild(li);
+                });
+            }
+            // Lógica para "Livro da Bíblia" (Lista de Textos)
+            else if (currentContext.type === 'bible-book') {
+                const bookName = currentContext.id; // Ex: "Génesis"
+                const bibleTexts = allEntities['textobiblico'] || [];
+                
+                // Filtra textos que começam com o nome do livro
+                const bookTexts = bibleTexts.filter(t => t.nome.toLowerCase().startsWith(bookName.toLowerCase()));
+
+                // Ordena numericamente (Génesis 1:1 antes de Génesis 1:10)
+                bookTexts.sort((a, b) => a.nome.localeCompare(b.nome, undefined, { numeric: true, sensitivity: 'base' }));
+
+                if (bookTexts.length === 0) {
+                    middlePanelList.innerHTML = '<li class="list-item" style="cursor: default;">Nenhum texto registado neste livro.</li>';
+                } else {
+                    bookTexts.forEach(textEntity => {
+                        const li = document.createElement('li');
+                        li.className = 'list-item';
+                        li.dataset.type = 'entity-item'; // Clicar aqui abre a 4ª coluna
+                        li.dataset.entityId = textEntity.id;
+                        li.dataset.entityName = textEntity.nome;
+                        li.dataset.entityType = 'textobiblico';
+                        li.textContent = textEntity.nome;
+                        middlePanelList.appendChild(li);
+                    });
+                }
+            }
         }
     }
-    
-    unsubscribeLeftPanel = fetchAndDisplayItems(leftPanelParentId, leftPanelList, leftPanelSelectedId);
-    if (middlePanelParentId) {
-        unsubscribeMiddlePanel = fetchAndDisplayItems(middlePanelParentId, middlePanelList, null);
+    // ============================================================
+    // MODO: NOTE (Padrão - Pastas e Notas)
+    // ============================================================
+    else {
+        // Código original de pastas...
+        const depth = navigationStack.length;
+        let leftPanelParentId = null, middlePanelParentId = null, leftPanelSelectedId = null;
+
+        if (depth === 0) {
+            leftPanelTitle.textContent = 'Pastas';
+            middlePanelTitle.textContent = 'Selecione uma pasta';
+            backBtn.style.display = 'none';
+            leftPanelParentId = null;
+            middlePanelList.innerHTML = '';
+        } else {
+            const currentFolder = navigationStack[depth - 1];
+            middlePanelParentId = currentFolder.id;
+            middlePanelTitle.textContent = currentFolder.name;
+            backBtn.style.display = 'flex';
+            if (depth > 1) {
+                const parentFolder = navigationStack[depth - 2];
+                leftPanelParentId = parentFolder.id;
+                leftPanelTitle.textContent = parentFolder.name;
+                leftPanelSelectedId = currentFolder.id;
+            } else {
+                leftPanelParentId = null;
+                leftPanelTitle.textContent = 'Pastas';
+                leftPanelSelectedId = currentFolder.id;
+            }
+        }
+        
+        unsubscribeLeftPanel = fetchAndDisplayItems(leftPanelParentId, leftPanelList, leftPanelSelectedId);
+        if (middlePanelParentId) {
+            unsubscribeMiddlePanel = fetchAndDisplayItems(middlePanelParentId, middlePanelList, null);
+        }
     }
 }
+
+
 
 function updateMiddlePanelForFolderSelection(folderId, folderName, selectedElement) {
     // 1. Atualiza o estado da seleção visual no painel esquerdo
@@ -2340,48 +2566,104 @@ function addUrlField(urlValue = '') {
 }
 
 function openTagsModal() {
-    const fetchData = async () => {
-        // Usa a cache de tags que já temos, ordenadas alfabeticamente
-        if (allTags && allTags.length > 0) {
-            return [...allTags]
-                .sort((a, b) => a.nome.localeCompare(b.nome))
-                .map(tag => ({
-                    title: `#${tag.nome}`,
-                    // Deixamos o content vazio, pois a ação será no clique
-                    content: '' 
-                }));
-        }
-        
-        // Fallback para ir à base de dados se a cache estiver vazia
-        const tagsCollection = collection(db, 'tags');
-        const tagsSnapshot = await getDocs(tagsCollection);
-        if (!tagsSnapshot.empty) {
-            const tags = tagsSnapshot.docs.map(doc => ({
-                title: `#${doc.data().nome}`,
-                content: ''
+    const fetchActiveTags = async () => {
+        // LÓGICA CORRIGIDA:
+        // Em vez de buscar na coleção 'tags' (que pode ter lixo ou notas ocultas),
+        // buscamos todas as NOTAS ATIVAS e extraímos as tags que estão sendo usadas DE FATO.
+        const q = query(
+            collection(db, 'pastas'),
+            where('tipo', '==', 'nota'),
+            where('estado', '==', 'ativa') 
+        );
+
+        try {
+            const snapshot = await getDocs(q);
+            const activeTagsSet = new Set();
+
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                if (data.tags && Array.isArray(data.tags)) {
+                    data.tags.forEach(tagName => {
+                        // Adiciona ao Set (que remove duplicados automaticamente)
+                        activeTagsSet.add(tagName);
+                    });
+                }
+            });
+
+            // Converte o Set num array de objetos para o modal
+            const tagsArray = Array.from(activeTagsSet).sort((a, b) => a.localeCompare(b));
+            
+            return tagsArray.map(tagName => ({
+                title: `#${tagName}`,
+                content: '' 
             }));
-            return tags.sort((a, b) => a.title.localeCompare(b.title));
+
+        } catch (error) {
+            console.error("Erro ao calcular tags ativas:", error);
+            return [];
         }
-        
-        return [];
     };
 
-    openGenericListModal("Todas as Tags", fetchData());
+    openGenericListModal("Tags (Em Notas Ativas)", fetchActiveTags());
 }
 
-async function openAnchorsModal() {
-    await fetchAllEntities();
+ async function openAnchorsModal() {
+    await fetchAllEntities(); 
+    
     const modal = document.getElementById('anchors-modal');
     const tabsContainer = document.getElementById('anchors-tabs-container');
     const contentContainer = document.getElementById('anchors-content-container');
+    
     tabsContainer.innerHTML = '';
     contentContainer.innerHTML = '';
-    const onPageEntityNames = new Set(Array.from(noteContentEditor.querySelectorAll('.entity-link')).map(link => link.dataset.entityName));
+
+    const onPageEntityNames = new Set(
+        Array.from(noteContentEditor.querySelectorAll('.entity-link'))
+             .map(link => link.dataset.entityName)
+    );
+
+    const createEntityListItem = (entity, isOnPage) => {
+        const li = document.createElement('li');
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = entity.nome;
+        li.appendChild(nameSpan);
+        
+        li.dataset.entityId = entity.id;
+        li.dataset.entityName = entity.nome;
+        li.dataset.entityType = entity.tipo;
+        
+        if (isOnPage) li.classList.add('is-on-page');
+        
+        const editBtn = document.createElement('button');
+        editBtn.className = 'entity-edit-btn';
+        editBtn.innerHTML = '…';
+        editBtn.title = 'Editar entidade';
+        editBtn.onclick = (event) => {
+            event.stopPropagation();
+            openEditEntityModal(entity.id, entity.tipo);
+        };
+
+        li.appendChild(editBtn);
+        return li;
+    };
+
+    // --- NOVA FUNÇÃO AUXILIAR DE ORDENAÇÃO BÍBLICA ---
+    const getBookIndex = (entityName) => {
+        const nameLower = entityName.toLowerCase();
+        // Procura qual livro da lista inicia o nome da entidade
+        const index = BIBLICAL_BOOKS.findIndex(book => 
+            nameLower.startsWith(book.toLowerCase())
+        );
+        // Se não encontrar (ex: erro de digitação), coloca no final (999)
+        return index === -1 ? 999 : index;
+    };
 
     let isFirstTab = true;
+
     for (const type in ENTITY_CONFIG) {
         if (allEntities[type] && allEntities[type].length > 0) {
             const config = ENTITY_CONFIG[type];
+            
             const tabButton = document.createElement('button');
             tabButton.dataset.tab = type;
             tabButton.textContent = config.displayName;
@@ -2393,32 +2675,71 @@ async function openAnchorsModal() {
             tabContent.className = 'tab-content';
             if (isFirstTab) tabContent.classList.add('active');
             
-            const ul = document.createElement('ul');
-            const sortedEntities = [...allEntities[type]].sort((a, b) => a.nome.localeCompare(b.nome));
+            // --- ALTERAÇÃO AQUI: LÓGICA DE ORDENAÇÃO CONDICIONAL ---
+            let sortedEntities;
+            
+            if (type === 'textobiblico') {
+                // Ordenação Especial para Textos Bíblicos
+                sortedEntities = [...allEntities[type]].sort((a, b) => {
+                    const indexA = getBookIndex(a.nome);
+                    const indexB = getBookIndex(b.nome);
 
-            sortedEntities.forEach(entity => {
-                const li = document.createElement('li');
-                const nameSpan = document.createElement('span');
-                nameSpan.textContent = entity.nome;
-                li.appendChild(nameSpan);
-                li.dataset.entityId = entity.id;
-                li.dataset.entityName = entity.nome;
-                li.dataset.entityType = entity.tipo;
-                if (onPageEntityNames.has(entity.nome)) li.classList.add('is-on-page');
-                
-                const editBtn = document.createElement('button');
-                editBtn.className = 'entity-edit-btn';
-                editBtn.innerHTML = '…';
-                editBtn.title = 'Editar entidade';
-                editBtn.onclick = (event) => {
-                    event.stopPropagation();
-                    openEditEntityModal(entity.id, entity.tipo);
-                };
+                    if (indexA !== indexB) {
+                        // Ordena pela ordem dos livros na array BIBLICAL_BOOKS
+                        return indexA - indexB;
+                    } else {
+                        // Se for o mesmo livro, ordena pelos capítulos/versículos (Numericamente)
+                        // numeric: true faz com que "Salmos 2" venha antes de "Salmos 10"
+                        return a.nome.localeCompare(b.nome, undefined, { numeric: true, sensitivity: 'base' });
+                    }
+                });
+            } else {
+                // Ordenação Alfabética Padrão para os outros tipos
+                sortedEntities = [...allEntities[type]].sort((a, b) => a.nome.localeCompare(b.nome));
+            }
+            // -------------------------------------------------------
 
-                li.appendChild(editBtn);
-                ul.appendChild(li);
-            });
-            tabContent.appendChild(ul);
+            const entitiesOnPage = sortedEntities.filter(e => onPageEntityNames.has(e.nome));
+            const entitiesOthers = sortedEntities.filter(e => !onPageEntityNames.has(e.nome));
+
+            if (entitiesOnPage.length > 0) {
+                const titleOnPage = document.createElement('h4');
+                titleOnPage.textContent = "Nesta Nota";
+                titleOnPage.style.color = "var(--accent-color)";
+                titleOnPage.style.margin = "10px 0 5px 0";
+                titleOnPage.style.paddingLeft = "5px";
+                tabContent.appendChild(titleOnPage);
+
+                const ulOnPage = document.createElement('ul');
+                entitiesOnPage.forEach(entity => {
+                    ulOnPage.appendChild(createEntityListItem(entity, true));
+                });
+                tabContent.appendChild(ulOnPage);
+            }
+
+            if (entitiesOthers.length > 0) {
+                if (entitiesOnPage.length > 0) {
+                    const hr = document.createElement('hr');
+                    hr.style.border = "0";
+                    hr.style.borderTop = "1px solid var(--border-color)";
+                    hr.style.margin = "15px 0";
+                    tabContent.appendChild(hr);
+                }
+
+                const titleOthers = document.createElement('h4');
+                titleOthers.textContent = "Banco de Dados";
+                titleOthers.style.color = "var(--text-muted-color)";
+                titleOthers.style.margin = "0 0 5px 0";
+                titleOthers.style.paddingLeft = "5px";
+                tabContent.appendChild(titleOthers);
+
+                const ulOthers = document.createElement('ul');
+                entitiesOthers.forEach(entity => {
+                    ulOthers.appendChild(createEntityListItem(entity, false));
+                });
+                tabContent.appendChild(ulOthers);
+            }
+
             contentContainer.appendChild(tabContent);
             isFirstTab = false;
         }
@@ -2557,7 +2878,7 @@ async function openEditEntityModal(entityId, entityType) {
 // ADICIONE ESTA NOVA FUNÇÃO AO SEU SCRIPT JAVASCRIPT
 // ====================================================================
 async function showTagReferencesPanel(tagName) {
-    // Esconde elementos específicos de entidades (descrição, toolbar)
+    // Esconde elementos específicos de entidades
     document.getElementById('references-panel-description').style.display = 'none';
     document.getElementById('references-toolbar').style.display = 'none';
     document.querySelectorAll('.references-separator').forEach(el => el.style.display = 'none');
@@ -2568,14 +2889,21 @@ async function showTagReferencesPanel(tagName) {
     referencesList.innerHTML = '<li>A carregar referências...</li>';
 
     try {
-        // Procura por todas as notas que contêm a tag no seu array 'tags'
-        const q = query(collection(db, 'pastas'), where('tags', 'array-contains', tagName));
+        // LÓGICA CORRIGIDA:
+        // Adicionado: where('estado', '==', 'ativa')
+        // Isso garante que notas ocultas/desativadas não apareçam na lista.
+        const q = query(
+            collection(db, 'pastas'), 
+            where('tags', 'array-contains', tagName),
+            where('estado', '==', 'ativa') 
+        );
+
         const querySnapshot = await getDocs(q);
 
-        referencesList.innerHTML = ''; // Limpa o "a carregar"
+        referencesList.innerHTML = ''; 
 
         if (querySnapshot.empty) {
-            referencesList.innerHTML = '<li>Nenhuma referência encontrada para esta tag.</li>';
+            referencesList.innerHTML = '<li>Nenhuma referência ativa encontrada para esta tag.</li>';
             return;
         }
 
@@ -2583,14 +2911,27 @@ async function showTagReferencesPanel(tagName) {
             if (!noteDoc.exists()) return null;
             const parentId = noteDoc.data().parentId;
             if (!parentId) return { noteSnap: noteDoc, parentSnap: null };
+            
+            // Verifica se a pasta pai existe (opcional, mas boa prática)
             const parentDoc = await getDoc(doc(db, 'pastas', parentId));
+            // Se a pasta pai estiver desativada, você também quer esconder a nota? 
+            // Se sim, descomente a linha abaixo:
+            // if (parentDoc.exists() && parentDoc.data().estado === 'desativa') return null;
+
             return { noteSnap: noteDoc, parentSnap: parentDoc.exists() ? parentDoc : null };
         });
 
         const results = await Promise.all(resultsPromises);
 
-        results.forEach(result => {
-            if (!result) return;
+        // Filtra nulos (caso tenhamos adicionado lógica extra de filtro acima)
+        const validResults = results.filter(r => r !== null);
+
+        if (validResults.length === 0) {
+            referencesList.innerHTML = '<li>Nenhuma referência ativa encontrada.</li>';
+            return;
+        }
+
+        validResults.forEach(result => {
             const { noteSnap, parentSnap } = result;
             const noteData = noteSnap.data();
             
@@ -2616,8 +2957,7 @@ async function showTagReferencesPanel(tagName) {
 
             const contextDiv = document.createElement('div');
             contextDiv.className = 'reference-context';
-            // Para tags, um contexto simples pode ser suficiente
-            contextDiv.innerHTML = `<p style="font-style: italic;">Esta nota contém a tag #${tagName}.</p>`;
+            contextDiv.innerHTML = `<p style="font-style: italic;">Nota ativa contendo a tag #${tagName}.</p>`;
             
             details.appendChild(summary);
             details.appendChild(contextDiv);
@@ -2817,11 +3157,12 @@ function showTagPopup(query) {
     tagSuggestionList.firstChild.classList.add('selected');
 }
 
-function hideTagPopup() {
+ function hideTagPopup() {
     tagSuggestionPopup.style.display = 'none';
     isTagPopupOpen = false;
-    currentTagQueryRange = null;
+    currentTagQueryRange = null; // Importante: limpa o range para evitar reaberturas acidentais
 }
+
 
 function navigateTagSuggestions(key) {
     const items = Array.from(tagSuggestionList.children);
@@ -2836,12 +3177,25 @@ function navigateTagSuggestions(key) {
 
 async function commitTagSelection() {
     const selectedLi = tagSuggestionList.querySelector('.selected');
-    if (!selectedLi) return;
+    if (!selectedLi) {
+        hideTagPopup();
+        return;
+    }
+
     const tagName = selectedLi.dataset.tagNome.trim();
-    if (!tagName) { hideTagPopup(); return; }
+    if (!tagName) { 
+        hideTagPopup(); 
+        return; 
+    }
+
+    // Verifica/Cria a tag no banco de dados
     let tagExists = allTags.some(t => t.nome.toLowerCase() === tagName.toLowerCase());
     if (!tagExists) await createNewTag(tagName);
+
+    // Insere no editor
     insertTagIntoEditor(tagName);
+    
+    // FORÇA O FECHO IMEDIATO
     hideTagPopup();
 }
 
@@ -2881,22 +3235,23 @@ async function fetchAllTags() {
 
 function insertTagIntoEditor(tagName) {
     if (!currentTagQueryRange) return;
+
     const tagSpan = document.createElement('span');
     tagSpan.className = 'tag';
     tagSpan.textContent = `#${tagName}`;
-    tagSpan.setAttribute('contenteditable', 'false');
+    tagSpan.setAttribute('contenteditable', 'false'); 
     const spaceNode = document.createTextNode('\u00A0');
     currentTagQueryRange.deleteContents();
-    currentTagQueryRange.insertNode(spaceNode);
-    currentTagQueryRange.insertNode(tagSpan);
+    currentTagQueryRange.insertNode(spaceNode); 
+    currentTagQueryRange.insertNode(tagSpan);  
     const selection = window.getSelection();
     const newRange = document.createRange();
-    const newOffset = Math.min(originalOffset, textNode.textContent.length); 
-    newRange.setStart(textNode, newOffset);
+    newRange.setStartAfter(spaceNode);
     newRange.collapse(true);
     selection.removeAllRanges();
     selection.addRange(newRange);
     saveNote();
+    currentTagQueryRange = null;
 }
 
 
@@ -3376,13 +3731,12 @@ window.addEventListener('beforeunload', (event) => {
 
 // Listeners de Navegação (Protegidos pelo Gatekeeper)
 backBtn.addEventListener('click', () => {
-    const action = () => {
-        if (navigationStack.length > 0) {
-            navigationStack.pop();
-            updateNavigationView();
-        }
-    };
-    navigateWithUnsavedCheck(action);
+    // Removemos o navigateWithUnsavedCheck pois a nota ficará aberta e segura
+    if (navigationStack.length > 0) {
+        navigationStack.pop();
+        // Passamos 'true' para indicar que queremos manter o editor aberto
+        updateNavigationView(true);
+    }
 });
 
 leftPanelList.addEventListener('click', (e) => {
@@ -3390,35 +3744,71 @@ leftPanelList.addEventListener('click', (e) => {
     if (itemMenuBtn) { showContextMenu(e); return; }
     
     const listItem = e.target.closest('.list-item');
-    // Ignora cliques que não são em pastas ou se a pasta já está selecionada
-    if (!listItem || listItem.dataset.type !== 'pasta' || listItem.classList.contains('selected')) {
+    if (!listItem) return;
+
+    // >>> LÓGICA PARA O MODO LISTS <<<
+    if (currentTab === 'lists') {
+        const type = listItem.dataset.type;
+        const id = listItem.dataset.id; // 'personagem', 'local', 'data', 'biblia'
+        const name = listItem.textContent;
+
+        if (type === 'list-category' || type === 'list-bible-root') {
+            // Reseta a pilha e entra na categoria selecionada
+            navigationStack = [{ type: type, id: id, name: name }];
+            
+            // Remove seleção visual anterior e adiciona à atual
+            document.querySelectorAll('#left-panel-list .list-item').forEach(el => el.classList.remove('selected'));
+            listItem.classList.add('selected');
+            
+            updateNavigationView();
+        }
         return;
     }
 
-    // --- A NOVA LÓGICA ESTÁ AQUI ---
-    // SE UMA NOTA ESTIVER ABERTA, usamos a nova função "suave" que não fecha o editor.
+    // >>> LÓGICA PARA O MODO NOTE (Original) <<<
+    if (listItem.dataset.type !== 'pasta' || listItem.classList.contains('selected')) return;
+
     if (selectedNoteId) {
         updateMiddlePanelForFolderSelection(listItem.dataset.id, listItem.dataset.name, listItem);
-    } 
-    // SE NENHUMA NOTA ESTIVER ABERTA, usamos a navegação padrão com reset total.
-    else {
+    } else {
         const action = () => {
             if (navigationStack.length > 0) navigationStack.pop();
             navigationStack.push({ id: listItem.dataset.id, name: listItem.dataset.name });
             updateNavigationView();
         };
-        // O gatekeeper não é estritamente necessário aqui, mas é uma boa prática
         navigateWithUnsavedCheck(action);
     }
 });
 
-middlePanelList.addEventListener('click', (e) => {
+ middlePanelList.addEventListener('click', (e) => {
     const itemMenuBtn = e.target.closest('.item-menu-btn');
     if (itemMenuBtn) { showContextMenu(e); return; }
 
     const listItem = e.target.closest('.list-item');
     if (!listItem) return;
 
+    // >>> LÓGICA PARA O MODO LISTS <<<
+    if (currentTab === 'lists') {
+        const type = listItem.dataset.type;
+
+        // Caso 1: Clicou num Livro da Bíblia (Ex: "Génesis") -> Abre lista de textos
+        if (type === 'bible-book') {
+            const bookName = listItem.dataset.bookName;
+            navigationStack.push({ type: 'bible-book', id: bookName, name: bookName });
+            updateNavigationView();
+        }
+        // Caso 2: Clicou numa Entidade final (Personagem, Local, Texto Bíblico) -> Abre 4ª Coluna
+        else if (type === 'entity-item') {
+            document.querySelectorAll('#file-list .list-item.selected').forEach(el => el.classList.remove('selected'));
+            listItem.classList.add('selected');
+            
+            const { entityId, entityName, entityType } = listItem.dataset;
+            showReferencesPanel(entityId, entityName, entityType);
+        }
+        return;
+    }
+
+    // >>> LÓGICA PARA O MODO NOTE (Original) <<<
     const { id, type, name } = listItem.dataset;
     if (type === 'nota' && id === selectedNoteId) return;
 
@@ -3434,13 +3824,18 @@ middlePanelList.addEventListener('click', (e) => {
 });
 
 document.querySelector('.tabs-container').addEventListener('click', (e) => {
-    const clickedTab = e.target.closest('button');
-    if (!clickedTab) return;
+    const clickedTabBtn = e.target.closest('button');
+    if (!clickedTabBtn) return;
 
+    const newTab = clickedTabBtn.dataset.tab;
+    
     const action = () => {
         document.querySelectorAll('.tabs-container button').forEach(btn => btn.classList.remove('active'));
-        clickedTab.classList.add('active');
-        navigationStack = [];
+        clickedTabBtn.classList.add('active');
+        
+        currentTab = newTab;
+        navigationStack = []; // Reseta a navegação ao trocar de aba
+        
         updateNavigationView();
     };
     navigateWithUnsavedCheck(action);
@@ -3524,8 +3919,10 @@ document.getElementById('generic-list-modal').addEventListener('click', (e) => {
         return; 
     }
 
+
+
     // --- LÓGICA DE SUGESTÕES (permanece igual) ---
-    const selection = window.getSelection();
+  const selection = window.getSelection();
     if (!selection.rangeCount > 0) return;
     const range = selection.getRangeAt(0);
     const textBeforeCursor = range.startContainer.textContent.substring(0, range.startOffset);
@@ -3550,10 +3947,23 @@ document.getElementById('generic-list-modal').addEventListener('click', (e) => {
         hideEntityPopup();
     }
     
-    // --- CHAMADA UNIFICADA E SEGURA ---
-    // Apenas a nossa função debounced será responsável por analisar e criar links.
-    // Isto elimina o conflito e a instabilidade.
     debouncedScanAndLink();
+});
+
+    // --- Listener para o Botão de Colapsar/Expandir o Painel do Meio ---
+const middlePanelToggleBtn = document.getElementById('middle-panel-toggle-btn');
+
+middlePanelToggleBtn.addEventListener('click', () => {
+    const isCollapsed = notebookContainer.classList.toggle('middle-panel-collapsed');
+    
+    // Muda o ícone da seta dependendo do estado
+    if (isCollapsed) {
+        middlePanelToggleBtn.textContent = '»'; // Seta para a direita (Expandir)
+        middlePanelToggleBtn.title = "Expandir Painel";
+    } else {
+        middlePanelToggleBtn.textContent = '«'; // Seta para a esquerda (Colapsar)
+        middlePanelToggleBtn.title = "Recolher Painel";
+    }
 });
 
 
@@ -3566,6 +3976,8 @@ document.addEventListener('click', (e) => {
 leftPanelToggleBtn.addEventListener('click', () => {
     notebookContainer.classList.toggle('left-panel-collapsed');
 });
+
+
 
 addItemBtn.addEventListener('click', () => {
     const addFolderBtn = document.querySelector('#add-item-options button[data-type="pasta"]');
@@ -3623,6 +4035,15 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
     if (action === 'hide') {
         const confirmed = await showConfirmation('Ocultar Item?', `Tem certeza que deseja ocultar "${itemContext.name}"?`);
         if (confirmed) {
+            // --- LÓGICA ADICIONADA ---
+            // Se o item que vamos ocultar é a nota que está aberta no momento, fechamo-la.
+            if (selectedNoteId && itemContext.id === selectedNoteId) {
+                resetEditor();
+                // Opcional: Se quiser que o título do painel do meio volte a ser "Selecione...", pode adicionar lógica aqui,
+                // mas o resetEditor já limpa o painel da direita.
+            }
+            // -------------------------
+
             await updateDoc(doc(db, 'pastas', itemContext.id), { 
                 estado: 'desativa',
                 ultimaedicao: serverTimestamp()
@@ -3631,7 +4052,6 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
     } else if (action === 'move-position') {
         await openMoveModal(); 
     } else if (action === 'move-folder') { 
-        // ALTERAÇÃO: Passamos o itemContext como argumento
         await openMoveToFolderModal(itemContext); 
     } else if (action === 'rename') {
         const currentName = itemContext.name;
@@ -3641,10 +4061,16 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
                 nome: newName.trim(),
                 ultimaedicao: serverTimestamp()
             });
+            // Atualiza o título no editor se a nota renomeada estiver aberta
+            if (selectedNoteId && itemContext.id === selectedNoteId) {
+                noteTitleInput.value = newName.trim();
+            }
         }
     }
-    hideContextMenu(); // Agora é seguro chamar isto, pois já passámos a informação
+    hideContextMenu(); 
 });
+
+
 
 document.querySelectorAll('.modal-overlay [data-action="cancel"]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -3848,6 +4274,12 @@ selectionPopup.addEventListener('click', (e) => {
     const type = e.target.dataset.type;
     if (!action || !currentSelectionRange) return;
 
+
+
+
+
+
+    
     const selection = window.getSelection();
     if (action === 'create-link') {
         console.groupCollapsed('%c[Popup de Seleção] "Criar Link" clicado', 'color: white; background-color: #2980b9; padding: 2px 5px; border-radius: 3px;');
@@ -3967,41 +4399,52 @@ document.getElementById('references-toolbar').addEventListener('click', (e) => {
     if (!noteId) return;
 
     const navigateAndOpenNote = () => {
-        // <<<<<<< ALTERAÇÃO PRINCIPAL: NÃO ESCONDEMOS MAIS O PAINEL >>>>>>>>>
-        // hideReferencesPanel(); // Esta linha foi removida/comentada.
+        // 1. MUDANÇA DE MODO: Força a mudança para a aba "Note"
+        if (currentTab !== 'note') {
+            currentTab = 'note';
+            // Atualiza visualmente os botões das abas no painel esquerdo
+            document.querySelectorAll('.tabs-container button').forEach(btn => {
+                if (btn.dataset.tab === 'note') {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
 
-        // 1. Determina a pasta atual
-        const currentFolderId = navigationStack.length > 0 ? navigationStack[navigationStack.length - 1].id : null;
+        // 2. REQUISITO: Colapsar a primeira coluna (Painel Esquerdo)
+        notebookContainer.classList.add('left-panel-collapsed');
 
-        // 2. Verifica se precisamos de mudar de pasta
+        // 3. Reconstruir a navegação para a pasta onde a nota está
         // O `parentId` do botão pode ser 'undefined' se a nota estiver na raiz.
         const targetParentId = parentId || null;
 
-        if (currentFolderId !== targetParentId) {
-            // Se a nota está numa pasta diferente, reconstruímos a navegação
-            console.log("A navegar para uma pasta diferente...");
-            navigationStack = [];
-            if (targetParentId && parentName) {
-                navigationStack.push({ id: targetParentId, name: parentName });
-            }
-            updateNavigationView();
+        console.log("A navegar para a nota e a mudar para modo Note...");
+        
+        // Reinicia o stack de navegação
+        navigationStack = [];
+        // Se a nota estiver dentro de uma pasta, adiciona essa pasta ao stack
+        // para que a lista do meio (coluna 2) mostre os "vizinhos" da nota
+        if (targetParentId && parentName) {
+            navigationStack.push({ id: targetParentId, name: parentName });
         }
 
-        // 3. Aguarda um instante para o DOM atualizar e depois abre a nota
+        // 4. Atualiza a vista
+        // Como mudamos currentTab para 'note', o updateNavigationView vai renderizar
+        // a estrutura de pastas na coluna 1 e os arquivos na coluna 2.
+        // Passamos 'true' para não resetar o editor visualmente antes de carregar o conteúdo.
+        updateNavigationView(true);
+
+        // 5. Aguarda um instante para o DOM atualizar e abre a nota
         setTimeout(() => {
             const noteElement = document.querySelector(`#middle-panel .list-item[data-id="${noteId}"]`);
-            if (noteElement) {
-                // Se a nota atual tiver alterações, o displayNote será bloqueado pelo
-                // navigateWithUnsavedCheck. Precisamos de o chamar de forma diferente.
-                // Como o check já foi feito, podemos chamar diretamente.
-                displayNote(noteId, noteElement);
-            } else {
-                console.error("Não foi possível encontrar o elemento da nota para a selecionar.");
-            }
-        }, 150); // Aumentei um pouco o delay para garantir a renderização
+            
+            // displayNote carrega o conteúdo e marca a nota como selecionada
+            displayNote(noteId, noteElement); 
+        }, 150); 
     };
     
-    // 4. Verifica se há alterações por guardar ANTES de fazer qualquer coisa
+    // Verifica se há alterações por guardar na nota atual (se houver) antes de mudar
     navigateWithUnsavedCheck(navigateAndOpenNote);
 });
 
