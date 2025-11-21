@@ -863,6 +863,7 @@ input:checked + .slider:before {
         <hr class="references-separator">
         <div id="references-toolbar">
             <button id="references-refresh-btn" title="Atualizar Referências">🔄</button>
+            <button id="references-wol-btn" title="Ler Texto na WOL" style="display: none;">📖</button>
             <button id="references-search-btn" title="Pesquisar na JW Library">🔍</button>
             <button id="references-edit-btn" title="Editar Entidade">✏️</button>
             <button id="references-toggle-btn" title="Expandir/Recolher Tudo">↕️</button>
@@ -2899,41 +2900,24 @@ function cleanupInvisibleCharacters() {
                 const collectionName = ENTITY_CONFIG['textobiblico'].collection;
 
                 try {
-        // Passo 1: Adiciona o documento com userId
-        console.log(`%c  - Passo 1: A criar ficha para "${cleanedName}"...`, logStyles.info);
-        
-        const newEntityDocRef = await addDoc(collection(db, collectionName), { 
-            nome: cleanedName, 
-            descricao: "", 
-            userId: auth.currentUser.uid, // <--- GARANTE QUE FICA ASSOCIADO AO USER
-            createdAt: serverTimestamp(), 
-            referencias: { [selectedNoteId]: true } 
-        });
-
-                    // Passo 2: Chamar o nosso novo servidor Python (O Pesquisador Especialista)
-                    console.log('%c  - Passo 2: A pedir ao Pesquisador Especialista para encontrar o texto...', logStyles.action);
-                    const response = await fetch(`https://jwnotebook.onrender.com/get-verse?ref=${encodeURIComponent(cleanedName)}`);
+                    // Passo 1: Adiciona o documento com userId (apenas cria a ficha, sem buscar texto externo)
+                    console.log(`%c  - Passo 1: A criar ficha para "${cleanedName}"...`, logStyles.info);
                     
-                    if (response.ok) {
-                        const data = await response.json();
-                        const verseText = data.text;
-                        
-                        // Passo 3: Atualiza o documento que acabámos de criar com a descrição.
-                        console.log(`%c  - Passo 3: Pesquisador respondeu com sucesso! A atualizar a ficha no Firebase.`, logStyles.success);
-                        await updateDoc(newEntityDocRef, {
-                            descricao: verseText
-                        });
+                    await addDoc(collection(db, collectionName), { 
+                        nome: cleanedName, 
+                        descricao: "", // A descrição fica vazia propositadamente
+                        userId: auth.currentUser.uid, 
+                        createdAt: serverTimestamp(), 
+                        referencias: { [selectedNoteId]: true } 
+                    });
 
-                    } else {
-                        const errorData = await response.json();
-                        console.warn(`%c  - AVISO: O Pesquisador não encontrou o texto. A descrição ficará vazia. (Erro: ${errorData.error})`, logStyles.phase);
-                    }
                 } catch (error) {
-                    console.error(`%c  - ERRO: Falha na comunicação com o Pesquisador Especialista. Verifique se o servidor Python (pesquisador_api.py) está a correr.`, 'color: red; font-weight: bold;', error);
+                    console.error(`%c  - ERRO: Falha ao criar a entidade automática na base de dados.`, 'color: red; font-weight: bold;', error);
                 } finally {
-                    await fetchAllEntities(); // Atualiza sempre o cache local, mesmo se a pesquisa falhar
+                    await fetchAllEntities(); // Atualiza sempre o cache local
                     console.groupEnd(); // Fecha o grupo de logs da automação
                 }
+                  
                 // ===================================================================
                 // --- FIM DA NOVA LÓGICA DE AUTOMAÇÃO ---
                 // ===================================================================
@@ -4437,6 +4421,14 @@ async function showReferencesPanel(entityId, entityName, entityType, anexoId = n
     document.querySelectorAll('.references-separator').forEach(el => el.style.display = 'block');
 
     activeReferenceEntity = { id: entityId, type: entityType, name: entityName };
+    const wolBtn = document.getElementById('references-wol-btn');
+    if (wolBtn) {
+        if (entityType === 'textobiblico') {
+            wolBtn.style.display = 'block'; // Mostra se for texto bíblico
+        } else {
+            wolBtn.style.display = 'none';  // Esconde para outros tipos
+        }
+    }
     const descriptionElement = document.getElementById('references-panel-description');
     notebookContainer.classList.add('references-panel-visible');
     referencesPanelTitle.textContent = `Referências para "${entityName}"`;
@@ -6127,33 +6119,38 @@ document.getElementById('references-toolbar').addEventListener('click', (e) => {
 
     switch (button.id) {
         case 'references-refresh-btn':
-            // Simplesmente chama a função de novo com os dados guardados
             console.log("A atualizar referências...");
             showReferencesPanel(id, name, type);
             break;
 
+        // --- NOVO CÓDIGO AQUI ---
+        case 'references-wol-btn':
+            // Codifica o nome (ex: "Malaquias 1:3-5") para formato URL e substitui espaços por '+'
+            // O encodeURIComponent transforma espaços em %20, o replace muda para + para ficar igual ao seu exemplo
+            const encodedQuery = encodeURIComponent(name).replace(/%20/g, '+');
+            
+            // Constrói o URL específico de "lookup" (/wol/l/)
+            const wolUrl = `https://wol.jw.org/pt-PT/wol/l/r296/lp-tpo?q=${encodedQuery}`;
+            
+            window.open(wolUrl, '_blank');
+            break;
+        // ------------------------
+
         case 'references-search-btn':
-            // Constrói a URL de pesquisa e abre-a numa nova aba
             const query = encodeURIComponent(name);
             const searchUrl = `https://wol.jw.org/pt/wol/s/r5/lp-t?q=${query}`;
             window.open(searchUrl, '_blank');
             break;
 
         case 'references-edit-btn':
-            // Abre o modal de edição de entidade que já existe
             openEditEntityModal(id, type);
             break;
 
         case 'references-toggle-btn':
-            // Verifica se a maioria dos 'details' está aberta ou fechada
             const allDetails = document.querySelectorAll('#references-list details');
             if (allDetails.length === 0) return;
-            
-            // Conta quantos estão abertos
             const openCount = document.querySelectorAll('#references-list details[open]').length;
-            // Se mais de metade estiver aberta, fecha todos. Senão, abre todos.
             const shouldOpen = openCount <= allDetails.length / 2;
-            
             allDetails.forEach(detail => {
                 detail.open = shouldOpen;
             });
