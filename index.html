@@ -38,7 +38,7 @@
     </div>
 
     <script type="module">
-       import { auth, db } from './js/firebase-config.js';
+      import { auth, db } from './js/firebase-config.js';
     import { signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
     import { doc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
 
@@ -51,12 +51,12 @@
     const errorMsg = document.getElementById('error-msg');
 
     let isRegistering = false;
+    let isProcessingRegistration = false; // NOVA VARIÁVEL DE CONTROLO
 
-    // Redireciona se já estiver logado
+    // Redireciona se já estiver logado (APENAS se não estivermos a meio de um registo)
     onAuthStateChanged(auth, (user) => {
-        if (user) {
-            // Opcional: Pode forçar a recarregar a página de destino para garantir que apanha o nome novo
-            window.location.href = "note.html"; 
+        if (user && !isProcessingRegistration) {
+            window.location.href = "note.html";
         }
     });
 
@@ -89,12 +89,14 @@
             if (isRegistering) {
                 if(!name) throw new Error("O nome é obrigatório.");
                 
-                // 1. Cria o Utilizador na Autenticação (Backend)
+                // ATIVA BLOQUEIO DE REDIRECIONAMENTO AUTOMÁTICO
+                isProcessingRegistration = true; 
+
+                // 1. Cria Usuário na Auth
                 const userCredential = await createUserWithEmailAndPassword(auth, email, password);
                 const user = userCredential.user;
 
-                // 2. Grava na coleção 'users' usando o UID como ID do Documento
-                // doc(db, "users", user.uid) -> Garante que o ID do documento é igual ao Auth UID
+                // 2. Grava dados na coleção 'users'
                 await setDoc(doc(db, "users", user.uid), {
                     nome: name,
                     email: email,
@@ -102,21 +104,28 @@
                     createdAt: serverTimestamp()
                 });
 
-                console.log("Conta criada e dados salvos com ID:", user.uid);
+                console.log("Utilizador gravado com sucesso!");
+
+                // 3. AGORA SIM, Redireciona manualmente após gravar
+                window.location.href = "note.html";
 
             } else {
                 // Login Normal
                 await signInWithEmailAndPassword(auth, email, password);
+                // O redirecionamento aqui será feito pelo onAuthStateChanged
             }
-            // O redirecionamento acontece no onAuthStateChanged no topo
+
         } catch (error) {
             console.error(error);
             submitBtn.disabled = false;
+            isProcessingRegistration = false; // Liberta o bloqueio em caso de erro
+            
             errorMsg.style.display = 'block';
             let message = error.message;
             if(error.code === 'auth/email-already-in-use') message = "Este email já está em uso.";
             if(error.code === 'auth/weak-password') message = "A senha deve ter pelo menos 6 caracteres.";
             if(error.code === 'auth/invalid-credential') message = "Dados incorretos.";
+            if(error.code === 'permission-denied') message = "Erro de permissão: Verifique as Regras do Firestore.";
             errorMsg.textContent = message;
         }
     });
