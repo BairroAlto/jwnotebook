@@ -824,19 +824,29 @@
             const finalHeight = refPanel.getBoundingClientRect().height;
             const windowHeight = window.innerHeight;
 
+            // DEFINIÇÃO DE ZONAS
+            const CLOSE_THRESHOLD = 60; // Só fecha se tiver menos de 60px de altura
+            const MINIMIZED_HEIGHT = 80; // Altura da barra minimizada
+
             if (finalHeight > windowHeight * 0.75) {
-                // Puxou muito para cima: Ecrã Cheio
+                // 1. Puxou muito para cima -> Ecrã Cheio
                 refPanel.style.height = '100vh';
-            } else if (finalHeight < windowHeight * 0.30) {
-                // Puxou muito para baixo: Fechar
+            } 
+            else if (finalHeight > windowHeight * 0.40) {
+                // 2. Está mais ou menos a meio -> 50% do ecrã
+                refPanel.style.height = '50vh';
+            } 
+            else if (finalHeight > CLOSE_THRESHOLD) {
+                // 3. Puxou para baixo, mas NÃO até ao fim -> MINIMIZA (80px)
+                refPanel.style.height = `${MINIMIZED_HEIGHT}px`;
+            } 
+            else {
+                // 4. Puxou até ao fundo mesmo (altura < 60px) -> FECHA
                 mainContainer.classList.remove('references-visible');
                 setTimeout(() => { refPanel.style.height = '50vh'; }, 300);
-            } else {
-                // Voltar ao meio
-                refPanel.style.height = '50vh';
             }
         });
-    }
+    } // <--- ESTA CHAVETA ESTAVA EM FALTA
 
     // ============================================================
     // 6. BARRA DE FERRAMENTAS (Zoom, Copiar, PDF)
@@ -867,25 +877,31 @@
         });
     }
 
-    document.getElementById('btn-copy').onclick = async () => { 
-        await navigator.clipboard.writeText(readTitle.textContent + '\n\n' + readBody.innerText); 
-        alert('Copiado!'); 
-    };
+    const btnCopy = document.getElementById('btn-copy');
+    if (btnCopy) {
+        btnCopy.onclick = async () => { 
+            await navigator.clipboard.writeText(readTitle.textContent + '\n\n' + readBody.innerText); 
+            alert('Copiado!'); 
+        };
+    }
     
-    document.getElementById('btn-pdf').onclick = () => {
-        const element = document.getElementById('reader-area');
-        const toolbar = document.getElementById('note-toolbar');
-        toolbar.style.display = 'none';
-        element.classList.add('pdf-force-light-mode');
-        
-        html2pdf().set({ 
-            margin: 10, filename: 'nota.pdf', image: { type: 'jpeg', quality: 0.98 }, 
-            html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } 
-        }).from(element).save().then(() => {
-            element.classList.remove('pdf-force-light-mode');
-            toolbar.style.display = 'flex';
-        });
-    };
+    const btnPdf = document.getElementById('btn-pdf');
+    if (btnPdf) {
+        btnPdf.onclick = () => {
+            const element = document.getElementById('reader-area');
+            const toolbar = document.getElementById('note-toolbar');
+            toolbar.style.display = 'none';
+            element.classList.add('pdf-force-light-mode');
+            
+            html2pdf().set({ 
+                margin: 10, filename: 'nota.pdf', image: { type: 'jpeg', quality: 0.98 }, 
+                html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } 
+            }).from(element).save().then(() => {
+                element.classList.remove('pdf-force-light-mode');
+                toolbar.style.display = 'flex';
+            });
+        };
+    }
 
     // ============================================================
     // 7. LISTAS (Categorias)
@@ -974,120 +990,6 @@
         await loadAndFilterReferences(item);
     }
 
-    async function loadAndFilterReferences(item) {
-        let notes = [];
-        const userId = auth.currentUser.uid;
-
-        try {
-            if (item.type === 'tag_item') {
-                const q = query(collection(db, 'pastas'), where('tags', 'array-contains', item.nome), where('userId', '==', userId), where('estado', '==', 'ativa'));
-                const snap = await getDocs(q);
-                notes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            } 
-            else if (item.type === 'topico_item') {
-                 const q = query(collection(db, 'pastas'), where('estado', '==', 'ativa'), where('userId', '==', userId));
-                 const snap = await getDocs(q);
-                 snap.forEach(d => {
-                     const data = d.data();
-                     if (data.topicosSelecionados && data.topicosSelecionados.hasOwnProperty(item.id)) {
-                         notes.push({ id: d.id, ...data });
-                     }
-                 });
-            }
-            else if (item.type === 'entity_item') {
-                if (item.referencias) {
-                    const noteIds = Object.keys(item.referencias);
-                    for (const noteId of noteIds) {
-                        const docRef = doc(db, 'pastas', noteId);
-                        const docSnap = await getDoc(docRef);
-                        if (docSnap.exists() && docSnap.data().estado === 'ativa') {
-                            notes.push({ id: docSnap.id, ...docSnap.data() });
-                        }
-                    }
-                }
-            }
-
-            const filteredNotes = [];
-            for (const note of notes) {
-                let isProtected = (note.passe && note.passe.trim() !== "");
-                if (!isProtected && note.parentId) {
-                    const parentSnap = await getDoc(doc(db, 'pastas', note.parentId));
-                    if (parentSnap.exists() && parentSnap.data().passe) isProtected = true;
-                }
-
-                let shouldShow = true;
-                if (isProtected) {
-                    if (item.type === 'tag_item' && !appSettings.searchTagsInProtected) shouldShow = false;
-                    if (item.type === 'topico_item' && !appSettings.searchTopicsInProtected) shouldShow = false;
-                    if (item.type === 'entity_item' && !appSettings.searchAnchorsInProtected) shouldShow = false;
-                }
-
-                if (shouldShow) filteredNotes.push({ ...note, isProtected });
-            }
-            renderReferenceList(filteredNotes);
-        } catch (e) {
-            console.error("Erro filtro:", e);
-            listsContent.innerHTML = '<li>Erro ao processar dados.</li>';
-        }
-    }
-
-    function renderReferenceList(notes) {
-        listsContent.innerHTML = '';
-        if (notes.length === 0) {
-            listsContent.innerHTML = '<li style="cursor:default; color:#888;">Nenhuma nota disponível.</li>';
-            return;
-        }
-        notes.sort((a, b) => a.nome.localeCompare(b.nome));
-        notes.forEach(note => {
-            const li = document.createElement('li');
-            const icon = note.tipo === 'pasta' ? '📁' : '📄';
-            const lockIcon = note.isProtected ? '🔒' : '';
-            li.innerHTML = `<span>${icon} ${note.nome}</span><span class="protected-icon">${lockIcon}</span>`;
-            li.onclick = () => handleReferenceClick(note);
-            listsContent.appendChild(li);
-        });
-    }
-
-   async function handleReferenceClick(note) {
-        // 1. Lógica de Senha (mantida)
-        if (note.isProtected) {
-            const noteUnlocked = sessionUnlockedFolders.has(note.id);
-            const parentUnlocked = note.parentId ? sessionUnlockedFolders.has(note.parentId) : false;
-            if (!noteUnlocked && !parentUnlocked) {
-                const authorized = await requestPassword(note.id, note.parentId);
-                if (!authorized) return;
-            }
-        }
-
-        // 2. Mostrar a Nota
-        displayNote(note);
-
-        // 3. NOVA LÓGICA: Minimizar painel no Mobile
-        if (window.innerWidth <= 768) {
-            const refPanel = document.getElementById('references-panel');
-            
-            // Define uma altura pequena (ex: 80px) para mostrar só o cabeçalho/pega
-            refPanel.style.height = '80px'; 
-            
-            // Garante que a animação é suave
-            refPanel.style.transition = 'height 0.3s ease-out';
-            
-            // Opcional: Se quiser rolar a página da nota para o topo
-            document.getElementById('book-content-scroll').scrollTop = 0;
-        }
-    }
-
-    function updateListHeader(title) {
-        listsHeader.style.display = 'flex';
-        const niceNames = { 'topico': 'Tópicos', 'personagem': 'Personagens', 'local': 'Locais', 'data': 'Datas', 'biblia_root': 'Livros Bíblicos', 'tags': 'Tags' };
-        listsTitle.textContent = niceNames[title] || title;
-    }
-
-    listsBackBtn.addEventListener('click', () => {
-        if (listsNavigationStack.length > 0) listsNavigationStack.pop();
-        renderListsRoot();
-    });
-
     // ============================================================
     // 8. UTILITÁRIOS (Pesquisa e Senha)
     // ============================================================
@@ -1124,7 +1026,7 @@
     }
 
     document.getElementById('global-search-btn').onclick = () => document.getElementById('search-modal').style.display = 'flex';
-    document.getElementById('close-search-modal').onclick = () => document.getElementById('search-modal').style.display = 'none';
-</script>
+    document.getElementById('close-search-modal').onclick = () => document.getElementById('search-modal').style.display = 'none';   
+    </script>
 </body>
 </html>
