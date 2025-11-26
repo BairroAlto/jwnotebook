@@ -1092,9 +1092,8 @@ input:checked + .slider:before {
                     </div>
                     <div class="toolbar-separator"></div>
                     <div class="toolbar-group">
-                        <button data-action="show-tags" title="Tags"># Tags</button>
+                      <button data-action="show-explorer" title="Explorador (Tags e Entidades)">🔍</button>
                         <button data-action="show-attachments" title="Anexos">📎 Anexos</button>
-                        <button data-action="show-anchors" title="Âncoras">⚓ Âncoras</button>
                         <button data-action="insert-mini-note" title="Inserir Mini-Nota">🔨</button>
                     </div>
                     <div class="toolbar-history">
@@ -3259,6 +3258,10 @@ async function displayNote(noteId, noteElement) {
         noteTitleInput.value = nome || '';
         noteContentEditor.innerHTML = conteudo || '';
 
+        // --- CORREÇÃO AQUI: FORÇAR SCROLL PARA O TOPO ---
+        noteContentEditor.scrollTop = 0;
+        // ------------------------------------------------
+
         // Inicia a verificação de entidades após carregar
         setTimeout(() => {
             scanAndLinkEntities();
@@ -4152,12 +4155,26 @@ async function updateTagLink(tagName, noteId, shouldExist) {
 
 // --- LÓGICA DE MODAIS E PAINÉIS ADICIONAIS ---
 
-async function openMoveModal() {
+async function openMoveModal(itemContext) {
+    if (!itemContext) {
+        console.error("Erro: Contexto do item não fornecido para openMoveModal");
+        return;
+    }
+
     const modal = document.getElementById('move-item-modal');
     const list = document.getElementById('move-list');
     list.innerHTML = 'Carregando...';
     modal.style.display = 'flex';
-    const q = query(collection(db, 'pastas'), where('parentId', '==', activeItemContext.parentId), where('estado', '==', 'ativa'), where('userId', '==', auth.currentUser.uid), orderBy('ordem'));
+    
+    // Agora usamos itemContext.parentId em vez de activeItemContext.parentId
+    const q = query(
+        collection(db, 'pastas'), 
+        where('parentId', '==', itemContext.parentId), // <--- AQUI ESTAVA O ERRO
+        where('estado', '==', 'ativa'), 
+        where('userId', '==', auth.currentUser.uid), 
+        orderBy('ordem')
+    );
+    
     const snapshot = await getDocs(q);
     let items = [];
     snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
@@ -4165,49 +4182,174 @@ async function openMoveModal() {
 }
 
 // --- NOVA FUNÇÃO PARA GERIR O MODAL "MOVER DE PASTA" ---
-async function openMoveToFolderModal(itemContext) { // ALTERAÇÃO: Recebe o item como argumento
+ async function openMoveToFolderModal(itemContext) {
     if (!itemContext) return;
 
     const modal = document.getElementById('move-to-folder-modal');
     const list = document.getElementById('folder-selection-list');
     const confirmBtn = document.getElementById('confirm-folder-move');
     const itemNameSpan = document.getElementById('item-to-move-name');
+    
+    // Configuração do bloco de "Caminho Atual" (Topo)
+    let currentPathContainer = document.getElementById('move-modal-current-path');
+    if (!currentPathContainer) {
+        currentPathContainer = document.createElement('div');
+        currentPathContainer.id = 'move-modal-current-path';
+        currentPathContainer.style.marginBottom = '15px';
+        currentPathContainer.style.padding = '10px';
+        currentPathContainer.style.backgroundColor = 'rgba(74, 144, 226, 0.1)';
+        currentPathContainer.style.borderRadius = '5px';
+        currentPathContainer.style.fontSize = '0.9em';
+        currentPathContainer.style.borderLeft = '3px solid var(--accent-color)';
+        const pDesc = modal.querySelector('p');
+        pDesc.parentNode.insertBefore(currentPathContainer, pDesc.nextSibling);
+    }
 
     itemNameSpan.textContent = itemContext.name;
-    list.innerHTML = '<li>A carregar pastas...</li>';
+    list.innerHTML = '<li>A carregar estrutura de pastas...</li>';
+    currentPathContainer.innerHTML = 'A calcular localização atual...';
     modal.style.display = 'flex';
 
-    const q = query(
-    collection(db, 'pastas'), 
-    where('tipo', '==', 'pasta'), 
-    where('estado', '==', 'ativa'),
-    where('userId', '==', auth.currentUser.uid)
-);
+    // Variáveis de controlo da paginação
+    const ITEMS_PER_PAGE = 30;
+    let currentRenderIndex = 0;
+    let allSortedFolders = []; // Armazenará a lista completa ordenada
+    let foldersMap = new Map(); // Para consulta rápida de nomes de pais
+    let loadMoreBtn = null; // Referência para o botão
 
-    const snapshot = await getDocs(q);
+    try {
+        // 1. CARREGAR DADOS
+        const q = query(
+            collection(db, 'pastas'), 
+            where('tipo', '==', 'pasta'), 
+            where('estado', '==', 'ativa'),
+            where('userId', '==', auth.currentUser.uid)
+        );
 
-    list.innerHTML = '';
+        const snapshot = await getDocs(q);
 
-    const rootLi = document.createElement('li');
-    rootLi.className = 'list-item'; // CORREÇÃO: Adicionada a classe para o estilo de seleção
-    rootLi.textContent = '📁 (Pasta Principal)';
-    rootLi.dataset.folderId = 'null';
-    if (itemContext.parentId !== null) {
-        list.appendChild(rootLi);
-    }
-    
-    snapshot.forEach(doc => {
-        if (doc.id !== itemContext.id && doc.id !== itemContext.parentId) {
-            const li = document.createElement('li');
-            li.className = 'list-item'; // CORREÇÃO: Adicionada a classe para o estilo de seleção
-            li.textContent = `📁 ${doc.data().nome}`;
-            li.dataset.folderId = doc.id;
-            list.appendChild(li);
+        // Preencher o Map (para lookup de caminhos)
+        snapshot.forEach(doc => {
+            foldersMap.set(doc.id, { id: doc.id, ...doc.data() });
+        });
+
+        // --- FUNÇÃO AUXILIAR: Construir string do caminho ---
+        const buildPathString = (parentId) => {
+            if (!parentId) return null;
+            const names = [];
+            let currId = parentId;
+            let safety = 0;
+            while(currId && foldersMap.has(currId) && safety < 20) {
+                const f = foldersMap.get(currId);
+                names.push(f.nome);
+                currId = f.parentId;
+                safety++;
+            }
+            return names.join(' -> '); // Ex: Reunião -> Domingo
+        };
+
+        // 2. EXIBIR LOCALIZAÇÃO ATUAL NO TOPO
+        const currentPathStr = buildPathString(itemContext.parentId);
+        currentPathContainer.innerHTML = `<strong>Localização Atual:</strong><br>${currentPathStr || 'Pasta Principal (Raiz)'}`;
+        currentPathContainer.style.display = 'block';
+
+        // 3. PREPARAR LISTA ORDENADA (Mais recente -> Mais antigo)
+        allSortedFolders = Array.from(foldersMap.values())
+            .filter(f => f.id !== itemContext.id && f.id !== itemContext.parentId) // Remove item atual e pai atual
+            .sort((a, b) => {
+                // Ordena por createdAt (descendente). Se não tiver data, assume 0.
+                const timeA = a.createdAt?.seconds || 0;
+                const timeB = b.createdAt?.seconds || 0;
+                return timeB - timeA; 
+            });
+
+        // 4. LIMPAR LISTA E ADICIONAR OPÇÃO "MOVER PARA RAIZ"
+        list.innerHTML = '';
+
+        if (itemContext.parentId !== null) {
+            const rootLi = document.createElement('li');
+            rootLi.className = 'list-item';
+            rootLi.style.flexDirection = 'column';
+            rootLi.style.alignItems = 'flex-start';
+            rootLi.innerHTML = `
+                <span style="font-weight: 500;">📁 (Mover para a Raiz)</span>
+                <span style="font-size: 0.8em; color: var(--text-muted-color);">Pasta Principal</span>
+            `;
+            rootLi.dataset.folderId = 'null';
+            list.appendChild(rootLi);
         }
-    });
 
+        // 5. FUNÇÃO PARA RENDERIZAR UM LOTE (BATCH)
+        const renderNextBatch = () => {
+            // Remove o botão "Carregar Mais" se existir, para o adicionar no fim novamente
+            if (loadMoreBtn) loadMoreBtn.remove();
+
+            const endIndex = Math.min(currentRenderIndex + ITEMS_PER_PAGE, allSortedFolders.length);
+            const batch = allSortedFolders.slice(currentRenderIndex, endIndex);
+
+            batch.forEach(folder => {
+                const pathStr = buildPathString(folder.parentId);
+                const pathDisplay = pathStr ? `(${pathStr})` : '(Na Raiz)';
+
+                const li = document.createElement('li');
+                li.className = 'list-item';
+                li.style.flexDirection = 'column';
+                li.style.alignItems = 'flex-start';
+                li.style.padding = '10px';
+                
+                li.innerHTML = `
+                    <span style="font-weight: 500; font-size: 1.05em;">📁 ${folder.nome}</span>
+                    <span style="font-size: 0.85em; color: var(--text-muted-color); margin-top: 2px; margin-left: 24px;">${pathDisplay}</span>
+                `;
+                li.dataset.folderId = folder.id;
+                list.appendChild(li);
+            });
+
+            currentRenderIndex = endIndex;
+
+            // Se ainda houver itens, cria o botão "Carregar Mais"
+            if (currentRenderIndex < allSortedFolders.length) {
+                createLoadMoreButton();
+            }
+        };
+
+        const createLoadMoreButton = () => {
+            loadMoreBtn = document.createElement('button');
+            loadMoreBtn.textContent = 'Carregar mais pastas...';
+            loadMoreBtn.style.width = '100%';
+            loadMoreBtn.style.padding = '10px';
+            loadMoreBtn.style.marginTop = '10px';
+            loadMoreBtn.style.background = 'var(--panel-color)';
+            loadMoreBtn.style.border = '1px solid var(--border-color)';
+            loadMoreBtn.style.color = 'var(--text-muted-color)';
+            loadMoreBtn.style.cursor = 'pointer';
+            loadMoreBtn.style.borderRadius = '5px';
+            
+            loadMoreBtn.onmouseover = () => { loadMoreBtn.style.background = 'var(--hover-color)'; loadMoreBtn.style.color = 'var(--text-color)'; };
+            loadMoreBtn.onmouseout = () => { loadMoreBtn.style.background = 'var(--panel-color)'; loadMoreBtn.style.color = 'var(--text-muted-color)'; };
+
+            loadMoreBtn.onclick = (e) => {
+                e.stopPropagation(); // Impede seleção da lista
+                renderNextBatch();
+            };
+            
+            list.appendChild(loadMoreBtn);
+        };
+
+        // Renderiza o primeiro lote (0 a 30)
+        renderNextBatch();
+
+    } catch (error) {
+        console.error("Erro ao carregar pastas:", error);
+        list.innerHTML = '<li>Erro ao carregar dados.</li>';
+    }
+
+    // Lógica de Seleção
     let selectedFolderId = null;
-    const handleSelection = (e) => {
+    list.onclick = (e) => {
+        // Ignora cliques no botão de carregar mais (já tratado no onclick do botão)
+        if (e.target === loadMoreBtn) return;
+
         const li = e.target.closest('li');
         if (!li) return;
         
@@ -4215,14 +4357,13 @@ async function openMoveToFolderModal(itemContext) { // ALTERAÇÃO: Recebe o ite
         li.classList.add('selected');
         selectedFolderId = li.dataset.folderId;
     };
-    // Usamos .onclick para substituir listeners antigos facilmente
-    list.onclick = handleSelection;
 
+    // Botão Confirmar
     const newConfirmBtn = confirmBtn.cloneNode(true);
     confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
 
     newConfirmBtn.onclick = async () => {
-        if (selectedFolderId === null) { // Verifica se é null, não !selectedFolderId, pois 'null' como string é "truthy"
+        if (selectedFolderId === null) {
             alert('Por favor, selecione uma pasta de destino.');
             return;
         }
@@ -4230,7 +4371,6 @@ async function openMoveToFolderModal(itemContext) { // ALTERAÇÃO: Recebe o ite
         const newParentId = selectedFolderId === 'null' ? null : selectedFolderId;
         
         try {
-            // CORREÇÃO: Usamos o itemContext.id que foi passado para a função
             const itemRef = doc(db, 'pastas', itemContext.id);
             await updateDoc(itemRef, {
                 parentId: newParentId,
@@ -4810,58 +4950,102 @@ async function openEntityModal(type, name) {
     openGenericListModal("Anexos na Nota", fetchData());
 }
 
-function openTagsModal() {
-    const fetchActiveTags = async () => {
-        // LÓGICA CORRIGIDA:
-        // Em vez de buscar na coleção 'tags' (que pode ter lixo ou notas ocultas),
-        // buscamos todas as NOTAS ATIVAS e extraímos as tags que estão sendo usadas DE FATO.
-        const q = query(
-            collection(db, 'pastas'),
-            where('tipo', '==', 'nota'),
-            where('estado', '==', 'ativa') 
-        );
+ 
 
-        try {
-            const snapshot = await getDocs(q);
-            const activeTagsSet = new Set();
 
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                if (data.tags && Array.isArray(data.tags)) {
-                    data.tags.forEach(tagName => {
-                        // Adiciona ao Set (que remove duplicados automaticamente)
-                        activeTagsSet.add(tagName);
-                    });
-                }
-            });
 
-            // Converte o Set num array de objetos para o modal
-            const tagsArray = Array.from(activeTagsSet).sort((a, b) => a.localeCompare(b));
-            
-            return tagsArray.map(tagName => ({
-                title: `#${tagName}`,
-                content: '' 
-            }));
 
-        } catch (error) {
-            console.error("Erro ao calcular tags ativas:", error);
-            return [];
-        }
-    };
-
-    openGenericListModal("Tags (Em Notas Ativas)", fetchActiveTags());
-}
-
- async function openAnchorsModal() {
-    await fetchAllEntities(); 
-    
+// --- FUNÇÃO UNIFICADA: EXPLORADOR (TAGS + ENTIDADES) ---
+async function openExplorerModal() {
     const modal = document.getElementById('anchors-modal');
     const tabsContainer = document.getElementById('anchors-tabs-container');
     const contentContainer = document.getElementById('anchors-content-container');
     
-    tabsContainer.innerHTML = '';
+    // 1. FEEDBACK IMEDIATO: Abre o modal e mostra o spinner
+    modal.style.display = 'flex';
+    
+    // Atualiza o título
+    const modalTitle = modal.querySelector('h3');
+    if(modalTitle) modalTitle.textContent = "Explorador (Tags & Entidades)";
+
+    // Limpa conteúdo antigo e mostra Loading
+    tabsContainer.innerHTML = ''; 
+    contentContainer.innerHTML = `
+        <div class="spinner-container" style="padding: 50px 0;">
+            <div class="spinner"></div>
+            <span>A carregar biblioteca...</span>
+        </div>
+    `;
+
+    // 2. CARREGAMENTO DE DADOS (Agora acontece com o modal já aberto)
+    await fetchAllEntities();
+    
+    // Limpa o spinner para começar a desenhar as abas
     contentContainer.innerHTML = '';
 
+    // ============================================================
+    // 3. CONSTRUÇÃO DA INTERFACE (Igual ao anterior)
+    // ============================================================
+
+    // --- ABA DE TAGS ---
+    const tagsTabBtn = document.createElement('button');
+    tagsTabBtn.dataset.tab = 'tags';
+    tagsTabBtn.textContent = 'Tags';
+    tagsTabBtn.classList.add('active'); 
+    tabsContainer.appendChild(tagsTabBtn);
+
+    const tagsContent = document.createElement('div');
+    tagsContent.id = 'tab-tags';
+    tagsContent.className = 'tab-content active';
+    // Spinner específico da aba de tags (enquanto carrega as tags ativas)
+    tagsContent.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A procurar tags ativas...</span></div>';
+    contentContainer.appendChild(tagsContent);
+
+    // Carregamento assíncrono das tags
+    (async () => {
+        try {
+            const q = query(
+                collection(db, 'pastas'),
+                where('tipo', '==', 'nota'),
+                where('estado', '==', 'ativa'),
+                where('userId', '==', auth.currentUser.uid)
+            );
+            const snapshot = await getDocs(q);
+            const activeTagsSet = new Set();
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                if (data.tags && Array.isArray(data.tags)) {
+                    data.tags.forEach(t => activeTagsSet.add(t));
+                }
+            });
+            const tagsArray = Array.from(activeTagsSet).sort((a, b) => a.localeCompare(b));
+
+            tagsContent.innerHTML = ''; 
+
+            if (tagsArray.length === 0) {
+                tagsContent.innerHTML = '<p style="padding:15px; color:#888;">Nenhuma tag encontrada em notas ativas.</p>';
+            } else {
+                const ul = document.createElement('ul');
+                tagsArray.forEach(tagName => {
+                    const li = document.createElement('li');
+                    li.textContent = `#${tagName}`;
+                    li.style.cursor = 'pointer';
+                    li.style.color = 'var(--accent-color)';
+                    li.style.fontWeight = '500';
+                    li.dataset.action = 'show-tag-references';
+                    li.dataset.tagName = tagName;
+                    ul.appendChild(li);
+                });
+                tagsContent.appendChild(ul);
+            }
+        } catch (e) {
+            console.error("Erro ao carregar tags:", e);
+            tagsContent.innerHTML = '<p style="color:red; padding:10px;">Erro ao carregar tags.</p>';
+        }
+    })();
+
+    // --- ABAS DE ENTIDADES ---
+    
     const onPageEntityNames = new Set(
         Array.from(noteContentEditor.querySelectorAll('.entity-link'))
              .map(link => link.dataset.entityName)
@@ -4876,6 +5060,7 @@ function openTagsModal() {
         li.dataset.entityId = entity.id;
         li.dataset.entityName = entity.nome;
         li.dataset.entityType = entity.tipo;
+        li.dataset.action = 'show-entity-references';
         
         if (isOnPage) li.classList.add('is-on-page');
         
@@ -4892,18 +5077,11 @@ function openTagsModal() {
         return li;
     };
 
-    // --- NOVA FUNÇÃO AUXILIAR DE ORDENAÇÃO BÍBLICA ---
     const getBookIndex = (entityName) => {
         const nameLower = entityName.toLowerCase();
-        // Procura qual livro da lista inicia o nome da entidade
-        const index = BIBLICAL_BOOKS.findIndex(book => 
-            nameLower.startsWith(book.toLowerCase())
-        );
-        // Se não encontrar (ex: erro de digitação), coloca no final (999)
+        const index = BIBLICAL_BOOKS.findIndex(book => nameLower.startsWith(book.toLowerCase()));
         return index === -1 ? 999 : index;
     };
-
-    let isFirstTab = true;
 
     for (const type in ENTITY_CONFIG) {
         if (allEntities[type] && allEntities[type].length > 0) {
@@ -4912,37 +5090,23 @@ function openTagsModal() {
             const tabButton = document.createElement('button');
             tabButton.dataset.tab = type;
             tabButton.textContent = config.displayName;
-            if (isFirstTab) tabButton.classList.add('active');
             tabsContainer.appendChild(tabButton);
 
             const tabContent = document.createElement('div');
             tabContent.id = `tab-${type}`;
             tabContent.className = 'tab-content';
-            if (isFirstTab) tabContent.classList.add('active');
             
-            // --- ALTERAÇÃO AQUI: LÓGICA DE ORDENAÇÃO CONDICIONAL ---
             let sortedEntities;
-            
             if (type === 'textobiblico') {
-                // Ordenação Especial para Textos Bíblicos
                 sortedEntities = [...allEntities[type]].sort((a, b) => {
                     const indexA = getBookIndex(a.nome);
                     const indexB = getBookIndex(b.nome);
-
-                    if (indexA !== indexB) {
-                        // Ordena pela ordem dos livros na array BIBLICAL_BOOKS
-                        return indexA - indexB;
-                    } else {
-                        // Se for o mesmo livro, ordena pelos capítulos/versículos (Numericamente)
-                        // numeric: true faz com que "Salmos 2" venha antes de "Salmos 10"
-                        return a.nome.localeCompare(b.nome, undefined, { numeric: true, sensitivity: 'base' });
-                    }
+                    if (indexA !== indexB) return indexA - indexB;
+                    return a.nome.localeCompare(b.nome, undefined, { numeric: true, sensitivity: 'base' });
                 });
             } else {
-                // Ordenação Alfabética Padrão para os outros tipos
                 sortedEntities = [...allEntities[type]].sort((a, b) => a.nome.localeCompare(b.nome));
             }
-            // -------------------------------------------------------
 
             const entitiesOnPage = sortedEntities.filter(e => onPageEntityNames.has(e.nome));
             const entitiesOthers = sortedEntities.filter(e => !onPageEntityNames.has(e.nome));
@@ -4986,11 +5150,11 @@ function openTagsModal() {
             }
 
             contentContainer.appendChild(tabContent);
-            isFirstTab = false;
         }
     }
-    modal.style.display = 'flex';
 }
+
+
 
 async function openEditEntityModal(entityId, entityType) {
     const modal = document.getElementById('edit-entity-modal');
@@ -5978,7 +6142,7 @@ function formatTimestamp(timestamp) {
     const action = target.dataset.action;
     if (action) {
         switch (action) {
-            case 'show-tags': openTagsModal(); break;
+            case 'show-explorer': openExplorerModal(); break;
             case 'show-attachments': openAttachmentsModal(); break;
             case 'show-anchors': openAnchorsModal(); break;
             case 'show-history': openHistoryModal(); break;
@@ -6661,7 +6825,7 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
         }
     } 
     else if (action === 'move-position') {
-        await openMoveModal(); 
+        await openMoveModal(itemContext); 
     } 
     else if (action === 'move-folder') { 
         await openMoveToFolderModal(itemContext); 
@@ -7161,20 +7325,41 @@ document.getElementById('references-list').addEventListener('click', async (e) =
     navigateWithUnsavedCheck(navigateAndOpenNote);
 });
 
-document.getElementById('anchors-modal').addEventListener('click', (e) => {
+ document.getElementById('anchors-modal').addEventListener('click', (e) => {
+    // 1. CLIQUE NAS ABAS
     const tabButton = e.target.closest('button[data-tab]');
     if (tabButton) {
+        // Remove active de todos
         document.querySelectorAll('#anchors-tabs-container button').forEach(btn => btn.classList.remove('active'));
         document.querySelectorAll('#anchors-content-container .tab-content').forEach(content => content.classList.remove('active'));
+        
+        // Ativa o selecionado
         tabButton.classList.add('active');
-        document.getElementById(`tab-${tabButton.dataset.tab}`).classList.add('active');
+        const contentId = `tab-${tabButton.dataset.tab}`;
+        const contentDiv = document.getElementById(contentId);
+        if(contentDiv) contentDiv.classList.add('active');
         return;
     }
-    const listItem = e.target.closest('li[data-entity-id]');
-    if(listItem) {
-        const { entityId, entityName, entityType } = listItem.dataset;
-        showReferencesPanel(entityId, entityName, entityType);
-        document.getElementById('anchors-modal').style.display = 'none';
+
+    // 2. CLIQUE NUM ITEM DA LISTA (Tag ou Entidade)
+    const listItem = e.target.closest('li');
+    if (listItem) {
+        // Ação para TAGS
+        if (listItem.dataset.action === 'show-tag-references') {
+            const tagName = listItem.dataset.tagName;
+            if (tagName) {
+                document.getElementById('anchors-modal').style.display = 'none';
+                showTagReferencesPanel(tagName);
+            }
+        }
+        // Ação para ENTIDADES (Usa o dataset action ou verifica entityId como fallback)
+        else if (listItem.dataset.entityId || listItem.dataset.action === 'show-entity-references') {
+            const { entityId, entityName, entityType } = listItem.dataset;
+            if (entityId) {
+                document.getElementById('anchors-modal').style.display = 'none';
+                showReferencesPanel(entityId, entityName, entityType);
+            }
+        }
     }
 });
 
