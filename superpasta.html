@@ -153,26 +153,8 @@ body {
 
 /* Conteúdo Editável */
 #note-content-editor {
-    position: relative; 
-    background: none; 
-    border: none; 
-    color: var(--text-color); 
-    font-size: 1.1em;
-    line-height: 1.6; 
-    outline: none; 
-    
-    /* CORREÇÃO DE TAMANHO */
-    width: 100%; 
-    max-width: 100%;      
-    flex-grow: 1; 
-    overflow-y: auto; 
-    overflow-x: hidden; 
-    padding: 5px;
-
-    /* CORREÇÃO DE QUEBRA DE LINHA (Faltava isto): */
-    white-space: pre-wrap;       
-    word-wrap: break-word;       
-    overflow-wrap: break-word;   
+    position: relative; background: none; border: none; color: var(--text-color); font-size: 1.1em;
+    line-height: 1.6; outline: none; width: 100%; flex-grow: 1; overflow-y: auto; overflow-x: hidden; padding: 5px;
 }
 
 #note-content-editor h1 { font-size: 2em; font-weight: bold; border-bottom: 1px solid var(--border-color); color: var(--accent-color); margin: 0.6em 0; }
@@ -615,6 +597,26 @@ input:checked + .slider:before { transform: translateX(20px); }
 .temporary-highlight {
     animation: flash-highlight 2s ease-out;
 }
+
+/* Status de Gravação */
+.save-status { 
+    font-size: 0.8em; 
+    color: var(--text-muted-color); 
+    margin-right: 15px; 
+    transition: all 0.3s ease; 
+    font-style: italic; 
+    font-weight: 500;
+    cursor: pointer; /* <--- ADICIONAR ESTA LINHA */
+}
+
+/* Opcional: Sublinhar ao passar o rato */
+.save-status:hover {
+    text-decoration: underline;
+    color: var(--accent-color);
+}
+
+.save-status.status-saved { color: #27ae60; cursor: default; } /* Opcional: remove cursor se já estiver salvo */
+.save-status.status-error { color: #c0392b; cursor: pointer; }
 
 /* ============================================================
    MEDIA QUERIES (RESPONSIVIDADE)
@@ -1895,51 +1897,37 @@ function toggleSubtopicSelection(topicId, subtopicId, isChecked) {
 editorToolbar.addEventListener('mousedown', (e) => {
     const target = e.target.closest('button');
     
-    // Se não for botão ou for o input de cor, ignoramos aqui
+    // Se não for botão ou for o input de cor, ignoramos aqui (deixa o navegador tratar)
     if (!target || target.tagName === 'INPUT') return;
 
     // Se o botão tiver um comando de formatação (data-command)
     if (target.dataset.command) {
-        // A. O SEGREDO: Impedir que o botão roube o foco
+        // A. IMPORTANTE: Previne que o botão roube o foco do editor
         e.preventDefault();
-        e.stopPropagation();
-
-        // B. Guardar a posição exata do cursor
-        const selection = window.getSelection();
-        if (selection.rangeCount > 0) {
-            savedRange = selection.getRangeAt(0).cloneRange();
-        }
 
         const command = target.dataset.command;
 
-        // C. Restaurar a seleção (garante que o browser sabe onde aplicar)
-        if (savedRange) {
-            selection.removeAllRanges();
-            selection.addRange(savedRange);
-        }
-
-        // D. Executar o comando correto
+        // B. Executa o comando
         if (command.includes('FontSize')) {
             // Lógica de Tamanho de Fonte
-            // Tenta obter o tamanho atual
-            let currentSize = "16px"; // valor padrão
-            if (selection.anchorNode && selection.anchorNode.parentElement) {
-                 currentSize = window.getComputedStyle(selection.anchorNode.parentElement, null).getPropertyValue('font-size');
-            }
-            
+            const currentSize = window.getComputedStyle(noteContentEditor, null).getPropertyValue('font-size');
             let newSize = parseFloat(currentSize) + (command === 'increaseFontSize' ? 1 : -1);
             
-            // Aplica tamanho arbitrário (7) para criar tags <font> e depois substitui pelo estilo px
+            // Truque para mudar tamanho
             document.execCommand("fontSize", false, "7");
-            
-            // Aplica o tamanho exato em px ao elemento criado
-            if (selection.anchorNode.parentNode) {
-                selection.anchorNode.parentNode.removeAttribute('size'); // Limpa atributo antigo
-                selection.anchorNode.parentNode.style.fontSize = newSize + "px";
+            const selection = window.getSelection();
+            if (selection.anchorNode && selection.anchorNode.parentNode) {
+                let fontElement = selection.anchorNode.parentNode;
+                // Sobe até encontrar o elemento font, se necessário
+                if (fontElement.nodeType === 3) fontElement = fontElement.parentNode;
+                
+                if (fontElement.tagName === 'FONT') {
+                    fontElement.removeAttribute('size');
+                    fontElement.style.fontSize = newSize + "px";
+                }
             }
         } 
         else if (command === 'boldBlue') {
-            // Negrito Azul
             document.execCommand('bold', false, null);
             document.execCommand('foreColor', false, '#4a90e2');
         } 
@@ -1948,7 +1936,7 @@ editorToolbar.addEventListener('mousedown', (e) => {
             document.execCommand(command, false, null);
         }
 
-        // E. Gravar
+        // C. Gravar alterações
         saveNote();
     }
 });
@@ -3540,7 +3528,6 @@ const miniNoteHTML = `
 // Adicione este bloco dentro do listener existente 'selectionPopup.addEventListener' 
 // Pode copiar este bloco e colocar junto aos outros 'else if' desse listener, ou adicionar separado se preferir
 selectionPopup.addEventListener('click', async (e) => {
-    // 1. Prevenção de comportamentos padrão
     e.preventDefault();
     e.stopPropagation();
 
@@ -3548,34 +3535,20 @@ selectionPopup.addEventListener('click', async (e) => {
     if (!btn) return;
 
     const action = btn.dataset.action;
-    const type = btn.dataset.type; // Usado para entidades
-    
-    if (!action) return;
 
-    // 2. RECUPERAÇÃO DE SELEÇÃO (Proteção contra Null)
-    // Se a variável global estiver vazia, tenta pegar a seleção atual do navegador
-    if (!currentSelectionRange) {
-        const sel = window.getSelection();
-        if (sel.rangeCount > 0) {
-            currentSelectionRange = sel.getRangeAt(0).cloneRange();
-        } else {
-            console.warn("Nenhuma seleção encontrada para a ação.");
-            selectionPopup.style.display = 'none';
+    // --- AÇÃO: CRIAR IDEIA (💡) ---
+    if (action === 'create-idea') {
+        // 1. Tenta recuperar a seleção global guardada
+        if (!currentSelectionRange) {
+            console.error("Nenhuma seleção de texto encontrada.");
             return;
         }
-    }
 
-    const selection = window.getSelection();
-    
-    // ------------------------------------------
-    // AÇÃO 1: CRIAR IDEIA (💡)
-    // ------------------------------------------
-    if (action === 'create-idea') {
         const text = currentSelectionRange.toString();
         if (!text.trim()) return;
 
         try {
-            // A. Criar documento no Firebase
+            // 2. Gravar no Firebase
             const ideaRef = await addDoc(collection(db, 'ideias'), {
                 texto: text,
                 origemNoteId: selectedNoteId,
@@ -3583,17 +3556,39 @@ selectionPopup.addEventListener('click', async (e) => {
                 createdAt: serverTimestamp()
             });
 
-            // B. Alterar visualmente o texto
+            // 3. Alterar o visual no Editor (Criar o SPAN vermelho)
             const span = document.createElement('span');
-            span.className = 'idea-span';
-            span.dataset.ideaId = ideaRef.id; 
-             span.setAttribute('spellcheck', 'false');
+            span.className = 'idea-span'; // Esta classe dá a cor vermelha
+            span.dataset.ideaId = ideaRef.id;
+            span.setAttribute('spellcheck', 'false');
+            
+            // Reinsere o texto dentro do span
+           span.textContent = text; 
 
-            // Aqui já não dará erro porque garantimos que currentSelectionRange existe no passo 2
+            // Substitui o texto selecionado pelo novo span
             currentSelectionRange.deleteContents();
             currentSelectionRange.insertNode(span);
 
-            console.log("Ideia criada com ID:", ideaRef.id);
+            // --- NOVO: Insere um espaço invisível DEPOIS da ideia e põe o cursor lá ---
+            const space = document.createTextNode('\u00A0'); // Espaço normal
+            if (span.nextSibling) {
+                span.parentNode.insertBefore(space, span.nextSibling);
+            } else {
+                span.parentNode.appendChild(space);
+            }
+
+            // Move o cursor para depois desse espaço
+            const newRange = document.createRange();
+            newRange.setStartAfter(space);
+            newRange.collapse(true);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+            // -----------------------------------------------------------------------
+
+            // Esconde o popup e Grava
+            selectionPopup.style.display = 'none';
+            currentSelectionRange = null;
             saveNote();
 
         } catch (error) {
@@ -6308,7 +6303,7 @@ async function commitEntitySelection() {
     const parentElement = currentNode.nodeType === Node.TEXT_NODE ? currentNode.parentElement : currentNode;
 
     // 1. Identifica se estamos dentro de algo "especial"
-    let styledContainer = parentElement.closest('.entity-link, .tag, a[data-anexo-id]');
+   let styledContainer = parentElement.closest('.entity-link, .tag, a[data-anexo-id], .idea-span');
 
     // 2. LÓGICA DE HIERARQUIA (CRUCIAL):
     // Se encontrarmos uma entidade, verificamos se ela está dentro de um link.
@@ -6395,7 +6390,7 @@ async function commitEntitySelection() {
          // (Mantém a lógica existente, adicionando 'a' ao seletor)
          if (range.startOffset === currentNode.textContent.length) {
             const elementAfter = parentElement.nextElementSibling;
-            if (elementAfter && elementAfter.matches('.entity-link, .tag, a[data-anexo-id]')) {
+            if (elementAfter && elementAfter.matches('.entity-link, .tag, a[data-anexo-id], .idea-span')) {
                 event.preventDefault();
                 // Foca no início do elemento seguinte em vez de o apagar
                 const newRange = document.createRange();
@@ -7684,15 +7679,17 @@ editorToolbar.addEventListener('click', async (e) => {
     const target = e.target.closest('button, input');
     if (!target) return;
 
-    // 2. CORREÇÃO: Comandos de Formatação (Bold, Italic, etc.)
-    // Se o botão tiver um "data-command", NÃO FAZEMOS NADA AQUI.
-    // Motivo: Estes comandos já foram executados no evento 'mousedown' (linha ~1250).
-    // Se executarmos aqui outra vez, eles anulam-se (ligar/desligar).
-    if (target.dataset.command) {
+    // 2. CORREÇÃO PRINCIPAL: 
+    // Se for um botão de formatação (que tem data-command, ex: Bold, Italic, Underline),
+    // NÓS IGNORAMOS AQUI e saímos da função.
+    // Motivo: O evento 'mousedown' já executa estes comandos. Se executarmos aqui de novo
+    // no 'click', a ação é feita duas vezes (liga e desliga imediatamente).
+    // Nota: O Input de cor (INPUT) é a exceção, deixamos passar.
+    if (target.dataset.command && target.tagName !== 'INPUT') {
         return; 
     }
 
-    // 3. Ações de Interface (Modais, Inserções, etc.)
+    // 3. Ações de Interface (Modais, Inserções, Ferramentas)
     const action = target.dataset.action;
     if (action) {
         e.preventDefault(); 
@@ -7711,7 +7708,8 @@ editorToolbar.addEventListener('click', async (e) => {
                 break;
             
             case 'show-anchors': 
-                openAnchorsModal(); 
+                // Corrigido para abrir o explorador que contem as abas
+                openExplorerModal(); 
                 break;
             
             case 'show-history': 
@@ -7736,10 +7734,10 @@ editorToolbar.addEventListener('click', async (e) => {
 // --- LÓGICA DE CLIQUE PARA GUARDAR ---
 if (saveStatusIndicator) {
     saveStatusIndicator.addEventListener('click', () => {
-        // Se estiver "por guardar" ou com "erro", força a gravação imediata
+        // Só grava se estiver no estado 'unsaved' (por guardar) ou 'error'
         if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'error') {
-            console.log("Clique no status: A forçar gravação imediata...");
-            saveNote(true); // 'true' ignora o tempo de espera e grava já
+            console.log("Clique no status: a forçar gravação imediata...");
+            saveNote(true); // O parâmetro 'true' força a gravação imediata
         }
     });
 }
