@@ -5878,18 +5878,15 @@ async function showReferencesPanel(entityId, entityName, entityType, anexoId = n
 
     notebookContainer.classList.add('references-panel-visible');
 
-    
-    // Título Inicial (Padrão)
+    // Título Inicial com Ícone se tiver marcadores
     referencesPanelTitle.textContent = `Referências para "${entityName}"`;
     
-    // Spinner
     referencesList.innerHTML = `
         <div class="spinner-container">
             <div class="spinner"></div>
             <span>A carregar referências...</span>
         </div>`;
         
-  
     const descriptionElement = document.getElementById('references-panel-description');
     descriptionElement.textContent = ''; 
 
@@ -5907,48 +5904,89 @@ async function showReferencesPanel(entityId, entityName, entityType, anexoId = n
             const entityData = entitySnap.data();
             descriptionElement.textContent = entityData.descricao?.trim() || 'Nenhuma descrição disponível.';
 
-            // --- LÓGICA NOVA: ÍCONE NO TÍTULO ---
-            // Verifica se tem marcadores associados e se há pelo menos uma chave no objeto
             const hasBookmarks = entityData.marcadoresAssociados && Object.keys(entityData.marcadoresAssociados).length > 0;
-            
             if (hasBookmarks) {
-                // Adiciona o ícone antes do nome, mas mantém a estrutura de aspas
                 referencesPanelTitle.textContent = `Referências para 🔖"${entityName}"`;
             } else {
                 referencesPanelTitle.textContent = `Referências para "${entityName}"`;
             }
-            // -------------------------------------
 
+            // --- LÓGICA DE CARREGAMENTO DAS NOTAS ---
             if (entityData.referencias && Object.keys(entityData.referencias).length > 0) {
-                // ... (O resto do código de carregar as notas mantém-se igual) ...
-                // COPIE AQUI A LÓGICA EXISTENTE DE CARREGAMENTO DE NOTAS (validResults, loop, etc.)
-                // Para poupar espaço, assumo que mantém o código original aqui.
                 const noteIds = Object.keys(entityData.referencias);
                 const validResults = [];
+
+                // Pesquisa cada nota referenciada
                 for (const id of noteIds) {
-                     // ... Lógica de buscar notas e verificar proteção ...
-                     // (Se precisar que eu reescreva este bloco todo, avise, mas é igual ao anterior)
-                     const noteDoc = await getDoc(doc(db, 'pastas', id));
-                     if (!noteDoc.exists()) continue;
-                     if (noteDoc.data().estado !== 'ativa') continue;
-                     // ... (verificações de segurança) ...
-                     validResults.push({ noteSnap: noteDoc, parentSnap: null, _isProtected: false }); // Simplificado para exemplo
+                    const noteDoc = await getDoc(doc(db, 'pastas', id));
+                    
+                    if (!noteDoc.exists()) continue;
+                    const data = noteDoc.data();
+                    if (data.estado !== 'ativa') continue;
+
+                    // Verificação de Segurança (Itens Protegidos)
+                    let isItemProtected = false;
+                    if (data.passe && data.passe.trim() !== "") isItemProtected = true;
+                    
+                    // Verifica herança do pai
+                    let parentData = null;
+                    if (data.parentId) {
+                        const parentSnap = await getDoc(doc(db, 'pastas', data.parentId));
+                        if (parentSnap.exists()) {
+                            parentData = parentSnap.data();
+                            if (parentData.passe && parentData.passe.trim() !== "") isItemProtected = true;
+                        }
+                    }
+
+                    // Se estiver protegido e a configuração proibir pesquisa, salta
+                    if (isItemProtected && !appSettings.searchAnchorsInProtected) continue;
+
+                    validResults.push({ 
+                        id: noteDoc.id, 
+                        data: data, 
+                        parentData: parentData,
+                        _isProtected: isItemProtected 
+                    });
                 }
                 
-                // Renderização (Mantenha o seu código original de renderização aqui)
                 referencesList.innerHTML = '';
+
                 if (validResults.length === 0) {
-                     // Vazio
+                     referencesList.innerHTML = '<li>Nenhuma nota acessível encontrada.</li>';
                 } else {
+                     // Ordenar por nome
+                     validResults.sort((a, b) => a.data.nome.localeCompare(b.data.nome));
+
                      validResults.forEach(result => {
-                         // ... criar elementos HTML ...
-                         const li = document.createElement('li'); // Exemplo simplificado
-                         li.textContent = result.noteSnap.data().nome;
-                         referencesList.appendChild(li);
+                         const details = document.createElement('details');
+                         details.className = 'reference-item';
+                         
+                         const summary = document.createElement('summary');
+                         const protectedIcon = result._isProtected ? "🔒 " : "";
+                         
+                         // --- AQUI ESTÁ A MAGIA DA SETA COM SCROLL ---
+                         // Adicionamos data-search-term="${entityName}"
+                         const goToBtn = `<button class="go-to-note-btn" 
+                             data-note-id="${result.id}" 
+                             data-parent-id="${result.data.parentId || ''}" 
+                             data-parent-name="${result.parentData ? result.parentData.nome : ''}"
+                             data-search-term="${entityName}"
+                             title="Ir para nota e destacar">➔</button>`;
+
+                         summary.innerHTML = `<span>📄 ${protectedIcon}${result.data.nome}</span> ${goToBtn}`;
+
+                         // Contexto (Snippet do texto)
+                         const contextDiv = document.createElement('div');
+                         contextDiv.className = 'reference-context';
+                         contextDiv.innerHTML = generateReferenceContext(result.data.conteudo, entityName);
+                         
+                         details.appendChild(summary);
+                         details.appendChild(contextDiv);
+                         referencesList.appendChild(details);
                      });
                 }
             } else {
-                 referencesList.innerHTML = ''; 
+                 referencesList.innerHTML = '<li>Nenhuma referência encontrada.</li>'; 
             }
         } else {
             referencesList.innerHTML = '<li>Erro: Entidade não encontrada.</li>';
@@ -5959,15 +5997,12 @@ async function showReferencesPanel(entityId, entityName, entityType, anexoId = n
             appendLinkInfoToPanel(anexoId); 
         }
 
-        if (referencesList.children.length === 0) {
-            referencesList.innerHTML = '<li>Nenhuma referência encontrada.</li>';
-        }
-
     } catch (error) {
         console.error("Erro ao buscar referências:", error);
         referencesList.innerHTML = '<li>Ocorreu um erro ao buscar as referências.</li>';
     }
 }
+
 
 function hideReferencesPanel() {
     notebookContainer.classList.remove('references-panel-visible');
@@ -8552,94 +8587,72 @@ document.getElementById('references-list').addEventListener('click', async (e) =
     e.preventDefault(); 
     e.stopPropagation();
 
-    const { noteId, parentId, parentName } = goToButton.dataset;
+    // Lemos o searchTerm (que contém o nome da entidade ou tag)
+    const { noteId, parentId, parentName, searchTerm } = goToButton.dataset;
+    
     if (!noteId) return;
 
-    // --- 1. VERIFICAÇÃO DE SEGURANÇA ANTES DE ABRIR ---
+    // --- VERIFICAÇÃO DE SEGURANÇA (Senha) ---
     let idToUnlock = null;
 
     try {
-        // A. Verifica se a própria NOTA tem senha
         const noteSnap = await getDoc(doc(db, 'pastas', noteId));
         if (noteSnap.exists()) {
             const nData = noteSnap.data();
-            if (nData.passe && nData.passe.trim() !== "") {
-                idToUnlock = noteId;
-            }
+            if (nData.passe && nData.passe.trim() !== "") idToUnlock = noteId;
         }
 
-        // B. Se a nota não tiver, verifica se a PASTA PAI tem senha (Herança)
         if (!idToUnlock && parentId) {
             const parentSnap = await getDoc(doc(db, 'pastas', parentId));
             if (parentSnap.exists()) {
                 const pData = parentSnap.data();
-                if (pData.passe && pData.passe.trim() !== "") {
-                    idToUnlock = parentId;
-                }
+                if (pData.passe && pData.passe.trim() !== "") idToUnlock = parentId;
             }
         }
 
-        // C. Se encontrou proteção, exige autenticação
         if (idToUnlock) {
-            // Se ainda NÃO foi desbloqueada nesta sessão
             if (!sessionUnlockedFolders.has(idToUnlock)) {
-                console.log(`Item protegido (${idToUnlock}). Solicitando senha...`);
                 const accessGranted = await requestPassword('access', idToUnlock);
-                
                 if (accessGranted) {
-                    sessionUnlockedFolders.add(idToUnlock); // Desbloqueia para a sessão
+                    sessionUnlockedFolders.add(idToUnlock);
                 } else {
-                    return; // Senha errada ou cancelada: PÁRA AQUI. Não abre a nota.
+                    return; 
                 }
             }
         }
-
     } catch (error) {
-        console.error("Erro ao verificar segurança do item:", error);
-        alert("Ocorreu um erro ao verificar as permissões.");
+        console.error("Erro ao verificar segurança:", error);
         return;
     }
-    // ------------------------------------------------------
 
-    // Se chegou aqui, é seguro abrir a nota (ou não tinha senha, ou a senha foi inserida corretamente)
+    // --- ABRIR A NOTA E FAZER SCROLL ---
     const navigateAndOpenNote = () => {
-        // 1. MUDANÇA DE MODO: Força a mudança para a aba "Note"
+        // Muda para a aba Note
         if (currentTab !== 'note') {
             currentTab = 'note';
             document.querySelectorAll('.tabs-container button').forEach(btn => {
-                if (btn.dataset.tab === 'note') {
-                    btn.classList.add('active');
-                } else {
-                    btn.classList.remove('active');
-                }
+                btn.classList.toggle('active', btn.dataset.tab === 'note');
             });
         }
 
-        // 2. REQUISITO: Colapsar a primeira coluna (Painel Esquerdo)
+        // Colapsa painel esquerdo
         notebookContainer.classList.add('left-panel-collapsed');
 
-        // 3. Reconstruir a navegação
-        const targetParentId = parentId || null;
-
-        console.log("A navegar para a nota e a mudar para modo Note...");
-        
-        // Reinicia o stack de navegação
+        // Atualiza breadcrumbs/navegação
         navigationStack = [];
-        if (targetParentId && parentName) {
-            navigationStack.push({ id: targetParentId, name: parentName });
+        if (parentId && parentName) {
+            navigationStack.push({ id: parentId, name: parentName });
         }
-
-        // 4. Atualiza a vista
         updateNavigationView(true);
 
-        // 5. Aguarda e abre a nota
+        // Abre a nota e passa o searchTerm para o highlight/scroll
         setTimeout(() => {
             const noteElement = document.querySelector(`#middle-panel .list-item[data-id="${noteId}"]`);
-            displayNote(noteId, noteElement); 
+            // O 3º argumento é o termo para fazer scroll
+            displayNote(noteId, noteElement, searchTerm); 
         }, 150); 
     };
     
-    // Verifica alterações não guardadas na nota atual antes de sair
     navigateWithUnsavedCheck(navigateAndOpenNote);
 });
 
