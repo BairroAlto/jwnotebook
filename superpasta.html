@@ -349,7 +349,7 @@ a[data-anexo-id] { color: inherit; text-decoration: none; border-bottom: 1px dot
     background-color: rgba(30, 132, 73, 0.15); color: var(--question-color); border-color: var(--question-color);
 }
 /* Esconde botões desnecessários dentro da mini-nota */
-.mini-note-toolbar button:not([data-action="delete-mini-note"]):not([data-action="manage-mini-note-topics"]),
+.mini-note-toolbar button:not([data-action="delete-mini-note"]):not([data-action="manage-mini-note-topics"]):not([data-action="highlight-color"]),
 .mini-note-toolbar input[type="color"],
 .mini-note-toolbar .toolbar-separator { display: none !important; }
 
@@ -705,6 +705,93 @@ input:checked + .slider:before { transform: translateX(20px); }
 
 .temporary-highlight {
     animation: flash-highlight 2s ease-out;
+}
+
+/* --- ESTILOS DO MODAL DE DESTAQUES (NOVO) --- */
+#highlight-options-container .highlight-option-row {
+    display: flex;
+    align-items: center;
+    padding: 12px;        /* Mais espaço para toque */
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 5px;
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    transition: all 0.2s;
+}
+
+#highlight-options-container .highlight-option-row:hover {
+    background-color: var(--accent-color);
+    color: white;
+    border-color: var(--accent-color);
+}
+
+/* Ajuste para o texto não ficar azul quando selecionado */
+#highlight-options-container .highlight-option-row:hover .highlight-name-label {
+    color: white;
+}
+
+#highlight-options-container .color-preview-box {
+    width: 24px;              
+    height: 24px;
+    border-radius: 50%; /* Bolinhas redondas */
+    margin-right: 15px;
+    border: 1px solid rgba(0,0,0,0.2);
+    flex-shrink: 0;
+}
+
+#highlight-options-container .highlight-name-label {
+    font-size: 16px;
+    font-weight: 500;
+    flex-grow: 1;
+}
+
+#highlight-options-container .highlight-options-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted-color);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 5px;
+}
+
+#highlight-options-container .highlight-options-btn:hover {
+    color: white;
+}
+
+#highlight-options-container .remove-highlight-row {
+    border: 1px dashed #e74c3c;
+    color: #e74c3c; 
+    justify-content: center;
+    font-weight: bold;
+}
+
+#highlight-options-container .remove-highlight-row:hover {
+    background-color: #e74c3c;
+    color: white;
+    border-style: solid;
+}
+
+/* Estilo para a cor que está atualmente selecionada */
+.highlight-option-row.selected-color-row {
+    background-color: var(--accent-color) !important; /* !important força a sobrepor */
+    color: white !important;
+    border-color: var(--accent-color) !important;
+}
+
+/* Garante que o lápis fica branco na linha selecionada */
+.highlight-option-row.selected-color-row .highlight-options-btn {
+    color: white !important;
+}
+
+/* Adiciona um "Check" visual no fim */
+.highlight-option-row.selected-color-row::after {
+    content: '✓';
+    margin-left: auto;
+    font-weight: bold;
+    color: white;
+    font-size: 18px;
+    padding-left: 10px;
 }
 
 /* ============================================================
@@ -1376,6 +1463,19 @@ input:checked + .slider:before { transform: translateX(20px); }
     </div>
 </div>
 
+<!-- NOVO MODAL DE DESTAQUES (POPUP CENTRAL) -->
+<div id="highlight-modal" class="modal-overlay" style="z-index: 2200;">
+    <div class="modal-content" style="max-width: 350px;">
+        <h3>Escolher Cor</h3>
+        <div id="highlight-options-container" style="max-height: 400px; overflow-y: auto; margin-top: 15px;">
+            <!-- As cores serão geradas aqui via JS -->
+        </div>
+        <div class="modal-actions" style="margin-top: 20px;">
+            <button class="modal-btn secondary" data-action="cancel">Cancelar</button>
+        </div>
+    </div>
+</div>
+
 </body>
 
 
@@ -1509,7 +1609,18 @@ const BIBLICAL_BOOKS = [
 ];
 const urlParams = new URLSearchParams(window.location.search);
 const SUPERFOLDER_ID = urlParams.get('rootId');
-
+// 10 Cores diferentes das padrão (Azul/Verde/Laranja)
+const DEFAULT_HIGHLIGHTS = [
+    { code: "#FF8A80", name: "Vermelho Coral" },    // Vermelho avermelhado
+    { code: "#FFD180", name: "Laranja Sol" },       // Laranja bem distinto
+    { code: "#FFFF8D", name: "Amarelo Intenso" },   // Amarelo "Post-it" forte
+    { code: "#CCFF90", name: "Verde Lima" },        // Verde amarelado
+    { code: "#69F0AE", name: "Verde Esmeralda" },   // Verde menta forte
+    { code: "#84FFFF", name: "Turquesa" },          // Ciano vibrante
+    { code: "#EA80FC", name: "Roxo Lavanda" },      // Roxo elétrico claro
+    { code: "#FF80AB", name: "Rosa Choque" },       // Rosa forte
+    { code: "#CFD8DC", name: "Cinza Metálico" }     // Neutro
+];
 
 
 // --- ESTADO DA APLICAÇÃO ---
@@ -1546,6 +1657,8 @@ let appSettings = {
 let currentBookmarkSort = 'texto'; // Opções: 'texto', 'categoria', 'descricao'
 let savedRange = null;
 let activeMiniNoteElement = null;
+let activeWrapperForColor = null; // Qual caixa estamos a editar
+let userCustomHighlights = {}; // Cache dos nomes personalizados
 
 
 
@@ -1664,6 +1777,7 @@ onAuthStateChanged(auth, async (user) => {
         // Carrega caches globais
         fetchAllEntities();
         fetchAllTags();
+         loadUserHighlights();
     }
 });
 
@@ -2668,20 +2782,23 @@ function setLeftPanelTitle(text) {
 async function updateNavigationView(keepEditorOpen = false) {
     notebookContainer.classList.remove('left-panel-collapsed');
 
+    // Limpa os listeners anteriores para evitar fugas de memória ou duplicações
     if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
     if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
     
+    // Se não for para manter aberto (ex: clicou em voltar), limpa o editor
     if (!keepEditorOpen) resetEditor();
 
+    // Verifica se estamos dentro de uma Superpasta (variável global definida no superpasta.html)
     const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
     // ============================================================
-    // MODO: LISTS (ATUALIZADO COM MARCADORES)
+    // MODO: LISTS (Categorias Especiais)
     // ============================================================
     if (currentTab === 'lists') {
         setLeftPanelTitle('Categorias'); 
         
-        // 1. MENU ESQUERDO ATUALIZADO
+        // 1. MENU ESQUERDO ATUALIZADO (Inclui Destaques)
         leftPanelList.innerHTML = `
             <li class="list-item" data-type="list-category" data-id="topico">📑 Tópicos</li>
             <li class="list-item" data-type="list-category" data-id="personagem">👤 Personagens</li>
@@ -2689,6 +2806,7 @@ async function updateNavigationView(keepEditorOpen = false) {
             <li class="list-item" data-type="list-category" data-id="data">📅 Datas</li>
             <li class="list-item" data-type="list-bible-root" data-id="biblia">📖 Bíblia</li>
             <li class="list-item" data-type="list-category" data-id="marcadores">🔖 Marcadores</li>
+            <li class="list-item" data-type="list-category" data-id="destaque">🎨 Destaques</li>
         `;
 
         const depth = navigationStack.length;
@@ -2703,6 +2821,7 @@ async function updateNavigationView(keepEditorOpen = false) {
             backBtn.style.display = 'flex';
             middlePanelList.innerHTML = '<li>A carregar...</li>'; 
 
+            // Filtro de Superpasta (Opcional: verifica IDs válidos se estiver numa superpasta)
             let validNoteIds = null; 
             if (isSuperContext && !appSettings.searchGlobalInSuperfolder) {
                 try {
@@ -2725,7 +2844,61 @@ async function updateNavigationView(keepEditorOpen = false) {
             if (currentContext.type === 'list-category') {
                 const type = currentContext.id;
 
-                // >>> 1. MARCADORES (NOVO BLOCO) <<<
+                // >>> 1. DESTAQUES (NOVO BLOCO) <<<
+                if (type === 'destaque') {
+                    middlePanelList.innerHTML = '<li class="list-item">A carregar cores...</li>';
+                    
+                    try {
+                        const docRef = doc(db, 'destaques', auth.currentUser.uid);
+                        const docSnap = await getDoc(docRef);
+                        
+                        let colorsToRender = [];
+                        
+                        if (docSnap.exists() && docSnap.data().colors) {
+                            // Se o user tem cores salvas, usa essas
+                            const userColors = docSnap.data().colors; 
+                            colorsToRender = Object.entries(userColors).map(([hex, name]) => ({
+                                code: hex,
+                                name: name
+                            }));
+                        } else {
+                            // Se não tem nada salvo, usa as padrão
+                            colorsToRender = [...DEFAULT_HIGHLIGHTS];
+                        }
+
+                        // Ordenar alfabeticamente por nome
+                        colorsToRender.sort((a, b) => a.name.localeCompare(b.name));
+
+                        middlePanelList.innerHTML = '';
+                        
+                        if (colorsToRender.length === 0) {
+                            middlePanelList.innerHTML = '<li class="list-item">Nenhum destaque definido.</li>';
+                        } else {
+                            colorsToRender.forEach(color => {
+                                const li = document.createElement('li');
+                                li.className = 'list-item';
+                                li.dataset.type = 'highlight-item'; // Identificador para o clique
+                                li.dataset.hex = color.code;
+                                li.dataset.name = color.name;
+                                
+                                li.innerHTML = `
+                                    <div style="display:flex; align-items:center;">
+                                        <div style="width:20px; height:20px; border-radius:50%; background-color:${color.code}; margin-right:10px; border:1px solid rgba(0,0,0,0.2);"></div>
+                                        <span>${color.name}</span>
+                                    </div>
+                                `;
+                                middlePanelList.appendChild(li);
+                            });
+                        }
+
+                    } catch (error) {
+                        console.error("Erro ao carregar destaques:", error);
+                        middlePanelList.innerHTML = '<li>Erro ao carregar dados.</li>';
+                    }
+                    return;
+                }
+
+                // >>> 2. MARCADORES <<<
                 if (type === 'marcadores') {
                     middlePanelList.innerHTML = '<li class="list-item">A carregar marcadores...</li>';
                     const getBookIndex = (entityName) => {
@@ -2751,7 +2924,7 @@ async function updateNavigationView(keepEditorOpen = false) {
                             }
                         });
 
-                        // --- FILTRO GLOBAL PARA MARCADORES NA SUPERPASTA ---
+                        // Filtro Global
                         if (validNoteIds) {
                             textosMarcados = textosMarcados.filter(texto => {
                                 if (!texto.referencias || Object.keys(texto.referencias).length === 0) return false;
@@ -2759,10 +2932,10 @@ async function updateNavigationView(keepEditorOpen = false) {
                                 return entityNoteIds.some(noteId => validNoteIds.has(noteId));
                             });
                         }
-                        // ---------------------------------------------------
 
                         middlePanelList.innerHTML = '';
 
+                        // Cabeçalho de Filtro
                         const filterLi = document.createElement('li');
                         filterLi.style.cursor = 'default';
                         filterLi.innerHTML = `
@@ -2785,6 +2958,8 @@ async function updateNavigationView(keepEditorOpen = false) {
                             e.stopPropagation();
                             filterPopup.style.display = (filterPopup.style.display === 'flex') ? 'none' : 'flex';
                         };
+                        
+                        // Fecha popup ao clicar fora (hack simples)
                         setTimeout(() => {
                             document.addEventListener('click', function closePopup(e) {
                                 if (!filterLi.contains(e.target)) {
@@ -2793,6 +2968,7 @@ async function updateNavigationView(keepEditorOpen = false) {
                                 }
                             });
                         }, 0);
+
                         filterPopup.querySelectorAll('button').forEach(btn => {
                             btn.onclick = (e) => {
                                 e.stopPropagation();
@@ -2804,11 +2980,12 @@ async function updateNavigationView(keepEditorOpen = false) {
                         if (textosMarcados.length === 0) {
                             const emptyLi = document.createElement('li');
                             emptyLi.className = 'list-item';
-                            emptyLi.textContent = 'Nenhum texto marcado encontrado nesta pasta.';
+                            emptyLi.textContent = 'Nenhum texto marcado encontrado.';
                             middlePanelList.appendChild(emptyLi);
                             return;
                         }
 
+                        // Lógica de Ordenação e Renderização dos Marcadores
                         if (currentBookmarkSort === 'texto') {
                             textosMarcados.sort((a, b) => {
                                 const indexA = getBookIndex(a.nome);
@@ -2828,104 +3005,73 @@ async function updateNavigationView(keepEditorOpen = false) {
                                 middlePanelList.appendChild(li);
                             });
                         } else if (currentBookmarkSort === 'categoria') {
-    const groups = {};
-    // Agrupar
-    textosMarcados.forEach(texto => {
-        Object.keys(texto.marcadoresAssociados || {}).forEach(mId => {
-            const markerData = mapMarcadores[mId];
-            const markerName = markerData?.nome || 'Sem Categoria';
-            
-            if (!groups[markerName]) groups[markerName] = { items: [], info: markerData };
-            groups[markerName].items.push(texto);
-        });
-    });
-
-    Object.keys(groups).sort().forEach(cat => {
-        // 1. Cabeçalho do Grupo (Nome da Categoria)
-        const header = document.createElement('li');
-        header.className = 'group-header';
-        header.textContent = cat;
-        middlePanelList.appendChild(header);
-
-        // Descrição da categoria para usar no subtítulo
-        const catDesc = groups[cat].info?.descricao || ''; 
-
-        // 2. Itens do Grupo
-        groups[cat].items.sort((a, b) => {
-            const indexA = getBookIndex(a.nome);
-            const indexB = getBookIndex(b.nome);
-            if (indexA !== indexB) return indexA - indexB;
-            return a.nome.localeCompare(b.nome, undefined, { numeric: true, sensitivity: 'base' });
-        }).forEach(texto => {
-            const li = document.createElement('li');
-            li.className = 'list-item';
-            li.dataset.type = 'entity-item';
-            li.dataset.entityId = texto.id;
-            li.dataset.entityName = texto.nome;
-            li.dataset.entityType = 'textobiblico';
-            li.style.paddingLeft = '20px'; // Indentação visual
-            
-            // ALTERAÇÃO: Mostra Texto + Descrição do Marcador como subtítulo
-            li.innerHTML = `
-                <div style="display:flex; flex-direction:column;">
-                    <span style="font-weight:500;">🔖 ${texto.nome}</span>
-                    ${catDesc ? `<span style="font-size:0.8em; color:var(--text-muted-color);">📝 ${catDesc}</span>` : ''}
-                </div>`;
-            
-            middlePanelList.appendChild(li);
-        });
-    });
-
-} else if (currentBookmarkSort === 'descricao') {
-    const groups = {};
-    // Agrupar
-    textosMarcados.forEach(texto => {
-        Object.keys(texto.marcadoresAssociados || {}).forEach(mId => {
-            const markerData = mapMarcadores[mId];
-            const markerDesc = markerData?.descricao || 'Sem Descrição';
-            const markerName = markerData?.nome || 'Desconhecido';
-
-            if (!groups[markerDesc]) groups[markerDesc] = [];
-            // Guardamos também o nome da categoria junto com o texto para exibir
-            groups[markerDesc].push({ texto: texto, categoria: markerName });
-        });
-    });
-
-    Object.keys(groups).sort().forEach(desc => {
-        // 1. Cabeçalho do Grupo (Descrição)
-        const header = document.createElement('li');
-        header.className = 'group-header';
-        header.textContent = desc;
-        if (desc === 'Sem Descrição') header.style.fontStyle = 'italic';
-        middlePanelList.appendChild(header);
-
-        // 2. Itens do Grupo
-        groups[desc].sort((a, b) => {
-            // Ordenação pelo nome do texto bíblico dentro da descrição
-            const indexA = getBookIndex(a.texto.nome);
-            const indexB = getBookIndex(b.texto.nome);
-            if (indexA !== indexB) return indexA - indexB;
-            return a.texto.nome.localeCompare(b.texto.nome, undefined, { numeric: true, sensitivity: 'base' });
-        }).forEach(item => {
-            const li = document.createElement('li');
-            li.className = 'list-item';
-            li.dataset.type = 'entity-item';
-            li.dataset.entityId = item.texto.id;
-            li.dataset.entityName = item.texto.nome;
-            li.dataset.entityType = 'textobiblico';
-            li.style.paddingLeft = '20px';
-
-            // ALTERAÇÃO: Mostra Texto + Nome da Categoria como subtítulo
-            li.innerHTML = `
-                <div style="display:flex; flex-direction:column;">
-                    <span style="font-weight:500;">🔖 ${item.texto.nome}</span>
-                    <span style="font-size:0.8em; color:var(--text-muted-color);">🏷️ ${item.categoria}</span>
-                </div>`;
-            
-            middlePanelList.appendChild(li);
-        });
-    });
-}
+                            const groups = {};
+                            textosMarcados.forEach(texto => {
+                                Object.keys(texto.marcadoresAssociados || {}).forEach(mId => {
+                                    const markerData = mapMarcadores[mId];
+                                    const markerName = markerData?.nome || 'Sem Categoria';
+                                    if (!groups[markerName]) groups[markerName] = { items: [], info: markerData };
+                                    groups[markerName].items.push(texto);
+                                });
+                            });
+                            Object.keys(groups).sort().forEach(cat => {
+                                const header = document.createElement('li');
+                                header.className = 'group-header';
+                                header.textContent = cat;
+                                middlePanelList.appendChild(header);
+                                const catDesc = groups[cat].info?.descricao || ''; 
+                                groups[cat].items.sort((a, b) => {
+                                    const indexA = getBookIndex(a.nome);
+                                    const indexB = getBookIndex(b.nome);
+                                    if (indexA !== indexB) return indexA - indexB;
+                                    return a.nome.localeCompare(b.nome, undefined, { numeric: true, sensitivity: 'base' });
+                                }).forEach(texto => {
+                                    const li = document.createElement('li');
+                                    li.className = 'list-item';
+                                    li.dataset.type = 'entity-item';
+                                    li.dataset.entityId = texto.id;
+                                    li.dataset.entityName = texto.nome;
+                                    li.dataset.entityType = 'textobiblico';
+                                    li.style.paddingLeft = '20px';
+                                    li.innerHTML = `<div style="display:flex; flex-direction:column;"><span style="font-weight:500;">🔖 ${texto.nome}</span>${catDesc ? `<span style="font-size:0.8em; color:var(--text-muted-color);">📝 ${catDesc}</span>` : ''}</div>`;
+                                    middlePanelList.appendChild(li);
+                                });
+                            });
+                        } else if (currentBookmarkSort === 'descricao') {
+                            const groups = {};
+                            textosMarcados.forEach(texto => {
+                                Object.keys(texto.marcadoresAssociados || {}).forEach(mId => {
+                                    const markerData = mapMarcadores[mId];
+                                    const markerDesc = markerData?.descricao || 'Sem Descrição';
+                                    const markerName = markerData?.nome || 'Desconhecido';
+                                    if (!groups[markerDesc]) groups[markerDesc] = [];
+                                    groups[markerDesc].push({ texto: texto, categoria: markerName });
+                                });
+                            });
+                            Object.keys(groups).sort().forEach(desc => {
+                                const header = document.createElement('li');
+                                header.className = 'group-header';
+                                header.textContent = desc;
+                                if (desc === 'Sem Descrição') header.style.fontStyle = 'italic';
+                                middlePanelList.appendChild(header);
+                                groups[desc].sort((a, b) => {
+                                    const indexA = getBookIndex(a.texto.nome);
+                                    const indexB = getBookIndex(b.texto.nome);
+                                    if (indexA !== indexB) return indexA - indexB;
+                                    return a.texto.nome.localeCompare(b.texto.nome, undefined, { numeric: true, sensitivity: 'base' });
+                                }).forEach(item => {
+                                    const li = document.createElement('li');
+                                    li.className = 'list-item';
+                                    li.dataset.type = 'entity-item';
+                                    li.dataset.entityId = item.texto.id;
+                                    li.dataset.entityName = item.texto.nome;
+                                    li.dataset.entityType = 'textobiblico';
+                                    li.style.paddingLeft = '20px';
+                                    li.innerHTML = `<div style="display:flex; flex-direction:column;"><span style="font-weight:500;">🔖 ${item.texto.nome}</span><span style="font-size:0.8em; color:var(--text-muted-color);">🏷️ ${item.categoria}</span></div>`;
+                                    middlePanelList.appendChild(li);
+                                });
+                            });
+                        }
                     } catch (error) {
                         console.error("Erro ao carregar marcadores:", error);
                         middlePanelList.innerHTML = '<li>Erro ao carregar dados.</li>';
@@ -2933,7 +3079,7 @@ async function updateNavigationView(keepEditorOpen = false) {
                     return; 
                 }
 
-                // >>> 2. TÓPICOS <<<
+                // >>> 3. TÓPICOS <<<
                 if (type === 'topico') {
                     try {
                         const topicsSnapshot = await getDocs(query(collection(db, 'topicos'), where('userId', '==', auth.currentUser.uid), orderBy('nome')));
@@ -3016,7 +3162,7 @@ async function updateNavigationView(keepEditorOpen = false) {
                     return;
                 }
 
-                // >>> 3. ENTIDADES <<<
+                // >>> 4. ENTIDADES (Personagem, Local, Data) <<<
                 middlePanelList.innerHTML = ''; 
                 let entities = allEntities[type] || [];
                 
@@ -3030,6 +3176,7 @@ async function updateNavigationView(keepEditorOpen = false) {
 
                 const sortedEntities = [...entities].sort((a, b) => a.nome.localeCompare(b.nome));
                 
+                // Barra de pesquisa
                 const searchLi = document.createElement('li');
                 searchLi.className = 'list-search-container';
                 const searchInput = document.createElement('input');
@@ -3068,7 +3215,7 @@ async function updateNavigationView(keepEditorOpen = false) {
                 }
             }
 
-            // >>> 4. BÍBLIA <<<
+            // >>> 5. BÍBLIA <<<
             else if (currentContext.type === 'list-bible-root') {
                 middlePanelList.innerHTML = '';
                 BIBLICAL_BOOKS.forEach(book => {
@@ -3145,22 +3292,18 @@ async function updateNavigationView(keepEditorOpen = false) {
                 leftPanelParentId = parentFolder.id;
                 setLeftPanelTitle(parentFolder.name);
                 leftPanelSelectedId = currentFolder.id;
-                if (!isSuperContext) {
-                setLeftPanelTitle(parentFolder.name);
-            }
-           } else {
-            // Nível 0 da Superpasta (ou nível 1 do note.html)
-            if (isSuperContext) {
-                leftPanelParentId = SUPERFOLDER_ID;
-                // Mantemos o título fixo (Global Parent)
-                setLeftPanelTitle(globalParentName); 
             } else {
-                leftPanelParentId = null;
-                leftPanelTitle.textContent = 'Pastas';
+                // Nível 0 da Superpasta
+                if (isSuperContext) {
+                    leftPanelParentId = SUPERFOLDER_ID;
+                    setLeftPanelTitle(currentSuperfolderName);
+                } else {
+                    leftPanelParentId = null;
+                    leftPanelTitle.textContent = 'Pastas';
+                }
+                leftPanelSelectedId = currentFolder.id;
             }
-            leftPanelSelectedId = currentFolder.id;
         }
-    }
         
         unsubscribeLeftPanel = fetchAndDisplayItems(leftPanelParentId, leftPanelList, leftPanelSelectedId);
         if (middlePanelParentId) {
@@ -3330,40 +3473,308 @@ function updateMiniNoteButtonState(wrapperElement) {
 }
 
 // --- FUNÇÃO PARA CORRIGIR SUBNOTAS ANTIGAS ---
-function fixLegacyMiniNotes() {
-    // Procura todas as subnotas/questões no editor
+ function fixLegacyMiniNotes() {
     const wrappers = noteContentEditor.querySelectorAll('.mini-note-wrapper');
     
     wrappers.forEach(wrapper => {
-        // 1. Se não tiver o atributo de dados, cria-o vazio
+        // Garante atributo de tópicos
         if (!wrapper.hasAttribute('data-topics')) {
             wrapper.setAttribute('data-topics', '{}');
         }
 
-        // 2. Verifica a barra de ferramentas
         const toolbar = wrapper.querySelector('.mini-note-toolbar');
         if (toolbar) {
-            // Verifica se o botão da prancheta JÁ existe
-            let btn = toolbar.querySelector('button[data-action="manage-mini-note-topics"]');
-            
-            // Se NÃO existir, cria e adiciona
-            if (!btn) {
-                btn = document.createElement('button');
+            // Verificar e adicionar botão Tópicos (📋) se faltar
+            if (!toolbar.querySelector('button[data-action="manage-mini-note-topics"]')) {
+                const btn = document.createElement('button');
                 btn.type = 'button';
                 btn.dataset.action = 'manage-mini-note-topics';
                 btn.title = 'Gerir Tópicos';
                 btn.textContent = '📋';
+                // Insere no início ou antes do lixo
+                const trashBtn = toolbar.querySelector('button[data-action="delete-mini-note"]');
+                if (trashBtn) toolbar.insertBefore(btn, trashBtn);
+                else toolbar.appendChild(btn);
+            }
+
+            // Verificar e adicionar botão Destaque (🎨) se faltar
+            if (!toolbar.querySelector('button[data-action="highlight-color"]')) {
+                const btnColor = document.createElement('button');
+                btnColor.type = 'button';
+                btnColor.dataset.action = 'highlight-color';
+                btnColor.title = 'Destacar';
+                btnColor.textContent = '🎨';
                 
-                // Insere no início da barra (antes do lixo)
-                toolbar.insertBefore(btn, toolbar.firstChild);
+                // Insere antes do botão de tópicos
+                const topicsBtn = toolbar.querySelector('button[data-action="manage-mini-note-topics"]');
+                toolbar.insertBefore(btnColor, topicsBtn);
             }
         }
 
-        // >>> NOVO: Atualiza o estado visual do botão com base nos dados existentes <<<
-        updateMiniNoteButtonState(wrapper);
+        // --- ATUALIZAÇÃO VISUAL DOS BOTÕES ---
+        updateMiniNoteButtonState(wrapper); // Atualiza botão 📋
+        updateHighlightButtonState(wrapper); // Atualiza botão 🎨 e fundo da caixa
     });
 }
 
+// 1. Carregar Destaques Personalizados do Firebase
+async function loadUserHighlights() {
+    if (!auth.currentUser) return;
+    try {
+        const docRef = doc(db, 'destaques', auth.currentUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+            userCustomHighlights = docSnap.data().colors || {};
+        }
+    } catch (e) {
+        console.error("Erro ao carregar destaques:", e);
+    }
+}
+
+// 2. Abrir Popup de Cores
+ function renderHighlightList() {
+    const container = document.getElementById('highlight-options-container');
+    container.innerHTML = '';
+
+    // 1. Descobrir qual a cor ativa na caixa atual
+    // Convertemos para minúsculas para garantir que a comparação funciona
+    const activeColor = activeWrapperForColor && activeWrapperForColor.dataset.highlight 
+                      ? activeWrapperForColor.dataset.highlight.toLowerCase() 
+                      : null;
+
+    // Opção de Remover
+    const removeRow = document.createElement('div');
+    removeRow.className = 'highlight-option-row remove-highlight-row';
+    removeRow.innerHTML = '<span>🚫 Remover Destaque</span>';
+    removeRow.onclick = () => applyHighlight(null);
+    container.appendChild(removeRow);
+
+    // Lista de Cores
+    DEFAULT_HIGHLIGHTS.forEach(colorObj => {
+        const hex = colorObj.code;
+        const displayName = userCustomHighlights[hex] || colorObj.name;
+
+        const row = document.createElement('div');
+        row.className = 'highlight-option-row';
+
+        // --- CORREÇÃO AQUI: Comparar ambos em minúsculas ---
+        if (hex.toLowerCase() === activeColor) {
+            row.classList.add('selected-color-row');
+        }
+        // ---------------------------------------------------
+
+        // Bola de Cor
+        const colorBox = document.createElement('div');
+        colorBox.className = 'color-preview-box';
+        colorBox.style.backgroundColor = hex;
+
+        // Nome
+        const nameLabel = document.createElement('span');
+        nameLabel.className = 'highlight-name-label';
+        nameLabel.textContent = displayName;
+
+        // Lápis
+        const editBtn = document.createElement('button');
+        editBtn.className = 'highlight-options-btn';
+        editBtn.innerHTML = '✏️';
+        editBtn.title = "Mudar Nome";
+        editBtn.onclick = (e) => {
+            e.stopPropagation(); 
+            renameHighlight(hex, displayName);
+        };
+
+        row.onclick = () => applyHighlight(hex);
+
+        row.appendChild(colorBox);
+        row.appendChild(nameLabel);
+        row.appendChild(editBtn);
+        container.appendChild(row);
+    });
+}
+
+// 2. Abrir Modal de Cores (Agora muito mais simples)
+async function openHighlightPopup(wrapper) {
+    // IMPORTANTE: Definir o wrapper ativo ANTES de renderizar a lista
+    activeWrapperForColor = wrapper; 
+    
+    const modal = document.getElementById('highlight-modal');
+    
+    await loadUserHighlights();
+    
+    // Agora o render vai conseguir ler activeWrapperForColor.dataset.highlight
+    renderHighlightList(); 
+
+    modal.style.display = 'flex';
+}
+
+// 3. Renomear Destaque
+async function renameHighlight(hexCode, currentName) {
+    const newName = prompt("Novo nome para esta cor:", currentName);
+    
+    if (newName && newName.trim() !== "" && newName !== currentName) {
+        
+        // 1. Atualiza a memória local (Cache)
+        userCustomHighlights[hexCode] = newName.trim();
+        
+        // 2. Grava no Firebase (Usa a lógica Cria/Edita)
+        await syncColorsToFirebase();
+
+        // 3. Atualiza a lista visual
+        renderHighlightList();
+    }
+}
+
+// Função Central: Grava as cores e o UserID no Firebase
+// (Cria se não existir, Atualiza se já existir)
+async function syncColorsToFirebase() {
+    if (!auth.currentUser) return;
+
+    try {
+        const docRef = doc(db, 'destaques', auth.currentUser.uid);
+        
+        // Prepara os dados
+        const dataToSave = {
+            userId: auth.currentUser.uid, // Garante que o ID do user está gravado
+            colors: userCustomHighlights    // Grava o mapa de cores (Hex -> Nome)
+        };
+
+        // O { merge: true } é a chave aqui:
+        // - Se o doc não existir: CRIA com estes dados.
+        // - Se o doc existir: ATUALIZA/JUNTA estes dados.
+        await setDoc(docRef, dataToSave, { merge: true });
+        
+        console.log("Firebase sincronizado: Cores e UserID gravados.");
+
+    } catch (e) {
+        console.error("Erro ao sincronizar cores:", e);
+    }
+}
+
+// 4. Aplicar Destaque à Caixa
+async function applyHighlight(colorCode) {
+    if (!activeWrapperForColor) return;
+
+    // 1. Lógica de Base de Dados (Gravar a cor no perfil se for nova)
+    if (colorCode) {
+        const colorObj = DEFAULT_HIGHLIGHTS.find(c => c.code === colorCode);
+        const colorName = userCustomHighlights[colorCode] || (colorObj ? colorObj.name : "Cor Personalizada");
+        await ensureColorExistsInFirebase(colorCode, colorName);
+        
+        // Define o atributo no HTML
+        activeWrapperForColor.dataset.highlight = colorCode;
+    } else {
+        // Remove o atributo
+        activeWrapperForColor.removeAttribute('data-highlight');
+    }
+
+    // 2. Lógica Visual (Chama a função centralizada que acabámos de criar)
+    updateHighlightButtonState(activeWrapperForColor);
+
+    // 3. Fechar e Gravar
+    document.getElementById('highlight-modal').style.display = 'none';
+    activeWrapperForColor = null;
+    saveNote();
+}
+
+// Função Auxiliar: Garante que a cor existe na coleção 'destaques'
+async function ensureColorExistsInFirebase(hexCode, defaultName) {
+    // Se já temos esta cor carregada localmente, não precisamos de ir à BD
+    if (userCustomHighlights[hexCode]) return;
+
+    const nameToSave = defaultName;
+    
+    // Atualiza cache local
+    userCustomHighlights[hexCode] = nameToSave;
+
+    try {
+        const docRef = doc(db, 'destaques', auth.currentUser.uid);
+        
+        // --- ALTERAÇÃO AQUI ---
+        // Adicionamos userId: auth.currentUser.uid ao objeto
+        await setDoc(docRef, {
+            userId: auth.currentUser.uid, // <--- CAMPO NOVO
+            colors: {
+                [hexCode]: nameToSave
+            }
+        }, { merge: true });
+        
+        console.log(`Cor ${nameToSave} (${hexCode}) registada no Firebase com UserID.`);
+    } catch (e) {
+        console.error("Erro ao registar cor:", e);
+    }
+}
+
+// Listener para o botão 🎨
+noteContentEditor.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action="highlight-color"]');
+    if (btn) {
+        e.preventDefault(); 
+        e.stopPropagation();
+        
+        const wrapper = btn.closest('.mini-note-wrapper');
+        
+        // Simplesmente abre o popup, sem cálculos de posição nem toggle complexo
+        openHighlightPopup(wrapper);
+        return;
+    }
+});
+
+// Fechar popup ao clicar fora
+document.addEventListener('click', (e) => {
+    // Tenta encontrar o novo modal
+    const modal = document.getElementById('highlight-modal');
+    
+    // PROTEÇÃO CRÍTICA: Se o modal não existir no HTML, para aqui e não dá erro
+    if (!modal) return; 
+
+    // Verifica se está visível ('flex') e se o clique foi fora dele
+    // Nota: Ignora também cliques no botão que abre o modal para evitar conflitos
+    if (modal.style.display === 'flex' && 
+        !modal.contains(e.target) && 
+        !e.target.closest('button[data-action="highlight-color"]')) {
+        
+        modal.style.display = 'none';
+        activeWrapperForColor = null;
+    }
+});
+
+// 5. Atualizar Estado Visual do Botão (Ao carregar a nota)
+function updateHighlightButtonState(wrapper) {
+    const color = wrapper.dataset.highlight;
+    const btn = wrapper.querySelector('button[data-action="highlight-color"]');
+    const contentDiv = wrapper.querySelector('.mini-note-content');
+
+    if (!btn) return;
+
+    if (color) {
+        // --- ESTILO ATIVO (PREENCHIDO) ---
+        // Fundo ligeiramente claro para destacar que está ativo
+        btn.style.backgroundColor = "rgba(255, 255, 255, 0.15)"; 
+        // Borda com a cor do destaque escolhido
+        btn.style.borderColor = color; 
+        // Ícone com a cor do destaque escolhido
+        btn.style.color = color; 
+        
+        btn.classList.add('has-color');
+        
+        // Garante que a caixa de texto tem a cor correta
+        if (contentDiv) {
+            contentDiv.style.backgroundColor = color;
+            contentDiv.style.color = "#222222"; // Texto escuro para contraste
+        }
+    } else {
+        // --- ESTILO INATIVO (RESET) ---
+        btn.style.backgroundColor = "";
+        btn.style.borderColor = "";
+        btn.style.color = "";
+        btn.classList.remove('has-color');
+        
+        if (contentDiv) {
+            contentDiv.style.backgroundColor = ""; // Remove fundo
+            contentDiv.style.color = ""; // Volta à cor do tema
+        }
+    }
+}
 
 function updateMiddlePanelForFolderSelection(folderId, folderName, selectedElement) {
     // 1. Atualiza o estado da seleção visual no painel esquerdo
@@ -3552,13 +3963,27 @@ async function executeSave() {
             }
         } catch (err) {}
 
-        // --- GRAVAÇÃO FINAL ---
-        await updateDoc(noteRef, { 
-            nome: noteTitleInput.value, 
-            conteudo: noteContentEditor.innerHTML,
-            tags: finalTagNames,
-            ultimaedicao: serverTimestamp()
-        });
+       // --- NOVA LÓGICA DE CORES (ADICIONE ISTO) ---
+    // 1. Varrer o editor à procura de todas as caixas com cor
+    const coloredWrappers = noteContentEditor.querySelectorAll('.mini-note-wrapper[data-highlight]');
+    
+    // 2. Criar um conjunto único de cores usadas nesta nota
+    // Ex: Se tiver 3 caixas vermelhas, guarda apenas 1 referência ao vermelho
+    const uniqueColorsUsed = [...new Set(Array.from(coloredWrappers).map(el => el.dataset.highlight))];
+
+    // ---------------------------------------------
+
+    // --- GRAVAÇÃO FINAL ---
+    await updateDoc(noteRef, { 
+        nome: noteTitleInput.value, 
+        conteudo: noteContentEditor.innerHTML,
+        tags: finalTagNames, // (A sua variável de tags existente)
+        
+        // NOVO CAMPO: Guardamos array de cores usadas
+        coresUsadas: uniqueColorsUsed, 
+        
+        ultimaedicao: serverTimestamp()
+    });
 
         // Atualiza visualmente na lista lateral
         const listItem = document.querySelector(`.list-item[data-id="${selectedNoteId}"] span`);
@@ -3579,40 +4004,35 @@ async function executeSave() {
 function insertMiniNoteAtCursor(type = 'default') {
     const selection = window.getSelection();
     if (!selection.rangeCount) return;
-
     if (!noteContentEditor.contains(selection.anchorNode)) return;
 
     // Verificação de aninhamento
     const currentNode = selection.anchorNode.nodeType === 3 ? selection.anchorNode.parentElement : selection.anchorNode;
     if (currentNode.closest('.mini-note-wrapper')) return;
 
-    const range = selection.getRangeAt(0);
     const miniNoteId = `mn_${Date.now()}`;
     
     // Configurações baseadas no tipo
     let wrapperClass = 'mini-note-wrapper';
-    let titleHTML = ''; // HTML do input do título
+    let titleHTML = ''; 
     
     if (type === 'question') {
         wrapperClass += ' question-mode';
         titleHTML = `<input type="text" class="mini-note-title-input" placeholder="Título da Questão..." value="">`;
-    } 
-    else if (type === 'free') {
+    } else if (type === 'free') {
         wrapperClass += ' free-mode';
-        // Contentor Livre NÃO tem Input de Título
         titleHTML = ''; 
-    } 
-    else {
-        // Padrão (SubNota)
+    } else {
         titleHTML = `<input type="text" class="mini-note-title-input" placeholder="Título da Sub-Nota..." value="">`;
     }
 
-    // HTML da Mini-Nota
+    // HTML da Mini-Nota (COM O NOVO BOTÃO 🎨)
    const miniNoteHTML = `
         <div contenteditable="false" style="height: 20px;"></div>
         <div class="${wrapperClass}" contenteditable="false" id="${miniNoteId}" data-topics='{}'>
             ${titleHTML}
             <div class="mini-note-toolbar">
+                <button type="button" data-action="highlight-color" title="Destacar">🎨</button> <!-- NOVO -->
                 <button type="button" data-action="manage-mini-note-topics" title="Gerir Tópicos">📋</button>
                 <button type="button" data-action="delete-mini-note" title="Remover">🗑️</button>
             </div>
@@ -3626,22 +4046,19 @@ function insertMiniNoteAtCursor(type = 'default') {
 
     document.execCommand('insertHTML', false, miniNoteHTML);
     
-    // Coloca o foco (no título ou no conteúdo se for livre)
+    // Foco...
     setTimeout(() => {
         const insertedWrapper = document.getElementById(miniNoteId);
         if (insertedWrapper) {
             if (type === 'free') {
-                // Foca direto no conteúdo
                 const contentDiv = insertedWrapper.querySelector('.mini-note-content');
                 if (contentDiv) contentDiv.focus();
             } else {
-                // Foca no título
                 const titleInput = insertedWrapper.querySelector('.mini-note-title-input');
                 if (titleInput) titleInput.focus();
             }
         }
     }, 10);
-
     saveNote();
 }
 
@@ -7226,10 +7643,11 @@ leftPanelList.addEventListener('click', async (e) => {
 });
 
 middlePanelList.addEventListener('click', async (e) => {
+    // 1. Verifica se clicou no menu de 3 pontos
     const itemMenuBtn = e.target.closest('.item-menu-btn');
     if (itemMenuBtn) { showContextMenu(e); return; }
 
-    // Lógica para Tópicos e Entidades
+    // 2. Lógica específica para detalhes de Tópicos (árvore)
     const topicTarget = e.target.closest('[data-type="topic-detail"], [data-type="subtopic-detail"]');
     if (topicTarget) {
         document.querySelectorAll('#file-list .selected-text').forEach(el => el.classList.remove('selected-text'));
@@ -7239,10 +7657,26 @@ middlePanelList.addEventListener('click', async (e) => {
         return;
     }
 
+    // 3. DEFINIÇÃO DA VARIÁVEL (CRUCIAL: Tem de estar aqui)
     const listItem = e.target.closest('.list-item');
     if (!listItem) return;
 
-    // Lógica para Listas (Bíblia, etc)
+    // --- BLOCO NOVO CORRIGIDO (DESTAQUES) ---
+    // Agora já podemos usar 'listItem' porque foi definido acima
+    if (listItem.dataset.type === 'highlight-item') {
+        // Limpa seleções anteriores
+        document.querySelectorAll('#file-list .list-item.selected').forEach(el => el.classList.remove('selected'));
+        listItem.classList.add('selected');
+        
+        const { hex, name } = listItem.dataset;
+        
+        // Chama a função da 4ª coluna
+        showHighlightReferencesPanel(hex, name);
+        return;
+    }
+    // ----------------------------------------
+
+    // 4. Lógica para Listas (Bíblia, Entidades, etc.)
     if (currentTab === 'lists') {
         const type = listItem.dataset.type;
         if (type === 'bible-book') {
@@ -7258,14 +7692,14 @@ middlePanelList.addEventListener('click', async (e) => {
         return;
     }
 
-    // --- LÓGICA PRINCIPAL (PASTAS E NOTAS) ---
+    // 5. LÓGICA PRINCIPAL (PASTAS E NOTAS)
     const { id, type, name } = listItem.dataset;
 
     // A. SE FOR UMA PASTA
     if (type === 'pasta') {
         const isSuperfolder = listItem.dataset.superpasta === "true";
 
-        // 1. Verifica se é Superpasta
+        // Verifica se é Superpasta
         if (isSuperfolder) {
             if (listItem.hasAttribute('data-protected')) {
                 if (!sessionUnlockedFolders.has(id)) {
@@ -7278,11 +7712,13 @@ middlePanelList.addEventListener('click', async (e) => {
                     }
                 }
             }
-            window.location.href = `superpasta.html?rootId=${id}`;
+           navigateWithUnsavedCheck(() => {
+                window.location.href = `superpasta.html?rootId=${id}`;
+            });
             return;
         }
 
-        // 2. Pasta Normal - Proteção
+        // Pasta Normal - Proteção
         if (listItem.hasAttribute('data-protected')) {
             if (!sessionUnlockedFolders.has(id)) {
                 console.log("Item bloqueado. A pedir senha...");
@@ -7299,7 +7735,7 @@ middlePanelList.addEventListener('click', async (e) => {
             } 
         }
 
-        // 3. Navegação Pasta Normal
+        // Navegação Pasta Normal
         const action = () => {
             navigationStack.push({ id, name });
             updateNavigationView();
@@ -7329,68 +7765,6 @@ middlePanelList.addEventListener('click', async (e) => {
         
         const action = () => displayNote(id, listItem);
         navigateWithUnsavedCheck(action);
-    }
-});
-
-document.querySelector('.tabs-container').addEventListener('click', (e) => {
-    const clickedTabBtn = e.target.closest('button');
-    if (!clickedTabBtn) return;
-
-    const newTab = clickedTabBtn.dataset.tab;
-    
-    if (newTab === 'book') {
-        window.open('book.html', '_blank'); 
-        return; 
-    }
-
-    if (currentSaveStatus === 'unsaved') {
-        saveNote(true); // Grava imediatamente
-    }
-
-    // 1. Atualização Visual dos Botões
-    document.querySelectorAll('.tabs-container button').forEach(btn => btn.classList.remove('active'));
-    clickedTabBtn.classList.add('active');
-    
-    // 2. Atualiza o estado da aba atual
-    currentTab = newTab;
-    
-    // 3. Limpa a pilha de navegação
-    navigationStack = []; 
-    
-    // 4. Atualiza a vista mantendo o editor aberto (true)
-    updateNavigationView(true);
-});
-
-// Listeners do Editor
-noteTitleInput.addEventListener('input', () => {
-    updateSaveStatus('unsaved');
-    saveNote();
-});
-noteContentEditor.addEventListener('input', () => {
-    updateSaveStatus('unsaved');
-    saveNote();
-});
-document.addEventListener('selectionchange', handleTextSelection);
-
-  noteContentEditor.addEventListener('keydown', (event) => {
-    escapeStyledElements(event); // Mantém a função original
-
-    if (isTagPopupOpen) {
-        if (['ArrowUp', 'ArrowDown'].includes(event.key)) {
-            event.preventDefault();
-            navigateTagSuggestions(event.key);
-        } else if (['Enter', 'Tab'].includes(event.key)) { // Removi o ' ' e ','
-            event.preventDefault();
-            commitTagSelection();
-        }
-    } else if (isEntityPopupOpen) {
-        if (['ArrowUp', 'ArrowDown'].includes(event.key)) {
-            event.preventDefault();
-            navigateEntitySuggestions(event.key);
-        } else if (['Enter', 'Tab'].includes(event.key)) {
-            event.preventDefault();
-            commitEntitySelection();
-        }
     }
 });
 
@@ -7745,6 +8119,7 @@ if (confirmCreateBookmarkBtn) {
     
     debouncedScanAndLink();
 });
+
 
     // --- Listener para o Botão de Colapsar/Expandir o Painel do Meio ---
 const middlePanelToggleBtn = document.getElementById('middle-panel-toggle-btn');
@@ -8671,6 +9046,146 @@ entitySuggestionList.addEventListener('mousedown', (e) => {
         commitEntitySelection();
     }
 });
+
+
+// ====================================================================
+// FUNÇÃO: MOSTRAR REFERÊNCIAS DE DESTAQUE (4ª COLUNA)
+// ====================================================================
+async function showHighlightReferencesPanel(hexCode, colorName) {
+    // 1. Configuração Visual
+    document.getElementById('references-panel-description').style.display = 'none'; // Sem descrição para cores
+    document.getElementById('references-toolbar').style.display = 'flex';
+    document.querySelectorAll('.references-separator').forEach(el => el.style.display = 'block');
+    
+    // Esconder botões irrelevantes
+    document.getElementById('references-wol-btn').style.display = 'none';
+    document.getElementById('references-bookmark-btn').style.display = 'none';
+
+    notebookContainer.classList.add('references-panel-visible');
+    
+    // Atualiza título com a bolinha da cor
+    const titleEl = document.getElementById('references-panel-title');
+    titleEl.innerHTML = `
+        <span style="display:inline-block; width:15px; height:15px; background:${hexCode}; border-radius:50%; border:1px solid #ccc; margin-right:5px; vertical-align:middle;"></span>
+        ${colorName}
+    `;
+    
+    const listElement = document.getElementById('references-list');
+    listElement.innerHTML = `
+        <div class="spinner-container">
+            <div class="spinner"></div>
+            <span>A procurar caixas coloridas...</span>
+        </div>`;
+
+    try {
+        // 2. Query Eficiente: Busca apenas notas que usam esta cor
+        const q = query(
+            collection(db, 'pastas'), 
+            where('tipo', '==', 'nota'),
+            where('estado', '==', 'ativa'),
+            where('userId', '==', auth.currentUser.uid),
+            where('coresUsadas', 'array-contains', hexCode) // <--- O SEGREDO DA VELOCIDADE
+        );
+
+        const snapshot = await getDocs(q);
+        const results = [];
+
+        // 3. Processar Resultados e Extrair Contexto
+        const parser = new DOMParser();
+
+        for (const docSnap of snapshot.docs) {
+            const data = docSnap.data();
+            
+            // Verificação de Segurança (Protegidos)
+            let isItemProtected = false;
+            if (data.passe && data.passe.trim() !== "") isItemProtected = true;
+            
+            // (Verifica pai se necessário - simplificado aqui)
+            if (data.parentId) { /* Lógica de pai aqui se quiseres ser rigoroso */ }
+
+            if (isItemProtected && !appSettings.searchTagsInProtected) continue;
+
+            // 4. PARSE DO HTML para encontrar o texto da caixa
+            const docHTML = parser.parseFromString(data.conteudo, 'text/html');
+            
+            // Seleciona todas as caixas com esta cor específica
+            const boxes = docHTML.querySelectorAll(`.mini-note-wrapper[data-highlight="${hexCode}"]`);
+            
+            // Cria uma entrada por cada caixa encontrada na nota
+            boxes.forEach(box => {
+                // Tenta achar o título (input) ou o conteúdo
+                const titleInput = box.querySelector('.mini-note-title-input');
+                const contentDiv = box.querySelector('.mini-note-content');
+                
+                let snippet = "";
+                let typeLabel = "SubNota";
+
+                // Determina o tipo
+                if (box.classList.contains('question-mode')) typeLabel = "Questão";
+                else if (box.classList.contains('free-mode')) typeLabel = "Contentor";
+
+                // Determina o texto a mostrar
+                if (titleInput && titleInput.value.trim()) {
+                    snippet = `<b>[${typeLabel}]</b> ${titleInput.value}`;
+                } else if (contentDiv) {
+                    // Pega no texto limpo e corta se for grande
+                    const text = contentDiv.textContent.trim();
+                    snippet = text.length > 80 ? text.substring(0, 80) + "..." : text;
+                    if (!snippet) snippet = `(${typeLabel} sem texto)`;
+                }
+
+                results.push({
+                    noteId: docSnap.id,
+                    noteName: data.nome,
+                    parentId: data.parentId,
+                    isProtected: isItemProtected,
+                    snippet: snippet
+                });
+            });
+        }
+
+        // 5. Renderizar
+        listElement.innerHTML = '';
+        
+        if (results.length === 0) {
+            listElement.innerHTML = '<li style="padding:15px; color:#888;">Nenhuma caixa encontrada com esta cor.</li>';
+            return;
+        }
+
+        // Ordenar por nome da nota
+        results.sort((a, b) => a.noteName.localeCompare(b.noteName));
+
+        results.forEach(item => {
+            const details = document.createElement('details');
+            details.className = 'reference-item';
+            
+            const summary = document.createElement('summary');
+            const protectedIcon = item.isProtected ? "🔒 " : "";
+            
+            // Botão Ir Para
+            const goToBtn = `<button class="go-to-note-btn" 
+                data-note-id="${item.noteId}" 
+                data-parent-id="${item.parentId || ''}" 
+                title="Ir para nota">➔</button>`;
+
+            summary.innerHTML = `<span>📄 ${protectedIcon}${item.noteName}</span> ${goToBtn}`;
+            
+            const contextDiv = document.createElement('div');
+            contextDiv.className = 'reference-context';
+            // Pinta uma borda lateral com a cor do destaque para referência visual
+            contextDiv.style.borderLeft = `3px solid ${hexCode}`;
+            contextDiv.innerHTML = `<p>${item.snippet}</p>`;
+            
+            details.appendChild(summary);
+            details.appendChild(contextDiv);
+            listElement.appendChild(details);
+        });
+
+    } catch (error) {
+        console.error("Erro ao buscar referências de cor:", error);
+        listElement.innerHTML = '<li>Erro ao processar dados.</li>';
+    }
+}
 
 function checkToolbarStatus() {
     // 1. Pergunta ao browser o estado da formatação atual
