@@ -1669,7 +1669,7 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
 // ============================================================
    // LÓGICA DE PARTILHA DE CAIXAS (Event Delegation)
    // ============================================================
-   document.getElementById('read-body').addEventListener('click', async (e) => {
+ document.getElementById('read-body').addEventListener('click', async (e) => {
        // Verificar se o clique foi no botão de partilha
        const shareBtn = e.target.closest('.share-box-btn');
        if (!shareBtn) return;
@@ -1681,15 +1681,14 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
        shareBtn.disabled = true;
 
        try {
-           // Recuperar dados dos atributos data-*
+           // Recuperar dados
            const titleText = shareBtn.dataset.title;
            const highlightHex = shareBtn.dataset.highlight;
            const typeClass = shareBtn.dataset.type;
            const topicsJSON = shareBtn.dataset.topics;
-           // Descodificar o HTML do conteúdo
            const innerHTML = decodeURIComponent(shareBtn.dataset.content);
 
-           // Reconstruir o HTML "cru" para o sharenote.html
+           // Preparar HTML para a partilha
            const rawSnippet = `
                <div class="mini-note-wrapper ${typeClass}" data-highlight="${highlightHex}" data-topics='${topicsJSON}'>
                    <input class="mini-note-title-input" value="${titleText}">
@@ -1699,7 +1698,7 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
 
            const authorName = document.getElementById('user-info').textContent;
 
-           // Salvar na coleção shared_notes
+           // Salvar no Firebase
            const docRef = await addDoc(collection(db, "shared_notes"), {
                nome: titleText || "Fragmento Partilhado",
                conteudo: rawSnippet,
@@ -1708,15 +1707,45 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
                type: 'snippet'
            });
 
-           // Gerar Link e Copiar
            const shareUrl = `${window.location.origin}/sharenote.html?id=${docRef.id}`;
-           await navigator.clipboard.writeText(shareUrl);
-           
-           shareBtn.innerHTML = '✅';
-           setTimeout(() => { shareBtn.innerHTML = originalIcon; shareBtn.disabled = false; }, 2000);
+
+           // --- LÓGICA INTELIGENTE (Mobile vs Desktop) ---
+           if (navigator.share) {
+               // SE SUPORTAR PARTILHA NATIVA (Android/iPhone)
+               try {
+                   await navigator.share({
+                       title: 'Nota Partilhada - JW Notebook',
+                       text: `Vê esta nota sobre "${titleText || 'um assunto'}" que partilhei:`,
+                       url: shareUrl
+                   });
+                   // Se partilhou com sucesso (ou abriu o menu)
+                   shareBtn.innerHTML = '✅'; 
+               } catch (shareError) {
+                   // Se o utilizador cancelou o menu de partilha, não fazemos nada (ou mostramos erro)
+                   if (shareError.name !== 'AbortError') {
+                        console.error('Erro na partilha nativa:', shareError);
+                   }
+                   shareBtn.innerHTML = originalIcon; // Restaura o ícone
+               }
+           } else {
+               // FALLBACK PARA DESKTOP (Copiar Link)
+               await navigator.clipboard.writeText(shareUrl);
+               shareBtn.innerHTML = '✅';
+               // Tooltip temporário para avisar que copiou
+               const originalTitle = shareBtn.title;
+               shareBtn.title = "Link copiado!";
+               setTimeout(() => shareBtn.title = originalTitle, 2000);
+           }
+
+           // Restaurar botão após 2 segundos (apenas se tiver sucesso visual)
+           if (shareBtn.innerHTML === '✅') {
+               setTimeout(() => { shareBtn.innerHTML = originalIcon; shareBtn.disabled = false; }, 2500);
+           } else {
+               shareBtn.disabled = false;
+           }
 
        } catch (err) {
-           console.error("Erro ao partilhar bloco:", err);
+           console.error("Erro ao gerar partilha:", err);
            shareBtn.innerHTML = '❌';
            setTimeout(() => { shareBtn.innerHTML = originalIcon; shareBtn.disabled = false; }, 2000);
        }
