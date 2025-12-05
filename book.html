@@ -1626,14 +1626,25 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
 
        const btn = this;
        const originalText = btn.textContent;
-       btn.textContent = "⏳ A gerar link...";
+       btn.textContent = "⏳ A copiar...";
        btn.disabled = true;
 
        try {
+           // 1. GERAR URL E COPIAR IMEDIATAMENTE
+           const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
+           const shareUrl = `${baseUrl}/sharenote.html?id=${window.currentNoteId}`;
+
+           // Tenta copiar logo
+           await navigator.clipboard.writeText(shareUrl);
+           
+           // Muda texto para indicar que está a salvar
+           btn.textContent = "☁️ A guardar...";
+
+           // 2. LER E GUARDAR NA BASE DE DADOS (Processo lento)
            const docRef = doc(db, 'pastas', window.currentNoteId);
            const docSnap = await getDoc(docRef);
            
-           if (!docSnap.exists()) throw new Error("Nota não encontrada na origem.");
+           if (!docSnap.exists()) throw new Error("Nota não encontrada.");
            const noteData = docSnap.data();
 
            await setDoc(doc(db, 'shared_notes', window.currentNoteId), {
@@ -1643,18 +1654,16 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
                sharedAt: serverTimestamp()
            });
 
-           // --- CORREÇÃO DO LINK AQUI TAMBÉM ---
-           const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
-           const shareUrl = `${baseUrl}/sharenote.html?id=${window.currentNoteId}`;
-           // ------------------------------------
-
-           await navigator.clipboard.writeText(shareUrl);
-           
            btn.textContent = "✅ Link Copiado!";
 
        } catch (error) {
            console.error("Erro ao partilhar:", error);
            btn.textContent = "❌ Erro";
+           // Fallback: Se o erro foi no clipboard mas a BD funcionou, mostramos o link num prompt
+           if (error.name === 'NotAllowedError' || error.name === 'ClipboardError') {
+                prompt("Não foi possível copiar automaticamente. Copie este link:", 
+                       `${window.location.href.substring(0, window.location.href.lastIndexOf('/'))}/sharenote.html?id=${window.currentNoteId}`);
+           }
        } finally {
            setTimeout(() => {
                btn.textContent = originalText;
@@ -1666,27 +1675,26 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
 // ============================================================
    // LÓGICA DE PARTILHA DE CAIXAS (Event Delegation)
    // ============================================================
-  document.getElementById('read-body').addEventListener('click', async (e) => {
-       // 1. Verificar se clicou no botão de partilha
+   document.getElementById('read-body').addEventListener('click', async (e) => {
        const shareBtn = e.target.closest('.share-box-btn');
        if (!shareBtn) return;
 
        e.stopPropagation();
-
-       // 2. Feedback visual de carregamento
        const originalIcon = shareBtn.innerHTML;
+       
+       // Feedback imediato
        shareBtn.innerHTML = '⏳';
        shareBtn.disabled = true;
 
        try {
-           // 3. Obter dados escondidos no botão
+           // 1. Preparar os dados
            const titleText = shareBtn.dataset.title;
            const highlightHex = shareBtn.dataset.highlight;
            const typeClass = shareBtn.dataset.type;
            const topicsJSON = shareBtn.dataset.topics;
            const innerHTML = decodeURIComponent(shareBtn.dataset.content);
+           const authorName = document.getElementById('user-info').textContent;
 
-           // 4. Preparar o HTML para o fragmento
            const rawSnippet = `
                <div class="mini-note-wrapper ${typeClass}" data-highlight="${highlightHex}" data-topics='${topicsJSON}'>
                    <input class="mini-note-title-input" value="${titleText}">
@@ -1694,10 +1702,19 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
                </div>
            `;
 
-           const authorName = document.getElementById('user-info').textContent;
+           // 2. GERAR O ID E O LINK IMEDIATAMENTE (Sem esperar pela Base de Dados)
+           // Cria uma referência vazia apenas para ter um ID válido
+           const newRef = doc(collection(db, "shared_notes"));
+           
+           // Constrói o URL
+           const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
+           const shareUrl = `${baseUrl}/sharenote.html?id=${newRef.id}`;
 
-           // 5. Salvar na base de dados
-           const docRef = await addDoc(collection(db, "shared_notes"), {
+           // 3. COPIAR AGORA (Enquanto o clique ainda é "válido" para o browser)
+           await navigator.clipboard.writeText(shareUrl);
+           
+           // 4. AGORA SIM, GUARDAR NA BASE DE DADOS
+           await setDoc(newRef, {
                nome: titleText || "Fragmento Partilhado",
                conteudo: rawSnippet,
                authorName: authorName,
@@ -1705,17 +1722,9 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
                type: 'snippet'
            });
 
-           // 6. Gerar o Link (Com a correção da pasta do GitHub)
-           const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
-           const shareUrl = `${baseUrl}/sharenote.html?id=${docRef.id}`;
-
-           // 7. COPIAR PARA O CLIPBOARD (Apenas isto, sem menus)
-           await navigator.clipboard.writeText(shareUrl);
-           
-           // 8. Sucesso
+           // Sucesso
            shareBtn.innerHTML = '✅';
            
-           // Repor o ícone original após 2.5 segundos
            setTimeout(() => { 
                shareBtn.innerHTML = originalIcon; 
                shareBtn.disabled = false; 
@@ -1723,6 +1732,8 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
 
        } catch (err) {
            console.error("Erro na partilha:", err);
+           // Se falhar, tentamos alertar o user, pois o erro visual é subtil
+           alert("Erro ao copiar: " + err.message);
            shareBtn.innerHTML = '❌';
            setTimeout(() => { 
                shareBtn.innerHTML = originalIcon; 
