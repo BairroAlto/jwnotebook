@@ -1204,12 +1204,16 @@ button.sharing-active {
         <button data-command="redo" title="Refazer">↪️</button>
     </div>
     
-    <!-- GRUPO 3: Status e Histórico (Fica à direita automaticamente por causa do CSS margin-left: auto) -->
-    <div class="toolbar-history">
-        <span id="save-status-indicator" class="save-status"></span>
-        <button data-action="show-topics" title="Gerir Tópicos" style="margin-right: 5px;">📑</button> 
-        <button data-action="show-history" title="Histórico de Versões">🕒</button>
-    </div>
+   <!-- GRUPO 3: Status e Histórico -->
+<div class="toolbar-history">
+    <span id="save-status-indicator" class="save-status"></span>
+    
+    <!-- NOVO BOTÃO DE PARTILHA DA NOTA -->
+    <button data-action="note-sharing-settings" title="Partilha da Nota" style="margin-right: 5px;">🔗</button> 
+    
+    <button data-action="show-topics" title="Gerir Tópicos" style="margin-right: 5px;">📑</button> 
+    <button data-action="show-history" title="Histórico de Versões">🕒</button>
+</div>
     
 </div>
 
@@ -1898,6 +1902,28 @@ button.sharing-active {
     </p>
 </div>
 
+<!-- POPUP DE PARTILHA DA NOTA INTEIRA -->
+<div id="note-share-popup" style="display: none; position: absolute; background-color: var(--sidebar-color); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.4); z-index: 2200; padding: 15px; width: 260px; flex-direction: column; gap: 10px;">
+    <h4 style="margin: 0 0 10px 0; font-size: 0.9em; text-transform: uppercase; color: var(--text-muted-color); border-bottom: 1px solid var(--border-color); padding-bottom: 5px;">Partilha da Nota</h4>
+    
+    <div class="share-toggle-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.95em; color: var(--text-color);">
+        <span>Link Público</span>
+        <label class="setting-switch">
+            <input type="checkbox" id="note-share-toggle">
+            <span class="slider round"></span>
+        </label>
+    </div>
+    
+    <div id="note-share-link-container" style="display: none; margin-top: 10px;">
+        <input type="text" id="note-share-url" readonly style="width: 100%; padding: 5px; font-size: 0.85em; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-muted-color); margin-bottom: 5px;">
+        <button id="copy-note-link-btn" style="width: 100%; padding: 5px; background: var(--accent-color); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em;">Copiar Link</button>
+    </div>
+
+    <p style="font-size: 0.75em; color: var(--text-muted-color); margin-top: 5px; line-height: 1.3;">
+        Ao ativar, qualquer pessoa com o link poderá ler esta nota (mas não editar).
+    </p>
+</div>
+
 </body>
 
 
@@ -2000,6 +2026,11 @@ const saveStatusIndicator = document.getElementById('save-status-indicator');
 const connectivityStatus = document.getElementById('connectivity-status');
 const entitySuggestionPopup = document.getElementById('entity-suggestion-popup');
 const entitySuggestionList = document.getElementById('entity-suggestion-list');
+const noteSharePopup = document.getElementById('note-share-popup');
+const noteShareToggle = document.getElementById('note-share-toggle');
+const noteShareLinkContainer = document.getElementById('note-share-link-container');
+const noteShareUrlInput = document.getElementById('note-share-url');
+const copyNoteLinkBtn = document.getElementById('copy-note-link-btn');
 const debouncedScanAndLink = debounce(scanAndLinkEntities, 2000);
 const ENTITY_CONFIG = {
     personagem: {
@@ -2083,6 +2114,7 @@ let aggregationTargetName = ""; // Nome da nova nota a criar
 let aggregationParentId = null; // Onde a nova nota será criada
 let htmlToAppend = ""; // Guarda o conteúdo da caixa que vamos copiar
 let appendStack = [];  // Histórico de navegação do modal
+let currentNoteShareData = null;
 
 
 // --- PROTEÇÃO DE ROTA E CARREGAMENTO DE USUÁRIO ---
@@ -4193,6 +4225,22 @@ function updateSharingButtonState(wrapper) {
     }
 }
 
+// Atualiza o ícone na toolbar principal
+function updateNoteSharingButtonUI(isShared) {
+    const btn = document.querySelector('button[data-action="note-sharing-settings"]');
+    if (!btn) return;
+
+    if (isShared) {
+        btn.textContent = '🔓'; // Aberto/Verde
+        btn.style.color = '#2ecc71';
+        btn.title = "Nota Pública (Clique para gerir)";
+    } else {
+        btn.textContent = '🔗'; // Corrente/Neutro
+        btn.style.color = '';
+        btn.title = "Partilhar Nota";
+    }
+}
+
 // Função Central: Grava as cores e o UserID no Firebase
 // (Cria se não existir, Atualiza se já existir)
 async function syncColorsToFirebase() {
@@ -4373,7 +4421,7 @@ function updateMiddlePanelForFolderSelection(folderId, folderName, selectedEleme
 
 
 
- async function displayNote(noteId, noteElement, searchTerm = null) {
+async function displayNote(noteId, noteElement, searchTerm = null) {
     // 1. Lógica visual de seleção na lista
     document.querySelectorAll('#middle-panel .list-item.selected').forEach(el => el.classList.remove('selected'));
     // Se viemos da pesquisa, noteElement pode ser nulo, então procuramos na lista
@@ -4392,9 +4440,22 @@ function updateMiddlePanelForFolderSelection(folderId, folderName, selectedEleme
     // 3. Carregar dados da nota
     const noteSnap = await getDoc(doc(db, 'pastas', noteId));
     if (noteSnap.exists()) {
-        const { nome, conteudo } = noteSnap.data();
+        // --- ALTERAÇÃO AQUI: Adicione 'shareSettings' à desestruturação ---
+        const { nome, conteudo, shareSettings } = noteSnap.data(); 
+        
         noteTitleInput.value = nome || '';
         noteContentEditor.innerHTML = conteudo || '';
+
+        // --- PASSO D: COLOQUE ESTE BLOCO AQUI ---
+        // Atualiza a variável global e o ícone
+        currentNoteShareData = shareSettings || { shared: false, shareId: null };
+        
+        if (currentNoteShareData.shared) {
+            updateNoteSharingButtonUI(true);
+        } else {
+            updateNoteSharingButtonUI(false);
+        }
+        // ----------------------------------------
 
         fixLegacyMiniNotes(); 
         refreshAllCalendars();
@@ -4572,6 +4633,22 @@ async function executeSave() {
     }
 }
 
+// SINCRONIZAÇÃO PÚBLICA (Se a nota estiver partilhada)
+    if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
+        try {
+            // Grava na coleção 'shared_notes' sem bloquear a gravação principal
+            setDoc(doc(db, 'shared_notes', currentNoteShareData.shareId), {
+                nome: noteTitleInput.value,
+                conteudo: noteContentEditor.innerHTML,
+                authorName: currentUserData?.nome || "Anónimo",
+                updatedAt: serverTimestamp(),
+                type: 'full_note' // Marca como nota completa
+            }, { merge: true }).catch(err => console.error("Erro sync partilha:", err));
+            
+        } catch (e) {
+            console.warn("Falha silenciosa ao sincronizar partilha pública.");
+        }
+    }
 
  function insertMiniNoteAtCursor(type = 'default') {
     const selection = window.getSelection();
@@ -10187,72 +10264,142 @@ document.addEventListener('click', (e) => {
 });
 
 // --- LISTENER UNIFICADO DA BARRA DE FERRAMENTAS ---
- editorToolbar.addEventListener('click', async (e) => {
-    // 1. Identificar o alvo (Botão ou Input)
-    const target = e.target.closest('button, input');
-    if (!target) return;
+ // --- EVENT LISTENER: BOTÃO DA TOOLBAR ---
+editorToolbar.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-action="note-sharing-settings"]');
+    if (!btn) return;
 
-    // Ignora botões de formatação (negrito, etc)
-    if (target.dataset.command && target.tagName !== 'INPUT') {
-        return; 
+    e.preventDefault(); e.stopPropagation();
+
+    if (!selectedNoteId) return;
+
+    // 1. Carregar estado atual da base de dados
+    // (O estado de partilha fica gravado na própria nota em 'shareSettings')
+    try {
+        const docRef = doc(db, 'pastas', selectedNoteId);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            currentNoteShareData = data.shareSettings || { shared: false, shareId: null };
+            
+            // Configura UI do Popup
+            noteShareToggle.checked = currentNoteShareData.shared;
+            toggleNoteLinkUI(currentNoteShareData.shared);
+
+            // Se já tiver ID, gera o link para mostrar
+            if (currentNoteShareData.shareId) {
+                const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
+                noteShareUrlInput.value = `${baseUrl}/sharenote.html?id=${currentNoteShareData.shareId}`;
+            }
+        }
+    } catch (err) {
+        console.error("Erro ao ler definições de partilha:", err);
     }
 
-    // 3. Ações de Interface
-    const action = target.dataset.action;
+    // 2. Posicionar e Abrir Popup
+    const rect = btn.getBoundingClientRect();
+    noteSharePopup.style.display = 'flex';
+    noteSharePopup.style.top = `${rect.bottom + window.scrollY + 5}px`;
+    // Alinha à direita do botão para não sair do ecrã
+    noteSharePopup.style.left = `${rect.right - 260}px`; 
+});
+
+// --- TOGGLE (LIGAR/DESLIGAR) ---
+noteShareToggle.addEventListener('change', async () => {
+    if (!selectedNoteId) return;
+
+    const isShared = noteShareToggle.checked;
     
-    // --- LOG PARA DEBUG ---
-    console.log("Botão da barra clicado:", action); 
-    // ---------------------
+    // Feedback visual imediato
+    toggleNoteLinkUI(isShared);
+    updateNoteSharingButtonUI(isShared);
 
-    if (action) {
-        e.preventDefault(); 
+    try {
+        const noteRef = doc(db, 'pastas', selectedNoteId);
+        let shareId = currentNoteShareData?.shareId;
 
-        switch (action) {
-            case 'show-explorer': 
-                openExplorerModal(); 
-                break;
-            
-            case 'show-attachments': 
-                openAttachmentsModal(); 
-                break;
-            
-            case 'insert-mini-note': 
-                insertMiniNoteAtCursor('default'); 
-                break;
-            
-            case 'insert-question': 
-                insertMiniNoteAtCursor('question'); 
-                break;
-
-            // >>>>>> AQUI ESTAVA A FALTA <<<<<<
-            case 'insert-free-container': 
-                console.log("A executar inserção de Contentor Livre...");
-                insertMiniNoteAtCursor('free'); 
-                break;
-            // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-            // ... outros casos ...
-            
-            case 'show-history': 
-                openHistoryModal(); 
-                break;
-            
-            case 'show-topics': 
-                openTopicsModal(selectedNoteId, 'nota'); 
-                break;
+        // Se está a ligar e ainda não tem ID de partilha, cria um novo
+        // (Ou usa o próprio ID da nota se preferir, mas um ID separado é mais seguro)
+        if (isShared && !shareId) {
+            // Vamos usar o próprio ID da nota para simplificar a sincronização,
+            // mas gravamos na coleção 'shared_notes' separada.
+            shareId = selectedNoteId; 
         }
+
+        // 1. Atualizar metadados na Nota Original
+        await updateDoc(noteRef, {
+            shareSettings: {
+                shared: isShared,
+                shareId: shareId,
+                updatedAt: serverTimestamp()
+            }
+        });
+
+        // 2. Sincronizar com a coleção pública 'shared_notes'
+        if (isShared) {
+            // Copia o conteúdo atual para a área pública
+            const noteSnap = await getDoc(noteRef);
+            const noteData = noteSnap.data();
+            
+            await setDoc(doc(db, 'shared_notes', shareId), {
+                nome: noteData.nome,
+                conteudo: noteData.conteudo,
+                authorName: currentUserData.nome || "Anónimo", // Usa a variável global do user
+                sharedAt: serverTimestamp(),
+                type: 'full_note',
+                originalNoteId: selectedNoteId
+            });
+            
+            // Gera link para o input
+            const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
+            noteShareUrlInput.value = `${baseUrl}/sharenote.html?id=${shareId}`;
+
+        } else {
+            // Se desligou, apagamos da coleção pública para segurança total
+            if (shareId) {
+                await deleteDoc(doc(db, 'shared_notes', shareId));
+            }
+        }
+
+        // Atualiza estado local
+        currentNoteShareData = { shared: isShared, shareId: shareId };
+
+    } catch (e) {
+        console.error("Erro ao alterar partilha:", e);
+        alert("Erro ao atualizar definições de partilha.");
+        // Reverte visualmente em caso de erro
+        noteShareToggle.checked = !isShared;
+        toggleNoteLinkUI(!isShared);
     }
 });
 
-if (saveStatusIndicator) {
-    saveStatusIndicator.addEventListener('click', () => {
-        // Só grava se estiver no estado 'unsaved' (por guardar) ou 'error'
-        if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'error') {
-            console.log("Clique no status: a forçar gravação imediata...");
-            saveNote(true); // O parâmetro 'true' força a gravação imediata
-        }
-    });
+// Auxiliar para mostrar/esconder o input do link
+function toggleNoteLinkUI(show) {
+    if (show) {
+        noteShareLinkContainer.style.display = 'block';
+    } else {
+        noteShareLinkContainer.style.display = 'none';
+    }
 }
+
+// Botão Copiar Link
+copyNoteLinkBtn.addEventListener('click', () => {
+    noteShareUrlInput.select();
+    document.execCommand('copy');
+    const originalText = copyNoteLinkBtn.textContent;
+    copyNoteLinkBtn.textContent = "Copiado!";
+    setTimeout(() => copyNoteLinkBtn.textContent = originalText, 2000);
+});
+
+// Fechar ao clicar fora
+document.addEventListener('click', (e) => {
+    if (noteSharePopup.style.display !== 'none') {
+        if (!noteSharePopup.contains(e.target) && !e.target.closest('button[data-action="note-sharing-settings"]')) {
+            noteSharePopup.style.display = 'none';
+        }
+    }
+});
 
 // ====================================================================
 // NOVA FUNÇÃO PARA O POPUP DE VISUALIZAÇÃO
