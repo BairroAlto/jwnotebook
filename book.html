@@ -711,17 +711,21 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
            }
 
            // --- ALTERAÇÃO AQUI: Botão com Dados, sem onclick ---
-           const shareBtn = document.createElement('button');
+         const shareBtn = document.createElement('button');
            shareBtn.className = 'share-box-btn';
-           shareBtn.innerHTML = '🔗';
-           shareBtn.title = 'Partilhar apenas este bloco';
            
-           // Guardar dados nos atributos do botão para ler depois
+           // Lógica visual do ícone baseada no estado atual
+           const isShared = wrapper.getAttribute('data-shared') === 'true';
+           shareBtn.innerHTML = isShared ? '🔓' : '🔗'; // Mostra cadeado aberto se já partilhado, ou corrente se não
+           shareBtn.title = 'Gerar Link de Partilha';
+           
+           // Guardar dados
+           shareBtn.dataset.boxId = wrapper.id; // <--- CRUCIAL: O ID DA CAIXA
+           shareBtn.dataset.currentSharedState = wrapper.getAttribute('data-shared') || 'false';
            shareBtn.dataset.title = titleText;
            shareBtn.dataset.highlight = highlightHex || '';
            shareBtn.dataset.type = typeClass;
            shareBtn.dataset.topics = topicsJSON || '{}';
-           // Importante: Codificar o HTML para não partir o atributo
            shareBtn.dataset.content = encodeURIComponent(innerHTML); 
            
            newContainer.appendChild(shareBtn);
@@ -1675,7 +1679,7 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
 // ============================================================
    // LÓGICA DE PARTILHA DE CAIXAS (Event Delegation)
    // ============================================================
-   document.getElementById('read-body').addEventListener('click', async (e) => {
+  document.getElementById('read-body').addEventListener('click', async (e) => {
        const shareBtn = e.target.closest('.share-box-btn');
        if (!shareBtn) return;
 
@@ -1688,32 +1692,67 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
 
        try {
            // 1. Preparar os dados
+           const boxId = shareBtn.dataset.boxId;
            const titleText = shareBtn.dataset.title;
            const highlightHex = shareBtn.dataset.highlight;
            const typeClass = shareBtn.dataset.type;
            const topicsJSON = shareBtn.dataset.topics;
            const innerHTML = decodeURIComponent(shareBtn.dataset.content);
            const authorName = document.getElementById('user-info').textContent;
+           const noteId = window.currentNoteId; // ID da nota pai
 
+           // 2. FORÇAR "TRUE" NO HTML QUE VAI PARA O LINK PÚBLICO
+           // Independentemente do que estava antes, o link público nasce com data-shared="true"
            const rawSnippet = `
-               <div class="mini-note-wrapper ${typeClass}" data-highlight="${highlightHex}" data-topics='${topicsJSON}'>
+               <div class="mini-note-wrapper ${typeClass}" id="${boxId}" data-shared="true" data-highlight="${highlightHex}" data-topics='${topicsJSON}'>
                    <input class="mini-note-title-input" value="${titleText}">
                    <div class="mini-note-content">${innerHTML}</div>
                </div>
            `;
 
-           // 2. GERAR O ID E O LINK IMEDIATAMENTE (Sem esperar pela Base de Dados)
-           // Cria uma referência vazia apenas para ter um ID válido
+           // 3. ATUALIZAR A NOTA ORIGINAL NA BASE DE DADOS (Se ainda estava false)
+           // Isto garante que quando voltar ao editor, o botão esteja "Verde/Aberto"
+           if (shareBtn.dataset.currentSharedState !== 'true') {
+               try {
+                   // A. Ler a nota completa
+                   const noteRef = doc(db, 'pastas', noteId);
+                   const noteSnap = await getDoc(noteRef);
+                   
+                   if (noteSnap.exists()) {
+                       let fullContent = noteSnap.data().conteudo;
+                       
+                       // B. Manipular o HTML usando DOMParser (Mais seguro que Replace string)
+                       const parser = new DOMParser();
+                       const docHTML = parser.parseFromString(fullContent, 'text/html');
+                       const boxElement = docHTML.getElementById(boxId);
+                       
+                       if (boxElement) {
+                           boxElement.setAttribute('data-shared', 'true');
+                           
+                           // C. Gravar de volta
+                           await setDoc(noteRef, {
+                               conteudo: docHTML.body.innerHTML,
+                               ultimaedicao: serverTimestamp() // Importar serverTimestamp se der erro
+                           }, { merge: true });
+                           
+                           console.log("Nota original atualizada para permitir partilha.");
+                           
+                           // Atualiza o botão localmente para refletir o novo estado
+                           shareBtn.dataset.currentSharedState = 'true';
+                       }
+                   }
+               } catch (dbError) {
+                   console.error("Aviso: O link foi criado, mas falhou ao atualizar a nota original.", dbError);
+               }
+           }
+
+           // 4. CRIAR O LINK PÚBLICO
            const newRef = doc(collection(db, "shared_notes"));
-           
-           // Constrói o URL
            const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
            const shareUrl = `${baseUrl}/sharenote.html?id=${newRef.id}`;
 
-           // 3. COPIAR AGORA (Enquanto o clique ainda é "válido" para o browser)
            await navigator.clipboard.writeText(shareUrl);
            
-           // 4. AGORA SIM, GUARDAR NA BASE DE DADOS
            await setDoc(newRef, {
                nome: titleText || "Fragmento Partilhado",
                conteudo: rawSnippet,
@@ -1723,17 +1762,16 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
            });
 
            // Sucesso
-           shareBtn.innerHTML = '✅';
+           shareBtn.innerHTML = '✅'; // Cadeado aberto ou check
            
            setTimeout(() => { 
-               shareBtn.innerHTML = originalIcon; 
+               shareBtn.innerHTML = '🔓'; // Fica como desbloqueado
                shareBtn.disabled = false; 
            }, 2500);
 
        } catch (err) {
            console.error("Erro na partilha:", err);
-           // Se falhar, tentamos alertar o user, pois o erro visual é subtil
-           alert("Erro ao copiar: " + err.message);
+           alert("Erro ao processar partilha: " + err.message);
            shareBtn.innerHTML = '❌';
            setTimeout(() => { 
                shareBtn.innerHTML = originalIcon; 
