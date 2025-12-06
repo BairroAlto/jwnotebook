@@ -6086,22 +6086,21 @@ async function showTopicReferencesPanel(id, name, description, type) {
 // ====================================================================
 // CÓDIGO ATUALIZADO COM LOGS
 // ====================================================================
- function openLinkModal(isEditing, data) {
-    // 1. CRUCIAL: Guardar a seleção IMEDIATAMENTE numa variável local.
-    // Assim, mesmo que o user clique noutros sítios, temos a referência do texto original.
+ async function openLinkModal(isEditing, data) {
+    // 1. CAPTURA ROBUSTA DA SELEÇÃO (CRÍTICO)
+    // Tentamos garantir que temos o texto selecionado guardado antes de qualquer outra coisa.
+    // Isto resolve o problema de perder a seleção quando se clica nos inputs do modal.
     let savedRange = null;
-    
+
     if (!isEditing) {
         if (currentSelectionRange) {
+            // Tenta usar a variável global gerida pelo handleTextSelection
             savedRange = currentSelectionRange.cloneRange();
         } else {
-            // Tenta obter do browser se a variável global falhar
+            // Fallback: Tenta obter diretamente do navegador
             const sel = window.getSelection();
-            if (sel.rangeCount > 0) {
+            if (sel.rangeCount > 0 && !sel.isCollapsed) {
                 savedRange = sel.getRangeAt(0).cloneRange();
-            } else {
-                alert("Erro: Nenhum texto selecionado para criar o link.");
-                return;
             }
         }
     }
@@ -6113,46 +6112,59 @@ async function showTopicReferencesPanel(id, name, description, type) {
     const removeBtn = document.getElementById('link-remove-btn');
     const saveBtn = document.getElementById('link-save-btn');
     const modalTitle = document.getElementById('link-modal-title');
-    
-    urlsContainer.innerHTML = '';
 
-    // Clonar botões para limpar listeners antigos
+    // Reset UI
+    urlsContainer.innerHTML = '';
+    
+    // Clonar botões para limpar listeners antigos (Evita cliques duplicados)
     const newSaveBtn = saveBtn.cloneNode(true);
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
-    
+
     const newRemoveBtn = removeBtn.cloneNode(true);
     removeBtn.parentNode.replaceChild(newRemoveBtn, removeBtn);
-    
+
     const newAddUrlBtn = addUrlBtn.cloneNode(true);
     addUrlBtn.parentNode.replaceChild(newAddUrlBtn, addUrlBtn);
-    
+
     newAddUrlBtn.onclick = () => addUrlField();
 
     // --- MODO EDIÇÃO ---
     if (isEditing) {
-        console.log('[openLinkModal] Abrindo em modo de EDIÇÃO para o anexo ID:', data.id);
+        console.log('[openLinkModal] Modo EDIÇÃO para ID:', data.id);
         modalTitle.textContent = "Editar/Remover Anexo";
         newRemoveBtn.style.display = 'block';
-        
+
+        // Preenche os dados atuais
         (async () => {
-            const noteSnap = await getDoc(doc(db, 'pastas', selectedNoteId));
-            if (noteSnap.exists() && noteSnap.data().anexos && noteSnap.data().anexos[data.id]) {
-                const anexoFromDb = noteSnap.data().anexos[data.id];
-                titleInput.value = anexoFromDb.titulo;
-                if (anexoFromDb.urls && Object.keys(anexoFromDb.urls).length > 0) {
-                    Object.values(anexoFromDb.urls).forEach(url => addUrlField(url));
-                } else { addUrlField(); }
+            try {
+                const noteSnap = await getDoc(doc(db, 'pastas', selectedNoteId));
+                if (noteSnap.exists() && noteSnap.data().anexos && noteSnap.data().anexos[data.id]) {
+                    const anexoFromDb = noteSnap.data().anexos[data.id];
+                    titleInput.value = anexoFromDb.titulo;
+                    
+                    if (anexoFromDb.urls && Object.keys(anexoFromDb.urls).length > 0) {
+                        Object.values(anexoFromDb.urls).forEach(url => addUrlField(url));
+                    } else if (anexoFromDb.hiperligacao) {
+                         // Suporte legado
+                         addUrlField(anexoFromDb.hiperligacao);
+                    } else { 
+                        addUrlField(); 
+                    }
+                }
+            } catch (e) {
+                console.error("Erro ao carregar dados do anexo:", e);
             }
         })();
-    
+
+        // Gravar Edição
         newSaveBtn.onclick = async () => {
             const newTitle = titleInput.value.trim();
-            if (!newTitle) return;
-            
+            if (!newTitle) return alert("O título é obrigatório.");
+
             const urlInputs = urlsContainer.querySelectorAll('input');
             const urlsToSave = {};
             let firstUrl = null;
-            
+
             urlInputs.forEach((input, index) => {
                 let url = input.value.trim();
                 if (url) {
@@ -6161,38 +6173,50 @@ async function showTopicReferencesPanel(id, name, description, type) {
                     urlsToSave[`url_${Date.now() + index}`] = url;
                 }
             });
-            
-            if (Object.keys(urlsToSave).length === 0) { alert('Por favor, preencha pelo menos uma URL.'); return; }
-            
-            const noteRef = doc(db, 'pastas', selectedNoteId);
-            await updateDoc(noteRef, {
-                [`anexos.${data.id}.titulo`]: newTitle,
-                [`anexos.${data.id}.urls`]: urlsToSave,
-                [`anexos.${data.id}.hiperligacao`]: deleteField(),
-                [`anexos.${data.id}.timestamp`]: serverTimestamp()
-            });
-            
-            const linkInEditor = noteContentEditor.querySelector(`a[data-anexo-id="${data.id}"]`);
-            if (linkInEditor) linkInEditor.href = firstUrl;
-            
-            modal.style.display = 'none';
-            saveNote();
+
+            if (Object.keys(urlsToSave).length === 0) return alert('Preencha pelo menos uma URL.');
+
+            try {
+                const noteRef = doc(db, 'pastas', selectedNoteId);
+                await updateDoc(noteRef, {
+                    [`anexos.${data.id}.titulo`]: newTitle,
+                    [`anexos.${data.id}.urls`]: urlsToSave,
+                    [`anexos.${data.id}.hiperligacao`]: deleteField(), // Limpa campo antigo se existir
+                    [`anexos.${data.id}.timestamp`]: serverTimestamp()
+                });
+
+                // Atualiza o href no editor visualmente
+                const linkInEditor = noteContentEditor.querySelector(`a[data-anexo-id="${data.id}"]`);
+                if (linkInEditor) linkInEditor.href = firstUrl;
+
+                modal.style.display = 'none';
+                saveNote();
+            } catch (e) {
+                console.error("Erro ao editar anexo:", e);
+                alert("Erro ao gravar alterações.");
+            }
         };
 
-        newRemoveBtn.onclick = async () => {
+        // Remover Anexo
+    newRemoveBtn.onclick = async () => {
+            // 1. CORREÇÃO: Forçar o modal de confirmação a ficar acima de tudo
+            const confirmModal = document.getElementById('confirm-modal');
+            confirmModal.style.zIndex = '2000'; 
+
             const confirmed = await showConfirmation('Remover Anexo?', `Tem certeza que deseja remover o anexo "${titleInput.value}"?`);
+            
+            // 2. CORREÇÃO: Restaurar o z-index original para não afetar usos futuros
+            confirmModal.style.zIndex = ''; 
+
             if (!confirmed) return;
 
-            const noteRef = doc(db, 'pastas', selectedNoteId);
-            const noteSnap = await getDoc(noteRef);
-            
-            if (noteSnap.exists() && noteSnap.data().anexos && noteSnap.data().anexos[data.id]) {
-                const anexoToMove = noteSnap.data().anexos[data.id];
+            try {
+                const noteRef = doc(db, 'pastas', selectedNoteId);
                 await updateDoc(noteRef, {
-                    [`anexos.${data.id}`]: deleteField(),
-                    [`anexosocultos.${data.id}`]: anexoToMove
+                    [`anexos.${data.id}`]: deleteField()
                 });
-                
+
+                // Remove a tag <a> mas mantém o texto
                 const linkInEditor = noteContentEditor.querySelector(`a[data-anexo-id="${data.id}"]`);
                 if (linkInEditor) {
                     const parent = linkInEditor.parentNode;
@@ -6205,98 +6229,105 @@ async function showTopicReferencesPanel(id, name, description, type) {
 
                 modal.style.display = 'none';
                 saveNote();
-            } else { 
-                alert("Erro: Anexo não encontrado no banco de dados."); 
+            } catch (e) {
+                console.error("Erro ao remover:", e);
+                alert("Erro ao remover anexo.");
             }
         };
 
     } 
-    // --- MODO CRIAÇÃO ---
+    // --- MODO CRIAÇÃO (COM A CORREÇÃO DO "GRAVAR") ---
     else {
         modalTitle.textContent = "Criar Anexo";
-        // Se 'data' for string (texto selecionado), usa como título
         titleInput.value = (typeof data === 'string') ? data : ''; 
         newRemoveBtn.style.display = 'none';
         addUrlField();
 
+        // Lógica do Botão Gravar (Nova Versão Robusta)
         newSaveBtn.onclick = async () => {
-            console.groupCollapsed('%c[Link Creation] Botão "Gravar" clicado', 'color: white; background-color: #3498db; padding: 2px 5px; border-radius: 3px;');
-            
-            const titleForDb = titleInput.value.trim();
-            if (!titleForDb) { console.log('  - ERRO: Título vazio.'); alert('Título obrigatório.'); console.groupEnd(); return; }
-            
-            const urlInputs = urlsContainer.querySelectorAll('input');
-            const urlsToSave = {};
-            let firstUrl = null;
-            
-            urlInputs.forEach((input, index) => {
-                let url = input.value.trim();
-                if (url) {
-                    if (!url.startsWith('http')) url = 'https://' + url;
-                    if (!firstUrl) firstUrl = url;
-                    urlsToSave[`url_${Date.now() + index}`] = url;
-                }
-            });
-            
-            if (Object.keys(urlsToSave).length === 0) { alert('Por favor, preencha pelo menos uma URL.'); console.groupEnd(); return; }
-            
-            console.log('  - Dados a gravar na DB:', { titleForDb, urlsToSave, firstUrl });
-
-            const anexoId = `anexo_${Date.now()}`;
-            const noteRef = doc(db, 'pastas', selectedNoteId);
-            
-            // Gravar na DB
-            await updateDoc(noteRef, { [`anexos.${anexoId}`]: { titulo: titleForDb, urls: urlsToSave, timestamp: serverTimestamp() } }, { merge: true });
-            console.log(`  - Anexo ID "${anexoId}" gravado na DB.`);
-
-            console.log('%cFASE 1: Preservar Âncoras Existentes', 'font-weight: bold; color: #f39c12;');
-            
-            // 2. CORREÇÃO: Usamos 'savedRange' em vez de 'currentSelectionRange'
-            const tempDiv = document.createElement('div');
-            tempDiv.appendChild(savedRange.cloneContents()); // <--- AQUI ESTAVA O ERRO
-            console.log('  - Conteúdo HTML da seleção:', tempDiv.innerHTML);
-
-            const anchorsInSelection = Array.from(tempDiv.querySelectorAll('.entity-link'));
-            const preservedAnchors = anchorsInSelection.map(span => ({
-                name: span.dataset.entityName,
-                type: span.dataset.entityType
-            }));
-            
-            console.log('  - Âncoras preservadas:', preservedAnchors);
-
-            console.log('%cFASE 2: Aplicar o Link (execCommand)', 'font-weight: bold; color: #e74c3c;');
-            
-            // Restaurar a seleção para o execCommand funcionar
-            const selection = window.getSelection();
-            selection.removeAllRanges();
-            selection.addRange(savedRange); // <--- Usamos a seleção guardada
-            
-            document.execCommand('createLink', false, firstUrl || '#');
-            
-            // Encontrar o link que acabou de ser criado (onde estava o cursor)
-            const createdLink = selection.anchorNode.parentElement.closest('a');
-            console.log('  - Link criado pelo browser:', createdLink ? createdLink.outerHTML : 'ERRO: Link não encontrado');
-
-            console.log('%cFASE 3: Re-hidratar Âncoras', 'font-weight: bold; color: #9b59b2;');
-            if (createdLink) {
-                createdLink.dataset.anexoId = anexoId;
+            try {
+                // 1. Validação de Dados
+                const titleForDb = titleInput.value.trim();
+                if (!titleForDb) { alert('Título obrigatório.'); return; }
                 
-                if (preservedAnchors.length > 0) {
-                    let reconstructedHTML = createdLink.textContent;
-                    
-                    preservedAnchors.forEach(anchor => {
-                        const anchorHTML = `<span class="entity-link" data-entity-type="${anchor.type}" data-entity-name="${anchor.name}">${anchor.name}</span>`;
-                        const replaceRegex = new RegExp(escapeRegExp(anchor.name), 'g');
-                        reconstructedHTML = reconstructedHTML.replace(replaceRegex, anchorHTML);
-                    });
+                const urlInputs = urlsContainer.querySelectorAll('input');
+                const urlsToSave = {};
+                let firstUrl = null;
+                
+                urlInputs.forEach((input, index) => {
+                    let url = input.value.trim();
+                    if (url) {
+                        if (!url.startsWith('http')) url = 'https://' + url;
+                        if (!firstUrl) firstUrl = url;
+                        urlsToSave[`url_${Date.now() + index}`] = url;
+                    }
+                });
+                
+                if (Object.keys(urlsToSave).length === 0) { alert('Preencha pelo menos uma URL.'); return; }
 
-                    createdLink.innerHTML = reconstructedHTML;
+                // 2. Verificações de Segurança Críticas
+                if (!selectedNoteId) throw new Error("ID da nota não encontrado.");
+                if (!savedRange) throw new Error("A seleção de texto foi perdida. Cancele e tente novamente.");
+
+                // 3. Gravar na Base de Dados (Firebase)
+                const anexoId = `anexo_${Date.now()}`;
+                const noteRef = doc(db, 'pastas', selectedNoteId);
+                
+                await updateDoc(noteRef, { 
+                    [`anexos.${anexoId}`]: { 
+                        titulo: titleForDb, 
+                        urls: urlsToSave, 
+                        timestamp: serverTimestamp() 
+                    } 
+                }, { merge: true });
+
+                console.log(`Anexo gravado na DB: ${anexoId}`);
+
+                // 4. Preparação Visual (Preservar Entidades)
+                const tempDiv = document.createElement('div');
+                tempDiv.appendChild(savedRange.cloneContents()); 
+
+                const anchorsInSelection = Array.from(tempDiv.querySelectorAll('.entity-link'));
+                const preservedAnchors = anchorsInSelection.map(span => ({
+                    name: span.dataset.entityName,
+                    type: span.dataset.entityType
+                }));
+                
+                // 5. Aplicar o Link no Editor
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(savedRange); // Restaura a seleção guardada
+                
+                document.execCommand('createLink', false, firstUrl || '#');
+                
+                // Encontrar o link recém-criado (onde está o cursor)
+                const createdLink = selection.anchorNode.parentElement.closest('a');
+
+                if (createdLink) {
+                    createdLink.dataset.anexoId = anexoId;
+                    
+                    // Se havia entidades coloridas, restaura-as dentro do link
+                    if (preservedAnchors.length > 0) {
+                        let reconstructedHTML = createdLink.textContent;
+                        
+                        preservedAnchors.forEach(anchor => {
+                            const anchorHTML = `<span class="entity-link" data-entity-type="${anchor.type}" data-entity-name="${anchor.name}">${anchor.name}</span>`;
+                            const replaceRegex = new RegExp(escapeRegExp(anchor.name), 'g');
+                            reconstructedHTML = reconstructedHTML.replace(replaceRegex, anchorHTML);
+                        });
+
+                        createdLink.innerHTML = reconstructedHTML;
+                    }
                 }
+                
+                // 6. Fechar e Gravar Nota
+                modal.style.display = 'none';
+                saveNote();
+
+            } catch (error) {
+                console.error("Erro ao criar link:", error);
+                alert("Ocorreu um erro: " + error.message);
             }
-            
-            modal.style.display = 'none';
-            saveNote();
-            console.groupEnd();
         };
     }
     
@@ -6612,53 +6643,27 @@ async function executeGlobalSearch(term, container) {
         const snapshot = await getDocs(q);
         const results = { folders: [], notes: [] };
 
-        // Variável auxiliar para verificar se estamos numa Superpasta
-        // (Assume que SUPERFOLDER_ID é global se estivermos dentro de uma)
         const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
         snapshot.forEach(doc => {
             const data = doc.data();
             const id = doc.id;
             
-            // =========================================================
-            // 1. VERIFICAÇÃO DE PRIVACIDADE (Respeita "Configurações")
-            // =========================================================
-            
-            // Verifica se o item tem senha
+            // 1. VERIFICAÇÃO DE PRIVACIDADE
             const isProtected = (data.passe && data.passe.trim() !== "");
-            
-            // Verifica se está BLOQUEADO (não foi desbloqueado nesta sessão)
             const isLocked = isProtected && !sessionUnlockedFolders.has(id);
             
-            // REGRA: Se está bloqueado e a config "Pesquisar Tags em Protegidos" está OFF,
-            // usamos essa config como "Mestre" para ocultar o item da pesquisa global.
             if (isLocked && !appSettings.searchTagsInProtected) {
-                return; // Pula este item completamente
+                return; 
             }
 
-            // REGRA DE SEGURANÇA DE CONTEÚDO:
-            // Se está bloqueado (mesmo que a config permita achar o item), 
-            // NUNCA pesquisamos dentro do conteúdo/HTML para não vazar segredos no snippet.
             const allowContentSearch = !isLocked;
 
+            // 2. LÓGICA DE PESQUISA
 
-            // =========================================================
-            // 2. FILTRO DE SUPERPASTA (Opcional - Lógica Simplificada)
-            // =========================================================
-            // Se estivermos dentro de uma superpasta e a opção "Pesquisar Globalmente" estiver OFF,
-            // idealmente filtraríamos aqui. (Nota: Filtragem de árvore completa no cliente é complexa,
-            // mas se quiser restringir, poderia verificar se data.parentId existe na lista carregada).
-            // Por agora, assumimos pesquisa global padrão, mas respeitando a privacidade acima.
-
-
-            // =========================================================
-            // 3. LÓGICA DE PESQUISA
-            // =========================================================
-
-            // A. Pesquisa em PASTAS (Apenas Nome)
+            // A. Pesquisa em PASTAS
             if (data.tipo === 'pasta') {
                 if (data.nome.toLowerCase().includes(term)) {
-                    // Adiciona indicador visual se estiver bloqueada
                     const displayName = isLocked ? `🔒 ${data.nome}` : data.nome;
                     results.folders.push({ id, name: displayName, parentId: data.parentId });
                 }
@@ -6668,14 +6673,14 @@ async function executeGlobalSearch(term, container) {
             else if (data.tipo === 'nota') {
                 let matched = false;
                 let context = '';
-                let matchType = 'nota'; // nota, postit, questao, subnota
+                let matchType = 'nota'; 
 
-                // 1. Verifica Título (Sempre permitido se passou o filtro de privacidade inicial)
+                // 1. Verifica Título
                 if (data.nome.toLowerCase().includes(term)) {
                     matched = true;
                 }
 
-                // 2. Verifica Conteúdo (APENAS SE PERMITIDO)
+                // 2. Verifica Conteúdo (TUDO DEVE ESTAR DENTRO DESTE IF)
                 if (!matched && allowContentSearch && data.conteudo) {
                     const parser = new DOMParser();
                     const docHTML = parser.parseFromString(data.conteudo, 'text/html');
@@ -6719,7 +6724,20 @@ async function executeGlobalSearch(term, container) {
                         }
                     }
 
-                    // d) Pesquisa no Texto Geral
+                    // d) Pesquisa em Contentores Livres (CORRIGIDO: Agora está dentro do bloco onde docHTML existe)
+                    if (!matched) {
+                        const frees = docHTML.querySelectorAll('.mini-note-wrapper.free-mode .mini-note-content');
+                        for (const f of frees) {
+                            if (f.textContent.toLowerCase().includes(term)) {
+                                matched = true;
+                                matchType = 'free';
+                                context = generateSearchContext(f.textContent, term);
+                                break;
+                            }
+                        }
+                    }
+
+                    // e) Pesquisa no Texto Geral (Body)
                     if (!matched) {
                         const bodyText = docHTML.body.textContent || "";
                         if (bodyText.toLowerCase().includes(term)) {
@@ -6727,24 +6745,9 @@ async function executeGlobalSearch(term, container) {
                             context = generateSearchContext(bodyText, term);
                         }
                     }
-                }
-
-                  // e) Pesquisa no Laranja
-                  if (!matched) {
-    // Procura por Contentores Livres
-    const frees = docHTML.querySelectorAll('.mini-note-wrapper.free-mode .mini-note-content');
-    for (const f of frees) {
-        if (f.textContent.toLowerCase().includes(term)) {
-            matched = true;
-            matchType = 'free'; // Novo tipo
-            context = generateSearchContext(f.textContent, term);
-            break;
-        }
-    }
-}
+                } // FIM DO IF DATA.CONTEUDO
 
                 if (matched) {
-                    // Se estiver bloqueado, adiciona cadeado e remove contexto (segurança extra)
                     const finalName = isLocked ? `🔒 ${data.nome}` : data.nome;
                     const finalContext = isLocked ? "<em>Conteúdo protegido. Desbloqueie para ver detalhes.</em>" : context;
 
