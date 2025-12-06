@@ -903,6 +903,22 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
        document.getElementById('reader-area').style.display = 'block';
        document.getElementById('read-title').textContent = noteData.nome;
        
+        // --- ADICIONE ESTE BLOCO AQUI ---
+       const shareBtn = document.getElementById('btn-share');
+       // Verifica se nas definições da nota (vindas da BD) está partilhada
+       if (noteData.shareSettings && noteData.shareSettings.shared) {
+           shareBtn.textContent = "🔓 Link Ativo";
+           shareBtn.style.color = "#2ecc71"; // Verde
+           shareBtn.style.borderColor = "#2ecc71";
+           // Guardamos o estado no botão para usar no clique
+           shareBtn.dataset.isShared = "true"; 
+       } else {
+           shareBtn.textContent = "🔗 Partilhar";
+           shareBtn.style.color = ""; // Reset
+           shareBtn.style.borderColor = "";
+           shareBtn.dataset.isShared = "false";
+       }
+
        const mainTopicsContainer = document.getElementById('note-main-topics');
        const topics = noteData.topicosSelecionados || {};
        renderTopicsIntoContainer(mainTopicsContainer, topics);
@@ -1622,57 +1638,78 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
    });
 
    // Lógica do Botão Partilhar
-  document.getElementById('btn-share').addEventListener('click', async function() {
+ document.getElementById('btn-share').addEventListener('click', async function() {
        if (!window.currentNoteId) {
            alert("Nenhuma nota selecionada.");
            return;
        }
 
        const btn = this;
-       const originalText = btn.textContent;
-       btn.textContent = "⏳ A copiar...";
+       const originalText = btn.dataset.isShared === "true" ? "🔓 Link Ativo" : "🔗 Partilhar";
+       
+       btn.textContent = "⏳ A processar...";
        btn.disabled = true;
 
        try {
-           // 1. GERAR URL E COPIAR IMEDIATAMENTE
+           // 1. Definir o ID de partilha (Usa o mesmo ID da nota para facilitar)
+           const shareId = window.currentNoteId; 
+           
+           // 2. Construir o Link
            const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
-           const shareUrl = `${baseUrl}/sharenote.html?id=${window.currentNoteId}`;
+           const shareUrl = `${baseUrl}/sharenote.html?id=${shareId}`;
 
-           // Tenta copiar logo
+           // 3. Copiar para a área de transferência
            await navigator.clipboard.writeText(shareUrl);
            
-           // Muda texto para indicar que está a salvar
-           btn.textContent = "☁️ A guardar...";
-
-           // 2. LER E GUARDAR NA BASE DE DADOS (Processo lento)
-           const docRef = doc(db, 'pastas', window.currentNoteId);
-           const docSnap = await getDoc(docRef);
+           // 4. ATIVAR PARTILHA NA BASE DE DADOS (Se ainda não estiver)
+           // Isto garante que o 'sharenote.html' consegue ler a nota
+           const noteRef = doc(db, 'pastas', window.currentNoteId);
+           const noteSnap = await getDoc(noteRef);
            
-           if (!docSnap.exists()) throw new Error("Nota não encontrada.");
-           const noteData = docSnap.data();
+           if (noteSnap.exists()) {
+               const noteData = noteSnap.data();
+               const authorName = document.getElementById('user-info').textContent;
 
-           await setDoc(doc(db, 'shared_notes', window.currentNoteId), {
-               nome: noteData.nome,
-               conteudo: noteData.conteudo, 
-               authorName: document.getElementById('user-info').textContent, 
-               sharedAt: serverTimestamp()
-           });
+               // A. Atualiza a flag na nota original (para o cadeado ficar verde no note.html)
+               await updateDoc(noteRef, {
+                   shareSettings: {
+                       shared: true,
+                       shareId: shareId,
+                       updatedAt: serverTimestamp()
+                   }
+               });
 
-           btn.textContent = "✅ Link Copiado!";
+               // B. Cria/Atualiza o documento público em 'shared_notes'
+               await setDoc(doc(db, 'shared_notes', shareId), {
+                   nome: noteData.nome,
+                   conteudo: noteData.conteudo,
+                   authorName: authorName,
+                   sharedAt: serverTimestamp(),
+                   type: 'full_note', // Marca como nota completa
+                   originalNoteId: window.currentNoteId
+               });
+           }
+
+           // 5. Atualizar Visual do Botão
+           btn.textContent = "✅ Copiado!";
+           btn.style.color = "#2ecc71";
+           btn.style.borderColor = "#2ecc71";
+           btn.dataset.isShared = "true";
+
+           setTimeout(() => {
+               btn.textContent = "🔓 Link Ativo";
+               btn.disabled = false;
+           }, 2000);
 
        } catch (error) {
            console.error("Erro ao partilhar:", error);
            btn.textContent = "❌ Erro";
-           // Fallback: Se o erro foi no clipboard mas a BD funcionou, mostramos o link num prompt
-           if (error.name === 'NotAllowedError' || error.name === 'ClipboardError') {
-                prompt("Não foi possível copiar automaticamente. Copie este link:", 
-                       `${window.location.href.substring(0, window.location.href.lastIndexOf('/'))}/sharenote.html?id=${window.currentNoteId}`);
-           }
-       } finally {
+           alert("Erro ao ativar partilha: " + error.message);
+           
            setTimeout(() => {
                btn.textContent = originalText;
                btn.disabled = false;
-           }, 3000);
+           }, 2000);
        }
    });
 
