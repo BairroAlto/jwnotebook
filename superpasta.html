@@ -10124,6 +10124,11 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
         aggregationTargetName = itemName;
         aggregationParentId = navigationStack.length > 0 ? navigationStack[navigationStack.length - 1].id : null;
         
+        // Se estivermos na raiz de uma Superpasta
+        if (!aggregationParentId && typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) {
+            aggregationParentId = SUPERFOLDER_ID;
+        }
+        
         // 2. Fecha o modal de nome
         document.getElementById('add-item-modal').style.display = 'none';
         newItemNameInput.value = '';
@@ -10131,6 +10136,79 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
         // 3. Abre o Seletor de Agregação
         openAggregationSelector();
         return; // Pára aqui, não cria nada na BD ainda
+    }
+
+    // >>> LÓGICA PARA CRIAR PASTA OU NOTA (O QUE FALTAVA) <<<
+    try {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "A criar...";
+
+        // 1. Determinar onde vamos criar (Parent ID)
+        let parentId = null;
+        
+        // Verifica se estamos a navegar dentro de pastas
+        if (navigationStack.length > 0) {
+            parentId = navigationStack[navigationStack.length - 1].id;
+        } 
+        // Verifica se estamos na raiz de uma Superpasta
+        else if (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) {
+            parentId = SUPERFOLDER_ID;
+        }
+
+        // 2. Calcular a ordem (para aparecer no fim da lista)
+        const q = query(
+            collection(db, 'pastas'), 
+            where('parentId', '==', parentId), 
+            where('estado', '==', 'ativa'),
+            where('userId', '==', auth.currentUser.uid)
+        );
+        const snapshot = await getDocs(q);
+        const newOrder = snapshot.size;
+
+        // 3. Preparar os dados do documento
+        const docData = {
+            nome: itemName,
+            parentId: parentId,
+            tipo: itemTypeToAdd, // 'pasta' ou 'nota'
+            userId: auth.currentUser.uid,
+            estado: 'ativa',
+            ordem: newOrder,
+            createdAt: serverTimestamp(),
+            ultimaedicao: serverTimestamp()
+        };
+
+        // Adiciona campos específicos se for Nota
+        if (itemTypeToAdd === 'nota') {
+            docData.conteudo = '';
+            docData.tags = [];
+        }
+        // Adiciona campos específicos se for Pasta
+        if (itemTypeToAdd === 'pasta') {
+            docData.superpasta = false;
+        }
+
+        // 4. Enviar para a Base de Dados
+        const docRef = await addDoc(collection(db, 'pastas'), docData);
+
+        // 5. Limpar e Fechar Modal
+        document.getElementById('add-item-modal').style.display = 'none';
+        newItemNameInput.value = '';
+
+        // (Opcional) Se for nota, abre-a automaticamente
+        if (itemTypeToAdd === 'nota') {
+            setTimeout(() => {
+                // Tenta encontrar o item na lista (o onSnapshot já deve ter atualizado)
+                const newListItem = document.querySelector(`.list-item[data-id="${docRef.id}"]`);
+                if (newListItem) displayNote(docRef.id, newListItem);
+            }, 300);
+        }
+
+    } catch (error) {
+        console.error("Erro ao criar item:", error);
+        alert("Ocorreu um erro ao criar o item. Verifique a consola.");
+    } finally {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "Criar";
     }
 });
 
