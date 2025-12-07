@@ -620,6 +620,60 @@ details.toggle-section .toggle-content {
         /* Links */
         a { text-decoration: none; color: #000; }
     }
+    /* Botão de Índice Flutuante (Mobile) */
+    #mobile-index-float-btn { 
+        display: none; /* Escondido em Desktop */
+    }
+
+  @media (max-width: 768px) {
+        #book-sidebar { display: flex; width: 100%; flex: 1; }
+        #book-main-panel { display: none; }
+        
+        body.mobile-reading-active #book-sidebar { display: none; }
+        body.mobile-reading-active #book-main-panel { display: flex; width: 100%; }
+        
+        /* --- ESTILOS DOS BOTÕES MOBILE (LADO A LADO) --- */
+        #mobile-menu-float-btn, 
+        #mobile-index-float-btn { 
+            display: flex !important; /* Força visibilidade */
+            position: absolute; 
+            top: 15px; 
+            width: 35px;  /* Mais pequeno (era 40px) */
+            height: 35px; /* Mais pequeno */
+            border-radius: 50%; 
+            justify-content: center; 
+            align-items: center; 
+            z-index: 100; 
+            cursor: pointer; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            font-size: 1.1em; /* Ajuste do ícone */
+        }
+
+        /* Botão Menu (Esquerda) */
+        #mobile-menu-float-btn {
+            left: 15px;
+            background: var(--panel-color); 
+            border: 1px solid var(--border-color); 
+        }
+
+        /* Botão Índice (Direita do Menu) */
+        #mobile-index-float-btn {
+            left: 60px; /* 15px (margem) + 35px (btn1) + 10px (espaço) */
+            background: var(--panel-color); 
+            border: 1px solid var(--accent-color); /* Borda azul */
+            color: var(--accent-color);
+        }
+        
+        #book-content-scroll { padding: 60px 15px 20px 15px; } /* Ajuste do padding de topo */
+        #reader-area, #empty-placeholder { padding: 0 !important; width: 100% !important; max-width: 100% !important; margin: 0 !important; }
+        
+        #references-panel { position: fixed; bottom: 0; left: 0; width: 100%; height: auto; z-index: 2000; border-top: 1px solid var(--border-color); border-radius: 20px 20px 0 0; transform: translateY(100%); }
+        .book-container.references-visible #references-panel { transform: translateY(0); height: 50vh; width: 100%; padding: 0; }
+        #panel-drag-handle { display: flex; width: 100%; height: 30px; justify-content: center; align-items: center; background: var(--sidebar-color); border-radius: 20px 20px 0 0; }
+        .drag-indicator { width: 50px; height: 5px; background: var(--border-color); border-radius: 10px; }
+        .reading-postit-absolute { position: static !important; margin: 20px 0; width: 100% !important; border-left: 5px solid #f1c40f; }
+    }
+
     </style>
 </head>
 <body>
@@ -664,6 +718,7 @@ details.toggle-section .toggle-content {
     <!-- ÁREA DE LEITURA -->
     <main id="book-main-panel">
         <button id="mobile-menu-float-btn" title="Voltar à Lista">☰</button>
+         <button id="mobile-index-float-btn" title="Ver Índice">📑</button> 
 
         <div id="book-content-scroll">
             <div id="empty-placeholder" class="empty-state">
@@ -757,6 +812,20 @@ details.toggle-section .toggle-content {
         <ul id="agenda-task-list" style="padding: 0; list-style: none; overflow-y: auto;"></ul>
     </div>
 </div>
+
+<!-- MODAL DE ÍNDICE MOBILE -->
+<div id="mobile-index-modal" class="search-modal-overlay" style="z-index: 6000;">
+    <div class="search-modal-content" style="max-height: 70vh;">
+        <div class="search-header" style="justify-content: space-between; align-items: center;">
+            <h3 style="color: var(--accent-color); margin: 0;">Índice da Nota</h3>
+            <button type="button" id="close-mobile-index" style="background:none; border:none; color:var(--text-muted); font-size:24px; cursor:pointer;">×</button>
+        </div>
+        <ul id="mobile-index-list" style="padding: 10px; list-style: none; overflow-y: auto;">
+            <!-- Será preenchido via JS -->
+        </ul>
+    </div>
+</div>
+
 
 <script type="module">
    import { db, auth } from './js/firebase-config.js';
@@ -1261,62 +1330,124 @@ function processContentForReading(htmlContent) {
 
 
    
-   function generateLocalIndex() {
+function generateLocalIndex() {
        const indexList = document.getElementById('book-index-list');
        const indexTabBtn = document.getElementById('tab-index-btn');
        indexList.innerHTML = '';
-       const items = document.getElementById('read-body').querySelectorAll('.processed-mini-note');
+
+       const items = document.getElementById('read-body').querySelectorAll(
+           '.processed-mini-note, h2, h3, details.toggle-section'
+       );
 
        if (items.length === 0) {
            indexTabBtn.style.display = 'none'; 
            if (indexTabBtn.classList.contains('active')) document.querySelector('[data-tab="notes"]').click();
            return;
        }
-       indexTabBtn.style.display = 'block';
+
+       let visibleCount = 0;
 
        items.forEach(el => {
+           // 1. FILTRO DE VISIBILIDADE (Ocultos não aparecem)
+           if (el.offsetParent === null) return;
+
+           // ============================================================
+           // 2. NOVO FILTRO DE ANINHAMENTO (A CORREÇÃO QUE PEDIU)
+           // ============================================================
+           // Se for um H2 ou H3, verificamos se está dentro de algo que já tem índice
+           if (el.tagName === 'H2' || el.tagName === 'H3') {
+               
+               // Ignora se for o título do próprio Toggle (já tratado no CASO A)
+               if (el.closest('summary')) return;
+
+               // Ignora se estiver DENTRO de uma Caixa (Mini-Nota, Questão, Contentor)
+               if (el.closest('.processed-mini-note')) return;
+
+               // Ignora se estiver DENTRO do corpo de um Toggle
+               // (Pois o Toggle principal já aparece no índice)
+               if (el.closest('.toggle-content')) return;
+           }
+           // ============================================================
+
+           visibleCount++;
            const li = document.createElement('li');
            li.className = 'index-item';
+           
            let title = "Sem Título";
-           let typeClass = 'type-subnota';
-           let typeLabel = "SubNota";
-
-           if (el.classList.contains('question-mode')) {
-               typeClass = 'type-question'; typeLabel = "Questão";
-               const h3 = el.querySelector('h3'); if (h3) title = h3.textContent;
-           } else if (el.classList.contains('free-mode')) {
-               typeClass = 'type-free'; typeLabel = "Contentor";
-               const bodyDiv = el.querySelector('.mini-note-body');
-               if (bodyDiv) {
-                   const text = bodyDiv.textContent.trim();
-                   title = text.split(/\s+/).slice(0, 8).join(" ") + (text.length>50?"...":"");
-                   if(!title) title="(Vazio)";
-               }
-           } else {
-               const h3 = el.querySelector('h3'); if (h3) title = h3.textContent;
+           let typeLabel = "";
+           
+           // CASO A: TOGGLES (ROXO)
+           if (el.tagName === 'DETAILS' && el.classList.contains('toggle-section')) {
+               const summaryH2 = el.querySelector('summary h2');
+               title = summaryH2 ? summaryH2.textContent : "Secção Expansível";
+               typeLabel = "Toggle";
+               li.style.borderLeft = "4px solid #9b59b6"; 
+               li.classList.add('type-toggle'); 
            }
-           li.classList.add(typeClass);
-           li.innerHTML = `<strong>${title}</strong><span>${typeLabel}</span>`;
+           // CASO B: TÍTULOS NORMAIS SOLTOS (CINZENTO)
+           else if (el.tagName === 'H2' || el.tagName === 'H3') {
+               title = el.textContent;
+               typeLabel = el.tagName;
+               li.style.borderLeft = "4px solid #7f8c8d"; 
+           } 
+           // CASO C: CAIXAS (COLORIDAS)
+           else {
+               if (el.classList.contains('question-mode')) {
+                   li.classList.add('type-question'); typeLabel = "Questão";
+                   const h3 = el.querySelector('h3'); if (h3) title = h3.textContent;
+               } else if (el.classList.contains('free-mode')) {
+                   li.classList.add('type-free'); typeLabel = "Contentor";
+                   const bodyDiv = el.querySelector('.mini-note-body');
+                   if (bodyDiv) {
+                       const text = bodyDiv.textContent.trim();
+                       title = text.split(/\s+/).slice(0, 8).join(" ") + (text.length>50?"...":"");
+                       if(!title) title="(Vazio)";
+                   }
+               } else {
+                   li.classList.add('type-subnota'); typeLabel = "SubNota";
+                   const h3 = el.querySelector('h3'); if (h3) title = h3.textContent;
+               }
+           }
+
+           li.innerHTML = `<strong>${title}</strong><span style="font-size:0.8em; opacity:0.7;">${typeLabel}</span>`;
+           
            li.onclick = () => {
                if (window.innerWidth <= 768) document.body.classList.add('mobile-reading-active');
-               el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-               el.style.transition = "transform 0.3s"; el.style.transform = "scale(1.02)";
-               setTimeout(() => el.style.transform = "scale(1)", 1000);
+               
+               if (el.tagName === 'DETAILS' && !el.open) el.open = true;
+
+               let targetToScroll = el;
+               if (el.tagName === 'DETAILS') {
+                   const summary = el.querySelector('summary');
+                   if (summary) targetToScroll = summary;
+               }
+
+               targetToScroll.scrollIntoView({ behavior: 'smooth', block: 'center' });
+               
+               const originalTrans = el.style.transition;
+               const originalTransform = el.style.transform;
+               
+               el.style.transition = "transform 0.3s"; 
+               el.style.transform = "scale(1.02)";
+               
+               if (['H2', 'H3', 'DETAILS'].includes(el.tagName)) {
+                   const originalBg = el.style.backgroundColor;
+                   el.style.backgroundColor = "rgba(241, 196, 15, 0.2)";
+                   setTimeout(() => { el.style.backgroundColor = originalBg; }, 1500);
+               }
+
+               setTimeout(() => {
+                   el.style.transform = originalTransform || "scale(1)";
+                   el.style.transition = originalTrans;
+               }, 1000);
            };
+           
            indexList.appendChild(li);
        });
-   }
 
-   let searchTimeout;
-   searchInput.addEventListener('input', (e) => {
-       const term = e.target.value.toLowerCase().trim();
-       clearTimeout(searchTimeout);
-       if (term.length < 2) {
-           searchResultsList.innerHTML = '<li style="padding:20px; text-align:center; color:#888;">Digite pelo menos 2 caracteres...</li>';
-           return;
-       }
-       searchTimeout = setTimeout(() => performGlobalSearch(term), 600);
-   });
+       if (visibleCount === 0) indexTabBtn.style.display = 'none';
+       else indexTabBtn.style.display = 'block';
+   }
 
    function escapeRegExp(string) { return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
@@ -1941,6 +2072,146 @@ function processContentForReading(htmlContent) {
            };
        } else { header.style.display = 'none'; }
    }
+
+   // ============================================================
+   // LÓGICA DO ÍNDICE MOBILE
+   // ============================================================
+// ============================================================
+   // LÓGICA DO ÍNDICE MOBILE (ATUALIZADA E SEGURA)
+   // ============================================================
+   const mobileIndexBtn = document.getElementById('mobile-index-float-btn');
+   const mobileIndexModal = document.getElementById('mobile-index-modal');
+   const mobileIndexList = document.getElementById('mobile-index-list');
+   const closeMobileIndexBtn = document.getElementById('close-mobile-index');
+
+   mobileIndexBtn.addEventListener('click', () => {
+       mobileIndexList.innerHTML = '';
+
+       const items = document.getElementById('read-body').querySelectorAll(
+           '.processed-mini-note, h2, h3, details.toggle-section'
+       );
+
+       if (items.length === 0) {
+           alert("Esta nota não tem tópicos visíveis.");
+           return;
+       }
+
+       let visibleCount = 0;
+
+       items.forEach(el => {
+           // 1. FILTRO DE VISIBILIDADE
+           if (el.offsetParent === null) return;
+
+           // 2. FILTRO DE ANINHAMENTO (Não mostrar headers dentro de caixas/toggles)
+           if (el.tagName === 'H2' || el.tagName === 'H3') {
+               if (el.closest('summary')) return;
+               if (el.closest('.processed-mini-note')) return;
+               if (el.closest('.toggle-content')) return;
+           }
+
+           visibleCount++;
+           const li = document.createElement('li');
+           
+           li.style.padding = "12px 10px";
+           li.style.borderBottom = "1px solid var(--border-color)";
+           li.style.cursor = "pointer";
+           li.style.display = "flex";
+           li.style.flexDirection = "column";
+           li.style.backgroundColor = "var(--bg-color)";
+           
+           let title = "Sem Título";
+           let typeLabel = "";
+           let borderColor = "transparent";
+
+           if (el.tagName === 'DETAILS' && el.classList.contains('toggle-section')) {
+               const summaryH2 = el.querySelector('summary h2');
+               title = summaryH2 ? summaryH2.textContent : "Secção Expansível";
+               typeLabel = "Toggle";
+               borderColor = "#9b59b6";
+           }
+           else if (el.tagName === 'H2' || el.tagName === 'H3') {
+               title = el.textContent;
+               typeLabel = el.tagName;
+               borderColor = "#7f8c8d";
+           } 
+           else {
+               if (el.classList.contains('question-mode')) {
+                   typeLabel = "Questão"; borderColor = "#2ecc71";
+                   const h3 = el.querySelector('h3'); if (h3) title = h3.textContent;
+               } else if (el.classList.contains('free-mode')) {
+                   typeLabel = "Contentor"; borderColor = "#e67e22";
+                   const bodyDiv = el.querySelector('.mini-note-body');
+                   if (bodyDiv) {
+                       const text = bodyDiv.textContent.trim();
+                       title = text.split(/\s+/).slice(0, 8).join(" ") + (text.length>50?"...":"");
+                       if(!title) title="(Vazio)";
+                   }
+               } else {
+                   typeLabel = "SubNota"; borderColor = "#4a90e2";
+                   const h3 = el.querySelector('h3'); if (h3) title = h3.textContent;
+               }
+           }
+
+           li.style.borderLeft = `4px solid ${borderColor}`;
+
+           li.innerHTML = `
+               <strong style="font-size:1em; color:var(--text-color);">${title}</strong>
+               <span style="font-size:0.8em; opacity:0.7; color:var(--text-muted);">${typeLabel}</span>
+           `;
+
+           li.onclick = () => {
+               mobileIndexModal.style.display = 'none';
+               
+               if (el.tagName === 'DETAILS' && !el.open) el.open = true;
+
+               let target = el;
+               if (el.tagName === 'DETAILS') {
+                   const sum = el.querySelector('summary');
+                   if (sum) target = sum;
+               }
+
+               target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+               
+               const oldTrans = el.style.transition;
+               el.style.transition = "background-color 0.5s";
+               const oldBg = el.style.backgroundColor;
+               el.style.backgroundColor = "rgba(241, 196, 15, 0.3)";
+               setTimeout(() => { 
+                   el.style.backgroundColor = oldBg; 
+                   setTimeout(() => { el.style.transition = oldTrans; }, 500);
+               }, 1000);
+           };
+
+           mobileIndexList.appendChild(li);
+       });
+
+       if (visibleCount === 0) {
+           alert("Nada visível para mostrar no índice.");
+           return;
+       }
+
+       mobileIndexModal.style.display = 'flex';
+   });
+
+   closeMobileIndexBtn.addEventListener('click', () => {
+       mobileIndexModal.style.display = 'none';
+   });
+
+   mobileIndexModal.addEventListener('click', (e) => {
+       if (e.target === mobileIndexModal) mobileIndexModal.style.display = 'none';
+   });
+   
+
+   // Fechar o Modal
+   closeMobileIndexBtn.addEventListener('click', () => {
+       mobileIndexModal.style.display = 'none';
+   });
+
+   mobileIndexModal.addEventListener('click', (e) => {
+       if (e.target === mobileIndexModal) mobileIndexModal.style.display = 'none';
+   });
+
+
 
    window.showHighlightRef = async (hexCode, colorName) => {
        mainContainer.classList.add('references-visible');
