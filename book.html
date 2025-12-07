@@ -676,7 +676,7 @@ details.toggle-section .toggle-content {
                 <h1 id="read-title"></h1>
                 <div id="note-main-topics"></div> 
                 
-                <div id="note-toolbar">
+               <div id="note-toolbar">
                  <select id="reader-zoom" title="Zoom">
                     <option value="50%">50%</option>
                     <option value="75%">75%</option>
@@ -689,6 +689,10 @@ details.toggle-section .toggle-content {
                  </select>
                     <button class="toolbar-btn" id="btn-copy">📋 Copiar</button>
                     <button class="toolbar-btn" id="btn-pdf">📥 PDF</button>
+                    
+                    <!-- NOVO BOTÃO AQUI -->
+                    <button class="toolbar-btn" id="btn-refresh">↻ Atualizar</button>
+                    
                     <button class="toolbar-btn" id="btn-share">🔗 Partilhar</button>
                 </div>
 
@@ -897,12 +901,32 @@ function processContentForReading(htmlContent) {
        const parser = new DOMParser();
        const docDOM = parser.parseFromString(htmlContent, 'text/html');
 
-       // 1. Converter Post-its (JÁ EXISTE)
+       // =======================================================
+       // 1. CONVERTER POST-ITS (MODO LEITURA RIGOROSO)
+       // =======================================================
        docDOM.querySelectorAll('.post-it-note').forEach(postit => {
-           postit.querySelectorAll('.post-it-drag-handle, .post-it-cut-btn').forEach(h => h.remove());
+           // A. Remover elementos de interface de edição (botões, pegas, redimensionadores)
+           postit.querySelectorAll('.post-it-drag-handle, .post-it-cut-btn, .ui-resizable-handle').forEach(h => h.remove());
+           
+           // B. Definir a classe visual de leitura
            postit.className = 'reading-postit-absolute';
+           
+           // C. Bloquear qualquer edição no container pai
+           postit.removeAttribute('contenteditable');
            postit.setAttribute('contenteditable', 'false');
+           postit.style.cursor = 'default'; // Cursor normal, não de "mover"
+           postit.style.resize = 'none';    // Impede redimensionamento CSS
+           
+           // D. Bloquear edição especificamente na área de texto interna
+           const contentArea = postit.querySelector('.post-it-content');
+           if(contentArea) {
+               contentArea.removeAttribute('contenteditable');
+               contentArea.setAttribute('contenteditable', 'false');
+               contentArea.style.outline = 'none'; // Remove borda de foco se houver
+               contentArea.style.cursor = 'text';  // Permite seleção de texto
+           }
        });
+       // =======================================================
 
        // 2. Converter Ideias (JÁ EXISTE)
        docDOM.querySelectorAll('.idea-span').forEach(idea => {
@@ -2153,6 +2177,59 @@ function processContentForReading(htmlContent) {
                shareBtn.innerHTML = originalIcon; 
                shareBtn.disabled = false; 
            }, 2000);
+       }
+   });
+
+   // ============================================================
+   // LÓGICA DO BOTÃO ATUALIZAR (Recarregar Nota)
+   // ============================================================
+   document.getElementById('btn-refresh').addEventListener('click', async function() {
+       const btn = this;
+       
+       // Se não houver nota aberta, não faz nada
+       if (!window.currentNoteId) return;
+
+       // 1. Feedback visual (Loading)
+       const originalText = btn.innerHTML;
+       btn.innerHTML = "⏳ ...";
+       btn.disabled = true;
+       
+       // Guardar a posição do scroll para não voltar ao topo
+       const scrollContainer = document.getElementById('book-content-scroll');
+       const currentScrollPos = scrollContainer.scrollTop;
+
+       try {
+           // 2. Buscar a versão mais recente da nota na BD
+           const docRef = doc(db, 'pastas', window.currentNoteId);
+           const docSnap = await getDoc(docRef);
+
+           if (docSnap.exists()) {
+               const freshData = { id: docSnap.id, ...docSnap.data() };
+               
+               // 3. Redesenhar a nota com os dados novos
+               // Nota: displayNote() vai limpar o HTML e criar tudo de novo
+               window.displayNote(freshData);
+
+               // 4. Restaurar Scroll
+               // Precisamos de um pequeno timeout para o render terminar
+               setTimeout(() => {
+                   scrollContainer.scrollTop = currentScrollPos;
+               }, 50);
+               
+               // Feedback de sucesso rápido
+               btn.innerHTML = "✅";
+           } else {
+               alert('A nota atual foi apagada ou não existe.');
+           }
+       } catch (error) {
+           console.error("Erro ao atualizar nota:", error);
+           alert("Erro de conexão ao atualizar.");
+       } finally {
+           // 5. Restaurar botão após 1 segundo
+           setTimeout(() => {
+               btn.innerHTML = originalText;
+               btn.disabled = false;
+           }, 800);
        }
    });
 
