@@ -2635,7 +2635,9 @@ let aggregationParentId = null; // Onde a nova nota será criada
 let htmlToAppend = ""; // Guarda o conteúdo da caixa que vamos copiar
 let appendStack = [];  // Histórico de navegação do modal
 let currentNoteShareData = null;
-
+let moveStack = []; // Histórico de navegação (como no Append/Aggregation)
+let itemToMoveRef = null; // Guarda o objeto do item que estamos a mover
+let selectedDestFolderId = null; // Guarda o ID da pasta destino selecionada
 
 // --- PROTEÇÃO DE ROTA E CARREGAMENTO DE USUÁRIO ---
 onAuthStateChanged(auth, async (user) => {
@@ -6281,205 +6283,233 @@ async function openMoveModal(itemContext) {
  async function openMoveToFolderModal(itemContext) {
     if (!itemContext) return;
 
+    itemToMoveRef = itemContext; // { id, name, parentId, type... }
     const modal = document.getElementById('move-to-folder-modal');
     const list = document.getElementById('folder-selection-list');
     const confirmBtn = document.getElementById('confirm-folder-move');
-    const itemNameSpan = document.getElementById('item-to-move-name');
+    const nameSpan = document.getElementById('item-to-move-name');
     
-    // Configuração do bloco de "Caminho Atual" (Topo)
-    let currentPathContainer = document.getElementById('move-modal-current-path');
-    if (!currentPathContainer) {
-        currentPathContainer = document.createElement('div');
-        currentPathContainer.id = 'move-modal-current-path';
-        currentPathContainer.style.marginBottom = '15px';
-        currentPathContainer.style.padding = '10px';
-        currentPathContainer.style.backgroundColor = 'rgba(74, 144, 226, 0.1)';
-        currentPathContainer.style.borderRadius = '5px';
-        currentPathContainer.style.fontSize = '0.9em';
-        currentPathContainer.style.borderLeft = '3px solid var(--accent-color)';
-        const pDesc = modal.querySelector('p');
-        pDesc.parentNode.insertBefore(currentPathContainer, pDesc.nextSibling);
+    // Atualiza o nome no título
+    if(nameSpan) nameSpan.textContent = itemContext.name;
+
+    // --- CONFIGURAÇÃO DA BARRA DE NAVEGAÇÃO (BREADCRUMBS) ---
+    // Verifica se já criámos a barra de navegação personalizada. Se não, cria agora.
+    let navContainer = document.getElementById('move-folder-nav-container');
+    
+    if (!navContainer) {
+        // Remove elementos antigos de descrição para limpar a vista
+        const oldPath = document.getElementById('move-modal-current-path');
+        if(oldPath) oldPath.style.display = 'none';
+        
+        // Cria a nova barra igual à do botão 🧬
+        navContainer = document.createElement('div');
+        navContainer.id = 'move-folder-nav-container';
+        navContainer.style.display = 'flex';
+        navContainer.style.gap = '10px';
+        navContainer.style.marginBottom = '15px';
+        navContainer.style.alignItems = 'center';
+        navContainer.innerHTML = `
+            <button id="move-folder-back-btn" class="modal-btn secondary" style="padding: 5px 10px; display: none;">⬅ Voltar</button>
+            <span id="move-folder-path" style="font-weight: bold; color: var(--text-color);">Raiz</span>
+        `;
+        
+        // Insere antes da lista
+        list.parentNode.insertBefore(navContainer, list);
+        
+        // Listener do botão Voltar
+        document.getElementById('move-folder-back-btn').addEventListener('click', () => {
+            const rootId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
+            if (moveStack.length > 0) {
+                moveStack.pop();
+                const parent = moveStack.length > 0 ? moveStack[moveStack.length - 1].id : rootId;
+                loadMoveFolderList(parent);
+            } else {
+                loadMoveFolderList(rootId);
+            }
+        });
     }
 
-    itemNameSpan.textContent = itemContext.name;
-    list.innerHTML = '<li>A carregar estrutura de pastas...</li>';
-    currentPathContainer.innerHTML = 'A calcular localização atual...';
+    // Reset da navegação
+    moveStack = []; 
+    selectedDestFolderId = null; // Reseta a seleção
+    
     modal.style.display = 'flex';
 
-    // Variáveis de controlo da paginação
-    const ITEMS_PER_PAGE = 30;
-    let currentRenderIndex = 0;
-    let allSortedFolders = []; // Armazenará a lista completa ordenada
-    let foldersMap = new Map(); // Para consulta rápida de nomes de pais
-    let loadMoreBtn = null; // Referência para o botão
+    // Determina o início (Raiz Global ou Superpasta)
+    const startRootId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
+    
+    // Carrega a lista inicial
+    loadMoveFolderList(startRootId);
 
-    try {
-        // 1. CARREGAR DADOS
-        const q = query(
-            collection(db, 'pastas'), 
-            where('tipo', '==', 'pasta'), 
-            where('estado', '==', 'ativa'),
-            where('userId', '==', auth.currentUser.uid)
-        );
-
-        const snapshot = await getDocs(q);
-
-        // Preencher o Map (para lookup de caminhos)
-        snapshot.forEach(doc => {
-            foldersMap.set(doc.id, { id: doc.id, ...doc.data() });
-        });
-
-        // --- FUNÇÃO AUXILIAR: Construir string do caminho ---
-        const buildPathString = (parentId) => {
-            if (!parentId) return null;
-            const names = [];
-            let currId = parentId;
-            let safety = 0;
-            while(currId && foldersMap.has(currId) && safety < 20) {
-                const f = foldersMap.get(currId);
-                names.push(f.nome);
-                currId = f.parentId;
-                safety++;
-            }
-            return names.join(' -> '); // Ex: Reunião -> Domingo
-        };
-
-        // 2. EXIBIR LOCALIZAÇÃO ATUAL NO TOPO
-        const currentPathStr = buildPathString(itemContext.parentId);
-        currentPathContainer.innerHTML = `<strong>Localização Atual:</strong><br>${currentPathStr || 'Pasta Principal (Raiz)'}`;
-        currentPathContainer.style.display = 'block';
-
-        // 3. PREPARAR LISTA ORDENADA (Mais recente -> Mais antigo)
-        allSortedFolders = Array.from(foldersMap.values())
-            .filter(f => f.id !== itemContext.id && f.id !== itemContext.parentId) // Remove item atual e pai atual
-            .sort((a, b) => {
-                // Ordena por createdAt (descendente). Se não tiver data, assume 0.
-                const timeA = a.createdAt?.seconds || 0;
-                const timeB = b.createdAt?.seconds || 0;
-                return timeB - timeA; 
-            });
-
-        // 4. LIMPAR LISTA E ADICIONAR OPÇÃO "MOVER PARA RAIZ"
-        list.innerHTML = '';
-
-        if (itemContext.parentId !== null) {
-            const rootLi = document.createElement('li');
-            rootLi.className = 'list-item';
-            rootLi.style.flexDirection = 'column';
-            rootLi.style.alignItems = 'flex-start';
-            rootLi.innerHTML = `
-                <span style="font-weight: 500;">📁 (Mover para a Raiz)</span>
-                <span style="font-size: 0.8em; color: var(--text-muted-color);">Pasta Principal</span>
-            `;
-            rootLi.dataset.folderId = 'null';
-            list.appendChild(rootLi);
-        }
-
-        // 5. FUNÇÃO PARA RENDERIZAR UM LOTE (BATCH)
-        const renderNextBatch = () => {
-            // Remove o botão "Carregar Mais" se existir, para o adicionar no fim novamente
-            if (loadMoreBtn) loadMoreBtn.remove();
-
-            const endIndex = Math.min(currentRenderIndex + ITEMS_PER_PAGE, allSortedFolders.length);
-            const batch = allSortedFolders.slice(currentRenderIndex, endIndex);
-
-            batch.forEach(folder => {
-                const pathStr = buildPathString(folder.parentId);
-                const pathDisplay = pathStr ? `(${pathStr})` : '(Na Raiz)';
-
-                const li = document.createElement('li');
-                li.className = 'list-item';
-                li.style.flexDirection = 'column';
-                li.style.alignItems = 'flex-start';
-                li.style.padding = '10px';
-                
-                li.innerHTML = `
-                    <span style="font-weight: 500; font-size: 1.05em;">📁 ${folder.nome}</span>
-                    <span style="font-size: 0.85em; color: var(--text-muted-color); margin-top: 2px; margin-left: 24px;">${pathDisplay}</span>
-                `;
-                li.dataset.folderId = folder.id;
-                list.appendChild(li);
-            });
-
-            currentRenderIndex = endIndex;
-
-            // Se ainda houver itens, cria o botão "Carregar Mais"
-            if (currentRenderIndex < allSortedFolders.length) {
-                createLoadMoreButton();
-            }
-        };
-
-        const createLoadMoreButton = () => {
-            loadMoreBtn = document.createElement('button');
-            loadMoreBtn.textContent = 'Carregar mais pastas...';
-            loadMoreBtn.style.width = '100%';
-            loadMoreBtn.style.padding = '10px';
-            loadMoreBtn.style.marginTop = '10px';
-            loadMoreBtn.style.background = 'var(--panel-color)';
-            loadMoreBtn.style.border = '1px solid var(--border-color)';
-            loadMoreBtn.style.color = 'var(--text-muted-color)';
-            loadMoreBtn.style.cursor = 'pointer';
-            loadMoreBtn.style.borderRadius = '5px';
-            
-            loadMoreBtn.onmouseover = () => { loadMoreBtn.style.background = 'var(--hover-color)'; loadMoreBtn.style.color = 'var(--text-color)'; };
-            loadMoreBtn.onmouseout = () => { loadMoreBtn.style.background = 'var(--panel-color)'; loadMoreBtn.style.color = 'var(--text-muted-color)'; };
-
-            loadMoreBtn.onclick = (e) => {
-                e.stopPropagation(); // Impede seleção da lista
-                renderNextBatch();
-            };
-            
-            list.appendChild(loadMoreBtn);
-        };
-
-        // Renderiza o primeiro lote (0 a 30)
-        renderNextBatch();
-
-    } catch (error) {
-        console.error("Erro ao carregar pastas:", error);
-        list.innerHTML = '<li>Erro ao carregar dados.</li>';
-    }
-
-    // Lógica de Seleção
-    let selectedFolderId = null;
-    list.onclick = (e) => {
-        // Ignora cliques no botão de carregar mais (já tratado no onclick do botão)
-        if (e.target === loadMoreBtn) return;
-
-        const li = e.target.closest('li');
-        if (!li) return;
-        
-        list.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
-        li.classList.add('selected');
-        selectedFolderId = li.dataset.folderId;
-    };
-
-    // Botão Confirmar
+    // --- RECONFIGURAR BOTÃO CONFIRMAR ---
     const newConfirmBtn = confirmBtn.cloneNode(true);
     confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
 
     newConfirmBtn.onclick = async () => {
-        if (selectedFolderId === null) {
-            alert('Por favor, selecione uma pasta de destino.');
+        // Se nada estiver selecionado (azul), assume que queremos mover para a PASTA ATUAL que estamos a ver
+        let targetId = selectedDestFolderId;
+        
+        // Lógica de fallback: Se o user não selecionou uma linha, mas navegou até uma pasta,
+        // perguntamos se quer mover para a pasta aberta.
+        if (targetId === null) {
+            // Se estiver na raiz, target é null (ou superpasta ID). Se estiver numa subpasta, é o ID dela.
+            const currentViewId = moveStack.length > 0 ? moveStack[moveStack.length - 1].id : startRootId;
+            
+            // Confirmação extra se não houver seleção visual
+            if(!confirm(`Mover "${itemContext.name}" para a pasta que está a ver agora?`)) return;
+            targetId = currentViewId;
+        }
+
+        // Evitar mover para dentro de si próprio (se for pasta)
+        if (targetId === itemContext.id) {
+            alert("Não pode mover uma pasta para dentro de si mesma.");
             return;
         }
 
-        const newParentId = selectedFolderId === 'null' ? null : selectedFolderId;
-        
         try {
             const itemRef = doc(db, 'pastas', itemContext.id);
             await updateDoc(itemRef, {
-                parentId: newParentId,
+                parentId: targetId, // null se for raiz global
                 ultimaedicao: serverTimestamp()
             });
 
             modal.style.display = 'none';
-            updateNavigationView();
+            // Se tivermos a função updateNavigationView disponível, chamamos
+            if (typeof updateNavigationView === 'function') updateNavigationView();
+            
         } catch (error) {
-            console.error("Erro ao mover o item:", error);
-            alert("Ocorreu um erro ao mover o item.");
+            console.error("Erro ao mover:", error);
+            alert("Erro ao mover o item.");
         }
     };
+}
+
+// ============================================================
+// 2. CARREGAR LISTA (VISUAL IGUAL AO 🧬)
+// ============================================================
+async function loadMoveFolderList(parentId) {
+    const list = document.getElementById('folder-selection-list');
+    const backBtn = document.getElementById('move-folder-back-btn');
+    const pathLabel = document.getElementById('move-folder-path');
+    
+    list.innerHTML = '<li style="padding:10px;">A carregar...</li>';
+
+    // Atualiza Breadcrumbs (Topo)
+    if (moveStack.length > 0) {
+        pathLabel.textContent = moveStack[moveStack.length - 1].name;
+        backBtn.style.display = 'block';
+    } else {
+        pathLabel.textContent = parentId ? "Pasta Atual (Raiz)" : "Raiz Global";
+        backBtn.style.display = 'none';
+    }
+
+    try {
+        const q = query(
+            collection(db, 'pastas'),
+            where('parentId', '==', parentId),
+            where('tipo', '==', 'pasta'), // APENAS PASTAS (não queremos mover para dentro de notas)
+            where('estado', '==', 'ativa'),
+            where('userId', '==', auth.currentUser.uid),
+            orderBy('nome')
+        );
+
+        const snapshot = await getDocs(q);
+        list.innerHTML = '';
+
+        // --- OPÇÃO 1: FICAR NA PASTA ATUAL ---
+        // Adiciona sempre uma opção no topo para "Mover para aqui"
+        const currentLi = document.createElement('li');
+        currentLi.className = 'list-item';
+        currentLi.style.fontWeight = 'bold';
+        currentLi.style.borderBottom = '2px solid var(--border-color)';
+        currentLi.style.color = 'var(--accent-color)';
+        currentLi.innerHTML = `📥 Mover para esta pasta atual`;
+        currentLi.onclick = () => {
+            handleMoveSelection(currentLi, parentId); // O destino é o ID da pasta que estamos a ver
+        };
+        list.appendChild(currentLi);
+
+
+        if (snapshot.empty) {
+            const emptyLi = document.createElement('li');
+            emptyLi.textContent = "Não há subpastas aqui.";
+            emptyLi.style.padding = "10px";
+            emptyLi.style.color = "var(--text-muted-color)";
+            list.appendChild(emptyLi);
+            return;
+        }
+
+        // --- LISTAGEM DE SUBPASTAS ---
+        snapshot.forEach(doc => {
+            // Ignora a própria pasta que estamos a tentar mover (para não criar loops)
+            if (doc.id === itemToMoveRef.id) return;
+
+            const folder = { id: doc.id, ...doc.data() };
+            const li = document.createElement('li');
+            
+            // Estilo visual idêntico ao Append/Aggregation
+            li.style.display = 'flex';
+            li.style.justifyContent = 'space-between';
+            li.style.alignItems = 'center';
+            li.style.padding = '12px';
+            li.style.borderBottom = '1px solid var(--border-color)';
+            li.style.cursor = 'pointer';
+            li.className = 'list-item move-folder-item'; // Classe para CSS se precisar
+
+            // Esquerda: Nome (Seleciona) | Direita: Seta (Entra)
+            li.innerHTML = `
+                <div class="move-select-area" style="flex-grow:1; display:flex; align-items:center;">
+                    <span style="font-size:1.2em; margin-right:10px;">📁</span>
+                    <span>${folder.nome}</span>
+                </div>
+                <div class="move-nav-btn" style="padding: 5px 10px; border-left:1px solid var(--border-color); color:var(--text-muted-color);">
+                    ➔
+                </div>
+            `;
+
+            // CLIQUE NA ÁREA DA ESQUERDA (Selecionar como Destino)
+            const selectArea = li.querySelector('.move-select-area');
+            selectArea.onclick = (e) => {
+                e.stopPropagation();
+                handleMoveSelection(li, folder.id);
+            };
+
+            // CLIQUE NA SETA (Entrar na Pasta)
+            const navBtn = li.querySelector('.move-nav-btn');
+            navBtn.onclick = (e) => {
+                e.stopPropagation();
+                moveStack.push({ id: folder.id, name: folder.nome });
+                loadMoveFolderList(folder.id);
+            };
+            
+            // Hover manual para a seta
+            navBtn.onmouseover = () => { navBtn.style.color = 'var(--accent-color)'; navBtn.style.backgroundColor = 'var(--hover-color)'; };
+            navBtn.onmouseout = () => { navBtn.style.color = 'var(--text-muted-color)'; navBtn.style.backgroundColor = 'transparent'; };
+
+            list.appendChild(li);
+        });
+
+    } catch (e) {
+        console.error(e);
+        list.innerHTML = '<li>Erro ao carregar pastas.</li>';
+    }
+}
+
+// --- FUNÇÃO AUXILIAR DE SELEÇÃO VISUAL ---
+function handleMoveSelection(liElement, folderId) {
+    // 1. Remove seleção de todos
+    const list = document.getElementById('folder-selection-list');
+    list.querySelectorAll('li').forEach(el => {
+        el.style.backgroundColor = 'transparent';
+        el.classList.remove('selected');
+    });
+
+    // 2. Seleciona o atual
+    liElement.classList.add('selected');
+    liElement.style.backgroundColor = 'var(--selected-color)'; // Usa a cor do seu tema
+    
+    // 3. Atualiza variável de estado
+    selectedDestFolderId = folderId;
 }
 
 function renderMoveList(items) {
