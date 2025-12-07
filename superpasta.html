@@ -1409,12 +1409,96 @@ details.toggle-section summary h2 {
 /* ============================================================
    MEDIA QUERIES (RESPONSIVIDADE)
    ============================================================ */
+/* ============================================================
+   RESPONSIVIDADE MOBILE (SISTEMA DE PILHA)
+   ============================================================ */
 @media (max-width: 768px) {
-    .notebook-container.left-panel-collapsed #left-panel { flex: 0 0 0px !important; width: 0 !important; padding: 0 !important; overflow: hidden; border: none; }
+    /* 1. Estrutura Base */
+    .notebook-container {
+        display: block; /* Remove flex row para permitir empilhamento */
+        position: relative;
+        overflow: hidden;
+    }
+
+    /* 2. Todos os painéis ocupam o ecrã inteiro */
+    #left-panel, #middle-panel, #right-panel {
+        width: 100vw !important;
+        height: 100vh !important;
+        flex: none !important;
+        position: absolute;
+        top: 0;
+        left: 0;
+        background-color: var(--bg-color);
+        z-index: 10;
+        transition: transform 0.3s ease-in-out;
+    }
+
+    /* 3. LÓGICA DE ESTADOS (Quem aparece?) */
     
-    /* Nota: As regras de colapso do painel do meio já estão definidas globalmente acima,
-       mas mantemos a regra de esconder quando a classe é ativada em mobile se necessário */
-    #right-panel { padding: 10px; }
+    /* ESTADO 1: Inicial (Ver Painel Esquerdo) */
+    /* Esconde o Meio e a Direita, empurrando-os para fora do ecrã */
+    body:not(.mobile-view-middle):not(.mobile-view-editor) #left-panel {
+        transform: translateX(0);
+        z-index: 20;
+    }
+    body:not(.mobile-view-middle):not(.mobile-view-editor) #middle-panel,
+    body:not(.mobile-view-middle):not(.mobile-view-editor) #right-panel {
+        transform: translateX(100%); /* Escondidos à direita */
+    }
+
+    /* ESTADO 2: Ver Painel do Meio (Lista de Ficheiros) */
+    body.mobile-view-middle #left-panel {
+        transform: translateX(-30%); /* Efeito visual subtil */
+    }
+    body.mobile-view-middle #middle-panel {
+        transform: translateX(0);
+        z-index: 30;
+        display: flex !important; /* Garante que é flex para o layout interno */
+    }
+    body.mobile-view-middle #right-panel {
+        transform: translateX(100%);
+    }
+
+    /* ESTADO 3: Ver Editor (Nota Aberta) */
+    body.mobile-view-editor #left-panel,
+    body.mobile-view-editor #middle-panel {
+        transform: translateX(-100%); /* Escondidos à esquerda */
+    }
+    body.mobile-view-editor #right-panel {
+        transform: translateX(0);
+        z-index: 40;
+        display: flex !important;
+        padding: 10px !important; /* Reset do padding */
+    }
+
+    /* 4. Mostrar o botão de voltar no editor */
+    #mobile-back-btn {
+        display: block !important;
+        background-color: rgba(255,255,255,0.1) !important;
+        border: 1px solid var(--border-color) !important;
+    }
+
+    /* 5. Ajustes Visuais */
+    /* Remove botões de toggle desnecessários no mobile */
+    #left-panel-toggle-btn, 
+    #middle-panel-toggle-btn {
+        display: none !important;
+    }
+    
+    /* Garante que o botão de voltar do painel do meio está visível */
+    #back-btn {
+        display: flex !important;
+    }
+    
+    /* Ajuste da 4ª Coluna (Referências) no Mobile */
+    .notebook-container.references-panel-visible #references-panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 100vw !important; /* Ocupa ecrã todo */
+        height: 100vh;
+        z-index: 100; /* Acima de tudo */
+    }
 }
 </style>
 
@@ -1477,6 +1561,9 @@ details.toggle-section summary h2 {
                 <!-- 1. BARRA DE FERRAMENTAS PRINCIPAL -->
           <div id="editor-toolbar">
     <!-- GRUPO 1: Formatação de Texto -->
+     <!-- 1. Botão de Voltar para Mobile (NOVO) -->
+<button id="mobile-back-btn" title="Voltar à Lista" style="display: none; margin-right: 10px; font-weight: bold;">⬅ Voltar</button>
+
     <div class="toolbar-group">
         <button data-command="bold" title="Negrito"><b>B</b></button>
         <button data-command="boldBlue" title="Negrito Azul" style="color: #4a90e2; font-weight: bold;">B</button>
@@ -2340,6 +2427,7 @@ const noteShareToggle = document.getElementById('note-share-toggle');
 const noteShareLinkContainer = document.getElementById('note-share-link-container');
 const noteShareUrlInput = document.getElementById('note-share-url');
 const copyNoteLinkBtn = document.getElementById('copy-note-link-btn');
+const mobileBackBtn = document.getElementById('mobile-back-btn');
 const debouncedScanAndLink = debounce(scanAndLinkEntities, 2000);
 const ENTITY_CONFIG = {
     personagem: {
@@ -8197,6 +8285,67 @@ function insertTagIntoEditor(tagName) {
     saveNote();
     currentTagQueryRange = null;
 }
+
+// ============================================================
+// LÓGICA DE NAVEGAÇÃO MOBILE
+// ============================================================
+
+// 1. Ao clicar numa PASTA (Esquerda -> Meio)
+// Adicione isto ao seu listener existente do 'leftPanelList' ou use este auxiliar:
+const originalLeftClick = leftPanelList.onclick; // Preserva lógica antiga se existir
+leftPanelList.addEventListener('click', (e) => {
+    const item = e.target.closest('.list-item');
+    if (!item) return;
+    
+    // Se for clique em menu ou expandir, ignora
+    if (e.target.closest('.item-menu-btn')) return;
+
+    // Se a largura for mobile, avança para o painel do meio
+    if (window.innerWidth <= 768) {
+        document.body.classList.add('mobile-view-middle');
+        document.body.classList.remove('mobile-view-editor');
+    }
+});
+
+// 2. Ao clicar numa NOTA (Meio -> Direita/Editor)
+middlePanelList.addEventListener('click', (e) => {
+    const item = e.target.closest('.list-item');
+    if (!item) return;
+    if (e.target.closest('.item-menu-btn')) return;
+
+    const type = item.dataset.type;
+
+    if (window.innerWidth <= 768) {
+        // Se for pasta, mantemos no meio (apenas recarrega lista)
+        // Se for NOTA, vamos para o editor
+        if (type === 'nota') {
+            document.body.classList.add('mobile-view-editor');
+        }
+    }
+});
+
+// 3. Botão VOLTAR do Painel do Meio (Meio -> Esquerda)
+// Temos de intercetar o clique no backBtn existente
+backBtn.addEventListener('click', (e) => {
+    // Se estivermos na raiz da navegação e em mobile, volta para o painel esquerdo
+    if (window.innerWidth <= 768 && navigationStack.length === 0) {
+        document.body.classList.remove('mobile-view-middle');
+    }
+    // (A lógica original do backBtn para subir pastas continua a funcionar)
+});
+
+// 4. Botão VOLTAR do Editor (Direita -> Meio)
+if (mobileBackBtn) {
+    mobileBackBtn.addEventListener('click', () => {
+        // Força gravação ao sair
+        if (typeof saveNote === 'function') saveNote(true);
+        
+        // Remove a classe do editor para mostrar o painel do meio
+        document.body.classList.remove('mobile-view-editor');
+        document.body.classList.add('mobile-view-middle');
+    });
+}
+
 
 // ====================================================================
 // MOTOR DO CALENDÁRIO (EM FALTA NO SUPERPASTA)
