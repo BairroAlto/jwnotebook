@@ -2085,7 +2085,7 @@ function generateSearchContext(fullText, term, isExact) {
        }
    };
 
-  window.showTopicRef = async (id, name, type) => {
+ window.showTopicRef = async (id, name, type) => {
        // 1. Abrir o painel lateral
        mainContainer.classList.add('references-visible');
        
@@ -2094,7 +2094,7 @@ function generateSearchContext(fullText, term, isExact) {
        const refDesc = document.getElementById('ref-description');
 
        refTitle.textContent = `${type === 'topico' ? 'Tópico' : 'Subtópico'}: ${name}`;
-       refDesc.textContent = "A carregar dados...";
+       refDesc.textContent = "A analisar contextos...";
        refList.innerHTML = '<li style="padding:10px;"><div class="spinner"></div> A carregar lista...</li>';
 
        // Carregar o Quadro
@@ -2106,79 +2106,127 @@ function generateSearchContext(fullText, term, isExact) {
            const q = query(collection(db, 'pastas'), where('userId', '==', auth.currentUser.uid), where('estado', '==', 'ativa'));
            const snapshot = await getDocs(q);
            const results = [];
+           const parser = new DOMParser();
            
            snapshot.forEach(docSnap => {
                const data = docSnap.data();
-               if (data.topicosSelecionados) {
-                   let match = false;
-                   if (type === 'topico') {
-                       if (data.topicosSelecionados.hasOwnProperty(id)) match = true;
-                   } else {
-                       const allSubs = Object.values(data.topicosSelecionados).flat();
-                       if (allSubs.includes(id)) match = true;
-                   }
+               if (!data.topicosSelecionados) return;
+
+               // A. VERIFICA SE O TÓPICO EXISTE NA NOTA
+               let match = false;
+               if (type === 'topico') {
+                   if (data.topicosSelecionados.hasOwnProperty(id)) match = true;
+               } else {
+                   const allSubs = Object.values(data.topicosSelecionados).flat();
+                   // Converte para string para garantir
+                   if (allSubs.map(String).includes(String(id))) match = true;
+               }
+               
+               if (match) {
+                   let isProtected = (data.passe && data.passe.trim() !== "");
+                   if (isProtected && !sessionUnlockedFolders.has(docSnap.id) && !appSettings.searchTagsInProtected) return;
+
+                   // B. DESCOBRIR O CONTEXTO (Questão, Subnota, etc.)
+                   let displayTitle = data.nome; 
+                   let displayIcon = isProtected ? "🔒" : "📄";
+                   let contextType = "Nota";
+                   let snippet = "Tópico atribuído à nota geral.";
+                   let highlightColor = ""; 
+
+                   // Parse do HTML
+                   const docHTML = parser.parseFromString(data.conteudo, 'text/html');
+                   const wrappers = docHTML.querySelectorAll('.mini-note-wrapper');
                    
-                   if (match) {
-                       let isProtected = (data.passe && data.passe.trim() !== "");
-                       if (isProtected && !sessionUnlockedFolders.has(docSnap.id) && !appSettings.searchTagsInProtected) return;
-                       results.push({ id: docSnap.id, ...data, isProtected });
+                   for (const wrapper of wrappers) {
+                       const jsonStr = wrapper.getAttribute('data-topics');
+                       if (!jsonStr) continue;
+
+                       if (jsonStr.includes(`"${id}"`)) {
+                           // Detetar Tipo
+                           const input = wrapper.querySelector('input'); 
+                           const contentDiv = wrapper.querySelector('.mini-note-content'); 
+                           
+                           if (wrapper.classList.contains('question-mode')) {
+                               displayIcon = "📗";
+                               contextType = "Questão";
+                               displayTitle = input ? input.value : "Questão";
+                               snippet = "Encontrado nesta questão.";
+                               highlightColor = "#2ecc71"; // Verde
+                           } 
+                           else if (wrapper.classList.contains('free-mode')) {
+                               displayIcon = "📙";
+                               contextType = "Contentor";
+                               const text = contentDiv ? contentDiv.textContent.trim() : "";
+                               displayTitle = text.length > 40 ? text.substring(0, 40) + "..." : (text || "Contentor");
+                               snippet = "Encontrado neste contentor.";
+                               highlightColor = "#e67e22"; // Laranja
+                           } 
+                           else {
+                               displayIcon = "📘";
+                               contextType = "SubNota";
+                               displayTitle = input ? input.value : "SubNota";
+                               snippet = "Encontrado nesta subnota.";
+                               highlightColor = "#4a90e2"; // Azul
+                           }
+
+                           if (!displayTitle.trim()) displayTitle = `(Em) ${data.nome}`;
+                           break; // Pára na primeira caixa encontrada
+                       }
                    }
+
+                   results.push({ 
+                       id: docSnap.id, 
+                       originalName: data.nome, // Nome da Nota
+                       displayTitle: displayTitle, // Título da Caixa
+                       displayIcon: displayIcon,
+                       highlightColor: highlightColor,
+                       snippet: snippet,
+                       conteudo: data.conteudo,
+                       contextType: contextType
+                   });
                }
            });
 
-           // Renderizar a Lista com CARTÕES
+           // Renderizar
            refList.innerHTML = '';
            
            if (results.length === 0) {
                refList.innerHTML = '<div style="padding:15px; color:#888; text-align:center;">Sem notas na lista.</div>';
-               if(document.getElementById('puzzle-board-container').children.length > 0) {
-                   refDesc.textContent = ""; 
-               } else {
-                   refDesc.textContent = "Sem dados associados.";
-               }
+               if(document.getElementById('puzzle-board-container').children.length === 0) refDesc.textContent = "Sem dados.";
            } else {
-               refDesc.textContent = `${results.length} nota(s) encontrada(s).`;
-               results.sort((a,b) => a.nome.localeCompare(b.nome));
+               refDesc.textContent = `${results.length} ocorrência(s).`;
                
-               results.forEach(note => {
+               // Ordenar: Tipo primeiro, depois Título
+               results.sort((a,b) => {
+                   if (a.contextType !== b.contextType) return a.contextType.localeCompare(b.contextType);
+                   return a.displayTitle.localeCompare(b.displayTitle);
+               });
+               
+               results.forEach(item => {
                    const card = document.createElement('div');
                    card.className = 'ref-list-card';
-                   // Tópicos geralmente têm cor Roxa no design, podemos ajustar a borda
-                   card.style.borderLeftColor = "#9b59b6";
                    
-                   const protectedIcon = note.isProtected ? "🔒 " : "";
-
-                   // Como Tópicos classificam a nota inteira e não uma palavra específica,
-                   // vamos mostrar o início da nota como snippet ou uma mensagem genérica
-                   let snippet = "Nota classificada nesta categoria.";
+                   // Borda colorida se for caixa específica, senão roxo padrão de tópico
+                   card.style.borderLeftColor = item.highlightColor || "#9b59b6";
                    
-                   // Tentativa simples de pegar o primeiro parágrafo de texto real
-                   const tempDiv = document.createElement('div');
-                   tempDiv.innerHTML = note.conteudo;
-                   const firstP = tempDiv.querySelector('p');
-                   if(firstP && firstP.textContent.length > 5) {
-                       snippet = firstP.textContent.substring(0, 100) + "...";
-                   }
-
                    card.innerHTML = `
                        <div class="ref-card-header">
-                           <span class="ref-card-title">📄 ${protectedIcon}${note.nome}</span>
+                           <span class="ref-card-title" style="color:var(--text-color); font-size:1.05em;">
+                               ${item.displayIcon} ${item.displayTitle}
+                           </span>
                            <span class="ref-card-arrow">➔</span>
                        </div>
                        <div class="ref-card-body">
-                           ${snippet}
+                           <small style="color:var(--accent-color);">em 📄 ${item.originalName}</small><br>
+                           <span style="font-style:italic; opacity:0.8;">${item.snippet}</span>
                        </div>
                    `;
                    
-                 card.onclick = () => {
-    // 1. Se for telemóvel, fecha o painel
-    if (window.innerWidth <= 768) {
-        document.getElementById('main-container').classList.remove('references-visible');
-    }
-
-    // 2. Abre a nota
-    window.displayNote(note);
-};
+                   card.onclick = () => {
+                        if (window.innerWidth <= 768) document.getElementById('main-container').classList.remove('references-visible');
+                        // Abre a nota e faz scroll para o título da caixa
+                        window.displayNote({id: item.id, nome: item.originalName, conteudo: item.conteudo}, item.displayTitle);
+                   };
 
                    refList.appendChild(card);
                });
@@ -2186,123 +2234,6 @@ function generateSearchContext(fullText, term, isExact) {
        } catch (e) { 
            console.error(e); 
            refList.innerHTML = '<div style="color:red; padding:15px;">Erro ao carregar lista.</div>';
-       }
-   };
-
- window.findAndShowEntity = async (name, type) => {
-       // 1. Abrir Painel
-       mainContainer.classList.add('references-visible');
-       
-       const refList = document.getElementById('ref-list');
-       const refDesc = document.getElementById('ref-description');
-       const refTitle = document.getElementById('ref-title');
-
-       // Configuração Inicial
-       refTitle.textContent = name;
-       refDesc.textContent = "";
-       refList.innerHTML = '<li style="padding:10px;"><div class="spinner"></div> A carregar referências...</li>';
-
-       try {
-           // 2. Encontrar a Entidade na BD (pelo nome)
-           const config = ENTITY_CONFIG[type];
-           if(!config) throw new Error("Tipo desconhecido");
-           
-           const q = query(collection(db, config.collection), where('nome', '==', name), where('userId', '==', auth.currentUser.uid));
-           const s = await getDocs(q);
-           
-           if(s.empty) {
-               refList.innerHTML = '<li style="padding:10px; color:#888;">Entidade não encontrada.</li>';
-               document.getElementById('puzzle-board-container').innerHTML = '';
-               document.getElementById('puzzle-empty-msg').style.display = 'block';
-               return;
-           }
-
-           const docSnap = s.docs[0];
-           const entityData = docSnap.data();
-           const entityId = docSnap.id;
-
-           // Carregar o Quadro (Puzzle)
-           if (typeof loadPuzzleForReading === 'function') {
-               loadPuzzleForReading(entityId, type);
-           }
-           
-           // Forçar aba Lista ou Quadro conforme preferência (aqui deixamos o utilizador decidir ou forçamos Lista)
-           // document.querySelector('[data-ref-tab="references"]').click(); // Descomente para forçar a lista
-
-           // 4. Preencher Descrição
-           refDesc.textContent = entityData.descricao || '';
-           
-           const refsMap = entityData.referencias || {};
-           const noteIds = Object.keys(refsMap);
-           
-           if (noteIds.length === 0) {
-               refList.innerHTML = '<div style="padding:15px; color:#888; text-align:center;">Nenhuma referência encontrada na lista.</div>';
-               return;
-           }
-
-           const validResults = [];
-           
-           // Buscar detalhes de cada nota
-           for (const nId of noteIds) {
-               const docRef = doc(db, 'pastas', nId);
-               const noteDoc = await getDoc(docRef);
-               
-               if(noteDoc.exists()) {
-                   const d = noteDoc.data();
-                   if(d.estado === 'ativa') {
-                       let isProtected = (d.passe && d.passe.trim() !== "");
-                       if (isProtected && !sessionUnlockedFolders.has(nId) && !appSettings.searchAnchorsInProtected) continue;
-                       validResults.push({ id: nId, ...d, isProtected });
-                   }
-               }
-           }
-
-           // 5. Renderizar a Lista com CARTÕES NOVOS
-           refList.innerHTML = '';
-           
-           if(validResults.length === 0) {
-               refList.innerHTML = '<div style="padding:15px; color:#888; text-align:center;">Sem resultados acessíveis.</div>';
-           } else {
-               validResults.sort((a,b) => a.nome.localeCompare(b.nome));
-               
-               validResults.forEach(note => {
-                   // Criar o cartão
-                   const card = document.createElement('div');
-                   card.className = 'ref-list-card';
-                   
-                   const protectedIcon = note.isProtected ? "🔒 " : "";
-                   
-                   // Gerar o contexto (excerto)
-                   // Nota: Usamos a mesma função de contexto que já tínhamos, mas agora dentro do cartão
-                   const contextHTML = generateReferenceContext(note.conteudo, name);
-                   
-                   card.innerHTML = `
-                       <div class="ref-card-header">
-                           <span class="ref-card-title">📄 ${protectedIcon}${note.nome}</span>
-                           <span class="ref-card-arrow">➔</span>
-                       </div>
-                       <div class="ref-card-body">
-                           ${contextHTML}
-                       </div>
-                   `;
-                   
-                   // Clique no cartão inteiro
-                card.onclick = () => {
-    // 1. Se for telemóvel, fecha o painel para ver a nota
-    if (window.innerWidth <= 768) {
-        document.getElementById('main-container').classList.remove('references-visible');
-    }
-
-    // 2. Abre a nota
-    window.displayNote(note, name);
-};
-
-                   refList.appendChild(card);
-               });
-           }
-       } catch(e) { 
-           console.error(e); 
-           refList.innerHTML = '<div style="color:red; padding:15px;">Erro ao carregar dados.</div>';
        }
    };
 
@@ -2711,58 +2642,134 @@ document.getElementById('global-search-input').addEventListener('input', (e) => 
 });
 
 
-   window.showHighlightRef = async (hexCode, colorName) => {
+  window.showHighlightRef = async (hexCode, colorName) => {
        mainContainer.classList.add('references-visible');
        const refList = document.getElementById('ref-list');
        const refDesc = document.getElementById('ref-description');
        const refTitle = document.getElementById('ref-title');
+       
        refTitle.innerHTML = `<span style="display:inline-block;width:15px;height:15px;background:${hexCode};border-radius:50%;border:1px solid #ccc;"></span> ${colorName}`;
-       refDesc.textContent = "A pesquisar caixas com esta cor...";
+       refDesc.textContent = "A pesquisar contextos...";
        refList.innerHTML = '<li style="padding:10px;"><div class="spinner"></div></li>';
+       
+       // Tenta carregar quadro se existir (opcional para cores)
+       const puzzleContainer = document.getElementById('puzzle-board-container');
+       if(puzzleContainer) puzzleContainer.innerHTML = '';
+       const puzzleMsg = document.getElementById('puzzle-empty-msg');
+       if(puzzleMsg) { puzzleMsg.textContent = "Destaques não têm quadro."; puzzleMsg.style.display = 'block'; }
+       // Força a aba lista
+       const listTab = document.querySelector('[data-ref-tab="references"]');
+       if(listTab) listTab.click();
+
        try {
            const q = query(collection(db, 'pastas'), where('tipo', '==', 'nota'), where('estado', '==', 'ativa'), where('userId', '==', auth.currentUser.uid), where('coresUsadas', 'array-contains', hexCode));
            const snapshot = await getDocs(q);
            const results = [];
            const parser = new DOMParser();
+           
            snapshot.forEach(docSnap => {
                const data = docSnap.data();
                let isProtected = (data.passe && data.passe.trim() !== "");
                if (isProtected && !sessionUnlockedFolders.has(docSnap.id) && !appSettings.searchTagsInProtected) return;
+               
                const docHTML = parser.parseFromString(data.conteudo, 'text/html');
-               const boxes = docHTML.querySelectorAll(`.mini-note-wrapper[data-highlight="${hexCode}"]`);
-               boxes.forEach(box => {
-                   const titleInput = box.querySelector('.mini-note-title-input');
-                   const contentDiv = box.querySelector('.mini-note-content');
+               const elements = docHTML.querySelectorAll(`[data-highlight="${hexCode}"]`);
+               
+               elements.forEach(el => {
+                   let displayTitle = "Sem Título";
+                   let displayIcon = "🟦";
                    let snippet = "";
-                   let label = "SubNota";
-                   if(box.classList.contains('question-mode')) label = "Questão";
-                   if(box.classList.contains('free-mode')) label = "Contentor";
-                   if (titleInput && titleInput.value) snippet = `<b>[${label}]</b> ${titleInput.value}`;
-                   else if (contentDiv) {
-                       const txt = contentDiv.textContent.trim();
-                       snippet = txt.length > 60 ? txt.substring(0, 60)+"..." : (txt || `(${label} vazio)`);
+                   let contextType = "Item";
+
+                   // TOGGLES
+                   if (el.tagName === 'DETAILS' && el.classList.contains('toggle-section')) {
+                       displayIcon = "☂";
+                       contextType = "Toggle";
+                       const h2 = el.querySelector('h2');
+                       displayTitle = h2 ? h2.textContent : "Título Expansível";
+                       const contentDiv = el.querySelector('.toggle-content');
+                       snippet = contentDiv ? contentDiv.textContent.trim().substring(0, 60) + "..." : "";
                    }
-                   results.push({ id: docSnap.id, nome: data.nome, conteudo: data.conteudo, snippet: snippet });
+                   // CAIXAS
+                   else if (el.classList.contains('mini-note-wrapper')) {
+                       const titleInput = el.querySelector('.mini-note-title-input');
+                       const contentDiv = el.querySelector('.mini-note-content');
+
+                       if (el.classList.contains('question-mode')) {
+                           displayIcon = "📗"; contextType = "Questão";
+                           displayTitle = titleInput ? titleInput.value : "Questão";
+                       } else if (el.classList.contains('free-mode')) {
+                           displayIcon = "📙"; contextType = "Contentor";
+                           const txt = contentDiv ? contentDiv.textContent.trim() : "";
+                           displayTitle = txt.length > 40 ? txt.substring(0, 40) + "..." : (txt || "Contentor");
+                       } else {
+                           displayIcon = "📘"; contextType = "SubNota";
+                           displayTitle = titleInput ? titleInput.value : "SubNota";
+                       }
+
+                       if (!snippet && contentDiv) {
+                           snippet = contentDiv.textContent.trim().substring(0, 80) + "...";
+                       }
+                   }
+
+                   if (!displayTitle || displayTitle.trim() === "") displayTitle = `(Sem Título)`;
+
+                   results.push({ 
+                       id: docSnap.id, 
+                       noteName: data.nome, 
+                       conteudo: data.conteudo, 
+                       displayTitle, 
+                       displayIcon, 
+                       snippet,
+                       contextType 
+                   });
                });
            });
+
            refList.innerHTML = '';
+           
            if (results.length === 0) {
                refDesc.textContent = "Nenhuma caixa encontrada com esta cor.";
            } else {
-               refDesc.textContent = `${results.length} ocorrência(s) encontrada(s).`;
-               results.sort((a,b) => a.nome.localeCompare(b.nome));
-               results.forEach(res => {
-                   const li = document.createElement('li');
-                   li.className = 'reference-item';
-                   const safeName = res.nome.replace(/'/g, "\\'");
-                   const safeContent = res.conteudo.replace(/'/g, "\\'").replace(/\n/g, ' ');
-                   li.innerHTML = `<div><div style="display:flex; flex-direction:column;"><span style="font-weight:bold;">📄 ${res.nome}</span><span style="font-size:0.85em; color:var(--text-muted); border-left:3px solid ${hexCode}; padding-left:5px; margin-top:5px;">${res.snippet}</span></div><span>➔</span></div>`;
-                   li.querySelector('div').setAttribute('onclick', `displayNote({id:'${res.id}', nome:'${safeName}', conteudo:'${safeContent}'})`);
-                   refList.appendChild(li);
+               refDesc.textContent = `${results.length} ocorrência(s).`;
+               
+               // Ordenar
+               results.sort((a,b) => {
+                   if (a.contextType !== b.contextType) return a.contextType.localeCompare(b.contextType);
+                   return a.displayTitle.localeCompare(b.displayTitle);
+               });
+
+               results.forEach(item => {
+                   const card = document.createElement('div');
+                   card.className = 'ref-list-card';
+                   // Borda com a cor do destaque
+                   card.style.borderLeftColor = hexCode;
+                   
+                   card.innerHTML = `
+                       <div class="ref-card-header">
+                           <span class="ref-card-title" style="color:var(--text-color); font-size:1.05em;">
+                               ${item.displayIcon} ${item.displayTitle}
+                           </span>
+                           <span class="ref-card-arrow">➔</span>
+                       </div>
+                       <div class="ref-card-body">
+                           <small style="color:var(--accent-color);">em 📄 ${item.noteName}</small><br>
+                           <span style="font-style:italic; opacity:0.8;">${item.snippet || "Sem texto."}</span>
+                       </div>
+                   `;
+                   
+                   card.onclick = () => {
+                       if (window.innerWidth <= 768) document.getElementById('main-container').classList.remove('references-visible');
+                       // Abre a nota e faz scroll
+                       window.displayNote({id: item.id, nome: item.noteName, conteudo: item.conteudo}, item.displayTitle);
+                   };
+                   
+                   refList.appendChild(card);
                });
            }
        } catch (error) { console.error(error); refList.innerHTML = '<li>Erro ao processar dados.</li>'; }
    };
+   
    
    document.getElementById('reader-zoom').addEventListener('change', (e) => {
        readBody.style.fontSize = e.target.value;
