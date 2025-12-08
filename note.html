@@ -3127,6 +3127,7 @@ const DEFAULT_HIGHLIGHTS = [
     { code: "#FF80AB", name: "Rosa Choque" },       // Rosa forte
     { code: "#CFD8DC", name: "Cinza Metálico" }     // Neutro
 ];
+const EXPLORER_RESULTS_PER_PAGE = 15;
 
 
 // --- ESTADO DA APLICAÇÃO ---
@@ -3173,6 +3174,9 @@ let currentNoteShareData = null;
 let moveStack = []; // Histórico de navegação (como no Append/Aggregation)
 let itemToMoveRef = null; // Guarda o objeto do item que estamos a mover
 let selectedDestFolderId = null; // Guarda o ID da pasta destino selecionada
+let globalExplorerResults = []; // Guarda todos os resultados (Pastas + Notas)
+let currentExplorerPage = 0;
+
 
 // --- PROTEÇÃO DE ROTA E CARREGAMENTO DE USUÁRIO ---
 onAuthStateChanged(auth, async (user) => {
@@ -4164,7 +4168,7 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
     });
 }
 
-async function updateNavigationView(keepEditorOpen = false) {
+async function updateNavigationView(keepEditorOpen = false, targetSelectId = null) {
     notebookContainer.classList.remove('left-panel-collapsed');
 
     // Limpa os listeners anteriores para evitar fugas de memória ou duplicações
@@ -4174,7 +4178,7 @@ async function updateNavigationView(keepEditorOpen = false) {
     // Se não for para manter aberto (ex: clicou em voltar), limpa o editor
     if (!keepEditorOpen) resetEditor();
 
-    // Verifica se estamos dentro de uma Superpasta (variável global definida no superpasta.html)
+    // Verifica se estamos dentro de uma Superpasta
     const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
     // ============================================================
@@ -4183,7 +4187,7 @@ async function updateNavigationView(keepEditorOpen = false) {
     if (currentTab === 'lists') {
         setLeftPanelTitle('Categorias'); 
         
-        // 1. MENU ESQUERDO ATUALIZADO (Inclui Destaques)
+        // MENU ESQUERDO
         leftPanelList.innerHTML = `
             <li class="list-item" data-type="list-category" data-id="topico">📑 Tópicos</li>
             <li class="list-item" data-type="list-category" data-id="personagem">👤 Personagens</li>
@@ -4206,7 +4210,7 @@ async function updateNavigationView(keepEditorOpen = false) {
             backBtn.style.display = 'flex';
             middlePanelList.innerHTML = '<li>A carregar...</li>'; 
 
-            // Filtro de Superpasta (Opcional: verifica IDs válidos se estiver numa superpasta)
+            // Filtro de Superpasta (Opcional)
             let validNoteIds = null; 
             if (isSuperContext && !appSettings.searchGlobalInSuperfolder) {
                 try {
@@ -4229,57 +4233,35 @@ async function updateNavigationView(keepEditorOpen = false) {
             if (currentContext.type === 'list-category') {
                 const type = currentContext.id;
 
-                // >>> 1. DESTAQUES (NOVO BLOCO) <<<
+                // >>> 1. DESTAQUES <<<
                 if (type === 'destaque') {
                     middlePanelList.innerHTML = '<li class="list-item">A carregar cores...</li>';
-                    
                     try {
                         const docRef = doc(db, 'destaques', auth.currentUser.uid);
                         const docSnap = await getDoc(docRef);
-                        
                         let colorsToRender = [];
-                        
                         if (docSnap.exists() && docSnap.data().colors) {
-                            // Se o user tem cores salvas, usa essas
                             const userColors = docSnap.data().colors; 
-                            colorsToRender = Object.entries(userColors).map(([hex, name]) => ({
-                                code: hex,
-                                name: name
-                            }));
+                            colorsToRender = Object.entries(userColors).map(([hex, name]) => ({ code: hex, name: name }));
                         } else {
-                            // Se não tem nada salvo, usa as padrão
                             colorsToRender = [...DEFAULT_HIGHLIGHTS];
                         }
-
-                        // Ordenar alfabeticamente por nome
                         colorsToRender.sort((a, b) => a.name.localeCompare(b.name));
-
                         middlePanelList.innerHTML = '';
-                        
                         if (colorsToRender.length === 0) {
                             middlePanelList.innerHTML = '<li class="list-item">Nenhum destaque definido.</li>';
                         } else {
                             colorsToRender.forEach(color => {
                                 const li = document.createElement('li');
                                 li.className = 'list-item';
-                                li.dataset.type = 'highlight-item'; // Identificador para o clique
+                                li.dataset.type = 'highlight-item';
                                 li.dataset.hex = color.code;
                                 li.dataset.name = color.name;
-                                
-                                li.innerHTML = `
-                                    <div style="display:flex; align-items:center;">
-                                        <div style="width:20px; height:20px; border-radius:50%; background-color:${color.code}; margin-right:10px; border:1px solid rgba(0,0,0,0.2);"></div>
-                                        <span>${color.name}</span>
-                                    </div>
-                                `;
+                                li.innerHTML = `<div style="display:flex; align-items:center;"><div style="width:20px; height:20px; border-radius:50%; background-color:${color.code}; margin-right:10px; border:1px solid rgba(0,0,0,0.2);"></div><span>${color.name}</span></div>`;
                                 middlePanelList.appendChild(li);
                             });
                         }
-
-                    } catch (error) {
-                        console.error("Erro ao carregar destaques:", error);
-                        middlePanelList.innerHTML = '<li>Erro ao carregar dados.</li>';
-                    }
+                    } catch (error) { console.error(error); middlePanelList.innerHTML = '<li>Erro ao carregar.</li>'; }
                     return;
                 }
 
@@ -4678,7 +4660,7 @@ async function updateNavigationView(keepEditorOpen = false) {
                 setLeftPanelTitle(parentFolder.name);
                 leftPanelSelectedId = currentFolder.id;
             } else {
-                // Nível 0 da Superpasta
+                // Nível 0 da Superpasta ou Raiz Global
                 if (isSuperContext) {
                     leftPanelParentId = SUPERFOLDER_ID;
                     setLeftPanelTitle(currentSuperfolderName);
@@ -4690,11 +4672,40 @@ async function updateNavigationView(keepEditorOpen = false) {
             }
         }
         
+        // Renderiza Painel Esquerdo (com a pasta selecionada)
         unsubscribeLeftPanel = fetchAndDisplayItems(leftPanelParentId, leftPanelList, leftPanelSelectedId);
+        
+        // Renderiza Painel do Meio (com a NOTA selecionada, se houver targetSelectId)
         if (middlePanelParentId) {
-            unsubscribeMiddlePanel = fetchAndDisplayItems(middlePanelParentId, middlePanelList, null);
+            unsubscribeMiddlePanel = fetchAndDisplayItems(middlePanelParentId, middlePanelList, targetSelectId);
         }
     }
+}
+
+
+
+
+// 1. Remove acentos (ex: "João" -> "joao")
+function removeAccents(str) {
+    if (!str) return "";
+    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+// 2. Cria Regex que entende acentos (ex: "joao" vira regex para encontrar "joão", "João", "JÒAO")
+function getAccentInsensitiveRegex(term) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // Escapa caracteres especiais
+    
+    // Substitui vogais simples pelos seus grupos com acento
+    let regexStr = escaped
+        .replace(/a/gi, '[aàáâãäå]')
+        .replace(/e/gi, '[eèéêë]')
+        .replace(/i/gi, '[iìíîï]')
+        .replace(/o/gi, '[oòóôõö]')
+        .replace(/u/gi, '[uùúûü]')
+        .replace(/c/gi, '[cç]')
+        .replace(/n/gi, '[nñ]');
+        
+    return new RegExp(`(${regexStr})`, 'gi');
 }
 
 
@@ -7903,8 +7914,30 @@ async function openExplorerModal() {
 async function executeGlobalSearch(term, container) {
     container.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A pesquisar...</span></div>';
     
+    // 1. Deteção de Pesquisa Exata (Aspas)
+    let isExactMatch = false;
+    let cleanTerm = term;
+
+    if (term.length > 2 && term.startsWith('"') && term.endsWith('"')) {
+        isExactMatch = true;
+        cleanTerm = term.slice(1, -1);
+    }
+
+    const normalizedTerm = removeAccents(cleanTerm);
+
+    const checkMatch = (text) => {
+        if (!text) return false;
+        const normText = removeAccents(text);
+        
+        if (isExactMatch) {
+            const regex = new RegExp(`\\b${escapeRegExp(normalizedTerm)}\\b`, 'i');
+            return regex.test(normText);
+        } else {
+            return normText.includes(normalizedTerm);
+        }
+    };
+
     try {
-        // 1. Buscar todas as pastas e notas ativas do utilizador
         const q = query(
             collection(db, 'pastas'),
             where('estado', '==', 'ativa'),
@@ -7912,128 +7945,133 @@ async function executeGlobalSearch(term, container) {
         );
         
         const snapshot = await getDocs(q);
-        const results = { folders: [], notes: [] };
+        
+        const foundFolders = [];
+        const foundNotes = [];
 
-        const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
+        const folderMap = {};
+        snapshot.forEach(doc => {
+            const d = doc.data();
+            if (d.tipo === 'pasta') {
+                folderMap[doc.id] = { id: doc.id, nome: d.nome, parentId: d.parentId, passe: d.passe };
+            }
+        });
 
         snapshot.forEach(doc => {
             const data = doc.data();
             const id = doc.id;
             
-            // 1. VERIFICAÇÃO DE PRIVACIDADE
             const isProtected = (data.passe && data.passe.trim() !== "");
             const isLocked = isProtected && !sessionUnlockedFolders.has(id);
             
-            if (isLocked && !appSettings.searchTagsInProtected) {
-                return; 
-            }
-
+            if (isLocked && !appSettings.searchTagsInProtected) return; 
             const allowContentSearch = !isLocked;
 
-            // 2. LÓGICA DE PESQUISA
-
-            // A. Pesquisa em PASTAS
+            // --- A. PASTAS ---
             if (data.tipo === 'pasta') {
-                if (data.nome.toLowerCase().includes(term)) {
+                if (checkMatch(data.nome)) {
                     const displayName = isLocked ? `🔒 ${data.nome}` : data.nome;
-                    results.folders.push({ id, name: displayName, parentId: data.parentId });
+                    foundFolders.push({ 
+                        id, 
+                        name: displayName, 
+                        parentId: data.parentId, 
+                        type: 'pasta' 
+                    });
                 }
             }
 
-            // B. Pesquisa em NOTAS
+            // --- B. NOTAS ---
             else if (data.tipo === 'nota') {
                 let matched = false;
                 let context = '';
                 let matchType = 'nota'; 
 
                 // 1. Verifica Título
-                if (data.nome.toLowerCase().includes(term)) {
+                if (checkMatch(data.nome)) {
                     matched = true;
+                    // Se encontrou no título, não precisamos de procurar no corpo para "encontrar",
+                    // MAS se quisermos mostrar o contexto do corpo, podemos continuar.
+                    // Para performance, assumimos que título basta, a menos que queira procurar Toggles especificamente.
                 }
 
-                // 2. Verifica Conteúdo (TUDO DEVE ESTAR DENTRO DESTE IF)
-                if (!matched && allowContentSearch && data.conteudo) {
-                    const parser = new DOMParser();
-                    const docHTML = parser.parseFromString(data.conteudo, 'text/html');
+                // 2. Verifica Conteúdo (Se não encontrou no título OU para enriquecer contexto)
+                // CORREÇÃO: Inicializamos docHTML apenas se formos analisar conteúdo
+                if (allowContentSearch && data.conteudo) {
+                    // Só fazemos parse se ainda não encontrámos (para poupar CPU) 
+                    // OU se quisermos forçar a procura de tipos específicos como Toggles
                     
-                    // a) Pesquisa em Post-its
-                    const postits = docHTML.querySelectorAll('.post-it-content');
-                    for (const p of postits) {
-                        if (p.textContent.toLowerCase().includes(term)) {
-                            matched = true;
-                            matchType = 'postit';
-                            context = generateSearchContext(p.textContent, term);
-                            break;
-                        }
-                    }
-
-                    // b) Pesquisa em Questões
                     if (!matched) {
-                        const questions = docHTML.querySelectorAll('.mini-note-wrapper.question-mode .mini-note-content, .mini-note-wrapper.question-mode input');
-                        for (const q of questions) {
-                            const text = q.tagName === 'INPUT' ? q.value : q.textContent;
-                            if (text.toLowerCase().includes(term)) {
-                                matched = true;
-                                matchType = 'question';
-                                context = generateSearchContext(text, term);
-                                break;
+                        const parser = new DOMParser();
+                        const docHTML = parser.parseFromString(data.conteudo, 'text/html');
+                        
+                        // a) Post-its
+                        const postits = docHTML.querySelectorAll('.post-it-content');
+                        for (const p of postits) {
+                            if (checkMatch(p.textContent)) { matched = true; matchType = 'postit'; context = generateSearchContext(p.textContent, cleanTerm, isExactMatch); break; }
+                        }
+                        // b) Questões
+                        if (!matched) {
+                            const questions = docHTML.querySelectorAll('.mini-note-wrapper.question-mode input, .mini-note-wrapper.question-mode .mini-note-content');
+                            for (const q of questions) {
+                                const txt = q.tagName==='INPUT'?q.value:q.textContent;
+                                if (checkMatch(txt)) { matched = true; matchType = 'question'; context = generateSearchContext(txt, cleanTerm, isExactMatch); break; }
                             }
                         }
-                    }
-
-                    // c) Pesquisa em Subnotas
-                    if (!matched) {
-                        const minis = docHTML.querySelectorAll('.mini-note-wrapper:not(.question-mode) .mini-note-content, .mini-note-wrapper:not(.question-mode) input');
-                        for (const m of minis) {
-                            const text = m.tagName === 'INPUT' ? m.value : m.textContent;
-                            if (text.toLowerCase().includes(term)) {
-                                matched = true;
-                                matchType = 'subnota';
-                                context = generateSearchContext(text, term);
-                                break;
+                        // c) Subnotas
+                        if (!matched) {
+                            const minis = docHTML.querySelectorAll('.mini-note-wrapper:not(.question-mode):not(.free-mode) input, .mini-note-wrapper:not(.question-mode):not(.free-mode) .mini-note-content');
+                            for (const m of minis) {
+                                const txt = m.tagName==='INPUT'?m.value:m.textContent;
+                                if (checkMatch(txt)) { matched = true; matchType = 'subnota'; context = generateSearchContext(txt, cleanTerm, isExactMatch); break; }
                             }
                         }
-                    }
-
-                    // d) Pesquisa em Contentores Livres (CORRIGIDO: Agora está dentro do bloco onde docHTML existe)
-                    if (!matched) {
-                        const frees = docHTML.querySelectorAll('.mini-note-wrapper.free-mode .mini-note-content');
-                        for (const f of frees) {
-                            if (f.textContent.toLowerCase().includes(term)) {
-                                matched = true;
-                                matchType = 'free';
-                                context = generateSearchContext(f.textContent, term);
-                                break;
+                        // d) Contentores Livres
+                        if (!matched) {
+                            const frees = docHTML.querySelectorAll('.mini-note-wrapper.free-mode .mini-note-content');
+                            for (const f of frees) {
+                                if (checkMatch(f.textContent)) { matched = true; matchType = 'free'; context = generateSearchContext(f.textContent, cleanTerm, isExactMatch); break; }
                             }
                         }
-                    }
-
-                    // e) Pesquisa no Texto Geral (Body)
-                    if (!matched) {
-                        const bodyText = docHTML.body.textContent || "";
-                        if (bodyText.toLowerCase().includes(term)) {
-                            matched = true;
-                            context = generateSearchContext(bodyText, term);
+                        // f) Títulos Toggle (A PARTE QUE DEU ERRO AGORA ESTÁ SEGURA)
+                        if (!matched) {
+                            const summaries = docHTML.querySelectorAll('summary h2');
+                            for (const h2 of summaries) {
+                                if (checkMatch(h2.textContent)) {
+                                    matched = true;
+                                    matchType = 'toggle';
+                                    context = generateSearchContext(h2.textContent, cleanTerm, isExactMatch);
+                                    break;
+                                }
+                            }
+                        }
+                        // e) Body Geral (Último recurso)
+                        if (!matched) {
+                            const bodyText = docHTML.body.textContent || "";
+                            if (checkMatch(bodyText)) { matched = true; context = generateSearchContext(bodyText, cleanTerm, isExactMatch); }
                         }
                     }
-                } // FIM DO IF DATA.CONTEUDO
+                } 
 
                 if (matched) {
                     const finalName = isLocked ? `🔒 ${data.nome}` : data.nome;
-                    const finalContext = isLocked ? "<em>Conteúdo protegido. Desbloqueie para ver detalhes.</em>" : context;
+                    const finalContext = isLocked ? "<em>Conteúdo protegido.</em>" : context;
 
-                    results.notes.push({ 
+                    foundNotes.push({ 
                         id, 
                         name: finalName, 
                         parentId: data.parentId,
                         context: finalContext,
-                        matchType: matchType
+                        matchType: matchType,
+                        type: 'nota',
+                        rawSearchTerm: cleanTerm 
                     });
                 }
             }
         });
 
-        renderSearchResults(results, container, term);
+        globalExplorerResults = [...foundFolders, ...foundNotes];
+        currentExplorerPage = 0;
+        renderExplorerResultsPage(container, term, folderMap, true);
 
     } catch (error) {
         console.error("Erro na pesquisa:", error);
@@ -8041,10 +8079,23 @@ async function executeGlobalSearch(term, container) {
     }
 }
 
+
 // --- GERAR CONTEXTO (TEXTO AO REDOR) ---
-function generateSearchContext(fullText, term) {
-    const lowerText = fullText.toLowerCase();
-    const index = lowerText.indexOf(term);
+function generateSearchContext(fullText, term, isExact) {
+    const normalizedText = removeAccents(fullText);
+    const normalizedTerm = removeAccents(term);
+    
+    let index = -1;
+
+    if (isExact) {
+        // Usa Regex para encontrar a posição da palavra inteira
+        const regex = new RegExp(`\\b${escapeRegExp(normalizedTerm)}\\b`, 'i');
+        const match = normalizedText.match(regex);
+        index = match ? match.index : -1;
+    } else {
+        index = normalizedText.indexOf(normalizedTerm);
+    }
+
     if (index === -1) return "";
 
     const start = Math.max(0, index - 40);
@@ -8052,122 +8103,208 @@ function generateSearchContext(fullText, term) {
     
     let snippet = fullText.substring(start, end);
     
-    // Adiciona reticências
     if (start > 0) snippet = "..." + snippet;
     if (end < fullText.length) snippet = snippet + "...";
 
-    // Destaca a palavra (Case insensitive replace para visual)
-    const regex = new RegExp(`(${escapeRegExp(term)})`, 'gi');
-    return snippet.replace(regex, "<mark>$1</mark>");
+    // Passamos o isExact para o highlightMatch também
+    return highlightMatch(snippet, term, isExact);
 }
 
-// --- RENDERIZAR RESULTADOS ---
-async function renderSearchResults(results, container, term) {
-    container.innerHTML = '';
 
-    // Se não houver nada
-    if (results.folders.length === 0 && results.notes.length === 0) {
+// --- RENDERIZAR RESULTADOS ---
+function renderExplorerResultsPage(container, term, folderMap, reset = false) {
+    // Se for reset, limpa o contentor
+    if (reset) {
+        container.innerHTML = '';
+    }
+
+    if (globalExplorerResults.length === 0) {
         container.innerHTML = '<p style="text-align: center; color: var(--text-muted-color);">Nenhum resultado encontrado.</p>';
         return;
     }
 
-    // 1. Renderizar Pastas
-    if (results.folders.length > 0) {
-        const group = document.createElement('div');
-        group.className = 'search-results-group';
-        group.innerHTML = `<div class="search-results-header">Pastas (${results.folders.length})</div>`;
-        
-        results.folders.forEach(folder => {
-            const item = document.createElement('div');
-            item.className = 'search-result-item';
-            
-            // Destaca o nome da pasta se coincidir com o termo
-            item.innerHTML = `
-                <span class="search-result-title">📁 ${highlightMatch(folder.name, term)} <span class="search-badge badge-pasta">Pasta</span></span>
+    // Calcular Paginação
+    const start = currentExplorerPage * EXPLORER_RESULTS_PER_PAGE;
+    const end = start + EXPLORER_RESULTS_PER_PAGE;
+    const pageResults = globalExplorerResults.slice(start, end);
+
+    // Remove botão antigo se existir
+    const oldBtn = document.getElementById('explorer-load-more-btn');
+    if (oldBtn) oldBtn.remove();
+
+    // Renderizar Itens
+    pageResults.forEach(item => {
+        const divItem = document.createElement('div');
+        divItem.className = 'search-result-item';
+
+        // --- RENDERIZAR PASTA ---
+        if (item.type === 'pasta') {
+            divItem.innerHTML = `
+                <span class="search-result-title">📁 ${highlightMatch(item.name, term)} <span class="search-badge badge-pasta">Pasta</span></span>
             `;
             
-            item.onclick = () => {
+            divItem.onclick = () => {
                 document.getElementById('anchors-modal').style.display = 'none';
                 
-                // Se não estivermos na aba Note, mudamos
+                // Mudar para a aba Note
                 if (currentTab !== 'note') {
                     currentTab = 'note';
-                    document.querySelectorAll('.tabs-container button').forEach(btn => {
-                        if (btn.dataset.tab === 'note') btn.classList.add('active');
-                        else btn.classList.remove('active');
-                    });
+                    updateTabsUI();
                 }
 
+                // Navegação Inteligente (Breadcrumbs)
                 navigationStack = []; 
-                if (folder.parentId) {
-                    // Lógica simplificada de navegação
+                let curr = item.parentId;
+                const path = [];
+                while(curr && folderMap[curr]) {
+                    path.unshift({ id: folderMap[curr].id, name: folderMap[curr].nome });
+                    curr = folderMap[curr].parentId;
                 }
-                navigationStack.push({ id: folder.id, name: folder.name });
-                updateNavigationView();
+                path.forEach(p => navigationStack.push(p));
+                navigationStack.push({ id: item.id, name: item.name.replace('🔒 ', '') }); // Adiciona a própria pasta
+                
+                updateNavigationView(true);
             };
-            group.appendChild(item);
-        });
-        container.appendChild(group);
-    }
-
-    // 2. Renderizar Notas (e seus conteúdos)
-    if (results.notes.length > 0) {
-        const group = document.createElement('div');
-        group.className = 'search-results-group';
-        group.innerHTML = `<div class="search-results-header">Notas e Conteúdo (${results.notes.length})</div>`;
+        } 
         
-        results.notes.forEach(note => {
-            const item = document.createElement('div');
-            item.className = 'search-result-item';
+        // --- RENDERIZAR NOTA ---
+     else if (item.type === 'nota') {
             
-            // Define a badge baseada no tipo de match
-            let badgeHtml = '<span class="search-badge badge-nota">Nota</span>';
-            
-            if (note.matchType === 'postit') {
-                badgeHtml = '<span class="search-badge badge-postit">Post-it</span>';
+            // CORES E BADGES PERSONALIZADAS
+            let badgeText = "Nota";
+            let badgeStyle = "background-color: rgba(128, 128, 128, 0.2); color: #95a5a6; border: 1px solid #95a5a6;"; // Cinzento (Padrão)
+            let borderLeftColor = "#95a5a6"; // Cinzento
+
+            if (item.matchType === 'subnota') {
+                badgeText = "SubNota";
+                badgeStyle = "background-color: rgba(52, 152, 219, 0.2); color: #3498db; border: 1px solid #3498db;"; // Azul
+                borderLeftColor = "#3498db";
             } 
-            else if (note.matchType === 'question') {
-                badgeHtml = '<span class="search-badge badge-question">Questão</span>';
-            } 
-            else if (note.matchType === 'subnota') {
-                badgeHtml = '<span class="search-badge badge-postit">Subnota</span>';
+            else if (item.matchType === 'question') {
+                badgeText = "Questão";
+                badgeStyle = "background-color: rgba(46, 204, 113, 0.2); color: #2ecc71; border: 1px solid #2ecc71;"; // Verde
+                borderLeftColor = "#2ecc71";
             }
-            // --- NOVA LINHA ADICIONADA AQUI ---
-            else if (note.matchType === 'free') {
-                badgeHtml = '<span class="search-badge badge-postit" style="background:rgba(230, 126, 34, 0.2); color:#e67e22;">Contentor Livre</span>';
+            else if (item.matchType === 'free') {
+                badgeText = "Contentor";
+                badgeStyle = "background-color: rgba(230, 126, 34, 0.2); color: #e67e22; border: 1px solid #e67e22;"; // Laranja
+                borderLeftColor = "#e67e22";
+            }
+            else if (item.matchType === 'postit') {
+                badgeText = "Post-it";
+                badgeStyle = "background-color: rgba(121, 85, 72, 0.2); color: #a1887f; border: 1px solid #a1887f;"; // Castanho
+                borderLeftColor = "#a1887f"; // Castanho (Brown)
+            }
+            else if (item.matchType === 'toggle') { // Caso detetemos título de toggle
+                badgeText = "Título Toggle";
+                badgeStyle = "background-color: rgba(231, 76, 60, 0.2); color: #e74c3c; border: 1px solid #e74c3c;"; // Vermelho
+                borderLeftColor = "#e74c3c";
             }
 
-            item.innerHTML = `
-                <span class="search-result-title">📄 ${highlightMatch(note.name, term)} ${badgeHtml}</span>
-                ${note.context ? `<div class="search-match-context">${note.context}</div>` : ''}
+            // Aplicar estilo visual ao item
+            divItem.style.borderLeft = `4px solid ${borderLeftColor}`;
+            divItem.style.paddingLeft = "12px"; // Ajuste fino para o texto não colar à borda colorida
+
+            divItem.innerHTML = `
+                <span class="search-result-title">
+                    📄 ${highlightMatch(item.name, term)} 
+                    <span class="search-badge" style="${badgeStyle} font-size:0.75em; padding:2px 6px; border-radius:4px; margin-left:8px; text-transform:uppercase; font-weight:bold;">
+                        ${badgeText}
+                    </span>
+                </span>
+                ${item.context ? `<div class="search-match-context">${item.context}</div>` : ''}
             `;
             
-            item.onclick = () => {
+            divItem.onclick = () => {
                 document.getElementById('anchors-modal').style.display = 'none';
                 
-                // 1. Garante que a interface muda para o modo de Notas/Pastas
                 if (currentTab !== 'note') {
                     currentTab = 'note';
-                    document.querySelectorAll('.tabs-container button').forEach(btn => {
-                        if (btn.dataset.tab === 'note') btn.classList.add('active');
-                        else btn.classList.remove('active');
-                    });
-                    navigationStack = []; 
-                    updateNavigationView(true); 
+                    updateTabsUI();
                 }
 
-                // 2. Abre a nota e passa o termo para fazer scroll/highlight
-                displayNote(note.id, null, term);
+                // Navegação Inteligente
+                navigationStack = [];
+                let curr = item.parentId;
+                const path = [];
+                while(curr && folderMap[curr]) {
+                    path.unshift({ id: folderMap[curr].id, name: folderMap[curr].nome });
+                    curr = folderMap[curr].parentId;
+                }
+                path.forEach(p => navigationStack.push(p));
+                
+                updateNavigationView(true, item.id);
+                setTimeout(() => {
+                    displayNote(item.id, null, item.rawSearchTerm);
+                }, 50);
             };
-            group.appendChild(item);
-        });
-        container.appendChild(group);
+        }
+        container.appendChild(divItem);
+    });
+
+    // Adicionar Botão "Carregar Mais" se houver mais
+    if (end < globalExplorerResults.length) {
+        const remaining = globalExplorerResults.length - end;
+        
+        const loadMoreBtn = document.createElement('button');
+        loadMoreBtn.id = 'explorer-load-more-btn';
+        loadMoreBtn.textContent = `Carregar mais (${remaining} restantes)`;
+        
+        // Estilos do botão
+        loadMoreBtn.style.display = 'block';
+        loadMoreBtn.style.width = '100%';
+        loadMoreBtn.style.padding = '12px';
+        loadMoreBtn.style.margin = '10px 0';
+        loadMoreBtn.style.background = 'var(--panel-color)';
+        loadMoreBtn.style.border = '1px solid var(--border-color)';
+        loadMoreBtn.style.color = 'var(--accent-color)';
+        loadMoreBtn.style.borderRadius = '5px';
+        loadMoreBtn.style.cursor = 'pointer';
+        loadMoreBtn.style.fontWeight = 'bold';
+        
+        loadMoreBtn.onclick = () => {
+            currentExplorerPage++;
+            // Chamamos a função com reset = false para ADICIONAR
+            renderExplorerResultsPage(container, term, folderMap, false);
+        };
+        
+        container.appendChild(loadMoreBtn);
     }
 }
 
+// Função auxiliar para atualizar as abas visualmente (se ainda não existir)
+function updateTabsUI() {
+    document.querySelectorAll('.tabs-container button').forEach(btn => {
+        if (btn.dataset.tab === 'note') btn.classList.add('active');
+        else btn.classList.remove('active');
+    });
+}
+
 // Auxiliar para destacar título
-function highlightMatch(text, term) {
-    const regex = new RegExp(`(${escapeRegExp(term)})`, 'gi');
+function highlightMatch(text, term, isExact) {
+    let regex;
+    
+    if (isExact) {
+        // Usa a função de regex insensível a acentos, mas adiciona \b à volta
+        // 1. Escapa o termo
+        const safeTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // 2. Cria a string de regex complexa (a|á|à...)
+        let regexStr = safeTerm
+            .replace(/a/gi, '[aàáâãäå]')
+            .replace(/e/gi, '[eèéêë]')
+            .replace(/i/gi, '[iìíîï]')
+            .replace(/o/gi, '[oòóôõö]')
+            .replace(/u/gi, '[uùúûü]')
+            .replace(/c/gi, '[cç]')
+            .replace(/n/gi, '[nñ]');
+            
+        // 3. Adiciona barreiras de palavra
+        regex = new RegExp(`(\\b${regexStr}\\b)`, 'gi');
+    } else {
+        // Usa a função antiga (getAccentInsensitiveRegex)
+        regex = getAccentInsensitiveRegex(term);
+    }
+
     return text.replace(regex, "<mark>$1</mark>");
 }
 
