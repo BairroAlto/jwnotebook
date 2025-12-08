@@ -3862,23 +3862,46 @@ async function toggleBookmark(marcadorId, shouldAdd, liElement) {
 // --- 3. GRAVAÇÃO NA NOTA ---
 
  document.getElementById('save-topics-btn').addEventListener('click', async () => {
-    if (!topicTargetId) return;
+    
+    // CASO 1: Estamos a gravar tópicos de uma CAIXA (SubNota/Questão)
+    if (activeMiniNoteElement) {
+        // A. Prepara os dados
+        const jsonTopics = JSON.stringify(currentNoteTopics);
+        
+        console.log("📝 [MODAL] A gravar na caixa:", jsonTopics);
 
-    try {
-        const itemRef = doc(db, 'pastas', topicTargetId);
-        await updateDoc(itemRef, {
-            topicosSelecionados: currentNoteTopics,
-            ultimaedicao: serverTimestamp()
-        });
+        // B. Escreve no atributo invisível do HTML
+        activeMiniNoteElement.setAttribute('data-topics', jsonTopics);
+        
+        // C. Atualiza visualmente o botão da caixa (para ficar azul)
+        updateMiniNoteButtonState(activeMiniNoteElement);
+
+        // D. Fecha o modal
         document.getElementById('topics-modal').style.display = 'none';
         
-        // Se o item que editámos for a nota aberta atualmente, atualiza o status visual
-        if (topicTargetId === selectedNoteId) {
-            updateSaveStatus('saved');
+        // E. Limpa a variável global
+        activeMiniNoteElement = null;
+
+        // F. FORÇA A GRAVAÇÃO NA BASE DE DADOS IMEDIATAMENTE
+        // Isto é crucial! Chama o executeSave para enviar para o Firebase
+        await saveNote(true); 
+        return;
+    }
+
+    // CASO 2: Estamos a gravar tópicos da NOTA PRINCIPAL
+    if (topicTargetId) {
+        try {
+            const itemRef = doc(db, 'pastas', topicTargetId);
+            await updateDoc(itemRef, {
+                topicosSelecionados: currentNoteTopics,
+                ultimaedicao: serverTimestamp()
+            });
+            document.getElementById('topics-modal').style.display = 'none';
+            if (topicTargetId === selectedNoteId) updateSaveStatus('saved');
+        } catch (error) {
+            console.error("Erro ao gravar tópicos:", error);
+            alert("Erro ao gravar.");
         }
-    } catch (error) {
-        console.error("Erro ao gravar tópicos:", error);
-        alert("Erro ao gravar.");
     }
 });
 
@@ -6001,6 +6024,49 @@ function saveNote(forceImmediate = false) {
     }, 120000); 
 }
 
+// ============================================================
+// FUNÇÃO AUXILIAR: Extrair todos os tópicos do HTML (Caixas)
+// ============================================================
+function extractTopicsFromEditorHTML() {
+    // Encontra todas as caixas (Questões, Subnotas, Contentores)
+    const allWrappers = document.getElementById('note-content-editor').querySelectorAll('.mini-note-wrapper');
+    const aggregatedTopics = {};
+
+    allWrappers.forEach(wrapper => {
+        try {
+            // Lê o atributo data-topics
+            const jsonStr = wrapper.getAttribute('data-topics');
+            
+            // Ignora se estiver vazio
+            if (!jsonStr || jsonStr === '{}') return;
+
+            const topics = JSON.parse(jsonStr);
+
+            // Junta tudo num único objeto grande
+            for (const [topicId, subArray] of Object.entries(topics)) {
+                
+                // Se o tópico ainda não existe, cria array vazio
+                if (!aggregatedTopics[topicId]) {
+                    aggregatedTopics[topicId] = [];
+                }
+
+                // Adiciona subtópicos sem duplicar
+                if (Array.isArray(subArray)) {
+                    subArray.forEach(subId => {
+                        if (!aggregatedTopics[topicId].includes(subId)) {
+                            aggregatedTopics[topicId].push(subId);
+                        }
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn("Erro ao ler tópicos de uma caixa:", e);
+        }
+    });
+
+    return aggregatedTopics;
+}
+
 // Função que faz a gravação real no Firebase
 async function executeSave() {
     if (!selectedNoteId) return;
@@ -6008,70 +6074,52 @@ async function executeSave() {
     updateSaveStatus('saving');
 
     try {
-        // --- Lógica de Fixar Inputs (Mini-Notas) ---
-        try {
-            const miniNoteInputs = noteContentEditor.querySelectorAll('.mini-note-title-input');
-            miniNoteInputs.forEach(input => {
-                if (input) input.setAttribute('value', input.value || '');
-            });
-        } catch (e) { console.warn("Aviso menor:", e); }
+        // Fixar valores dos inputs
+        const miniNoteInputs = noteContentEditor.querySelectorAll('.mini-note-title-input');
+        miniNoteInputs.forEach(input => input.setAttribute('value', input.value || ''));
 
         const noteRef = doc(db, 'pastas', selectedNoteId);
         
-        // --- Processamento de Tags e Anexos (Copiado da sua lógica original) ---
-        let finalTagNames = [];
-        try {
-            finalTagNames = Array.from(noteContentEditor.querySelectorAll('span.tag'))
-                .map(span => span.textContent.substring(1));
-            // (A lógica de atualização de índices de tags mantém-se aqui, simplificada para brevidade)
-             // Atualiza referências de tags na coleção 'tags'
-            const noteSnap = await getDoc(noteRef);
-            if (noteSnap.exists()) {
-                const previousTagNames = new Set(noteSnap.data().tags || []);
-                const currentTagNames = new Set(finalTagNames);
-                const tagsToAdd = [...currentTagNames].filter(name => !previousTagNames.has(name));
-                const tagsToRemove = [...previousTagNames].filter(name => !currentTagNames.has(name));
-                Promise.all([
-                    ...tagsToAdd.map(t => updateTagLink(t, selectedNoteId, true)),
-                    ...tagsToRemove.map(t => updateTagLink(t, selectedNoteId, false))
-                ]).catch(err => console.warn(err));
-            }
-        } catch (err) {}
-
-       // --- NOVA LÓGICA DE CORES (ADICIONE ISTO) ---
-    // 1. Varrer o editor à procura de todas as caixas com cor
-    const coloredWrappers = noteContentEditor.querySelectorAll('.mini-note-wrapper[data-highlight]');
-    
-    // 2. Criar um conjunto único de cores usadas nesta nota
-    // Ex: Se tiver 3 caixas vermelhas, guarda apenas 1 referência ao vermelho
-    const uniqueColorsUsed = [...new Set(Array.from(coloredWrappers).map(el => el.dataset.highlight))];
-
-    // ---------------------------------------------
-
-    // --- GRAVAÇÃO FINAL ---
-    await updateDoc(noteRef, { 
-        nome: noteTitleInput.value, 
-        conteudo: noteContentEditor.innerHTML,
-        tags: finalTagNames, // (A sua variável de tags existente)
+        // --- AQUI ESTÁ A MAGIA ---
+        // 1. Extrai os tópicos de todas as caixas HTML
+        const finalTopicsIndex = extractTopicsFromEditorHTML();
         
-        // NOVO CAMPO: Guardamos array de cores usadas
-        coresUsadas: uniqueColorsUsed, 
-        
-        ultimaedicao: serverTimestamp()
-    });
+        console.log("💾 [SAVE] A enviar para DB:", finalTopicsIndex);
+        // -------------------------
 
-        // Atualiza visualmente na lista lateral
+        // Lógica de Tags e Cores (Mantém a tua existente ou usa este resumo)
+        let finalTagNames = []; 
+        try { finalTagNames = Array.from(noteContentEditor.querySelectorAll('span.tag')).map(s => s.textContent.substring(1)); } catch(e){}
+        
+        const coloredWrappers = noteContentEditor.querySelectorAll('.mini-note-wrapper[data-highlight]');
+        const uniqueColorsUsed = [...new Set(Array.from(coloredWrappers).map(el => el.dataset.highlight))];
+
+        // 2. Atualiza o documento
+        await updateDoc(noteRef, { 
+            nome: noteTitleInput.value, 
+            conteudo: noteContentEditor.innerHTML,
+            tags: finalTagNames,
+            coresUsadas: uniqueColorsUsed,
+            
+            // CAMPO CRÍTICO PARA A PESQUISA:
+            topicosSelecionados: finalTopicsIndex, 
+            
+            ultimaedicao: serverTimestamp()
+        });
+
+        // Atualiza UI
         const listItem = document.querySelector(`.list-item[data-id="${selectedNoteId}"] span`);
         if (listItem) listItem.textContent = noteTitleInput.value;
         
         updateSaveStatus('saved');
-        return true; // Sucesso
+        console.log("✅ Gravado com sucesso!");
+        return true; 
 
     } catch (error) {
-        console.error("ERRO CRÍTICO AO GUARDAR:", error);
+        console.error("ERRO AO GUARDAR:", error);
         updateSaveStatus('error');
-        alert("Erro ao guardar! Verifique a sua ligação.");
-        throw error; // Lança erro para impedir navegação se falhar
+        alert("Erro ao guardar!");
+        throw error;
     }
 }
 
@@ -7492,33 +7540,30 @@ window.addItemToPuzzle = function(noteId, noteName, snippetHTML) {
 // FUNÇÃO PARA EXIBIR DETALHES DO TÓPICO (4ª COLUNA)
 // ============================================================
 async function showTopicReferencesPanel(id, name, description, type) {
-    // >>> LINHA NOVA: Grava o anterior antes de carregar o novo <<<
+    // 1. Gravar antes de mudar de vista
     await forceSaveAndClosePuzzleMode();
 
-    // 1. Configuração Visual
+    // 2. Configurar UI da 4ª Coluna
     document.getElementById('references-panel-description').style.display = 'block';
     document.getElementById('references-toolbar').style.display = 'flex';
     document.querySelectorAll('.references-separator').forEach(el => el.style.display = 'block');
     
+    // Forçar aba "Referências"
+    const refTabBtn = document.querySelector('[data-ref-tab="references"]');
+    if (refTabBtn) refTabBtn.click(); 
+
     activeReferenceEntity = { id: id, type: type, name: name }; 
-     loadPuzzleData(id, type);
+    loadPuzzleData(id, type); // Carrega Puzzle em background
+    
     notebookContainer.classList.add('references-panel-visible');
     referencesPanelTitle.textContent = `${type === 'topico' ? 'Tópico' : 'Subtópico'}: ${name}`;
     document.getElementById('references-panel-description').textContent = description || 'Sem descrição.';
     
-    // 2. Spinner
     const listElement = document.getElementById('references-list');
-    listElement.innerHTML = `
-        <div class="spinner-container">
-            <div class="spinner"></div>
-            <span>A pesquisar (pode demorar um pouco)...</span>
-        </div>`;
+    listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar contextos...</span></div>';
 
     try {
-        console.log(`Iniciando pesquisa para: ${name} (${type})`);
-
-        // 3. Carregar TODAS as pastas/notas ativas de uma só vez (Muito mais rápido)
-        // Em vez de fazer pedidos individuais dentro de um loop, trazemos o mapa completo.
+        // 3. Buscar todas as notas ativas
         const q = query(
             collection(db, 'pastas'), 
             where('estado', '==', 'ativa'),
@@ -7526,13 +7571,10 @@ async function showTopicReferencesPanel(id, name, description, type) {
         );
         const snapshot = await getDocs(q);
         
-        console.log(`Total de itens carregados: ${snapshot.size}`);
-
-        // 4. Criar um Mapa de Memória para encontrar nomes de Pastas Pais instantaneamente
+        // Mapa para nomes de pastas (breadcrumbs)
         const foldersMap = {};
         snapshot.forEach(doc => {
             const data = doc.data();
-            // Guardamos ID, Nome e se tem senha
             foldersMap[doc.id] = { 
                 nome: data.nome, 
                 temSenha: (data.passe && data.passe.trim() !== "") 
@@ -7540,89 +7582,166 @@ async function showTopicReferencesPanel(id, name, description, type) {
         });
 
         const results = [];
+        const parser = new DOMParser(); // Ferramenta para ler HTML
 
-        // 5. Filtrar os resultados em memória (Instantâneo)
+        // 4. Filtragem e Extração de Contexto
         snapshot.forEach(docSnapshot => {
             const data = docSnapshot.data();
+            const docId = docSnapshot.id;
             
-            // A. Verifica se tem tópicos
+            // Verifica se a nota tem tópicos no índice
             if (!data.topicosSelecionados) return;
 
-            // B. Verifica se corresponde ao ID procurado
+            // --- VERIFICAÇÃO 1: O TÓPICO EXISTE NA NOTA? ---
             let match = false;
             if (type === 'topico') {
-                // Verifica se a chave existe no objeto
-                if (data.topicosSelecionados[id] !== undefined) match = true;
+                if (data.topicosSelecionados.hasOwnProperty(id)) match = true;
             } else {
-                // Verifica se o ID está dentro de algum array de subtópicos
-                // O Object.values garante que não falha mesmo que a estrutura varie
-                match = Object.values(data.topicosSelecionados).some(subArray => 
-                    Array.isArray(subArray) && subArray.includes(id)
-                );
+                const allSubtopics = Object.values(data.topicosSelecionados).flat();
+                if (allSubtopics.map(String).includes(String(id))) match = true;
             }
 
             if (match) {
-                // C. Verificação de Segurança (Herança de Proteção)
+                // Segurança
                 let isProtected = (data.passe && data.passe.trim() !== "");
-                
-                // Verifica se a pasta pai (se existir) está protegida usando o Mapa
-                if (!isProtected && data.parentId && foldersMap[data.parentId]) {
-                    if (foldersMap[data.parentId].temSenha) isProtected = true;
-                }
-
-                // Aplica a configuração de pesquisa
+                if (!isProtected && data.parentId && foldersMap[data.parentId]?.temSenha) isProtected = true;
                 if (isProtected && !appSettings.searchTopicsInProtected) return;
 
-                // Adiciona ao resultado
+                // --- VERIFICAÇÃO 2: ONDE ESTÁ O TÓPICO? (Contexto) ---
+                // Vamos ler o HTML para saber se está numa Questão, Subnota ou na Nota Geral
+                
+                let displayTitle = data.nome; // Padrão: Nome da Nota
+                let displayIcon = isProtected ? "🔒" : "📄";
+                let contextType = "Nota";
+                let snippet = "Tópico atribuído à nota geral.";
+                let highlightColor = ""; // Cor da borda
+
+                // Parse do HTML da nota
+                const docHTML = parser.parseFromString(data.conteudo, 'text/html');
+                const wrappers = docHTML.querySelectorAll('.mini-note-wrapper');
+                
+                let foundInBox = false;
+
+                // Procura em cada caixa da nota
+                for (const wrapper of wrappers) {
+                    const jsonStr = wrapper.getAttribute('data-topics');
+                    if (!jsonStr) continue;
+
+                    // Verifica se o ID (Tópico ou Subtópico) está dentro do JSON desta caixa
+                    // Usamos includes string simples porque é mais rápido e funciona para keys e values
+                    if (jsonStr.includes(`"${id}"`)) {
+                        
+                        foundInBox = true;
+                        
+                        // Detetar Tipo de Caixa
+                        const input = wrapper.querySelector('input'); // Título
+                        const contentDiv = wrapper.querySelector('.mini-note-content'); // Texto
+                        
+                        if (wrapper.classList.contains('question-mode')) {
+                            // É UMA QUESTÃO
+                            displayIcon = "📗";
+                            contextType = "Questão";
+                            displayTitle = input ? input.value : "Questão Sem Título";
+                            snippet = "Encontrado nesta questão.";
+                            highlightColor = "#2ecc71"; // Verde
+                        } 
+                        else if (wrapper.classList.contains('free-mode')) {
+                            // É UM CONTENTOR LIVRE
+                            displayIcon = "📙";
+                            contextType = "Contentor";
+                            // Tenta pegar a primeira frase do texto
+                            const text = contentDiv ? contentDiv.textContent.trim() : "";
+                            displayTitle = text.length > 40 ? text.substring(0, 40) + "..." : (text || "Contentor Vazio");
+                            snippet = "Encontrado neste contentor de texto.";
+                            highlightColor = "#e67e22"; // Laranja
+                        } 
+                        else {
+                            // É UMA SUBNOTA
+                            displayIcon = "📘";
+                            contextType = "SubNota";
+                            displayTitle = input ? input.value : "SubNota Sem Título";
+                            snippet = "Encontrado nesta subnota.";
+                            highlightColor = "#3498db"; // Azul
+                        }
+
+                        // Se não tiver título na caixa, usa o nome da nota como fallback
+                        if (!displayTitle.trim()) displayTitle = `(Em) ${data.nome}`;
+                        
+                        // Pára na primeira caixa que encontrar (para não duplicar na lista)
+                        break; 
+                    }
+                }
+
                 results.push({ 
-                    id: docSnapshot.id, 
-                    ...data, 
-                    _isProtected: isProtected,
-                    _parentName: data.parentId && foldersMap[data.parentId] ? foldersMap[data.parentId].nome : null
+                    id: docId, 
+                    originalName: data.nome, // Nome da nota (para o breadcrumb ou detalhe)
+                    displayTitle: displayTitle,
+                    displayIcon: displayIcon,
+                    contextType: contextType,
+                    snippet: snippet,
+                    highlightColor: highlightColor,
+                    parentId: data.parentId,
+                    parentName: data.parentId && foldersMap[data.parentId] ? foldersMap[data.parentId].nome : null
                 });
             }
         });
 
-        // 6. Renderizar
+        // 5. Renderizar
         listElement.innerHTML = '';
-        
         if (results.length === 0) {
             listElement.innerHTML = '<li style="padding:15px; color:#888;">Nenhuma referência encontrada.</li>';
             return;
         }
 
-        // Ordenar alfabeticamente
-        results.sort((a, b) => a.nome.localeCompare(b.nome));
+        // Ordenar: Agrupa por tipo (Questões primeiro), depois alfabético
+        results.sort((a, b) => {
+            if (a.contextType !== b.contextType) return a.contextType.localeCompare(b.contextType);
+            return a.displayTitle.localeCompare(b.displayTitle);
+        });
 
-        for (const item of results) {
+        results.forEach(item => {
             const details = document.createElement('details');
             details.className = 'reference-item';
             
-            const summary = document.createElement('summary');
-            const icon = item.tipo === 'pasta' ? '📁' : '📄';
-            const protectedIcon = item._isProtected ? "🔒 " : "";
+            // Se tiver cor de destaque (Questão/Subnota), aplica borda lateral
+            if (item.highlightColor) {
+                details.style.borderLeft = `3px solid ${item.highlightColor}`;
+            }
 
+            const summary = document.createElement('summary');
+            
             // Botão "Ir para"
             const goToBtn = `<button class="go-to-note-btn" 
                     data-note-id="${item.id}" 
-                    ${item.parentId ? `data-parent-id="${item.parentId}"` : ''} 
-                    ${item._parentName ? `data-parent-name="${item._parentName}"` : ''}
-                    title="Ir para item">➔</button>`;
+                    data-search-term="${item.displayTitle}" 
+                    title="Ir para o local exato">➔</button>`;
 
-            summary.innerHTML = `<span>${icon} ${protectedIcon}${item.nome}</span> ${goToBtn}`;
+            // Visual: Ícone + Título Específico + (Nome da Nota Pequeno)
+            summary.innerHTML = `
+                <div style="display:flex; flex-direction:column; width:100%;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-weight:500;">${item.displayIcon} ${item.displayTitle}</span>
+                        ${goToBtn}
+                    </div>
+                    ${item.contextType !== 'Nota' ? `<small style="color:var(--text-muted-color); margin-top:2px;">em 📄 ${item.originalName}</small>` : ''}
+                </div>
+            `;
             
+            // Remove o marcador padrão do summary (triângulo) para usar o nosso layout flex
+            summary.style.listStyle = "none"; 
+
             const contextDiv = document.createElement('div');
             contextDiv.className = 'reference-context';
-            contextDiv.innerHTML = `<p style="font-style:italic; font-size:0.9em;">Vinculado ao ${type === 'topico' ? 'tópico' : 'subtópico'} "${name}".</p>`;
+            contextDiv.innerHTML = `<p>${item.snippet}</p>`;
 
             details.appendChild(summary);
             details.appendChild(contextDiv);
             listElement.appendChild(details);
-        }
+        });
 
     } catch (error) {
-        console.error("Erro CRÍTICO ao buscar tópicos:", error);
-        listElement.innerHTML = '<li style="color:red; padding:10px;">Erro ao processar dados. Verifique a consola.</li>';
+        console.error("Erro ao processar referências:", error);
+        listElement.innerHTML = '<li>Erro ao carregar dados.</li>';
     }
 }
 
@@ -8909,76 +9028,177 @@ window.openNoteFromBoard = function(noteId) {
 };
 
 // --- LÓGICA DO POPUP DE SELEÇÃO DE REFERÊNCIAS ---
- async function openReferenceSelectionPopup() {
+async function openReferenceSelectionPopup() {
     const modal = document.getElementById('puzzle-ref-selection-modal');
     const list = document.getElementById('puzzle-ref-selection-list');
     
     if (!activeReferenceEntity || !activeReferenceEntity.id) {
-        alert("Selecione uma entidade primeiro.");
+        alert("Selecione um tópico, tag ou entidade primeiro.");
         return;
     }
 
     modal.style.display = 'flex';
-    list.innerHTML = '<li style="padding:10px;">A processar texto atualizado...</li>';
+    list.innerHTML = '<li style="padding:10px;">A pesquisar referências...</li>';
 
+    const { id, type, name } = activeReferenceEntity;
+    
     // Lista de IDs já no quadro (para marcar a verde)
     const existingRefIds = new Set();
     document.querySelectorAll('#puzzle-board-container .board-card.type-ref').forEach(card => {
         if (card.dataset.noteId) existingRefIds.add(card.dataset.noteId);
     });
 
-    const { id, type, name } = activeReferenceEntity;
-    const collectionName = getCollectionFromType(type);
+    let notesFound = [];
 
     try {
-        const entityDoc = await getDoc(doc(db, collectionName, id));
-        if (!entityDoc.exists()) {
-            list.innerHTML = '<li>Entidade não encontrada.</li>';
-            return;
+        // --- CENÁRIO A: TÓPICOS E SUBTÓPICOS ---
+        if (type === 'topico' || type === 'subtopico') {
+            // Pesquisa todas as notas ativas para encontrar este tópico
+            const q = query(
+                collection(db, 'pastas'), 
+                where('estado', '==', 'ativa'),
+                where('userId', '==', auth.currentUser.uid)
+            );
+            const snapshot = await getDocs(q);
+            
+            // Filtra em memória (mais flexível para estruturas complexas de JSON)
+            snapshot.forEach(docSnap => {
+                const data = docSnap.data();
+                if (!data.topicosSelecionados) return;
+
+                let match = false;
+                // Se for Tópico Principal
+                if (type === 'topico' && data.topicosSelecionados[id] !== undefined) match = true;
+                // Se for Subtópico (procura dentro dos arrays)
+                else if (type === 'subtopico') {
+                    match = Object.values(data.topicosSelecionados).some(arr => Array.isArray(arr) && arr.includes(id));
+                }
+
+                if (match) {
+                    // Proteção: Se for protegida e a config não permitir, ignora
+                    let isProtected = (data.passe && data.passe.trim() !== "");
+                    if (isProtected && !appSettings.searchTopicsInProtected) return;
+
+                    notesFound.push({ id: docSnap.id, ...data });
+                }
+            });
+        } 
+        
+        // --- CENÁRIO B: TAGS (#) ---
+        else if (type === 'tag') {
+            // O ID aqui é o nome da Tag
+            const q = query(
+                collection(db, 'pastas'),
+                where('tags', 'array-contains', name), // 'name' é o nome da tag (ex: "amor")
+                where('estado', '==', 'ativa'),
+                where('userId', '==', auth.currentUser.uid)
+            );
+            const snapshot = await getDocs(q);
+            snapshot.forEach(docSnap => {
+                const data = docSnap.data();
+                let isProtected = (data.passe && data.passe.trim() !== "");
+                if (isProtected && !appSettings.searchTagsInProtected) return;
+                notesFound.push({ id: docSnap.id, ...data });
+            });
         }
 
-        const refsMap = entityDoc.data().referencias || {};
-        const noteIds = Object.keys(refsMap);
+        // --- CENÁRIO C: ENTIDADES (Personagem, Local, Data, Texto Bíblico) ---
+        else {
+            const collectionName = getCollectionFromType(type);
+            const entityDoc = await getDoc(doc(db, collectionName, id));
+            
+            if (entityDoc.exists()) {
+                const refsMap = entityDoc.data().referencias || {};
+                const noteIds = Object.keys(refsMap);
+                
+                // Busca cada nota (Nota: em produção real, usar 'in' query para lotes de 10)
+                for (const noteId of noteIds) {
+                    // Verifica se já temos os dados (se for a nota aberta)
+                    if (selectedNoteId === noteId) {
+                        notesFound.push({ 
+                            id: noteId, 
+                            nome: document.getElementById('note-title-input').value,
+                            conteudo: document.getElementById('note-content-editor').innerHTML 
+                        });
+                    } else {
+                        const noteSnap = await getDoc(doc(db, 'pastas', noteId));
+                        if (noteSnap.exists()) {
+                            const data = noteSnap.data();
+                            let isProtected = (data.passe && data.passe.trim() !== "");
+                            if (!isProtected || appSettings.searchAnchorsInProtected) {
+                                notesFound.push({ id: noteSnap.id, ...data });
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
+        // --- RENDERIZAR A LISTA ---
         list.innerHTML = '';
-        if (noteIds.length === 0) {
-            list.innerHTML = '<li>Sem referências disponíveis.</li>';
+        if (notesFound.length === 0) {
+            list.innerHTML = '<li>Sem referências encontradas.</li>';
             return;
         }
 
-        // Processar cada nota
-        for (const noteId of noteIds) {
-            let noteData = null;
-            let contentToUse = "";
+        // Parser para encontrar o texto específico da caixa (Questão/Subnota)
+        const parser = new DOMParser();
 
-            // Lógica Live vs DB
-            if (selectedNoteId === noteId) {
-                // Se é a nota aberta, usa o HTML do editor
-                contentToUse = document.getElementById('note-content-editor').innerHTML;
-                noteData = { nome: document.getElementById('note-title-input').value, parentId: null };
-            } else {
-                // Busca à DB
-                const noteSnap = await getDoc(doc(db, 'pastas', noteId));
-                if (!noteSnap.exists()) continue;
-                noteData = noteSnap.data();
-                contentToUse = noteData.conteudo;
+        notesFound.forEach(note => {
+            // 1. Gera o Snippet (Contexto)
+            let snippet = "";
+            let contextLabel = "Nota";
+
+            // Se for Tópico, tenta encontrar a CAIXA específica que tem esse tópico
+            if (type === 'topico' || type === 'subtopico') {
+                const docHTML = parser.parseFromString(note.conteudo, 'text/html');
+                
+                // Procura caixas que tenham este tópico no atributo data-topics
+                // O seletor CSS parcial não funciona bem com JSON, então iteramos:
+                const wrappers = docHTML.querySelectorAll('.mini-note-wrapper');
+                let targetWrapper = null;
+
+                for (const w of wrappers) {
+                    const tJson = w.getAttribute('data-topics');
+                    if (tJson && (tJson.includes(`"${id}"`) || tJson.includes(`"${id}":`))) {
+                        targetWrapper = w;
+                        break;
+                    }
+                }
+
+                if (targetWrapper) {
+                    // Encontrou a caixa específica!
+                    if (targetWrapper.classList.contains('question-mode')) contextLabel = "Questão";
+                    else if (targetWrapper.classList.contains('free-mode')) contextLabel = "Contentor";
+                    else contextLabel = "SubNota";
+
+                    const input = targetWrapper.querySelector('input');
+                    const content = targetWrapper.querySelector('.mini-note-content');
+                    
+                    if (input && input.value) snippet = `<b>[${contextLabel}]</b> ${input.value}`;
+                    else if (content) snippet = content.textContent.substring(0, 100) + "...";
+                }
             }
 
-            // Verifica segurança
-            let isProtected = (noteData.passe && noteData.passe.trim() !== "");
-            if (isProtected && !appSettings.searchAnchorsInProtected && selectedNoteId !== noteId) continue;
+            // Se não encontrou caixa específica (ou é Tag/Entidade), usa contexto genérico
+            if (!snippet) {
+                // Se for Tag, mostra onde aparece a tag
+                if (type === 'tag') {
+                    snippet = `<span style="color:#2ecc71">Nota marcada com #${name}</span>`;
+                } else {
+                    // Usa a função existente para gerar contexto de texto
+                    snippet = generateReferenceContext(note.conteudo, name);
+                }
+            }
 
-            // AQUI APLICA AS MESMAS REGRAS:
-            const snippet = generateReferenceContext(contentToUse, name);
-
+            // 2. Cria o Elemento da Lista
             const li = document.createElement('li');
-            // ... (estilos do li mantêm-se iguais ao seu código original) ...
-            li.className = 'list-item'; // Usar classes ajuda
+            li.className = 'list-item';
             li.style.borderBottom = '1px solid var(--border-color)';
             li.style.padding = '10px';
             li.style.cursor = 'pointer';
 
-            const isAdded = existingRefIds.has(noteId);
+            const isAdded = existingRefIds.has(note.id);
             if (isAdded) {
                 li.style.backgroundColor = "rgba(46, 204, 113, 0.1)";
                 li.style.borderLeft = "3px solid #2ecc71";
@@ -8986,30 +9206,38 @@ window.openNoteFromBoard = function(noteId) {
 
             li.innerHTML = `
                 <div style="font-weight:bold; color:var(--accent-color);">
-                    ${isAdded ? '✓ ' : ''}📄 ${noteData.nome}
+                    ${isAdded ? '✓ ' : ''}📄 ${note.nome}
                 </div>
-                <div style="font-size:0.85em; color:var(--text-muted-color); margin-top:4px;">
+                <div style="font-size:0.85em; color:var(--text-muted-color); margin-top:4px; line-height:1.4;">
                     ${snippet}
                 </div>
             `;
 
+            // 3. Clique para Adicionar ao Quadro
             li.onclick = () => {
                 createBoardItem('ref', {
-                    noteId: noteId,
-                    noteName: noteData.nome,
-                    parentId: noteData.parentId,
-                    snippet: snippet // Passa o snippet gerado com as regras
+                    noteId: note.id,
+                    noteName: note.nome,
+                    parentId: note.parentId,
+                    snippet: snippet
                 });
                 modal.style.display = 'none';
+                
+                // Se estivermos em modo de edição, grava logo
+                if (document.getElementById('ref-content-puzzle').classList.contains('edit-mode-active')) {
+                    savePuzzleData();
+                }
             };
 
             list.appendChild(li);
-        }
+        });
+
     } catch (e) {
-        console.error(e);
+        console.error("Erro no popup de seleção:", e);
         list.innerHTML = '<li>Erro ao carregar lista.</li>';
     }
 }
+
 
 // ============================================================
 // FUNÇÕES AUXILIARES EM FALTA (COLE ISTO ANTES DO savePuzzleData)
@@ -13896,20 +14124,25 @@ entitySuggestionList.addEventListener('mousedown', (e) => {
 // FUNÇÃO: MOSTRAR REFERÊNCIAS DE DESTAQUE (4ª COLUNA)
 // ====================================================================
 async function showHighlightReferencesPanel(hexCode, colorName) {
-    // >>> LINHA NOVA <<<
+    // 1. Gravar antes de mudar
     await forceSaveAndClosePuzzleMode();
-    // 1. Configuração Visual
-    document.getElementById('references-panel-description').style.display = 'none'; // Sem descrição para cores
+
+    // 2. Configuração Visual
+    document.getElementById('references-panel-description').style.display = 'none';
     document.getElementById('references-toolbar').style.display = 'flex';
     document.querySelectorAll('.references-separator').forEach(el => el.style.display = 'block');
     
+    // Forçar aba "Referências"
+    const refTabBtn = document.querySelector('[data-ref-tab="references"]');
+    if (refTabBtn) refTabBtn.click();
+
     // Esconder botões irrelevantes
     document.getElementById('references-wol-btn').style.display = 'none';
     document.getElementById('references-bookmark-btn').style.display = 'none';
 
     notebookContainer.classList.add('references-panel-visible');
     
-    // Atualiza título com a bolinha da cor
+    // Título com a bolinha da cor
     const titleEl = document.getElementById('references-panel-title');
     titleEl.innerHTML = `
         <span style="display:inline-block; width:15px; height:15px; background:${hexCode}; border-radius:50%; border:1px solid #ccc; margin-right:5px; vertical-align:middle;"></span>
@@ -13920,69 +14153,88 @@ async function showHighlightReferencesPanel(hexCode, colorName) {
     listElement.innerHTML = `
         <div class="spinner-container">
             <div class="spinner"></div>
-            <span>A procurar caixas coloridas...</span>
+            <span>A procurar destaques...</span>
         </div>`;
 
     try {
-        // 2. Query Eficiente: Busca apenas notas que usam esta cor
+        // 3. Query Eficiente (Busca notas que usam esta cor)
         const q = query(
             collection(db, 'pastas'), 
             where('tipo', '==', 'nota'),
             where('estado', '==', 'ativa'),
             where('userId', '==', auth.currentUser.uid),
-            where('coresUsadas', 'array-contains', hexCode) // <--- O SEGREDO DA VELOCIDADE
+            where('coresUsadas', 'array-contains', hexCode)
         );
 
         const snapshot = await getDocs(q);
         const results = [];
-
-        // 3. Processar Resultados e Extrair Contexto
         const parser = new DOMParser();
 
+        // 4. Processar Resultados
         for (const docSnap of snapshot.docs) {
             const data = docSnap.data();
             
-            // Verificação de Segurança (Protegidos)
-            let isItemProtected = false;
-            if (data.passe && data.passe.trim() !== "") isItemProtected = true;
-            
-            // (Verifica pai se necessário - simplificado aqui)
-            if (data.parentId) { /* Lógica de pai aqui se quiseres ser rigoroso */ }
-
+            // Segurança
+            let isItemProtected = (data.passe && data.passe.trim() !== "");
+            // (Verificação de pai simplificada, podes adicionar se quiseres)
             if (isItemProtected && !appSettings.searchTagsInProtected) continue;
 
-            // 4. PARSE DO HTML para encontrar o texto da caixa
+            // 5. PARSE DO HTML
             const docHTML = parser.parseFromString(data.conteudo, 'text/html');
             
-            // Seleciona todas as caixas com esta cor específica
-            const boxes = docHTML.querySelectorAll(`.mini-note-wrapper[data-highlight="${hexCode}"]`);
+            // Procura QUALQUER elemento com esta cor (Caixas ou Toggles)
+            const coloredElements = docHTML.querySelectorAll(`[data-highlight="${hexCode}"]`);
             
-            // Cria uma entrada por cada caixa encontrada na nota
-            boxes.forEach(box => {
-                // Tenta achar o título (input) ou o conteúdo
-                const titleInput = box.querySelector('.mini-note-title-input');
-                const contentDiv = box.querySelector('.mini-note-content');
-                
+            coloredElements.forEach(el => {
+                let displayTitle = "Sem Título";
+                let displayIcon = "🟦"; // Padrão
                 let snippet = "";
-                let typeLabel = "SubNota";
+                let contextType = "Item";
 
-                // Determina o tipo
-                if (box.classList.contains('question-mode')) typeLabel = "Questão";
-                else if (box.classList.contains('free-mode')) typeLabel = "Contentor";
-
-                // Determina o texto a mostrar
-                if (titleInput && titleInput.value.trim()) {
-                    snippet = `<b>[${typeLabel}]</b> ${titleInput.value}`;
-                } else if (contentDiv) {
-                    // Pega no texto limpo e corta se for grande
-                    const text = contentDiv.textContent.trim();
-                    snippet = text.length > 80 ? text.substring(0, 80) + "..." : text;
-                    if (!snippet) snippet = `(${typeLabel} sem texto)`;
+                // --- CENÁRIO A: É um TOGGLE (Título Expansível) ---
+                if (el.tagName === 'DETAILS' && el.classList.contains('toggle-section')) {
+                    displayIcon = "☂";
+                    contextType = "Toggle";
+                    const h2 = el.querySelector('h2');
+                    displayTitle = h2 ? h2.textContent : "Título Expansível";
+                    // Tenta pegar um pouco do conteúdo
+                    const contentDiv = el.querySelector('.toggle-content');
+                    snippet = contentDiv ? contentDiv.textContent.trim().substring(0, 60) + "..." : "";
                 }
+                // --- CENÁRIO B: É uma CAIXA (Questão/Subnota) ---
+                else if (el.classList.contains('mini-note-wrapper')) {
+                    const titleInput = el.querySelector('.mini-note-title-input');
+                    const contentDiv = el.querySelector('.mini-note-content');
+
+                    if (el.classList.contains('question-mode')) {
+                        displayIcon = "📗";
+                        contextType = "Questão";
+                        displayTitle = titleInput ? titleInput.value : "Questão";
+                    } else if (el.classList.contains('free-mode')) {
+                        displayIcon = "📙";
+                        contextType = "Contentor";
+                        const txt = contentDiv ? contentDiv.textContent.trim() : "";
+                        displayTitle = txt.length > 40 ? txt.substring(0, 40) + "..." : (txt || "Contentor");
+                    } else {
+                        displayIcon = "📘"; // Subnota normal
+                        contextType = "SubNota";
+                        displayTitle = titleInput ? titleInput.value : "SubNota";
+                    }
+
+                    if (!snippet && contentDiv) {
+                        snippet = contentDiv.textContent.trim().substring(0, 80) + "...";
+                    }
+                }
+
+                // Fallback se o título estiver vazio
+                if (!displayTitle || displayTitle.trim() === "") displayTitle = `(Sem Título)`;
 
                 results.push({
                     noteId: docSnap.id,
                     noteName: data.nome,
+                    displayTitle: displayTitle,
+                    displayIcon: displayIcon,
+                    contextType: contextType,
                     parentId: data.parentId,
                     isProtected: isItemProtected,
                     snippet: snippet
@@ -13990,7 +14242,7 @@ async function showHighlightReferencesPanel(hexCode, colorName) {
             });
         }
 
-        // 5. Renderizar
+        // 6. Renderizar
         listElement.innerHTML = '';
         
         if (results.length === 0) {
@@ -13998,29 +14250,46 @@ async function showHighlightReferencesPanel(hexCode, colorName) {
             return;
         }
 
-        // Ordenar por nome da nota
-        results.sort((a, b) => a.noteName.localeCompare(b.noteName));
+        // Ordenar: Primeiro por Tipo, depois por Título
+        results.sort((a, b) => {
+            if (a.contextType !== b.contextType) return a.contextType.localeCompare(b.contextType);
+            return a.displayTitle.localeCompare(b.displayTitle);
+        });
 
         results.forEach(item => {
             const details = document.createElement('details');
             details.className = 'reference-item';
             
+            // Borda com a cor do destaque para identificação rápida
+            details.style.borderLeft = `3px solid ${hexCode}`;
+            
             const summary = document.createElement('summary');
+            // Estilo do summary para suportar o layout flex
+            summary.style.listStyle = "none"; 
+            
             const protectedIcon = item.isProtected ? "🔒 " : "";
             
             // Botão Ir Para
             const goToBtn = `<button class="go-to-note-btn" 
                 data-note-id="${item.noteId}" 
                 data-parent-id="${item.parentId || ''}" 
+                data-search-term="${item.displayTitle}"
                 title="Ir para nota">➔</button>`;
 
-            summary.innerHTML = `<span>📄 ${protectedIcon}${item.noteName}</span> ${goToBtn}`;
+            // Layout: Título da Caixa em Cima, Nome da Nota em Baixo
+            summary.innerHTML = `
+                <div style="display:flex; flex-direction:column; width:100%;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-weight:500; color:var(--text-color);">${item.displayIcon} ${item.displayTitle}</span>
+                        ${goToBtn}
+                    </div>
+                    <small style="color:var(--text-muted-color); margin-top:2px;">em 📄 ${protectedIcon}${item.noteName}</small>
+                </div>
+            `;
             
             const contextDiv = document.createElement('div');
             contextDiv.className = 'reference-context';
-            // Pinta uma borda lateral com a cor do destaque para referência visual
-            contextDiv.style.borderLeft = `3px solid ${hexCode}`;
-            contextDiv.innerHTML = `<p>${item.snippet}</p>`;
+            contextDiv.innerHTML = `<p>${item.snippet || "Sem conteúdo de texto."}</p>`;
             
             details.appendChild(summary);
             details.appendChild(contextDiv);
