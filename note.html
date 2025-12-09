@@ -10522,6 +10522,7 @@ async function convertSelectionToUrlCard() {
         url = anchorNode.href;
     }
 
+    // Validação e correção de URL
     if (!url.startsWith('http')) {
         if (url.includes('.')) url = 'https://' + url;
         else {
@@ -10530,7 +10531,7 @@ async function convertSelectionToUrlCard() {
         }
     }
 
-    // 2. Criar Placeholder (Loading)
+    // 2. Criar Placeholder (Loading State)
     const cardId = `card_${Date.now()}`;
     const cardHtml = `
         <div class="url-card-widget" id="${cardId}" contenteditable="false" data-original-url="${url}">
@@ -10548,37 +10549,37 @@ async function convertSelectionToUrlCard() {
 
     // --- FUNÇÕES AUXILIARES INTERNAS ---
 
-    // A. Lista de imagens amigáveis (Natureza/Abstrato) do Unsplash
+    // A. Lista de imagens bonitas (Natureza/Abstrato) para usar quando não há imagem no site
     const getRandomImage = () => {
         const images = [
+            "https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=400&q=80", // Natureza Verde
             "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=400&q=80", // Gradiente Azul/Rosa
             "https://images.unsplash.com/photo-1557683316-973673baf926?w=400&q=80", // Gradiente Roxo
-            "https://images.unsplash.com/photo-1518173946687-a4c8892bbd9f?w=400&q=80", // Natureza Nevoeiro
-            "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&q=80", // Montanhas
+            "https://images.unsplash.com/photo-1518173946687-a4c8892bbd9f?w=400&q=80", // Montanhas/Nevoeiro
             "https://images.unsplash.com/photo-1507608616759-54f48f0af0ee?w=400&q=80", // Chuva/Vidro
             "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=400&q=80", // Abstrato Escuro
-            "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&q=80"  // Óleo Abstrato
+            "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&q=80", // Óleo Abstrato
+            "https://images.unsplash.com/photo-1506259091721-347f7d3bbcff?w=400&q=80"  // Textura Papel
         ];
+        // Seleciona uma baseada no tempo atual para variar, mas ser consistente
         return images[Math.floor(Math.random() * images.length)];
     };
 
-    // B. Gerar Título bonito a partir do URL (se a API falhar)
+    // B. Gerar Título bonito a partir do URL (se a API não trouxer título)
     const formatFallbackTitle = (link) => {
         try {
             const urlObj = new URL(link);
-            // Pega no hostname (ex: wol.jw.org) e capitaliza
-            let title = urlObj.hostname.replace('www.', '');
-            // Se tiver path, tenta usar a última parte (ex: /artigo/123 -> Artigo)
-            if (urlObj.pathname.length > 1) {
+            // 1. Tenta pegar a última parte do endereço (ex: /artigo/123 -> Artigo 123)
+            if (urlObj.pathname && urlObj.pathname.length > 1) {
                 const parts = urlObj.pathname.split('/').filter(p => p);
                 if (parts.length > 0) {
-                    // Pega na última parte legível
-                    const lastPart = parts[parts.length - 1].replace(/-/g, ' ').replace(/_/g, ' ');
-                    // Capitaliza a primeira letra
-                    return lastPart.charAt(0).toUpperCase() + lastPart.slice(1);
+                    const lastPart = parts[parts.length - 1];
+                    // Substitui traços e underscores por espaços e capitaliza
+                    return lastPart.replace(/[-_]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 }
             }
-            return title.charAt(0).toUpperCase() + title.slice(1);
+            // 2. Se não tiver path, usa o domínio limpo (ex: wol.jw.org -> Wol Jw Org)
+            return urlObj.hostname.replace('www.', '').replace(/\./g, ' ').replace(/\b\w/g, l => l.toUpperCase());
         } catch (e) {
             return "Ligação Externa";
         }
@@ -10587,26 +10588,31 @@ async function convertSelectionToUrlCard() {
     // --- LÓGICA PRINCIPAL ---
 
     try {
+        // Tenta obter dados da API Microlink
         const response = await fetch(`https://api.microlink.io/?url=${encodeURIComponent(url)}`);
         const data = await response.json();
         
         const cardEl = document.getElementById(cardId);
         if (!cardEl) return;
 
-        // PREPARA OS DADOS (Com Fallbacks)
-        let meta = data.status === 'success' ? data.data : {};
+        // Verifica se a API devolveu sucesso E dados
+        const meta = (data.status === 'success' && data.data) ? data.data : {};
         
-        // 1. Título: Usa o da API ou gera um baseado no URL
-        let finalTitle = meta.title || formatFallbackTitle(url);
+        // --- PREPARAÇÃO DOS DADOS FINAIS ---
         
-        // 2. Imagem: Usa a da API ou uma aleatória
-        let finalImage = meta.image?.url || getRandomImage();
+        // 1. TÍTULO: Se a API der null, gera um título bonito pelo URL
+        const finalTitle = meta.title ? meta.title : formatFallbackTitle(url);
         
-        // 3. Domínio/Editora
-        let finalPublisher = meta.publisher || new URL(url).hostname;
-        let finalLogo = meta.logo?.url || 'https://cdn-icons-png.flaticon.com/128/1006/1006771.png'; // Ícone de globo genérico
+        // 2. IMAGEM: Se a API der null, usa uma aleatória
+        const finalImage = (meta.image && meta.image.url) ? meta.image.url : getRandomImage();
+        
+        // 3. DOMÍNIO/LOGO
+        const domain = new URL(url).hostname;
+        const finalPublisher = meta.publisher || domain;
+        // Se não houver logo, usa um ícone genérico de globo
+        const finalLogo = (meta.logo && meta.logo.url) ? meta.logo.url : 'https://cdn-icons-png.flaticon.com/128/1006/1006771.png';
 
-        // ATUALIZA O HTML DO CARD
+        // --- ATUALIZAÇÃO DO DOM ---
         cardEl.innerHTML = `
             <div class="url-card-image" style="background-image: url('${finalImage}');"></div>
             <div class="url-card-info">
@@ -10626,7 +10632,9 @@ async function convertSelectionToUrlCard() {
         const cardEl = document.getElementById(cardId);
         
         if (cardEl) {
-            // FALLBACK TOTAL (Se a API falhar completamente)
+            // FALLBACK TOTAL: Se a internet falhar ou a API der erro fatal
+            // Garante que o cartão é criado na mesma com dados gerados localmente
+            
             const fallbackTitle = formatFallbackTitle(url);
             const fallbackImg = getRandomImage();
             const domain = new URL(url).hostname;
