@@ -2097,6 +2097,7 @@ a.board-link:hover {
     transition: transform 0.2s, box-shadow 0.2s;
     user-select: none;
     text-decoration: none; /* Remove sublinhado de link se houver */
+    cursor: pointer;
 }
 
 .url-card-widget:hover {
@@ -14304,60 +14305,41 @@ noteContentEditor.addEventListener('input', (e) => {
 noteContentEditor.addEventListener('click', async (e) => {
 
 // -----------------------------------------------------------
-// 1. LÓGICA DO POST-IT (✂️) - TESOURA (Inserção Visual)
+// 1. LÓGICA DO POST-IT (✂️) - TESOURA
 // -----------------------------------------------------------
 if (e.target.classList.contains('post-it-cut-btn')) {
-    e.preventDefault(); 
-    e.stopPropagation();
-
+    e.preventDefault(); e.stopPropagation();
     const postIt = e.target.closest('.post-it-note');
     if (!postIt) return;
 
-    // A. Guardar conteúdo e altura visual no ecrã
     const contentDiv = postIt.querySelector('.post-it-content');
     const savedHTML = contentDiv.innerHTML;
-    
-    // Pega a coordenada Y (topo) visual exata no ecrã
     const postItRect = postIt.getBoundingClientRect();
-    const postItTop = postItRect.top;
-
-    // B. Criar o novo parágrafo
+    
     const newPara = document.createElement('p');
     newPara.innerHTML = savedHTML || "<br>";
     
-    // C. ALGORITMO VISUAL: Encontrar onde "cortar" o texto
     const children = Array.from(noteContentEditor.children);
     let inserted = false;
-
     for (const child of children) {
-        // Ignora o próprio post-it e outros elementos flutuantes
         if (child === postIt || child.classList.contains('post-it-note')) continue;
-
-        const childRect = child.getBoundingClientRect();
-
-        // Se encontrarmos um parágrafo que começa (top) DEPOIS (mais abaixo) 
-        // da posição onde o post-it está, inserimos o texto ANTES dele.
-        if (childRect.top > postItTop) {
+        if (child.getBoundingClientRect().top > postItRect.top) {
             noteContentEditor.insertBefore(newPara, child);
             inserted = true;
             break;
         }
     }
-
-    // Se não encontrou nada abaixo, adiciona ao final
     if (!inserted) noteContentEditor.appendChild(newPara);
 
-    // Limpeza e Gravação
     postIt.remove();
     
-    // Foca no novo texto
+    // Focar
     const selection = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(newPara);
-    range.collapse(false); 
+    range.collapse(false);
     selection.removeAllRanges();
     selection.addRange(range);
-    newPara.focus();
     
     saveNote();
     return; 
@@ -14367,8 +14349,7 @@ if (e.target.classList.contains('post-it-cut-btn')) {
 // 2. LÓGICA DO CARTÃO WEB (✕) - REVERTER PARA LINK
 // -----------------------------------------------------------
 if (e.target.classList.contains('url-card-close')) {
-    e.preventDefault(); 
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
 
     const card = e.target.closest('.url-card-widget');
     if (!card) return;
@@ -14382,13 +14363,9 @@ if (e.target.classList.contains('url-card-close')) {
     a.target = "_blank";
     a.style.color = "var(--accent-color)";
     a.style.textDecoration = "underline";
-    // Recria o dataset para o sistema de cliques o reconhecer como anexo, se necessário
-    // a.dataset.anexoId = ... (opcional, se fosse um anexo registado)
 
-    // Substituir o card pelo link
     card.replaceWith(a);
     
-    // Adicionar um espaço depois para o cursor não ficar preso
     const space = document.createTextNode('\u00A0');
     a.after(space);
 
@@ -14397,16 +14374,32 @@ if (e.target.classList.contains('url-card-close')) {
 }
 
 // -----------------------------------------------------------
-// 3. LÓGICA DE APAGAR SECÇÃO/TOGGLE (🗑️ no Título)
+// 3. NAVEGAÇÃO DO CARTÃO WEB (Abrir Link) - NOVO!
+// -----------------------------------------------------------
+const cardWidget = e.target.closest('.url-card-widget');
+// Se clicou num card, MAS NÃO no botão de fechar
+if (cardWidget && !e.target.classList.contains('url-card-close')) {
+    e.preventDefault(); 
+    e.stopPropagation();
+
+    const url = cardWidget.dataset.originalUrl;
+    
+    if (url) {
+        // Abre numa nova aba
+        window.open(url, '_blank');
+    }
+    return;
+}
+
+// -----------------------------------------------------------
+// 4. LÓGICA DE APAGAR SECÇÃO/TOGGLE (🗑️)
 // -----------------------------------------------------------
 const toggleDelBtn = e.target.closest('.toggle-delete-btn');
 if (toggleDelBtn) {
     e.preventDefault(); e.stopPropagation();
-
     const detailsElement = toggleDelBtn.closest('details');
     if (!detailsElement) return;
 
-    // Arquivar (Move para o histórico)
     const success = await archiveMiniNote(detailsElement); 
     if (success) {
         const marker = document.createElement('span');
@@ -14420,37 +14413,26 @@ if (toggleDelBtn) {
 }
 
 // -----------------------------------------------------------
-// 4. LÓGICA DE APAGAR SUBNOTA/QUESTÃO (🗑️ na Caixa)
+// 5. LÓGICA DE APAGAR SUBNOTA/QUESTÃO (🗑️)
 // -----------------------------------------------------------
 const deleteBtn = e.target.closest('button[data-action="delete-mini-note"]');
 if (deleteBtn) {
     e.preventDefault(); e.stopPropagation();
-
     const wrapper = deleteBtn.closest('.mini-note-wrapper');
     const isQuestion = wrapper.classList.contains('question-mode');
     const label = isQuestion ? "Questão" : "SubNota";
 
-    // Confirmação
-    const confirmed = await showConfirmation(
-        "Mover para a Lixeira?", 
-        `Deseja ocultar esta ${label}?`
-    );
-
+    const confirmed = await showConfirmation("Mover para a Lixeira?", `Deseja ocultar esta ${label}?`);
     if (!confirmed) return;
 
-    // Arquivar (Modo silencioso true porque já confirmámos)
     const success = await archiveMiniNote(wrapper, true);
-    
     if (success) {
         const marker = document.createElement('span');
         marker.id = `marker_${wrapper.id}`;
         marker.className = 'hidden-note-marker';
         marker.style.display = 'none';
-        
         wrapper.replaceWith(marker);
         saveNote();
-    } else {
-        alert("Erro ao arquivar o item. Verifique a conexão.");
     }
     return;
 }
