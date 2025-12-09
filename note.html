@@ -10527,13 +10527,13 @@ async function convertSelectionToUrlCard() {
         else { alert("Link inválido."); return; }
     }
 
-    // 2. Criar Placeholder (Loading)
+    // 2. Criar Placeholder (Loading) com ID único
     const cardId = `card_${Date.now()}`;
     const cardHtml = `
         <div class="url-card-widget" id="${cardId}" contenteditable="false" data-original-url="${url}">
             <div class="url-card-loading">
                 <div class="spinner" style="width:20px; height:20px; border-width:2px; margin-right:10px;"></div>
-                A carregar...
+                A gerar pré-visualização...
             </div>
             <div class="url-card-close" title="Reverter para texto">✕</div>
         </div>
@@ -10544,6 +10544,7 @@ async function convertSelectionToUrlCard() {
     document.getElementById('selection-popup').style.display = 'none';
 
     // --- FUNÇÕES AUXILIARES ---
+    
     const getRandomImage = () => {
         const images = [
             "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=400&q=80", // Abstrato Escuro
@@ -10567,69 +10568,62 @@ async function convertSelectionToUrlCard() {
         } catch (e) { return "Ligação Externa"; }
     };
 
-    // --- LÓGICA DE TIMEOUT E API ---
-    
-    // Configura o cancelamento após 10 segundos
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10000ms = 10s
-
-    try {
-        // Faz o pedido à API passando o 'signal' do controller
-        const response = await fetch(`https://api.microlink.io/?url=${encodeURIComponent(url)}`, {
-            signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId); // Se respondeu a tempo, cancela o timer
-
-        const data = await response.json();
+    // Função que aplica o visual "Bonito" (usada no sucesso e no erro)
+    const updateCardUI = (title, image, logo, publisher) => {
         const cardEl = document.getElementById(cardId);
-        
-        if (!cardEl) return;
+        if (!cardEl) return; // Se o utilizador já apagou o card, sai.
 
-        const meta = (data.status === 'success' && data.data) ? data.data : {};
-        
-        // Dados finais (API ou Fallback)
-        const finalTitle = meta.title || formatFallbackTitle(url);
-        const finalImage = meta.image?.url || getRandomImage();
-        const finalPublisher = meta.publisher || new URL(url).hostname;
-        const finalLogo = meta.logo?.url || 'https://cdn-icons-png.flaticon.com/128/1006/1006771.png';
-
-        // Atualiza o Card (Sucesso)
         cardEl.innerHTML = `
-            <div class="url-card-image" style="background-image: url('${finalImage}');"></div>
+            <div class="url-card-image" style="background-image: url('${image}');"></div>
             <div class="url-card-info">
-                <div class="url-card-title">${finalTitle}</div>
+                <div class="url-card-title">${title}</div>
                 <div class="url-card-domain">
-                    <img src="${finalLogo}" style="width:12px; height:12px; vertical-align:middle; margin-right:4px; border-radius:50%;">
-                    ${finalPublisher}
+                    <img src="${logo}" style="width:12px; height:12px; vertical-align:middle; margin-right:4px; border-radius:50%;">
+                    ${publisher}
                 </div>
             </div>
             <div class="url-card-close" title="Reverter para texto">✕</div>
         `;
         saveNote();
+    };
+
+    // --- LÓGICA DE CORRIDA (RACE) ---
+    
+    // Promessa de Timeout: Rejeita automaticamente ao fim de 10s
+    const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Timeout de 10s atingido")), 10000)
+    );
+
+    // Promessa da API
+    const fetchPromise = fetch(`https://api.microlink.io/?url=${encodeURIComponent(url)}`)
+        .then(res => res.json());
+
+    try {
+        // A magia acontece aqui: Quem terminar primeiro ganha.
+        // Se o fetch demorar mais de 10s, o timeout ganha e lança um erro, ativando o catch.
+        const data = await Promise.race([fetchPromise, timeoutPromise]);
+
+        // SUCESSO DA API
+        const meta = (data.status === 'success' && data.data) ? data.data : {};
+        
+        const finalTitle = meta.title || formatFallbackTitle(url);
+        const finalImage = meta.image?.url || getRandomImage();
+        const finalPublisher = meta.publisher || new URL(url).hostname;
+        const finalLogo = meta.logo?.url || 'https://cdn-icons-png.flaticon.com/128/1006/1006771.png';
+
+        updateCardUI(finalTitle, finalImage, finalLogo, finalPublisher);
 
     } catch (err) {
-        // ENTRA AQUI SE DER ERRO OU SE PASSAR 10 SEGUNDOS (Timeout)
-        console.warn("API falhou ou expirou (10s). A usar dados locais.");
+        // FALHA OU TIMEOUT
+        console.warn("API demorou demasiado ou falhou. A aplicar fallback.", err);
         
-        const cardEl = document.getElementById(cardId);
-        if (cardEl) {
-            const fallbackTitle = formatFallbackTitle(url);
-            const fallbackImg = getRandomImage();
-            const domain = new URL(url).hostname;
+        // Dados de recurso (Fallback)
+        const fallbackTitle = formatFallbackTitle(url);
+        const fallbackImg = getRandomImage();
+        const domain = new URL(url).hostname;
+        const fallbackLogo = 'https://cdn-icons-png.flaticon.com/128/1006/1006771.png';
 
-            cardEl.innerHTML = `
-                <div class="url-card-image" style="background-image: url('${fallbackImg}');"></div>
-                <div class="url-card-info">
-                    <div class="url-card-title">${fallbackTitle}</div>
-                    <div class="url-card-domain">
-                        <span style="font-size:12px;">🌐</span> ${domain}
-                    </div>
-                </div>
-                <div class="url-card-close" title="Reverter para texto">✕</div>
-            `;
-            saveNote();
-        }
+        updateCardUI(fallbackTitle, fallbackImg, fallbackLogo, domain);
     }
 }
 
