@@ -10552,7 +10552,7 @@ async function convertSelectionToUrlCard() {
     const selection = window.getSelection();
     if (!selection.rangeCount) return;
 
-    // 1. Obter o URL (seja texto selecionado ou o href do link)
+    // 1. Obter o URL
     let url = selection.toString().trim();
     const anchorNode = selection.anchorNode.parentElement.closest('a');
     
@@ -10560,81 +10560,126 @@ async function convertSelectionToUrlCard() {
         url = anchorNode.href;
     }
 
-    // Validação simples de URL
     if (!url.startsWith('http')) {
-        // Tenta corrigir se for www. ou sicnoticias.pt
         if (url.includes('.')) url = 'https://' + url;
         else {
-            alert("Por favor selecione um link válido (ex: https://site.com)");
+            alert("Por favor selecione um link válido.");
             return;
         }
     }
 
-    // 2. Criar Elemento Placeholder (Carregando...)
+    // 2. Criar Placeholder (Loading)
     const cardId = `card_${Date.now()}`;
     const cardHtml = `
         <div class="url-card-widget" id="${cardId}" contenteditable="false" data-original-url="${url}">
             <div class="url-card-loading">
                 <div class="spinner" style="width:20px; height:20px; border-width:2px; margin-right:10px;"></div>
-                A carregar pré-visualização...
+                A gerar pré-visualização...
             </div>
             <div class="url-card-close" title="Reverter para texto">✕</div>
         </div>
         &nbsp;
     `;
 
-    // 3. Inserir no Editor
     document.execCommand('insertHTML', false, cardHtml);
     document.getElementById('selection-popup').style.display = 'none';
 
-    // 4. Buscar Metadados (Usando a API pública Microlink para evitar problemas de CORS)
+    // --- FUNÇÕES AUXILIARES INTERNAS ---
+
+    // A. Lista de imagens amigáveis (Natureza/Abstrato) do Unsplash
+    const getRandomImage = () => {
+        const images = [
+            "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=400&q=80", // Gradiente Azul/Rosa
+            "https://images.unsplash.com/photo-1557683316-973673baf926?w=400&q=80", // Gradiente Roxo
+            "https://images.unsplash.com/photo-1518173946687-a4c8892bbd9f?w=400&q=80", // Natureza Nevoeiro
+            "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&q=80", // Montanhas
+            "https://images.unsplash.com/photo-1507608616759-54f48f0af0ee?w=400&q=80", // Chuva/Vidro
+            "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=400&q=80", // Abstrato Escuro
+            "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&q=80"  // Óleo Abstrato
+        ];
+        return images[Math.floor(Math.random() * images.length)];
+    };
+
+    // B. Gerar Título bonito a partir do URL (se a API falhar)
+    const formatFallbackTitle = (link) => {
+        try {
+            const urlObj = new URL(link);
+            // Pega no hostname (ex: wol.jw.org) e capitaliza
+            let title = urlObj.hostname.replace('www.', '');
+            // Se tiver path, tenta usar a última parte (ex: /artigo/123 -> Artigo)
+            if (urlObj.pathname.length > 1) {
+                const parts = urlObj.pathname.split('/').filter(p => p);
+                if (parts.length > 0) {
+                    // Pega na última parte legível
+                    const lastPart = parts[parts.length - 1].replace(/-/g, ' ').replace(/_/g, ' ');
+                    // Capitaliza a primeira letra
+                    return lastPart.charAt(0).toUpperCase() + lastPart.slice(1);
+                }
+            }
+            return title.charAt(0).toUpperCase() + title.slice(1);
+        } catch (e) {
+            return "Ligação Externa";
+        }
+    };
+
+    // --- LÓGICA PRINCIPAL ---
+
     try {
         const response = await fetch(`https://api.microlink.io/?url=${encodeURIComponent(url)}`);
         const data = await response.json();
-
-        if (data.status === 'success') {
-            const meta = data.data;
-            const cardEl = document.getElementById(cardId);
-            
-            if (cardEl) {
-                // Definir cor dinâmica baseada no tema (ou aleatória se preferir)
-                const accentColor = "var(--accent-color)"; // Pode mudar para uma cor do logo se a API fornecer
-
-                // Atualizar HTML do Card com imagem e título
-                cardEl.innerHTML = `
-                    <div class="url-card-image" style="background-image: url('${meta.image?.url || ''}');"></div>
-                    <div class="url-card-info">
-                        <div class="url-card-title">${meta.title || url}</div>
-                        <div class="url-card-domain">
-                            <img src="${meta.logo?.url || ''}" style="width:12px; height:12px; vertical-align:middle; margin-right:4px;">
-                            ${meta.publisher || new URL(url).hostname}
-                        </div>
-                    </div>
-                    <div class="url-card-close" title="Reverter para texto">✕</div>
-                `;
-                
-                // Torna o card clicável para abrir o link
-                cardEl.onclick = (e) => {
-                    // Se clicar no X, não abre o link (tratado noutro listener)
-                    if(!e.target.classList.contains('url-card-close')) {
-                        window.open(url, '_blank');
-                    }
-                };
-            }
-            saveNote(); // Grava a alteração
-        }
-    } catch (err) {
-        console.error("Erro ao carregar preview:", err);
+        
         const cardEl = document.getElementById(cardId);
-        if (cardEl) {
-            // Fallback se falhar
-            cardEl.innerHTML = `
-                <div class="url-card-info" style="justify-content:center; text-align:center;">
-                    <div class="url-card-title">${url}</div>
-                    <div class="url-card-domain">Sem pré-visualização</div>
+        if (!cardEl) return;
+
+        // PREPARA OS DADOS (Com Fallbacks)
+        let meta = data.status === 'success' ? data.data : {};
+        
+        // 1. Título: Usa o da API ou gera um baseado no URL
+        let finalTitle = meta.title || formatFallbackTitle(url);
+        
+        // 2. Imagem: Usa a da API ou uma aleatória
+        let finalImage = meta.image?.url || getRandomImage();
+        
+        // 3. Domínio/Editora
+        let finalPublisher = meta.publisher || new URL(url).hostname;
+        let finalLogo = meta.logo?.url || 'https://cdn-icons-png.flaticon.com/128/1006/1006771.png'; // Ícone de globo genérico
+
+        // ATUALIZA O HTML DO CARD
+        cardEl.innerHTML = `
+            <div class="url-card-image" style="background-image: url('${finalImage}');"></div>
+            <div class="url-card-info">
+                <div class="url-card-title">${finalTitle}</div>
+                <div class="url-card-domain">
+                    <img src="${finalLogo}" style="width:12px; height:12px; vertical-align:middle; margin-right:4px; border-radius:50%;">
+                    ${finalPublisher}
                 </div>
-                <div class="url-card-close">✕</div>
+            </div>
+            <div class="url-card-close" title="Reverter para texto">✕</div>
+        `;
+
+        saveNote();
+
+    } catch (err) {
+        console.error("Erro na API, a usar dados locais:", err);
+        const cardEl = document.getElementById(cardId);
+        
+        if (cardEl) {
+            // FALLBACK TOTAL (Se a API falhar completamente)
+            const fallbackTitle = formatFallbackTitle(url);
+            const fallbackImg = getRandomImage();
+            const domain = new URL(url).hostname;
+
+            cardEl.innerHTML = `
+                <div class="url-card-image" style="background-image: url('${fallbackImg}');"></div>
+                <div class="url-card-info">
+                    <div class="url-card-title">${fallbackTitle}</div>
+                    <div class="url-card-domain">
+                        <span style="font-size:12px;">🌐</span> ${domain}
+                    </div>
+                </div>
+                <div class="url-card-close" title="Reverter para texto">✕</div>
             `;
+            saveNote();
         }
     }
 }
