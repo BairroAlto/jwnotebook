@@ -4719,25 +4719,31 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 function setLeftPanelTitle(text) {
     const titleEl = document.getElementById('left-panel-title');
     
-    // Verifica se estamos no ambiente de Superpasta
-    if (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) {
-        // Renderiza SEMPRE com a seta e o evento de clique
-        titleEl.innerHTML = `<span style="font-size: 0.8em; opacity: 0.7; margin-right: 8px;">🔙</span> ${text}`;
-        titleEl.style.cursor = "pointer";
-        titleEl.title = "Sair da Superpasta (Voltar ao Início)";
-        
-        // Garante que o evento de clique está sempre ativo
-      titleEl.onclick = () => {
-    navigateWithUnsavedCheck(() => {
-        window.location.href = "note.html";
-    });
-};
-    } else {
-        // Comportamento normal (note.html)
-        titleEl.textContent = text;
-        titleEl.style.cursor = "default";
-        titleEl.onclick = null;
-    }
+    // Adiciona uma seta visual
+    titleEl.innerHTML = `<span style="font-size: 0.8em; opacity: 0.7; margin-right: 8px;">🔙</span> ${text}`;
+    titleEl.style.cursor = "pointer";
+    titleEl.title = "Subir um nível / Voltar";
+    
+    titleEl.onclick = () => {
+        // Lógica de "Subir":
+        if (navigationStack.length > 1) {
+            // Se estamos fundo, recuamos 2 passos (remove atual, remove pai) para reconstruir a vista do avô
+            navigationStack.pop(); 
+            navigationStack.pop(); 
+            // Truque simples: chamamos o clique do backBtn que já sabe lidar com o histórico
+            document.getElementById('back-btn').click(); 
+        } 
+        else if (navigationStack.length === 1) {
+            // Se estamos no nível 1, voltar vai para a raiz
+            document.getElementById('back-btn').click();
+        }
+        else {
+            // Se já estamos na raiz da Superpasta, isto sai para o note.html (Início Global)
+            navigateWithUnsavedCheck(() => {
+                window.location.href = "note.html";
+            });
+        }
+    };
 }
 
 async function updateNavigationView(keepEditorOpen = false, targetSelectId = null) {
@@ -6212,7 +6218,17 @@ function updateMiddlePanelForFolderSelection(folderId, folderName, selectedEleme
 
 
 async function displayNote(noteId, noteElement, searchTerm = null, keepReferencesOpen = false) {
-    // 1. Lógica visual de seleção na lista
+    // 1. LIMPEZA DE SEGURANÇA IMEDIATA
+    // Remove o ID da nota anterior para impedir gravações fantasma
+    selectedNoteId = null; 
+    
+    // Limpa o visual imediatamente para não veres a nota antiga enquanto a nova carrega
+    noteTitleInput.value = "A carregar...";
+    noteContentEditor.innerHTML = ""; 
+    // Remove o ID de segurança do HTML
+    noteTitleInput.removeAttribute('data-safety-id'); 
+
+    // 2. Lógica visual de seleção na lista
     document.querySelectorAll('#middle-panel .list-item.selected').forEach(el => el.classList.remove('selected'));
     
     if (!noteElement) {
@@ -6221,62 +6237,54 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
     }
     if (noteElement) noteElement.classList.add('selected');
     
-    selectedNoteId = noteId;
-    
-    // 2. Alternar visualização para o Editor
+    // 3. Alternar visualização
     editorPlaceholder.style.display = 'none';
     editorArea.style.display = 'flex';
     
-    // 3. LIMPEZA DE CONTEXTO (Lógica Alterada)
-    // Só fecha o painel SE o parâmetro keepReferencesOpen for FALSO.
-    if (!keepReferencesOpen && notebookContainer.classList.contains('references-panel-visible')) {
-        hideReferencesPanel();
-    }
-    
-    // 4. Carregar dados
+    // 4. Carregar dados do Firebase
     try {
         const noteRef = doc(db, 'pastas', noteId);
         const noteSnap = await getDoc(noteRef);
 
         if (noteSnap.exists()) {
             const data = noteSnap.data();
-            const { nome, conteudo, shareSettings } = data; 
             
-            noteTitleInput.value = nome || '';
-            noteContentEditor.innerHTML = conteudo || '';
+            // 5. ATIVAR A NOVA NOTA (Só agora é seguro)
+            selectedNoteId = noteId; 
+            
+            // Injeta o conteúdo
+            noteTitleInput.value = data.nome || '';
+            noteContentEditor.innerHTML = data.conteudo || '';
 
-            currentNoteShareData = shareSettings || { shared: false, shareId: null };
+            // >>> SAFETY LOCK: Carimba o ID no HTML <<<
+            noteTitleInput.setAttribute('data-safety-id', noteId);
+
+            currentNoteShareData = data.shareSettings || { shared: false, shareId: null };
             updateNoteSharingButtonUI(currentNoteShareData.shared);
 
             fixLegacyMiniNotes(); 
             refreshAllCalendars();
 
-            // Scroll para o termo pesquisado (Nome da entidade)
             if (searchTerm) {
                 setTimeout(() => { scrollToAndHighlightText(searchTerm); }, 300);
             } else {
                 noteContentEditor.scrollTop = 0;
             }
-
-            setTimeout(() => { scanAndLinkEntities(); }, 1000); 
+            
+            updateSaveStatus('saved'); // Marca como limpo
         }
     } catch (error) {
         console.error("Erro ao carregar nota:", error);
+        noteTitleInput.value = "Erro ao carregar";
     }
     
-    // 5. UI Mobile
-    notebookContainer.classList.add('left-panel-collapsed');
+    // UI Mobile
     if (window.innerWidth <= 768) {
+        notebookContainer.classList.add('left-panel-collapsed');
         notebookContainer.classList.add('middle-panel-collapsed');
         document.body.classList.remove('mobile-view-middle');
         document.body.classList.add('mobile-view-editor');
-        if (middlePanelToggleBtn) {
-            middlePanelToggleBtn.textContent = '»';
-            middlePanelToggleBtn.title = "Expandir Painel";
-        }
     }
-
-    updateSaveStatus('saved');
 }
 
 
@@ -6407,19 +6415,19 @@ function extractTopicsFromEditorHTML() {
 // FUNÇÃO SAVENOTE (A PEÇA QUE FALTAVA)
 // ============================================================
 function saveNote(force = false) {
-    // 1. Limpa o temporizador anterior para não gravar duplicado
+    // 1. Limpa o temporizador anterior
     if (saveTimeout) clearTimeout(saveTimeout);
 
-    // 2. Se force = true (clicou no botão "por guardar"), grava imediatamente
+    // 2. Se for forçado, executa e RETORNA a promessa (Correção Crítica)
     if (force) {
         console.log("Gravação forçada pelo utilizador.");
-        executeSave();
+        return executeSave(); // <--- O 'return' aqui impede que o código avance sem gravar
     } 
-    // 3. Se force = false (está a escrever), espera 2 segundos antes de gravar
+    // 3. Se for automático (temporizador)
     else {
         saveTimeout = setTimeout(() => {
             executeSave();
-        }, 120000); // Espera 2000ms (2 segundos) de inatividade
+        }, 2000); // Reduzi para 2s para ser mais seguro (120000 era 2 minutos!)
     }
 }
 // ============================================================
@@ -6431,35 +6439,28 @@ async function executeSave() {
     // --- TRAVÃO DE SEGURANÇA ABSOLUTO ---
     const safetyId = document.getElementById('note-title-input').getAttribute('data-safety-id');
     
-    // Se o ID da variável global não bater certo com o ID carimbado no ecrã
-    if (safetyId && safetyId !== selectedNoteId) {
-        console.error("⛔ ERRO CRÍTICO DE SEGURANÇA: Tentativa de sobrescrever nota errada!");
-        console.error(`ID no Ecrã: ${safetyId} | ID na Memória: ${selectedNoteId}`);
-        alert("Erro de Sincronização: O sistema tentou gravar na nota errada. A página vai recarregar para proteger os seus dados.");
-        window.location.reload(); // Recarrega para limpar o estado corrompido
-        return;
+    // Se o HTML não tiver ID (está a carregar) ou se o ID não bater certo
+    if (!safetyId || safetyId !== selectedNoteId) {
+        console.warn(`⛔ BLOQUEIO DE SEGURANÇA: Tentativa de gravar na nota errada. (Memória: ${selectedNoteId} vs Ecrã: ${safetyId})`);
+        return; // Aborta silenciosamente para não estragar dados
     }
     // -------------------------------------
 
     updateSaveStatus('saving');
 
     try {
-        // Fixar valores dos inputs
+        // Fixar valores dos inputs das subnotas
         const miniNoteInputs = noteContentEditor.querySelectorAll('.mini-note-title-input');
         miniNoteInputs.forEach(input => input.setAttribute('value', input.value || ''));
 
         const noteRef = doc(db, 'pastas', selectedNoteId);
         
-        // Extrai os tópicos
-        const finalTopicsIndex = extractTopicsFromEditorHTML();
-        
-        console.log("💾 [SAVE] A gravar ID:", selectedNoteId);
-
+        // Extrai tags e cores
         let finalTagNames = []; 
         try { finalTagNames = Array.from(noteContentEditor.querySelectorAll('span.tag')).map(s => s.textContent.substring(1)); } catch(e){}
-        
         const coloredWrappers = noteContentEditor.querySelectorAll('.mini-note-wrapper[data-highlight]');
         const uniqueColorsUsed = [...new Set(Array.from(coloredWrappers).map(el => el.dataset.highlight))];
+        const finalTopicsIndex = extractTopicsFromEditorHTML();
 
         await updateDoc(noteRef, { 
             nome: noteTitleInput.value, 
@@ -6470,7 +6471,7 @@ async function executeSave() {
             ultimaedicao: serverTimestamp()
         });
 
-        // Atualiza UI da lista lateral para refletir o novo nome
+        // Atualiza UI da lista lateral
         const listItem = document.querySelector(`.list-item[data-id="${selectedNoteId}"] span`);
         if (listItem) listItem.textContent = noteTitleInput.value;
         
@@ -6480,7 +6481,6 @@ async function executeSave() {
     } catch (error) {
         console.error("ERRO AO GUARDAR:", error);
         updateSaveStatus('error');
-        // Não mostrar alert constante para erros de rede, apenas console
     }
 }
 
@@ -10981,36 +10981,14 @@ middlePanelList.addEventListener('click', (e) => {
 if (backBtn) {
     backBtn.onclick = (e) => {
         e.preventDefault();
-        e.stopPropagation(); // Impede interferências
-
-        // 1. Remove a pasta atual do histórico
+        
+        // Remove o último nível da pilha
         if (navigationStack.length > 0) {
             navigationStack.pop();
         }
-
-        // 2. Verifica se voltámos à raiz (Histórico vazio)
-        if (navigationStack.length === 0) {
-            
-            // Se estiver em Mobile
-            if (window.innerWidth <= 768) {
-                // Esconde o painel do meio
-                document.body.classList.remove('mobile-view-middle');
-                
-                // >>> A CORREÇÃO MÁGICA <<<
-                // Remove as classes que forçam o painel esquerdo a desaparecer
-                notebookContainer.classList.remove('middle-panel-collapsed');
-                notebookContainer.classList.remove('left-panel-collapsed');
-                
-                // Limpa seleção visual da esquerda
-                document.querySelectorAll('#left-panel-list .selected').forEach(el => el.classList.remove('selected'));
-            }
-            
-            // Atualiza para a Raiz
-            updateNavigationView(true);
-        } else {
-            // 3. Se ainda há histórico, carrega a pasta anterior
-            updateNavigationView(true);
-        }
+        
+        // Atualiza a vista. Se ficar vazio, volta à raiz da superpasta.
+        updateNavigationView(true);
     };
 }
 
@@ -12044,148 +12022,53 @@ leftPanelList.addEventListener('click', async (e) => {
 });
 
 middlePanelList.addEventListener('click', async (e) => {
-    // 1. Verifica se clicou no menu de 3 pontos
-    const itemMenuBtn = e.target.closest('.item-menu-btn');
-    if (itemMenuBtn) { showContextMenu(e); return; }
+    const item = e.target.closest('.list-item');
+    if (!item) return;
+    if (e.target.closest('.item-menu-btn')) { showContextMenu(e); return; }
 
-    // 2. Lógica específica para detalhes de Tópicos (árvore)
-    const topicTarget = e.target.closest('[data-type="topic-detail"], [data-type="subtopic-detail"]');
-    if (topicTarget) {
-        document.querySelectorAll('#file-list .selected-text').forEach(el => el.classList.remove('selected-text'));
-        topicTarget.classList.add('selected-text'); 
-        const { id, name, desc, type } = topicTarget.dataset;
-        showTopicReferencesPanel(id, name, desc, type === 'topic-detail' ? 'topico' : 'subtopico');
-        return;
-    }
+    const { id, name, type } = item.dataset;
 
-    // 3. DEFINIÇÃO DA VARIÁVEL (CRUCIAL: Tem de estar aqui)
-    const listItem = e.target.closest('.list-item');
-    if (!listItem) return;
-
-    // --- BLOCO NOVO CORRIGIDO (DESTAQUES) ---
-    // Agora já podemos usar 'listItem' porque foi definido acima
-    if (listItem.dataset.type === 'highlight-item') {
-        // Limpa seleções anteriores
-        document.querySelectorAll('#file-list .list-item.selected').forEach(el => el.classList.remove('selected'));
-        listItem.classList.add('selected');
-        
-        const { hex, name } = listItem.dataset;
-        
-        // Chama a função da 4ª coluna
-        showHighlightReferencesPanel(hex, name);
-        return;
-    }
-    // ----------------------------------------
-
-    // 4. Lógica para Listas (Bíblia, Entidades, etc.)
-    if (currentTab === 'lists') {
-        const type = listItem.dataset.type;
-        if (type === 'bible-book') {
-            const bookName = listItem.dataset.bookName;
-            navigationStack.push({ type: 'bible-book', id: bookName, name: bookName });
-            updateNavigationView();
-        } else if (type === 'entity-item') {
-            document.querySelectorAll('#file-list .list-item.selected').forEach(el => el.classList.remove('selected'));
-            listItem.classList.add('selected');
-            const { entityId, entityName, entityType } = listItem.dataset;
-            showReferencesPanel(entityId, entityName, entityType);
-        }
-        return;
-    }
-
-     // 5. LÓGICA PRINCIPAL (PASTAS E NOTAS)
-    const { id, type, name } = listItem.dataset;
-
-    // A. SE FOR UMA PASTA OU AGREGAÇÃO (ALTERADO AQUI)
-    if (type === 'pasta' || type === 'agregacao') {
-        const isSuperfolder = listItem.dataset.superpasta === "true";
-
-        // Verifica se é Superpasta
-        if (isSuperfolder) {
-            if (listItem.hasAttribute('data-protected')) {
-                if (!sessionUnlockedFolders.has(id)) {
-                    console.log("Superpasta bloqueada. A pedir senha...");
-                    const accessGranted = await requestPassword('access', id);
-                    if (accessGranted) {
-                        sessionUnlockedFolders.add(id);
-                    } else {
-                        return;
-                    }
-                }
-            }
-           navigateWithUnsavedCheck(() => {
-                window.location.href = `superpasta.html?rootId=${id}`;
-            });
-            return;
+    // --- SE FOR PASTA: MERGULHAR (DRILL-DOWN) ---
+    if (type === 'pasta') {
+        // Proteção
+        if (item.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
+            const access = await requestPassword('access', id);
+            if (access) sessionUnlockedFolders.add(id); else return;
         }
 
-        // Pasta Normal - Proteção
-        if (listItem.hasAttribute('data-protected')) {
-            if (!sessionUnlockedFolders.has(id)) {
-                console.log("Item bloqueado. A pedir senha...");
-                const accessGranted = await requestPassword('access', id);
-                if (accessGranted) {
-                    sessionUnlockedFolders.add(id);
-                    const textSpan = listItem.querySelector('span');
-                    if(textSpan && textSpan.textContent.includes('🔒')) {
-                        textSpan.textContent = textSpan.textContent.replace('🔒 ', '');
-                    }
-                } else {
-                    return; 
-                }
-            } 
-        }
-
-        // Navegação Pasta Normal
         const action = () => {
+            // Adiciona ao stack. Isto aumenta a profundidade.
+            // O updateNavigationView vai detetar depth maior e mover esta pasta para a esquerda.
             navigationStack.push({ id, name });
             updateNavigationView();
         };
         navigateWithUnsavedCheck(action);
-    } 
-    
-  // B. SE FOR UMA NOTA
-    else if (type === 'nota') {
-        
-        // 1. CASO ESPECIAL: Clicou na nota que JÁ está aberta
-        if (id === selectedNoteId) {
-            console.log(">> É a mesma nota. A esconder lista e mostrar editor...");
-            
-            // --- O PASSO MÁGICO QUE FALTAVA ---
-            // Remove a classe que mostra a lista
-            document.body.classList.remove('mobile-view-middle');
-            // Adiciona a classe que mostra o editor
-            document.body.classList.add('mobile-view-editor');
-            
-            return; // Agora sim, podemos sair porque o trabalho visual está feito
-        }
+    }
 
-        // 2. Lógica de Proteção (Senha) para OUTRAS notas
-        if (listItem.hasAttribute('data-protected')) {
-            if (!sessionUnlockedFolders.has(id)) {
-                const accessGranted = await requestPassword('access', id);
-                if (accessGranted) {
-                    sessionUnlockedFolders.add(id);
-                    const textSpan = listItem.querySelector('span');
-                    if(textSpan && textSpan.textContent.includes('🔒')) {
-                        textSpan.textContent = textSpan.textContent.replace('🔒 ', '');
-                    }
-                } else {
-                    return;
-                }
-            }
-        }
-        
-        // 3. Abre uma nota diferente (e garante a troca de ecrã)
-        const action = () => {
-            // Garante que muda para o editor mesmo sendo uma nota nova
+    // --- SE FOR NOTA: ABRIR EDITOR ---
+    else if (type === 'nota') {
+        // Se for a mesma nota, ignora ou foca (Mobile)
+        if (id === selectedNoteId) {
             if (window.innerWidth <= 768) {
                 document.body.classList.remove('mobile-view-middle');
                 document.body.classList.add('mobile-view-editor');
             }
-            displayNote(id, listItem);
+            return;
+        }
+
+        // Proteção
+        if (item.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
+            const access = await requestPassword('access', id);
+            if (access) sessionUnlockedFolders.add(id); else return;
+        }
+
+        const action = () => {
+            if (window.innerWidth <= 768) {
+                document.body.classList.remove('mobile-view-middle');
+                document.body.classList.add('mobile-view-editor');
+            }
+            displayNote(id, item);
         };
-        
         navigateWithUnsavedCheck(action);
     }
 });
