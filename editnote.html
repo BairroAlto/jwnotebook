@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="pt-pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editor de Margem - JW Notebook</title>
+    <style>
+        :root {
+            --bg-color: #1a1a1d;
+            --sidebar-color: #252528;
+            --panel-color: #1f1f22;
+            --accent-color: #4a90e2;
+            --text-color: #f0f0f0;
+            --text-muted: #888;
+            --border-color: #333;
+            --page-bg: #252528; /* Cor da folha no editor */
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            user-select: none;
+            overflow: hidden;
+        }
+
+        /* --- CABEÇALHO --- */
+        header {
+            height: 50px;
+            background-color: var(--sidebar-color);
+            border-bottom: 1px solid var(--border-color);
+            display: flex; align-items: center; padding: 0 15px;
+            justify-content: space-between; z-index: 20; flex-shrink: 0;
+        }
+
+        .back-btn {
+            background: none; border: 1px solid var(--border-color); color: var(--text-color);
+            padding: 5px 10px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 5px;
+        }
+        .back-btn:hover { background-color: var(--accent-color); border-color: var(--accent-color); }
+
+        .save-btn {
+            background-color: var(--accent-color); color: white; border: none;
+            padding: 5px 15px; border-radius: 4px; cursor: pointer; font-weight: bold;
+        }
+
+        /* --- LAYOUT --- */
+        .workspace { display: flex; flex: 1; overflow: hidden; position: relative; }
+
+        .tools-panel {
+            width: 90px;
+            background-color: var(--sidebar-color);
+            border-right: 1px solid var(--border-color);
+            display: flex; flex-direction: column; align-items: center;
+            padding: 15px 0; gap: 15px; z-index: 30; overflow-y: auto;
+        }
+
+        /* Ferramentas */
+        .tool-container { position: relative; width: 60px; height: 60px; flex-shrink: 0; }
+
+        .tool-item {
+            width: 100%; height: 100%;
+            background-color: var(--panel-color);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            cursor: grab; transition: all 0.2s;
+        }
+        .tool-item:hover { border-color: var(--accent-color); }
+        .tool-item:active { cursor: grabbing; }
+
+        .tool-menu-btn {
+            position: absolute; top: 2px; right: 2px;
+            font-size: 14px; color: var(--text-muted);
+            background: rgba(0,0,0,0.5); border-radius: 50%;
+            width: 18px; height: 18px; line-height: 18px; text-align: center;
+            cursor: pointer; border: none; display: none;
+        }
+        .tool-container:hover .tool-menu-btn { display: block; }
+        .tool-menu-btn:hover { color: white; background-color: var(--accent-color); }
+
+        .tool-icon-visual { width: 20px; height: 20px; background-color: #888; transition: background 0.3s; }
+        .tool-icon-visual.circle { border-radius: 50%; width: 12px; height: 12px; }
+        .tool-icon-visual.line { width: 4px; height: 25px; border-radius: 2px; }
+        .tool-icon-visual.hline { width: 30px; height: 4px; border-radius: 2px; }
+        .tool-label { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+
+        /* --- SCROLL E PÁGINA (SIMULAÇÃO A4) --- */
+        .scroll-container {
+            flex: 1; overflow-y: auto; background-color: #111; /* Fundo mais escuro atrás da folha */
+            display: block; position: relative; padding: 20px;
+        }
+
+        .page-wrapper {
+            /* Dimensões Realistas de A4 */
+            width: 210mm; 
+            min-height: 297mm; /* Altura mínima A4 */
+            margin: 0 auto; 
+            
+            background-color: var(--page-bg);
+            box-shadow: 0 0 30px rgba(0,0,0,0.5);
+            position: relative; /* Para posicionar a margem absoluta */
+            
+            display: flex; /* Mantém flex para estrutura interna */
+            flex-direction: row;
+        }
+
+        /* TIRA DA MARGEM (ÁREA DE DROP) */
+        .margin-strip {
+            /* Fixa e Absoluta à esquerda, tal como no PDF */
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 60px; /* Largura da margem */
+            height: 100%;
+            z-index: 10;
+            
+            /* Guia visual apenas para o editor (tracejado suave) */
+            border-right: 1px dashed rgba(255, 255, 255, 0.1); 
+        }
+
+        /* ÁREA DE CONTEÚDO */
+        .content-area {
+            flex: 1; 
+            /* Afasta o texto da esquerda para dar espaço à margem */
+            padding: 40px 40px 40px 70px; /* 70px left = 60px margem + 10px respiro */
+            
+            color: var(--text-color); 
+            line-height: 1.8; 
+            font-size: 1.1em;
+            cursor: default; 
+            overflow: visible;
+        }
+
+        /* --- ELEMENTOS DE MARGEM --- */
+        .margin-element { position: absolute; cursor: move; z-index: 20; }
+        .margin-element:hover { filter: brightness(1.3); z-index: 30; }
+        .margin-element.is-dragging { opacity: 0.7; pointer-events: none; }
+
+        .el-dot { width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 3px rgba(0,0,0,0.5); }
+        .el-star { font-size: 20px; font-weight: bold; line-height: 1; user-select: none; }
+        .el-exclaim { font-size: 20px; font-weight: 900; line-height: 1; font-family: serif; user-select: none; }
+
+        /* LINHA VERTICAL */
+        .el-line-container { width: 14px; height: 100%; display: flex; justify-content: center; position: relative; }
+        .el-line { width: 4px; height: 100%; border-radius: 2px; }
+        .resize-handle {
+            position: absolute; bottom: -8px; left: 0; width: 100%; height: 16px;
+            cursor: ns-resize; display: flex; justify-content: center; align-items: center;
+        }
+        .resize-handle::after {
+            content: ''; width: 8px; height: 4px; background-color: white; border-radius: 2px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+        }
+
+        /* LINHA HORIZONTAL */
+        .el-hline-container {
+            width: 100%; height: 14px; 
+            display: flex; align-items: center;
+            position: relative;
+        }
+        .el-hline {
+            width: 100%; height: 4px; 
+            border-radius: 2px;
+        }
+        .resize-handle-h {
+            position: absolute; right: -8px; top: 0; width: 16px; height: 100%;
+            cursor: ew-resize; 
+            display: flex; justify-content: center; align-items: center;
+        }
+        .resize-handle-h::after {
+            content: ''; width: 4px; height: 10px; background-color: white; border-radius: 2px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+        }
+
+        /* --- POPUPS --- */
+        #tool-color-popup {
+            position: fixed; display: none; background: var(--sidebar-color); border: 1px solid var(--border-color);
+            padding: 8px; border-radius: 6px; z-index: 2000; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        .color-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+        .color-option { width: 24px; height: 24px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: transform 0.1s; }
+        .color-option:hover { transform: scale(1.2); border-color: white; }
+
+        #context-menu {
+            position: fixed; display: none; background: var(--sidebar-color); border: 1px solid var(--border-color);
+            border-radius: 6px; padding: 5px; z-index: 3000;
+        }
+        #btn-delete { background: none; border: none; color: #e74c3c; padding: 8px 15px; cursor: pointer; display: flex; align-items: center; gap: 5px; }
+        #btn-delete:hover { background: rgba(231, 76, 60, 0.1); border-radius: 4px; }
+
+        /* --- CSS DE LIMPEZA PARA O TEXTO --- */
+        .mini-note-wrapper { border: 1px solid var(--border-color); padding: 15px; margin: 15px 0; background-color: rgba(255, 255, 255, 0.05); border-radius: 6px; }
+        .mini-note-title-input { background: none; border: none; color: var(--accent-color); font-size: 1.2em; font-weight: bold; width: 100%; pointer-events: none; }
+        .mini-note-toolbar, .toggle-delete-btn, .toggle-move-btn, .toggle-color-btn, .share-box-btn { display: none !important; }
+        .question-mode .mini-note-title-input { color: #2ecc71; }
+        .free-mode { border-color: #e67e22; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <button class="back-btn" id="btn-back">⬅ Voltar e Gravar</button>
+        <h3 style="color: var(--text-muted); font-size: 1em;">Editor de Margem</h3>
+        <button class="save-btn" id="btn-save">Gravar</button>
+    </header>
+
+    <div class="workspace">
+        <aside class="tools-panel">
+            <div class="tool-container">
+                <div class="tool-item" draggable="true" data-type="dot" id="tool-dot">
+                    <div class="tool-icon-visual circle" style="background-color: #e74c3c;"></div>
+                    <span class="tool-label">Ponto</span>
+                </div>
+                <button class="tool-menu-btn" data-tool="dot">⋮</button>
+            </div>
+            <div class="tool-container">
+                <div class="tool-item" draggable="true" data-type="line" id="tool-line">
+                    <div class="tool-icon-visual line" style="background-color: #e74c3c;"></div>
+                    <span class="tool-label">Linha V</span>
+                </div>
+                <button class="tool-menu-btn" data-tool="line">⋮</button>
+            </div>
+            <div class="tool-container">
+                <div class="tool-item" draggable="true" data-type="hline" id="tool-hline">
+                    <div class="tool-icon-visual hline" style="background-color: #e74c3c;"></div>
+                    <span class="tool-label">Linha H</span>
+                </div>
+                <button class="tool-menu-btn" data-tool="hline">⋮</button>
+            </div>
+            <div class="tool-container">
+                <div class="tool-item" draggable="true" data-type="star" id="tool-star">
+                    <span class="el-text-icon" style="color: #f1c40f;">★</span>
+                    <span class="tool-label">Imp.</span>
+                </div>
+                <button class="tool-menu-btn" data-tool="star">⋮</button>
+            </div>
+            <div class="tool-container">
+                <div class="tool-item" draggable="true" data-type="exclaim" id="tool-exclaim">
+                    <span class="el-text-icon" style="color: #e74c3c;">!</span>
+                    <span class="tool-label">Atenção</span>
+                </div>
+                <button class="tool-menu-btn" data-tool="exclaim">⋮</button>
+            </div>
+        </aside>
+
+        <div class="scroll-container" id="main-scroller">
+            <div class="page-wrapper">
+                <!-- MARGEM ABSOLUTA À ESQUERDA -->
+                <div class="margin-strip" id="margin-strip"></div>
+                
+                <!-- CONTEÚDO -->
+                <div class="content-area" id="note-content-display">
+                    <p style="color: #666; padding-top: 20px;">Carregando nota...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- POPUPS -->
+    <div id="tool-color-popup">
+        <div class="color-grid">
+            <div class="color-option" style="background-color: #e74c3c;" data-color="#e74c3c"></div>
+            <div class="color-option" style="background-color: #e67e22;" data-color="#e67e22"></div>
+            <div class="color-option" style="background-color: #f1c40f;" data-color="#f1c40f"></div>
+            <div class="color-option" style="background-color: #2ecc71;" data-color="#2ecc71"></div>
+            <div class="color-option" style="background-color: #3498db;" data-color="#3498db"></div>
+            <div class="color-option" style="background-color: #9b59b6;" data-color="#9b59b6"></div>
+        </div>
+    </div>
+
+    <div id="context-menu">
+        <button id="btn-delete">🗑️ Apagar</button>
+    </div>
+
+    <script type="module">
+        import { db, auth } from './js/firebase-config.js';
+        import { doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
+        import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
+
+        const params = new URLSearchParams(window.location.search);
+        const noteId = params.get('noteId');
+        const marginStrip = document.getElementById('margin-strip');
+        const colorPopup = document.getElementById('tool-color-popup');
+        
+        let currentMarginData = [];
+        let toolColors = { dot: '#e74c3c', line: '#e74c3c', hline: '#e74c3c', star: '#f1c40f', exclaim: '#e74c3c' };
+        let activeToolForColor = null;
+        let activeElementIdForDelete = null;
+
+        // Variáveis de Movimento
+        let isDraggingEl = false; let dragElId = null; let startDragX, startDragY, startElLeft, startElTop;
+        
+        // Resize
+        let isResizing = false; let resizeElId = null; let startResizeY, startResizeHeight;
+        let isResizingH = false; let startResizeX, startResizeWidth;
+
+        onAuthStateChanged(auth, async (user) => {
+            if (!user) { window.location.href = "index.html"; return; }
+            if (noteId) loadNoteData(noteId);
+        });
+
+        async function loadNoteData(id) {
+            try {
+                const docSnap = await getDoc(doc(db, 'pastas', id));
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    
+                    // Injeta Título + Conteúdo para simular a vista de leitura
+                    const fullContent = `
+                        <h1 style="font-size: 2em; margin-bottom: 20px; border-bottom: 1px solid #444; padding-bottom: 10px; color: #4a90e2;">
+                            ${data.nome}
+                        </h1>
+                        ${cleanHTML(data.conteudo)}
+                    `;
+                    
+                    document.getElementById('note-content-display').innerHTML = fullContent;
+                    
+                    if (data.marginElements) {
+                        currentMarginData = data.marginElements;
+                        renderAllElements();
+                    }
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        function cleanHTML(html) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            doc.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+            doc.querySelectorAll('.mini-note-toolbar, .toggle-delete-btn, .toggle-move-btn, .toggle-color-btn, .share-box-btn').forEach(el => el.remove());
+            doc.querySelectorAll('input').forEach(input => input.setAttribute('disabled', 'true'));
+            return doc.body.innerHTML;
+        }
+
+        // CORES
+        document.querySelectorAll('.tool-menu-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                activeToolForColor = btn.dataset.tool;
+                const rect = btn.getBoundingClientRect();
+                colorPopup.style.display = 'block';
+                colorPopup.style.top = `${rect.top}px`;
+                colorPopup.style.left = `${rect.right + 10}px`;
+            });
+        });
+
+        document.querySelectorAll('.color-option').forEach(opt => {
+            opt.addEventListener('click', (e) => {
+                const color = e.target.dataset.color;
+                if (activeToolForColor) {
+                    toolColors[activeToolForColor] = color;
+                    const toolDiv = document.getElementById(`tool-${activeToolForColor}`);
+                    const icon = toolDiv.querySelector('.tool-icon-visual, .el-text-icon');
+                    if (icon.classList.contains('tool-icon-visual')) icon.style.backgroundColor = color;
+                    else icon.style.color = color;
+                }
+                colorPopup.style.display = 'none';
+            });
+        });
+
+        // DRAG & DROP
+        document.querySelectorAll('.tool-item').forEach(tool => {
+            tool.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('type', tool.dataset.type);
+                e.dataTransfer.setData('color', toolColors[tool.dataset.type]);
+            });
+        });
+
+        marginStrip.addEventListener('dragover', (e) => e.preventDefault());
+        
+        marginStrip.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const type = e.dataTransfer.getData('type');
+            if(!type) return;
+            const color = e.dataTransfer.getData('color');
+            const rect = marginStrip.getBoundingClientRect();
+            
+            let left = e.clientX - rect.left;
+            let top = e.clientY - rect.top;
+            
+            // Ajustes finos de centralização ao largar
+            if (type !== 'line') left -= 5;
+            if (type === 'hline') top -= 2; else top -= 10;
+
+            const newEl = { id: Date.now(), type, top, left, color, height: 40, width: 150 };
+            currentMarginData.push(newEl);
+            renderOneElement(newEl);
+        });
+
+        function renderAllElements() {
+            marginStrip.innerHTML = '';
+            currentMarginData.forEach(renderOneElement);
+        }
+
+        function renderOneElement(el) {
+            const div = document.createElement('div');
+            div.className = 'margin-element';
+            div.dataset.id = el.id;
+            div.style.top = `${el.top}px`;
+            div.style.left = `${el.left}px`;
+
+            let innerHTML = '';
+            
+            if (el.type === 'line') {
+                div.style.height = `${el.height}px`;
+                innerHTML = `<div class="el-line-container"><div class="el-line" style="background-color: ${el.color};"></div><div class="resize-handle"></div></div>`;
+            } 
+            else if (el.type === 'hline') {
+                div.style.width = `${el.width}px`;
+                innerHTML = `
+                    <div class="el-hline-container">
+                        <div class="el-hline" style="background-color: ${el.color};"></div>
+                        <div class="resize-handle-h"></div>
+                    </div>`;
+            }
+            else if (el.type === 'dot') {
+                innerHTML = `<div class="el-dot" style="background-color: ${el.color};"></div>`;
+            } else if (el.type === 'star') {
+                div.style.color = el.color; innerHTML = `<div class="el-star">★</div>`;
+            } else if (el.type === 'exclaim') {
+                div.style.color = el.color; innerHTML = `<div class="el-exclaim">!</div>`;
+            }
+            
+            div.innerHTML = innerHTML;
+
+            // Mover
+            div.addEventListener('mousedown', (e) => {
+                if (e.target.classList.contains('resize-handle') || e.target.classList.contains('resize-handle-h')) return;
+                
+                e.preventDefault();
+                isDraggingEl = true; dragElId = el.id;
+                startDragX = e.clientX; startDragY = e.clientY;
+                startElLeft = el.left; startElTop = el.top;
+                div.classList.add('is-dragging');
+            });
+
+            // Resize Vertical
+            const handleV = div.querySelector('.resize-handle');
+            if (handleV) {
+                handleV.addEventListener('mousedown', (e) => {
+                    e.stopPropagation(); e.preventDefault();
+                    isResizing = true; resizeElId = el.id;
+                    startResizeY = e.clientY; startResizeHeight = el.height;
+                });
+            }
+
+            // Resize Horizontal
+            const handleH = div.querySelector('.resize-handle-h');
+            if (handleH) {
+                handleH.addEventListener('mousedown', (e) => {
+                    e.stopPropagation(); e.preventDefault();
+                    isResizingH = true; resizeElId = el.id;
+                    startResizeX = e.clientX; startResizeWidth = el.width || 150;
+                });
+            }
+
+            // Menu Contexto
+            div.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                activeElementIdForDelete = el.id;
+                const menu = document.getElementById('context-menu');
+                menu.style.display = 'block';
+                menu.style.top = `${e.clientY}px`;
+                menu.style.left = `${e.clientX}px`;
+            });
+
+            marginStrip.appendChild(div);
+        }
+
+        // GLOBAL MOUSE EVENTS
+        window.addEventListener('mousemove', (e) => {
+            if (isDraggingEl && dragElId) {
+                const deltaX = e.clientX - startDragX;
+                const deltaY = e.clientY - startDragY;
+                let newLeft = startElLeft + deltaX;
+                let newTop = startElTop + deltaY;
+                
+                // Permite ir mais longe para a direita (dentro da página)
+                if (newLeft < 0) newLeft = 0; 
+                if (newTop < 0) newTop = 0;
+
+                const domEl = marginStrip.querySelector(`[data-id="${dragElId}"]`);
+                if (domEl) { domEl.style.left = `${newLeft}px`; domEl.style.top = `${newTop}px`; }
+                
+                const dataEl = currentMarginData.find(i => i.id === dragElId);
+                if (dataEl) { dataEl.left = newLeft; dataEl.top = newTop; }
+            }
+            
+            if (isResizing && resizeElId) {
+                const deltaY = e.clientY - startResizeY;
+                let newH = startResizeHeight + deltaY;
+                if (newH < 20) newH = 20;
+                const domEl = marginStrip.querySelector(`[data-id="${resizeElId}"]`);
+                if (domEl) domEl.style.height = `${newH}px`;
+                const dataEl = currentMarginData.find(i => i.id === resizeElId);
+                if (dataEl) dataEl.height = newH;
+            }
+
+            if (isResizingH && resizeElId) {
+                const deltaX = e.clientX - startResizeX;
+                let newW = startResizeWidth + deltaX;
+                if (newW < 20) newW = 20; 
+                
+                const domEl = marginStrip.querySelector(`[data-id="${resizeElId}"]`);
+                if (domEl) domEl.style.width = `${newW}px`;
+                
+                const dataEl = currentMarginData.find(i => i.id === resizeElId);
+                if (dataEl) dataEl.width = newW;
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (isDraggingEl) {
+                const domEl = marginStrip.querySelector(`[data-id="${dragElId}"]`);
+                if (domEl) domEl.classList.remove('is-dragging');
+                isDraggingEl = false; dragElId = null;
+            }
+            isResizing = false;
+            isResizingH = false;
+            resizeElId = null;
+        });
+
+        document.getElementById('btn-delete').addEventListener('click', () => {
+            if (activeElementIdForDelete) {
+                currentMarginData = currentMarginData.filter(i => i.id !== activeElementIdForDelete);
+                renderAllElements();
+                document.getElementById('context-menu').style.display = 'none';
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#tool-color-popup') && !e.target.classList.contains('tool-menu-btn')) colorPopup.style.display = 'none';
+            if (!e.target.closest('#context-menu')) document.getElementById('context-menu').style.display = 'none';
+        });
+
+        async function saveToFirebase() {
+            const btn = document.getElementById('btn-save');
+            btn.textContent = "A gravar...";
+            try {
+                await updateDoc(doc(db, 'pastas', noteId), { marginElements: currentMarginData });
+                btn.textContent = "Guardado!"; return true;
+            } catch (e) { alert("Erro ao gravar."); return false; } 
+            finally { setTimeout(() => btn.textContent = "Gravar", 2000); }
+        }
+
+        document.getElementById('btn-save').addEventListener('click', saveToFirebase);
+        document.getElementById('btn-back').addEventListener('click', async () => {
+            document.getElementById('btn-back').textContent = "💾 A gravar...";
+            if (await saveToFirebase()) window.location.href = `note.html?noteId=${noteId}`;
+        });
+
+    </script>
+</body>
+</html>
