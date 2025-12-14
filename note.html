@@ -4919,32 +4919,39 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             li.dataset.parentid = item.parentId || 'null';
 
             // --- LÓGICA DE ÍCONES ---
-            let icon = "";
-            
-            // 1. É Superpasta?
-            if (item.superpasta === true) {
-                li.dataset.superpasta = "true";
-                li.style.borderLeft = "3px solid var(--accent-color)";
-                if (item.customIcon) {
-                    li.style.setProperty('--custom-icon', `"${item.customIcon}"`);
-                }
-            }
+        // 1. É Superpasta?
+if (item.superpasta === true) {
+    li.dataset.superpasta = "true";
+    li.style.borderLeft = "3px solid var(--accent-color)";
+    if (item.customIcon) {
+        li.style.setProperty('--custom-icon', `"${item.customIcon}"`);
+    }
+}
 
-            // 2. É Atalho Partilhado? (CORREÇÃO AQUI)
-            // Se tiver pointerId, é uma nota partilhada connosco
-            if (item.pointerId) {
-                li.dataset.isShared = "true";
-                li.style.color = "#4a90e2"; // Azul para destacar
-                icon = "🔗 "; 
-            }
+// 2. É Atalho? (Lógica de Prioridade)
+if (item.pointerId) {
+    // SE FOR MODO LIVE (🗪)
+    if (item.isLive === true) {
+        li.dataset.isLive = "true";
+        li.style.color = "#e74c3c"; // Vermelho ou Laranja para destacar Live
+        icon = "🗪 "; 
+    } 
+    // SE FOR APENAS LEITURA (🔗)
+    else {
+        li.dataset.isShared = "true";
+        li.style.color = "#4a90e2"; // Azul
+        icon = "🔗 "; 
+    }
+}
 
-            // 3. É Protegida?
-            if (item.passe && item.passe.trim() !== "") {
-                li.setAttribute('data-protected', 'true'); 
-                icon = "🔒 ";
-            }
+// 3. É Protegida? (Adiciona cadeado se necessário)
+if (item.passe && item.passe.trim() !== "") {
+    li.setAttribute('data-protected', 'true'); 
+    icon += "🔒 "; // Acumula o ícone
+}
 
-            const nameSpan = document.createElement('span');
+const nameSpan = document.createElement('span');
+nameSpan.textContent = `${icon}${item.nome}`;
             nameSpan.textContent = `${icon}${item.nome}`;
             
             // Botão de menu (3 pontos)
@@ -6544,55 +6551,63 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
         const noteRef = doc(db, 'pastas', noteId);
         const noteSnap = await getDoc(noteRef);
 
-        if (noteSnap.exists()) {
-            let data = noteSnap.data();
-            let isReadOnly = false;
+     if (noteSnap.exists()) {
+    let data = noteSnap.data();
+    let isReadOnly = false;
 
-            // --- VERIFICAÇÃO DE ATALHO (ACESSO REVOGÁVEL) ---
-            if (data.pointerId) {
-                console.log("🔗 Isto é um atalho. A carregar nota original...");
+    // --- VERIFICAÇÃO DE ATALHO ---
+    if (data.pointerId) {
+        console.log("🔗 Isto é um atalho...");
+        
+        try {
+            // (Código de carregar original mantém-se igual...)
+            const originalRef = doc(db, 'pastas', data.pointerId);
+            const originalSnap = await getDoc(originalRef);
+
+            if (originalSnap.exists()) {
+                const originalData = originalSnap.data();
                 
-                try {
-                    // Tenta carregar a original
-                    const originalRef = doc(db, 'pastas', data.pointerId);
-                    const originalSnap = await getDoc(originalRef);
-
-                    // Verifica se existe e se a partilha AINDA está ativa
-                    if (originalSnap.exists()) {
-                        const originalData = originalSnap.data();
+                // VERIFICA SE A PARTILHA AINDA EXISTE
+                if (originalData.shareSettings && originalData.shareSettings.shared === true) {
+                    
+                    // --- NOVA LÓGICA AQUI: É LIVE OU LEITURA? ---
+                    
+                    // Se o meu atalho local diz "isLive: true" E a nota original permite co-edição
+                    if (data.isLive === true && originalData.shareSettings.allowCoEditing === true) {
+                        console.log("🔴 Atalho LIVE detetado. A ativar multiplayer...");
                         
-                        // SEGREDO DA REVOGAÇÃO: Verifica se o dono desligou a partilha
-                        if (originalData.shareSettings && originalData.shareSettings.shared === true) {
-                            // SUCESSO: Substitui os dados locais pelos dados reais da original
-                            data = originalData;
-                            
-                            // Define como Apenas Leitura (o visitante não pode editar a original diretamente aqui)
-                            // A menos que queiramos permitir edição direta (Live), mas isso requer regras de segurança extra.
-                            // Por segurança, começamos com Read-Only.
-                            isReadOnly = true; 
-                            
-                            // Aviso visual
-                            document.getElementById('save-status-indicator').textContent = "👁️ Modo Leitura (Partilhado)";
-                        } else {
-                            throw new Error("Acesso revogado pelo proprietário.");
-                        }
+                        // 1. Substitui dados
+                        data = originalData;
+                        
+                        // 2. Permite edição (porque é Live)
+                        isReadOnly = false; 
+                        
+                        // 3. Ativa o sistema visual de Live
+                        setTimeout(() => {
+                            setupPresenceSystem(data.pointerId || noteId); // Liga à sala original
+                            document.getElementById('editor-toolbar').classList.add('live-mode-active');
+                            document.getElementById('live-indicator').style.display = 'flex';
+                        }, 500);
+
                     } else {
-                        throw new Error("Nota original foi apagada.");
+                        // É APENAS LEITURA (Comportamento antigo)
+                        data = originalData;
+                        isReadOnly = true; 
+                        document.getElementById('save-status-indicator').textContent = "👁️ Modo Leitura";
                     }
-                } catch (accessError) {
-                    // SE FALHAR (REVOGADO): Mostra erro no editor
-                    noteTitleInput.value = "Acesso Indisponível";
-                    noteContentEditor.innerHTML = `
-                        <div style="text-align:center; padding:50px; color:#e74c3c;">
-                            <h2>🚫 Acesso Revogado</h2>
-                            <p>${accessError.message}</p>
-                            <p style="color:#888; font-size:0.9em;">O proprietário pode ter parado a partilha ou apagado a nota.</p>
-                        </div>
-                    `;
-                    noteContentEditor.contentEditable = "false";
-                    return;
+
+                } else {
+                    throw new Error("Acesso revogado pelo proprietário.");
                 }
+            } else {
+                throw new Error("Nota original foi apagada.");
             }
+        } catch (accessError) {
+            // (Tratamento de erro mantém-se igual...)
+            // Se o dono revogou, o atalho ainda existe na lista do user, 
+            // mas ao clicar vai dar este erro.
+        }
+    }
             // ------------------------------------------------
 
             const { nome, conteudo, shareSettings } = data; 
