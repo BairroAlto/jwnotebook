@@ -3630,7 +3630,7 @@ a.board-link:hover {
     import { 
     collection, query, where, addDoc, serverTimestamp, onSnapshot, 
     doc, getDoc, updateDoc, orderBy, getDocs, writeBatch, deleteField, deleteDoc,
-    setDoc, limit, startAfter // <--- ADICIONE ESTES DOIS
+    setDoc, limit, startAfter, runTransaction 
 } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
 
     // 3. Importações de Autenticação
@@ -14425,50 +14425,72 @@ newAppendBackBtn.addEventListener('click', () => {
 // 5. CONFIRMAR E GRAVAR
 async function confirmAppendToNote(targetId, targetName) {
     
-    // 1. Truque de UI: Forçar o modal de confirmação a ficar acima de tudo (z-index 2000)
+    // 1. Truque de UI: Forçar o modal de confirmação a ficar acima de tudo
     const confirmModal = document.getElementById('confirm-modal');
     confirmModal.style.zIndex = '2000';
 
-    // 2. Usar a função de confirmação personalizada já existente no seu código
+    // 2. Confirmação
     const confirmed = await showConfirmation(
         "Confirmar Envio", 
-        `Deseja adicionar esta caixa à nota "${targetName}"?`
+        `Deseja adicionar esta caixa ao final da nota "${targetName}"?`
     );
 
     if (!confirmed) {
-        // Se cancelar, restaura o z-index original (opcional) e sai
         confirmModal.style.zIndex = ''; 
         return;
     }
 
+    // 3. Feedback Visual Imediato
+    const btn = document.querySelector('#append-list li[onclick*="' + targetId + '"] span:last-child');
+    if(btn) btn.textContent = "⏳";
+
     try {
-        const targetRef = doc(db, 'pastas', targetId);
-        const targetSnap = await getDoc(targetRef);
+        const noteRef = doc(db, 'pastas', targetId);
 
-        if (targetSnap.exists()) {
-            const currentContent = targetSnap.data().conteudo || "";
+        // --- A MAGIA ACONTECE AQUI: TRANSAÇÃO ---
+        await runTransaction(db, async (transaction) => {
             
-            // Adiciona ao final do conteúdo existente
-            const newContent = currentContent + htmlToAppend;
+            // A. Lê a versão mais recente do servidor (Bloqueia escrita de outros por milissegundos)
+            const noteDoc = await transaction.get(noteRef);
+            if (!noteDoc.exists()) throw "Nota não encontrada!";
 
-            await updateDoc(targetRef, {
+            const currentContent = noteDoc.data().conteudo || "";
+
+            // B. Prepara o conteúdo limpo
+            // Adiciona quebras de linha (<p><br></p>) para garantir que não cola na última palavra
+            // Adiciona um comentário invisível para separar visualmente no código
+            const separator = `<p><br></p><!-- APPENDED START -->`;
+            
+            // C. Constrói o novo HTML
+            const newContent = currentContent + separator + htmlToAppend;
+
+            // D. Grava a nova versão completa
+            transaction.update(noteRef, {
                 conteudo: newContent,
                 ultimaedicao: serverTimestamp()
             });
+        });
 
-            // Mostra aviso de sucesso temporário no botão ou um pequeno alert
-            // Como fechamos o modal logo a seguir, não é crítico
-            document.getElementById('append-to-note-modal').style.display = 'none';
-            
-            // Restaura z-index para o futuro
-            confirmModal.style.zIndex = ''; 
-
-        } else {
-            alert("Nota de destino não encontrada.");
+        // 4. Sucesso
+        document.getElementById('append-to-note-modal').style.display = 'none';
+        confirmModal.style.zIndex = ''; 
+        
+        // Notificação discreta
+        const statusEl = document.getElementById('save-status-indicator');
+        if(statusEl) {
+            const oldText = statusEl.textContent;
+            statusEl.textContent = `Enviado para "${targetName}"!`;
+            statusEl.style.color = "#2ecc71";
+            setTimeout(() => { 
+                statusEl.textContent = oldText; 
+                statusEl.style.color = "";
+            }, 3000);
         }
+
     } catch (e) {
         console.error("Erro ao enviar:", e);
-        alert("Erro ao gravar na nota de destino.");
+        alert("Erro ao gravar. A nota pode ter sido apagada ou não tem permissão.");
+        if(btn) btn.textContent = "❌";
     }
 }
 
