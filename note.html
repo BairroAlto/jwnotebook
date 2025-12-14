@@ -16946,7 +16946,7 @@ async function setupPresenceSystem(noteId) {
         updateLiveUI(activeCount + 1);
     });
 
-    // --- C. OUVIR O CONTEÚDO (Igual à versão anterior corrigida) ---
+   // --- C. OUVIR O CONTEÚDO (COM PROTEÇÃO DE CURSOR E ESCRITA) ---
     const noteDocRef = doc(db, 'pastas', noteId);
     
     contentUnsubscribe = onSnapshot(noteDocRef, (docSnap) => {
@@ -16954,24 +16954,102 @@ async function setupPresenceSystem(noteId) {
         const newData = docSnap.data();
         const editor = document.getElementById('note-content-editor');
         
-        if (editor && editor.innerHTML !== newData.conteudo) {
-            // Tenta manter posição do cursor
-            const selection = window.getSelection();
-            const hadFocus = (document.activeElement === editor);
-            
+        if (!editor) return;
+
+        // 1. VERIFICAÇÃO DE SEGURANÇA (O PROBLEMA DO "TEXTO ELIMINADO")
+        // Se eu tiver alterações não guardadas (estou a escrever furiosamente),
+        // NÃO aceito a atualização de fora, senão o que estou a escrever desaparece.
+        // A minha versão vai sobrepor a do outro quando o meu timer de 1s disparar.
+        // É a lei do "Último a escrever ganha", mas protege a experiência local.
+        if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
+            console.log("🛡️ Bloqueando atualização externa enquanto escrevo...");
+            return; 
+        }
+
+        // Se o conteúdo for realmente diferente
+        if (editor.innerHTML !== newData.conteudo) {
+            console.log("🔄 A atualizar conteúdo remoto...");
+
+            // 2. GUARDAR POSIÇÃO DO CURSOR
+            const currentCursorPos = (document.activeElement === editor) 
+                ? getCaretCharacterOffsetWithin(editor) 
+                : null;
+
+            // 3. ATUALIZAR HTML
             editor.innerHTML = newData.conteudo;
+            
+            // 4. RESTAURAR FUNCIONALIDADES (Caixas, Botões)
             if(typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
 
-            // Se estava focado, move para o fim para não perder o fio à meada
-            if (hadFocus) {
-                const range = document.createRange();
-                range.selectNodeContents(editor);
-                range.collapse(false);
-                selection.removeAllRanges();
-                selection.addRange(range);
+            // 5. RESTAURAR POSIÇÃO DO CURSOR
+            if (currentCursorPos !== null) {
+                setCaretPosition(editor, currentCursorPos);
             }
         }
-    }, (error) => { console.error("Erro sync:", error); });
+    }, (error) => {
+        console.error("Erro sync:", error);
+    });
+    
+    // --- FUNÇÕES AUXILIARES PARA MANTER O CURSOR ---
+
+// 1. Descobrir a posição numérica do cursor (ex: caractere 150)
+function getCaretCharacterOffsetWithin(element) {
+    let caretOffset = 0;
+    const doc = element.ownerDocument || element.document;
+    const win = doc.defaultView || doc.parentWindow;
+    const sel = win.getSelection();
+    
+    if (sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        const preCaretRange = range.cloneRange();
+        preCaretRange.selectNodeContents(element);
+        preCaretRange.setEnd(range.endContainer, range.endOffset);
+        caretOffset = preCaretRange.toString().length;
+    }
+    return caretOffset;
+}
+
+// 2. Colocar o cursor na posição numérica correta
+function setCaretPosition(element, offset) {
+    const createRange = (node, chars, range) => {
+        if (!range) {
+            range = document.createRange();
+            range.selectNode(node);
+            range.setStart(node, 0);
+        }
+
+        if (chars.count === 0) {
+            range.setEnd(node, chars.count);
+        }
+
+        if (node && chars.count > 0) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                if (node.textContent.length < chars.count) {
+                    chars.count -= node.textContent.length;
+                } else {
+                    range.setEnd(node, chars.count);
+                    chars.count = 0;
+                }
+            } else {
+                for (let lp = 0; lp < node.childNodes.length; lp++) {
+                    range = createRange(node.childNodes[lp], chars, range);
+                    if (chars.count === 0) break;
+                }
+            }
+        }
+        return range;
+    };
+
+    if (offset >= 0) {
+        const selection = window.getSelection();
+        const range = createRange(element, { count: offset });
+        if (range) {
+            range.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+    }
+}
 
     // Listener de fechar janela (pagehide é mais fiável que beforeunload em mobile)
     window.addEventListener('pagehide', cleanupPresence);
