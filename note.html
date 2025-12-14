@@ -14313,13 +14313,24 @@ async function loadAppendList(parentId) {
     
     list.innerHTML = '<li style="padding:10px;">A carregar...</li>';
 
-    // Atualiza Breadcrumbs
+    // --- LÓGICA DE NAVEGAÇÃO ALTERADA ---
     if (appendStack.length > 0) {
+        // Estamos dentro de uma subpasta (navegação normal)
         pathLabel.textContent = appendStack[appendStack.length - 1].name;
         backBtn.style.display = 'block';
     } else {
-        pathLabel.textContent = parentId ? "Pasta Atual" : "Raiz";
-        backBtn.style.display = 'none';
+        // Estamos no ponto de início (Stack vazio)
+        if (parentId) {
+            // Se tem parentId, estamos na raiz da Superpasta
+            pathLabel.textContent = "📂 Pasta Atual (Superpasta)";
+            // IMPORTANTE: Mostramos o botão para permitir sair para a Raiz Global
+            backBtn.style.display = 'block';
+            backBtn.textContent = "⬅ Raiz Global"; // Feedback visual
+        } else {
+            // Estamos na Raiz Global (null)
+            pathLabel.textContent = "🌍 Raiz Global";
+            backBtn.style.display = 'none'; // Não dá para subir mais
+        }
     }
 
     try {
@@ -14349,16 +14360,21 @@ async function loadAppendList(parentId) {
             li.style.borderBottom = '1px solid var(--border-color)';
             li.style.cursor = 'pointer';
 
+            // Destaque visual se for a Superpasta atual (para orientação)
+            const isSuperRoot = (typeof SUPERFOLDER_ID !== 'undefined' && item.id === SUPERFOLDER_ID);
+            const nameDisplay = isSuperRoot ? `⭐ ${item.nome}` : item.nome;
+
             if (item.tipo === 'pasta') {
                 // É PASTA: Clicar para entrar
-                li.innerHTML = `<span style="font-weight:bold;">📁 ${item.nome}</span> <span>➔</span>`;
+                li.innerHTML = `<span style="font-weight:bold;">📁 ${nameDisplay}</span> <span>➔</span>`;
                 li.onclick = () => {
                     appendStack.push({ id: item.id, name: item.nome });
+                    // Restaura o texto padrão do botão
+                    document.getElementById('append-back-btn').textContent = "⬅ Voltar";
                     loadAppendList(item.id);
                 };
             } else if (item.tipo === 'nota') {
                 // É NOTA: Clicar para ENVIAR
-                // Se for a própria nota aberta atualmente, avisamos visualmente (opcional)
                 const isCurrent = (item.id === selectedNoteId);
                 const colorStyle = isCurrent ? "color:var(--accent-color); font-style:italic;" : "";
                 
@@ -14367,9 +14383,6 @@ async function loadAppendList(parentId) {
                 li.onclick = () => confirmAppendToNote(item.id, item.nome);
             }
 
-            // Ignorar agregações? Não, agregações são notas, podem receber conteúdo.
-            
-            // Hover effect manual
             li.onmouseover = () => li.style.backgroundColor = 'var(--hover-color)';
             li.onmouseout = () => li.style.backgroundColor = 'transparent';
 
@@ -14382,16 +14395,30 @@ async function loadAppendList(parentId) {
     }
 }
 
-// 4. BOTÃO VOLTAR
-document.getElementById('append-back-btn').addEventListener('click', () => {
-    const rootId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
+// 4. BOTÃO VOLTAR (Lógica de "Escape" da Superpasta)
+// Remova o listener antigo e coloque este:
+const appendBackBtn = document.getElementById('append-back-btn');
+// Clonamos para remover listeners antigos e evitar duplicação
+const newAppendBackBtn = appendBackBtn.cloneNode(true);
+appendBackBtn.parentNode.replaceChild(newAppendBackBtn, appendBackBtn);
+
+newAppendBackBtn.addEventListener('click', () => {
+    // Verifica se estamos numa Superpasta
+    const superRootId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
 
     if (appendStack.length > 0) {
+        // Comportamento normal: remove o último passo
         appendStack.pop();
-        const parent = appendStack.length > 0 ? appendStack[appendStack.length - 1].id : rootId;
+        
+        // Se a pilha ainda tiver itens, carrega o anterior.
+        // Se ficou vazia, carrega o ponto de partida (que é o superRootId)
+        const parent = appendStack.length > 0 ? appendStack[appendStack.length - 1].id : superRootId;
+        
         loadAppendList(parent);
     } else {
-        loadAppendList(rootId);
+        // A pilha está vazia, mas clicámos em "Voltar".
+        // Isso significa que estamos na raiz da Superpasta e queremos ir para a GLOBAL.
+        loadAppendList(null);
     }
 });
 
@@ -16989,7 +17016,7 @@ async function setupPresenceSystem(noteId) {
     }, (error) => {
         console.error("Erro sync:", error);
     });
-    
+
     // --- FUNÇÕES AUXILIARES PARA MANTER O CURSOR ---
 
 // 1. Descobrir a posição numérica do cursor (ex: caractere 150)
