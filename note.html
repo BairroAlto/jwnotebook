@@ -6790,18 +6790,29 @@ function extractTopicsFromEditorHTML() {
 async function executeSave() {
     if (!selectedNoteId) return;
 
-    // --- TRAVÃO DE SEGURANÇA ABSOLUTO ---
-    const safetyId = document.getElementById('note-title-input').getAttribute('data-safety-id');
+    // --- 1. Determinar o ID de Destino (Local vs Remoto) ---
+    let targetId = selectedNoteId; // Por defeito, grava no documento atual
     
-    // Se o ID da variável global não bater certo com o ID carimbado no ecrã
-    if (safetyId && safetyId !== selectedNoteId) {
-        console.error("⛔ ERRO CRÍTICO DE SEGURANÇA: Tentativa de sobrescrever nota errada!");
-        console.error(`ID no Ecrã: ${safetyId} | ID na Memória: ${selectedNoteId}`);
-        alert("Erro de Sincronização: O sistema tentou gravar na nota errada. A página vai recarregar para proteger os seus dados.");
-        window.location.reload(); // Recarrega para limpar o estado corrompido
-        return;
+    // Se estivermos em Modo Live ou a ver um Atalho, queremos gravar no ORIGINAL
+    // Verificamos se o elemento da lista tem um pointerId
+    const listItem = document.querySelector(`.list-item[data-id="${selectedNoteId}"]`);
+    
+    // Se for atalho live ou partilhado e tivermos acesso de escrita
+    if (listItem && listItem.dataset.isLive === "true") {
+        // Precisamos de saber o ID original. 
+        // Felizmente, guardámo-lo quando carregámos a nota.
+        // Vamos buscar à memória global ou ler do documento se necessário.
+        
+        // Forma segura: Ler o pointerId do documento atual na BD antes de gravar
+        // (Para evitar erros, fazemos uma leitura rápida se não tivermos a certeza)
+        try {
+            const snap = await getDoc(doc(db, 'pastas', selectedNoteId));
+            if (snap.exists() && snap.data().pointerId) {
+                targetId = snap.data().pointerId; // MUDA O ALVO PARA A NOTA ORIGINAL
+                console.log(`📡 Modo Live: A gravar na nota original (${targetId}) em vez do atalho.`);
+            }
+        } catch(e) { console.error("Erro ao resolver pointer:", e); }
     }
-    // -------------------------------------
 
     updateSaveStatus('saving');
 
@@ -6810,12 +6821,10 @@ async function executeSave() {
         const miniNoteInputs = noteContentEditor.querySelectorAll('.mini-note-title-input');
         miniNoteInputs.forEach(input => input.setAttribute('value', input.value || ''));
 
-        const noteRef = doc(db, 'pastas', selectedNoteId);
+        // Usamos o targetId calculado acima
+        const noteRef = doc(db, 'pastas', targetId);
         
-        // Extrai os tópicos
         const finalTopicsIndex = extractTopicsFromEditorHTML();
-        
-
         let finalTagNames = []; 
         try { finalTagNames = Array.from(noteContentEditor.querySelectorAll('span.tag')).map(s => s.textContent.substring(1)); } catch(e){}
         
@@ -6831,9 +6840,16 @@ async function executeSave() {
             ultimaedicao: serverTimestamp()
         });
 
-        // Atualiza UI da lista lateral para refletir o novo nome
-        const listItem = document.querySelector(`.list-item[data-id="${selectedNoteId}"] span`);
-        if (listItem) listItem.textContent = noteTitleInput.value;
+        // Se gravámos no original, também atualizamos o nome no nosso atalho local para ficar igual
+        if (targetId !== selectedNoteId) {
+            const shortcutRef = doc(db, 'pastas', selectedNoteId);
+            await updateDoc(shortcutRef, {
+                nome: noteTitleInput.value // Sincroniza apenas o nome
+            });
+        }
+
+        // Atualiza UI
+        if (listItem) listItem.querySelector('span').textContent = (listItem.dataset.isLive ? "🗪 " : "📄 ") + noteTitleInput.value;
         
         updateSaveStatus('saved');
         return true; 
@@ -6841,7 +6857,6 @@ async function executeSave() {
     } catch (error) {
         console.error("ERRO AO GUARDAR:", error);
         updateSaveStatus('error');
-        // Não mostrar alert constante para erros de rede, apenas console
     }
 }
 
@@ -7913,43 +7928,43 @@ async function openMoveModal(itemContext) {
     const newConfirmBtn = confirmBtn.cloneNode(true);
     confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
 
-    newConfirmBtn.onclick = async () => {
-        // Se nada estiver selecionado (azul), assume que queremos mover para a PASTA ATUAL que estamos a ver
-        let targetId = selectedDestFolderId;
+  newConfirmBtn.onclick = async () => {
+    let targetId = selectedDestFolderId;
+    
+    // (Lógica de fallback se não selecionar nada...)
+    if (targetId === null) {
+        const startRootId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
+        const currentViewId = moveStack.length > 0 ? moveStack[moveStack.length - 1].id : startRootId;
+        if(!confirm(`Mover "${itemContext.name}" para a pasta que está a ver agora?`)) return;
+        targetId = currentViewId;
+    }
+
+    if (targetId === itemContext.id) {
+        alert("Não pode mover uma pasta para dentro de si mesma.");
+        return;
+    }
+
+      try {
+        const itemRef = doc(db, 'pastas', itemContext.id);
         
-        // Lógica de fallback: Se o user não selecionou uma linha, mas navegou até uma pasta,
-        // perguntamos se quer mover para a pasta aberta.
-        if (targetId === null) {
-            // Se estiver na raiz, target é null (ou superpasta ID). Se estiver numa subpasta, é o ID dela.
-            const currentViewId = moveStack.length > 0 ? moveStack[moveStack.length - 1].id : startRootId;
-            
-            // Confirmação extra se não houver seleção visual
-            if(!confirm(`Mover "${itemContext.name}" para a pasta que está a ver agora?`)) return;
-            targetId = currentViewId;
-        }
+        // ESTA É A PARTE CRÍTICA:
+        // Usamos updateDoc para alterar APENAS a localização.
+        // NUNCA usamos setDoc aqui, senão apagamos o "pointerId".
+        await updateDoc(itemRef, {
+            parentId: targetId, 
+            ultimaedicao: serverTimestamp()
+        });
 
-        // Evitar mover para dentro de si próprio (se for pasta)
-        if (targetId === itemContext.id) {
-            alert("Não pode mover uma pasta para dentro de si mesma.");
-            return;
-        }
-
-        try {
-            const itemRef = doc(db, 'pastas', itemContext.id);
-            await updateDoc(itemRef, {
-                parentId: targetId, // null se for raiz global
-                ultimaedicao: serverTimestamp()
-            });
-
-            modal.style.display = 'none';
-            // Se tivermos a função updateNavigationView disponível, chamamos
-            if (typeof updateNavigationView === 'function') updateNavigationView();
-            
-        } catch (error) {
-            console.error("Erro ao mover:", error);
-            alert("Erro ao mover o item.");
-        }
-    };
+        modal.style.display = 'none';
+        
+        // Atualiza a vista atual para o item desaparecer da lista antiga
+        if (typeof updateNavigationView === 'function') updateNavigationView();
+        
+    } catch (error) {
+        console.error("Erro ao mover:", error);
+        alert("Erro ao mover o item.");
+    }
+};
 }
 
 // ============================================================
