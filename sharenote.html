@@ -256,18 +256,23 @@
             </ul>
 
             <!-- Opções ao selecionar uma Pasta -->
-            <div id="folder-actions" class="import-options-container">
-                
-                <!-- BOTÃO 1: CÓPIA FÍSICA (Editável) -->
-                <button class="import-option-btn" id="action-save-copy" style="border-color:var(--accent-color); color:var(--text-color); font-weight:bold; justify-content: center; margin-bottom: 8px; background-color: var(--hover-color);">
-                    📄 Importar Cópia (Editável)
-                </button>
+    <div id="folder-actions" class="import-options-container">
+    
+    <!-- BOTÃO 1: CÓPIA FIEL (SEMPRE VISÍVEL) -->
+    <button class="import-option-btn" id="action-save-copy" style="border-color:var(--accent-color); color:var(--text-color); font-weight:bold; justify-content: center; margin-bottom: 8px; background-color: var(--hover-color);">
+        📄 Guardar Cópia Pessoal (Editável)
+    </button>
 
-                <!-- BOTÃO 2: ATALHO (Leitura/Sincronizado) -->
-                <button class="import-option-btn" id="action-save-shortcut" style="border-color:var(--text-muted); color:var(--text-muted); justify-content: center; font-size: 0.85em;">
-                    🔗 Criar Atalho (Apenas Leitura)
-                </button>
-            </div>
+    <!-- BOTÃO 2: MODO LIVE (SÓ APARECE SE PERMITIDO) -->
+    <button class="import-option-btn" id="action-live-mode" style="border-color:#e74c3c; color:#e74c3c; justify-content: center; font-weight:bold; display:none;">
+        🔴 Entrar em Modo Live (Co-edição)
+    </button>
+
+    <!-- BOTÃO 3: ATALHO (OPCIONAL) -->
+    <button class="import-option-btn" id="action-save-shortcut" style="border-color:var(--text-muted); color:var(--text-muted); justify-content: center; font-size: 0.85em; margin-top: 5px;">
+        🔗 Criar Apenas Atalho de Leitura
+    </button>
+</div>
 
             <!-- Opções ao selecionar uma Nota -->
             <div id="note-actions" class="import-options-container">
@@ -290,12 +295,12 @@
     import { doc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, serverTimestamp, orderBy } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
 
-    // 1. Obter Parâmetros
+    // 1. Obter Parâmetros do URL
     const urlParams = new URLSearchParams(window.location.search);
     const noteId = urlParams.get('id');
-    const actionParam = urlParams.get('action'); // 'import' para co-edição
+    const actionParam = urlParams.get('action'); // 'clone' ativa o popup automático
     
-    // UI Elements
+    // Elementos de UI
     const loadingScreen = document.getElementById('loading');
     const loadingText = document.getElementById('loading-text');
     const contentContainer = document.getElementById('container');
@@ -307,7 +312,7 @@
     let selectedTargetId = null;
 
     // =========================================================
-    // FUNÇÃO PRINCIPAL: INICIALIZAÇÃO INTELIGENTE
+    // FUNÇÃO PRINCIPAL: INICIALIZAÇÃO
     // =========================================================
     async function init() {
         if (!noteId) {
@@ -325,66 +330,38 @@
                 });
             });
 
-            // B. Esperar Dados da Nota
+            // B. Esperar Dados da Nota Partilhada
             const dataPromise = getDoc(doc(db, 'shared_notes', noteId));
 
-            // Executar em paralelo
             loadingText.textContent = "A carregar nota...";
+            
+            // Executar em paralelo para ser mais rápido
             const [user, docSnap] = await Promise.all([authPromise, dataPromise]);
 
-            // C. Tomada de Decisão
+            // C. Validação
             if (!docSnap.exists()) {
-                showError("Nota não encontrada.", "🚫", "O link pode estar incorreto ou a partilha foi removida.");
+                showError("Nota não encontrada.", "🚫", "O link pode estar incorreto, expirado ou a partilha foi removida pelo autor.");
                 return;
             }
 
             sharedNoteData = docSnap.data();
 
-            // --- LÓGICA DE CO-EDIÇÃO (LIVE) ---
-            // Se o link tiver action=import (links antigos) ou se quisermos forçar o live:
-            if (actionParam === 'import' || sharedNoteData.allowCoEditing === true) {
-                // Se o utilizador clicar no botão "Importar/Editar" nesta página
-                const importBtn = document.getElementById('btn-import');
-                
-                // Mudamos o comportamento do botão para ir para o LIVE
-                if (importBtn) {
-                    importBtn.innerHTML = "<span class='satellite-icon'>🔴</span> Entrar em Modo Live";
-                    importBtn.style.borderColor = "#e74c3c";
-                    importBtn.style.color = "#e74c3c";
-                    
-                    // Remove listeners antigos e adiciona redirecionamento
-                    const newBtn = importBtn.cloneNode(true);
-                    importBtn.parentNode.replaceChild(newBtn, importBtn);
-                    
-                    newBtn.addEventListener('click', () => {
-                        // Redireciona para o editor real na mesma nota
-                        window.location.href = `note.html?noteId=${sharedNoteData.originalNoteId}&mode=live`;
-                    });
-                }
-            }
-
-            // --- CASO 2: CONTEÚDO PRIVADO? ---
-            if (sharedNoteData.type === 'snippet') {
-                const parser = new DOMParser();
-                const tempDoc = parser.parseFromString(sharedNoteData.conteudo, 'text/html');
-                const wrapper = tempDoc.querySelector('.mini-note-wrapper');
-                if (wrapper && wrapper.getAttribute('data-shared') === 'false') {
-                    showError("Conteúdo Privado", "🔒", "O proprietário definiu este conteúdo como privado.");
-                    return;
-                }
-            }
-
-            // --- CASO 3: VISITANTE (Mostrar Página) ---
+            // --- RENDERIZAÇÃO ---
             document.getElementById('note-title').textContent = sharedNoteData.nome;
             document.getElementById('author-name').textContent = sharedNoteData.authorName || 'Anónimo';
+            
+            // Processa o HTML para remover botões de edição e tornar seguro
             document.getElementById('note-content').innerHTML = processContentForReading(sharedNoteData.conteudo);
 
             // Mostrar botão de importar se tiver login
             if (user) {
-                document.getElementById('btn-import').style.display = 'flex';
+                const importBtn = document.getElementById('btn-import');
+                importBtn.style.display = 'flex';
+                // Texto padrão
+                importBtn.innerHTML = "<span class='satellite-icon'>📥</span> Adicionar na Minha Pasta";
             }
 
-            // Animação de Entrada
+            // Animação de Entrada (Esconde loading, mostra conteúdo)
             loadingScreen.style.opacity = '0';
             setTimeout(() => {
                 loadingScreen.style.display = 'none';
@@ -392,13 +369,18 @@
                 requestAnimationFrame(() => contentContainer.style.opacity = '1');
             }, 500);
 
-            // --- CASO 4: AUTOMAÇÃO DE CO-EDIÇÃO ---
-            if (actionParam === 'import') {
+            // --- LÓGICA AUTOMÁTICA PARA "PERMITIR CLONAGEM" (action=clone) ---
+            if (actionParam === 'clone') {
                 if (user) {
-                    console.log("🚀 Modo de co-edição: Abrindo popup...");
+                    console.log("🚀 Link de Clonagem detetado: Abrindo popup de guardar...");
+                    // Abre o popup automaticamente após um pequeno delay visual
                     setTimeout(() => {
-                        document.getElementById('btn-import').click();
+                        openImportModal(); 
                     }, 600);
+                } else {
+                    // Se não estiver logado, guarda a intenção e redireciona para login
+                    sessionStorage.setItem('redirectAfterLogin', window.location.href);
+                    window.location.href = "index.html";
                 }
             }
 
@@ -418,12 +400,12 @@
                 <h2 style="color: #e74c3c;">${title}</h2>
                 <p style="color: #888; font-size: 1.1em; max-width: 500px; margin: 0 auto;">${message}</p>
                 <br>
-                <a href="index.html" class="action-btn" style="display:inline-block; text-decoration:none;">Voltar</a>
+                <a href="index.html" class="action-btn" style="display:inline-block; text-decoration:none;">Ir para Início</a>
             </div>
         `;
     }
 
-    // --- FUNÇÕES DA TOOLBAR ---
+    // --- FUNÇÕES DA TOOLBAR (Copiar e PDF) ---
     document.getElementById('btn-copy').addEventListener('click', async () => {
         const title = document.getElementById('note-title').innerText;
         const body = document.getElementById('note-content').innerText;
@@ -444,14 +426,27 @@
         document.title = originalTitle;
     });
 
-    // --- LÓGICA DE IMPORTAÇÃO (MODAL) ---
-    document.getElementById('btn-import').addEventListener('click', () => {
-        if (!currentUser) return;
+    // =========================================================
+    // LÓGICA DE IMPORTAÇÃO (MODAL "GUARDAR NOTA")
+    // =========================================================
+    
+    // Listener do botão na Toolbar
+    document.getElementById('btn-import').addEventListener('click', openImportModal);
+
+    function openImportModal() {
+        if (!currentUser) {
+            alert("Precisa de iniciar sessão para guardar notas.");
+            window.location.href = "index.html";
+            return;
+        }
         document.getElementById('import-modal').style.display = 'flex';
+        
+        // Reset da navegação (começa na raiz)
         navigationStack = [];
         loadUserFolders(null);
-    });
+    }
 
+    // Carregar Pastas do Utilizador e Gerir Botões
     async function loadUserFolders(parentId) {
         const list = document.getElementById('import-list');
         const backBtn = document.getElementById('import-back-btn');
@@ -463,17 +458,34 @@
         folderActions.style.display = 'none';
         noteActions.style.display = 'none';
         
+        // Navegação (Breadcrumbs)
         if (navigationStack.length > 0) {
             pathLabel.textContent = navigationStack[navigationStack.length - 1].name;
             backBtn.style.display = 'block';
         } else {
-            pathLabel.textContent = parentId ? "Pasta Atual" : "As Minhas Pastas";
+            pathLabel.textContent = parentId ? "Pasta Atual" : "As Minhas Pastas (Raiz)";
             backBtn.style.display = 'none';
         }
 
+        // Se estamos numa pasta (ou raiz), mostramos os botões de Ação de Pasta
         if (parentId || navigationStack.length === 0) {
             folderActions.style.display = 'flex';
-            selectedTargetId = parentId; 
+            selectedTargetId = parentId; // Define onde a nota será criada
+
+            // --- GESTÃO DO BOTÃO LIVE ---
+            const btnLive = document.getElementById('action-live-mode');
+            if (sharedNoteData && sharedNoteData.allowCoEditing === true) {
+                // Se a nota permite Live, mostra o botão
+                btnLive.style.display = 'flex';
+                
+                // Configurar clique do Live
+                btnLive.onclick = () => {
+                    // Redireciona para note.html com o ID ORIGINAL e mode=live
+                    window.location.href = `note.html?noteId=${sharedNoteData.originalNoteId}&mode=live`;
+                };
+            } else {
+                btnLive.style.display = 'none';
+            }
         }
 
         try {
@@ -505,11 +517,13 @@
                         loadUserFolders(doc.id);
                     };
                 } else if (item.tipo === 'nota') {
+                    // Se clicar numa nota, mostra opções de inserção (append)
                     li.innerHTML = `<span>📄 ${item.nome}</span> <span>📥</span>`;
                     li.onclick = () => {
                         folderActions.style.display = 'none';
                         noteActions.style.display = 'flex';
                         selectedTargetId = doc.id;
+                        // Destaque visual
                         document.querySelectorAll('.import-item').forEach(el => el.style.background = '');
                         li.style.background = 'var(--hover-color)';
                         li.style.borderColor = 'var(--accent-color)';
@@ -523,6 +537,7 @@
         }
     }
 
+    // Botão Voltar da navegação
     document.getElementById('import-back-btn').addEventListener('click', () => {
         if (navigationStack.length > 0) {
             navigationStack.pop();
@@ -534,48 +549,50 @@
     });
 
     // =========================================================================
-    // OPÇÃO 1: IMPORTAR CÓPIA EDITÁVEL (CRIA UMA NOTA NOVA E INDEPENDENTE)
+    // AÇÃO 1: GUARDAR CÓPIA PESSOAL (CÓPIA FIEL)
     // =========================================================================
     const btnSaveCopy = document.getElementById('action-save-copy');
     if (btnSaveCopy) {
         btnSaveCopy.addEventListener('click', async () => {
             if (!sharedNoteData) return;
             
-            btnSaveCopy.innerHTML = "⏳ A copiar conteúdo...";
+            btnSaveCopy.innerHTML = "⏳ A criar cópia...";
             btnSaveCopy.disabled = true;
             
             try {
-                // Cria um documento NOVO com o CONTEÚDO FÍSICO
+                // Cria um documento NOVO (ID novo) na coleção do utilizador
+                // O conteúdo HTML é copiado fielmente.
                 const newDoc = await addDoc(collection(db, 'pastas'), {
                     nome: sharedNoteData.nome || "Cópia Importada",
                     parentId: selectedTargetId || null,
                     tipo: 'nota',
                     
-                    // >>> IMPORTANTE: Copia o conteúdo real, NÃO cria pointerId <<<
+                    // IMPORTANTE: Copia o conteúdo real
                     conteudo: sharedNoteData.conteudo || "", 
                     
-                    userId: currentUser.uid,
+                    userId: currentUser.uid, // Dono é o novo utilizador
                     estado: 'ativa',
-                    ordem: 999,
+                    ordem: 999, // Põe no fim da lista
                     createdAt: serverTimestamp(),
                     ultimaedicao: serverTimestamp(),
-                    tags: [] // Começa sem tags para evitar conflitos
+                    tags: [], // Tags reiniciadas para evitar poluição
+                    anexos: {} 
                 });
                 
-                // Redireciona para a nota (agora será editável!)
+                // Redireciona para a NOVA nota (agora editável pelo utilizador em note.html)
                 window.location.href = `note.html?noteId=${newDoc.id}`;
                 
             } catch (e) {
                 console.error(e);
                 alert("Erro ao copiar nota.");
-                btnSaveCopy.innerHTML = "📄 Importar Cópia (Editável)";
+                btnSaveCopy.innerHTML = "📄 Guardar Cópia Pessoal (Editável)";
                 btnSaveCopy.disabled = false;
             }
         });
     }
 
     // =========================================================================
-    // OPÇÃO 2: CRIAR ATALHO (POINTER - APENAS LEITURA)
+    // AÇÃO 3: CRIAR ATALHO (POINTER - APENAS LEITURA)
     // =========================================================================
     const btnSaveShortcut = document.getElementById('action-save-shortcut');
     if (btnSaveShortcut) {
@@ -584,7 +601,7 @@
             
             // Validação: Só podemos criar atalho se a nota tiver ID original
             if (!sharedNoteData.originalNoteId) {
-                alert("Esta nota é antiga e não suporta atalhos. Por favor use a opção 'Importar Cópia'.");
+                alert("Esta nota é antiga e não suporta atalhos. Por favor use a opção 'Guardar Cópia Pessoal'.");
                 return;
             }
 
@@ -592,6 +609,7 @@
             btnSaveShortcut.disabled = true;
 
             try {
+                // Cria um apontador para a nota original
                 const docData = {
                     nome: sharedNoteData.nome || "Atalho",
                     parentId: selectedTargetId || null,
@@ -610,25 +628,26 @@
 
                 await addDoc(collection(db, 'pastas'), docData);
                 
-                // Redireciona (aparecerá como leitura no note.html)
-                // Usamos window.location para garantir que recarrega limpo
-                // Nota: se selectedTargetId for null, vai para a raiz
+                // Redireciona para note.html (aparecerá como leitura)
                 const targetUrl = selectedTargetId ? `note.html?openFolder=${selectedTargetId}` : 'note.html';
                 window.location.href = targetUrl;
 
             } catch (e) {
                 console.error(e);
                 alert("Erro ao criar atalho.");
-                btnSaveShortcut.innerHTML = "🔗 Criar Atalho (Apenas Leitura)";
+                btnSaveShortcut.innerHTML = "🔗 Criar Apenas Atalho de Leitura";
                 btnSaveShortcut.disabled = false;
             }
         });
     }
 
-    // INSERIR EM NOTA EXISTENTE
+    // =========================================================================
+    // INSERIR EM NOTA EXISTENTE (APPEND)
+    // =========================================================================
     document.querySelectorAll('[data-insert-type]').forEach(btn => {
         btn.addEventListener('click', async (e) => {
             if (!selectedTargetId || !sharedNoteData) return;
+            
             const type = e.currentTarget.dataset.insertType;
             const originalText = e.currentTarget.innerHTML;
             e.currentTarget.innerHTML = "⏳ A inserir...";
@@ -636,19 +655,31 @@
             try {
                 let boxHTML = '';
                 const uniqueId = `imported_${Date.now()}`;
+                const content = sharedNoteData.conteudo;
+                const name = sharedNoteData.nome;
                 
-                if (type === 'text') boxHTML = `<p><br></p>${sharedNoteData.conteudo}<p><br></p>`;
-                else if (type === 'idea') boxHTML = `<p><br></p><div style="background-color: rgba(231, 76, 60, 0.15); border-left: 3px solid #e74c3c; padding: 10px; border-radius: 4px;"><strong style="color: #e74c3c;">💡 ${sharedNoteData.nome}</strong><br>${sharedNoteData.conteudo}</div><p><br></p>`;
-                else if (type === 'toggle') boxHTML = `<p><br></p><details class="toggle-section" open id="${uniqueId}"><summary><h2>${sharedNoteData.nome}</h2><button class="toggle-move-btn" data-action="move-up">🔺</button><button class="toggle-move-btn" data-action="move-down">🔻</button><button class="toggle-color-btn">🖌️</button><button class="toggle-delete-btn">🗑️</button></summary><div class="toggle-content">${sharedNoteData.conteudo}</div></details><p><br></p>`;
+                // Constrói o HTML baseado no tipo escolhido
+                if (type === 'text') {
+                    boxHTML = `<p><br></p>${content}<p><br></p>`;
+                } 
+                else if (type === 'idea') {
+                    boxHTML = `<p><br></p><div style="background-color: rgba(231, 76, 60, 0.15); border-left: 3px solid #e74c3c; padding: 10px; border-radius: 4px;"><strong style="color: #e74c3c;">💡 ${name}</strong><br>${content}</div><p><br></p>`;
+                } 
+                else if (type === 'toggle') {
+                    boxHTML = `<p><br></p><details class="toggle-section" open id="${uniqueId}"><summary><h2>${name}</h2><button class="toggle-move-btn" data-action="move-up">🔺</button><button class="toggle-move-btn" data-action="move-down">🔻</button><button class="toggle-color-btn">🖌️</button><button class="toggle-delete-btn">🗑️</button></summary><div class="toggle-content">${content}</div></details><p><br></p>`;
+                } 
                 else {
+                    // Mini-Notas (Questão, Subnota, Free)
                     let wrapperClass = "mini-note-wrapper";
-                    let titleInput = `<input class="mini-note-title-input" value="${sharedNoteData.nome}">`;
+                    let titleInput = `<input class="mini-note-title-input" value="${name}">`;
+                    
                     if (type === 'question') wrapperClass += " question-mode";
                     else if (type === 'free') { wrapperClass += " free-mode"; titleInput = ""; }
                     
-                    boxHTML = `<p><br></p><div class="${wrapperClass}" id="${uniqueId}" data-topics="{}" data-shared="false">${titleInput}<div class="mini-note-toolbar"><button type="button" data-action="sharing-settings">🔐</button><div class="toolbar-btn-group"><button type="button" data-action="move-up">🔺</button><button type="button" data-action="move-down">🔻</button></div><button type="button" data-action="append-mini-note">🧬</button><button type="button" data-action="highlight-color">🎨</button><button type="button" data-action="manage-mini-note-topics">📋</button><button type="button" data-action="delete-mini-note">🗑️</button></div><div class="mini-note-content">${sharedNoteData.conteudo}</div></div><p><br></p>`;
+                    boxHTML = `<p><br></p><div class="${wrapperClass}" id="${uniqueId}" data-topics="{}" data-shared="false">${titleInput}<div class="mini-note-toolbar"><button type="button" data-action="sharing-settings">🔐</button><div class="toolbar-btn-group"><button type="button" data-action="move-up">🔺</button><button type="button" data-action="move-down">🔻</button></div><button type="button" data-action="append-mini-note">🧬</button><button type="button" data-action="highlight-color">🎨</button><button type="button" data-action="manage-mini-note-topics">📋</button><button type="button" data-action="delete-mini-note">🗑️</button></div><div class="mini-note-content">${content}</div></div><p><br></p>`;
                 }
 
+                // Atualizar Nota de Destino
                 const targetRef = doc(db, 'pastas', selectedTargetId);
                 const targetSnap = await getDoc(targetRef);
                 
@@ -670,9 +701,10 @@
         });
     });
 
-    // --- LIMPEZA DE CONTEÚDO (Visual) ---
+    // --- LIMPEZA DE CONTEÚDO (Visual para Leitura) ---
     function processContentForReading(htmlContent) {
        if (!htmlContent) return '<p><em>Nota vazia.</em></p>';
+       
        const parser = new DOMParser();
        const docDOM = parser.parseFromString(htmlContent, 'text/html');
 
@@ -689,6 +721,7 @@
            toggle.removeAttribute('contenteditable');
            toggle.querySelectorAll('.toggle-delete-btn, .toggle-color-btn, .toggle-move-btn').forEach(btn => btn.remove());
            toggle.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+           // Correção de contraste para leitura
            if (toggle.style.backgroundColor) {
                toggle.style.color = '#333333';
                const h2 = toggle.querySelector('h2');
@@ -698,6 +731,7 @@
 
        // Limpar Mini-Notas
        docDOM.querySelectorAll('.mini-note-wrapper').forEach(wrapper => {
+           // Verifica se é conteúdo privado
            if (wrapper.getAttribute('data-shared') === 'false') {
                const placeholder = document.createElement('div');
                placeholder.className = 'private-box-placeholder';
@@ -705,7 +739,8 @@
                wrapper.replaceWith(placeholder);
                return; 
            }
-           // Converter para DIV estática
+           
+           // Converter para DIV estática de leitura
            const titleInput = wrapper.querySelector('.mini-note-title-input');
            const titleText = titleInput ? (titleInput.getAttribute('value') || titleInput.value) : '';
            const contentDiv = wrapper.querySelector('.mini-note-content');
@@ -726,7 +761,7 @@
            wrapper.replaceWith(newContainer);
        });
 
-       // Limpar Linhas Arrastáveis
+       // Limpar Linhas Arrastáveis (ᯓ)
        docDOM.querySelectorAll('.draggable-line').forEach(line => {
            const contentArea = line.querySelector('.drag-content-area');
            const innerHTML = contentArea ? contentArea.innerHTML : line.innerText.replace('ᯓ', '');
