@@ -224,7 +224,7 @@
         <button class="action-btn" id="btn-copy">📋 Copiar Texto</button>
         <button class="action-btn" id="btn-pdf">📥 PDF</button>
         <button class="action-btn import-btn" id="btn-import">
-            <span class="satellite-icon">🛰️</span> Adicionar na Minha Pasta
+            <span class="satellite-icon">🛰️</span> Adicionar na Minha Pasta (Atalho)
         </button>
     </div>
 
@@ -240,7 +240,7 @@
 <div id="import-modal" class="modal-overlay">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Guardar Nota</h3>
+            <h3>Guardar Nota (Atalho)</h3>
             <button onclick="document.getElementById('import-modal').style.display='none'" style="background:none; border:none; color:var(--text-muted); font-size:24px; cursor:pointer;">×</button>
         </div>
         <div class="modal-body">
@@ -249,7 +249,7 @@
                 <span id="import-path">Raiz</span>
             </div>
             
-            <p id="import-instruction" style="font-size:0.9em; color:var(--text-muted); margin-bottom:10px;">Selecione uma pasta para guardar como Nota, ou selecione uma Nota existente para anexar.</p>
+            <p id="import-instruction" style="font-size:0.9em; color:var(--text-muted); margin-bottom:10px;">Selecione onde quer guardar o atalho para esta nota.</p>
 
             <ul id="import-list" class="import-list">
                 <!-- Preenchido via JS -->
@@ -258,7 +258,7 @@
             <!-- Opções ao selecionar uma Pasta -->
             <div id="folder-actions" class="import-options-container">
                 <button class="import-option-btn" id="action-save-new-note" style="border-color:var(--accent-color); color:var(--accent-color); justify-content: center;">
-                    📄 Guardar aqui como <b>Nova Nota</b>
+                    🔗 Criar Atalho nesta Pasta
                 </button>
             </div>
 
@@ -331,30 +331,30 @@
                 return;
             }
 
-        sharedNoteData = docSnap.data();
+            sharedNoteData = docSnap.data();
 
-// --- LÓGICA DE CO-EDIÇÃO (LIVE) ---
-// Se o link tiver action=import (links antigos) ou se quisermos forçar o live:
-if (actionParam === 'import' || sharedNoteData.allowCoEditing === true) {
-    // Se o utilizador clicar no botão "Importar/Editar" nesta página
-    const importBtn = document.getElementById('btn-import');
-    
-    // Mudamos o comportamento do botão para ir para o LIVE
-    if (importBtn) {
-        importBtn.innerHTML = "<span class='satellite-icon'>🔴</span> Entrar em Modo Live";
-        importBtn.style.borderColor = "#e74c3c";
-        importBtn.style.color = "#e74c3c";
-        
-        // Remove listeners antigos e adiciona redirecionamento
-        const newBtn = importBtn.cloneNode(true);
-        importBtn.parentNode.replaceChild(newBtn, importBtn);
-        
-        newBtn.addEventListener('click', () => {
-            // Redireciona para o editor real na mesma nota
-            window.location.href = `note.html?noteId=${sharedNoteData.originalNoteId}&mode=live`;
-        });
-    }
-}
+            // --- LÓGICA DE CO-EDIÇÃO (LIVE) ---
+            // Se o link tiver action=import (links antigos) ou se quisermos forçar o live:
+            if (actionParam === 'import' || sharedNoteData.allowCoEditing === true) {
+                // Se o utilizador clicar no botão "Importar/Editar" nesta página
+                const importBtn = document.getElementById('btn-import');
+                
+                // Mudamos o comportamento do botão para ir para o LIVE
+                if (importBtn) {
+                    importBtn.innerHTML = "<span class='satellite-icon'>🔴</span> Entrar em Modo Live";
+                    importBtn.style.borderColor = "#e74c3c";
+                    importBtn.style.color = "#e74c3c";
+                    
+                    // Remove listeners antigos e adiciona redirecionamento
+                    const newBtn = importBtn.cloneNode(true);
+                    importBtn.parentNode.replaceChild(newBtn, importBtn);
+                    
+                    newBtn.addEventListener('click', () => {
+                        // Redireciona para o editor real na mesma nota
+                        window.location.href = `note.html?noteId=${sharedNoteData.originalNoteId}&mode=live`;
+                    });
+                }
+            }
 
             // --- CASO 2: CONTEÚDO PRIVADO? ---
             if (sharedNoteData.type === 'snippet') {
@@ -526,18 +526,28 @@ if (actionParam === 'import' || sharedNoteData.allowCoEditing === true) {
         }
     });
 
-    // GRAVAR NOVA NOTA
+    // =========================================================================
+    // GRAVAR NOVA NOTA (MODO ATALHO / ACESSO REVOGÁVEL)
+    // =========================================================================
     document.getElementById('action-save-new-note').addEventListener('click', async () => {
         if (!sharedNoteData) return;
         const btn = document.getElementById('action-save-new-note');
-        btn.innerHTML = "⏳ A guardar...";
+        btn.innerHTML = "⏳ A criar atalho...";
         
         try {
+            // Cria um novo documento que aponta para o original
             const newDoc = await addDoc(collection(db, 'pastas'), {
                 nome: sharedNoteData.nome,
-                parentId: selectedTargetId, 
+                parentId: selectedTargetId,
                 tipo: 'nota',
-                conteudo: sharedNoteData.conteudo,
+                
+                // >>> DADOS DO ATALHO (POINTER) <<<
+                pointerId: sharedNoteData.originalNoteId, // Aponta para a nota real
+                originalAuthorId: sharedNoteData.authorId,
+                isSharedCopy: true, // Flag visual
+                
+                // Sem 'conteudo'! O conteúdo vem do original.
+                
                 userId: currentUser.uid,
                 estado: 'ativa',
                 ordem: 999,
@@ -545,13 +555,14 @@ if (actionParam === 'import' || sharedNoteData.allowCoEditing === true) {
                 ultimaedicao: serverTimestamp()
             });
             
-            // Sucesso: Redirecionar para a nova nota no editor
+            // Sucesso: Redirecionar para o editor
+            // (Lembre-se: O note.html tem de ter a função displayNote atualizada para ler pointerId)
             window.location.href = `note.html?noteId=${newDoc.id}`;
             
         } catch (e) {
             console.error(e);
-            alert("Erro ao guardar nota.");
-            btn.innerHTML = "📄 Guardar aqui como <b>Nova Nota</b>";
+            alert("Erro ao criar atalho.");
+            btn.innerHTML = "🔗 Criar Atalho nesta Pasta";
         }
     });
 
