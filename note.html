@@ -2332,6 +2332,32 @@ a.board-link:hover {
 }
 
 
+/* --- CURSORES REMOTOS (MULTIPLAYER) --- */
+.remote-cursor {
+    position: absolute;
+    width: 2px;
+    height: 20px; /* Altura média da linha */
+    background-color: #f1c40f; /* Cor padrão (será dinâmica) */
+    pointer-events: none; /* Não interfere com cliques */
+    z-index: 90;
+    transition: all 0.2s ease; /* Movimento suave */
+}
+
+.remote-label {
+    position: absolute;
+    top: -20px;
+    left: 0;
+    background-color: #f1c40f;
+    color: #000;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.7em;
+    font-weight: bold;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0.8;
+}
+
 /* ============================================================
    RESPONSIVIDADE MOBILE (SISTEMA DE PILHA)
    ============================================================ */
@@ -12877,6 +12903,40 @@ function checkToolbarStatus() {
     toggleBtn('button[data-cmd="underline"]', isUnderline);
 }
 
+
+
+// Função para obter coordenadas exatas do cursor (Caret)
+function getCaretCoordinates() {
+    const selection = window.getSelection();
+    if (selection.rangeCount === 0) return null;
+
+    const range = selection.getRangeAt(0);
+    const rects = range.getClientRects();
+    
+    // Se não houver rects (cursor parado numa linha vazia), tenta usar o elemento
+    if (rects.length === 0) {
+        if (selection.anchorNode && selection.anchorNode.nodeType === 1) {
+             const rec = selection.anchorNode.getBoundingClientRect();
+             return { x: rec.left, y: rec.top, height: rec.height };
+        }
+        return null;
+    }
+
+    // Pega o primeiro rectângulo (onde o cursor está)
+    const rect = rects[0];
+    return { x: rect.left, y: rect.top, height: rect.height };
+}
+
+// Gera uma cor consistente baseada no ID do utilizador
+function stringToColor(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
+    return '#' + "00000".substring(0, 6 - c.length) + c;
+}
+
 // --- LIGAR O DETETOR ---
 // O evento 'selectionchange' dispara sempre que move o cursor ou clica no texto
 document.addEventListener('selectionchange', checkToolbarStatus);
@@ -16570,97 +16630,26 @@ noteContentEditor.addEventListener('keydown', (e) => {
     }
 });
 
+
 // ============================================================
-// SISTEMA DE PRESENÇA EM TEMPO REAL (LIVE)
+// SISTEMA DE PRESENÇA EM TEMPO REAL (LIVE) - VERSÃO CORRIGIDA
 // ============================================================
 
-async function setupPresenceSystem(noteId) {
-    if (!auth.currentUser) return;
+// Variável para controlar o listener de conteúdo
+let contentUnsubscribe = null; 
 
-    // 1. Limpar presença anterior (importante se mudar de nota rápido)
-    cleanupPresence();
-
-    const userId = auth.currentUser.uid;
-    const userName = currentUserData?.nome || "Anónimo";
-    
-    // Referência: /pastas/{noteId}/active_users/{userId}
-    const userPresenceDoc = doc(db, 'pastas', noteId, 'active_users', userId);
-    myPresenceRef = userPresenceDoc;
-
-    // 2. Função Heartbeat (Bate o coração a cada 30s)
-    const updateHeartbeat = async () => {
-        try {
-            await setDoc(userPresenceDoc, {
-                name: userName,
-                lastSeen: serverTimestamp() // Hora do servidor
-            });
-        } catch (e) { 
-            console.warn("Live presence error (ignore if navigating):", e); 
-        }
-    };
-
-    // Regista entrada imediata
-    updateHeartbeat();
-    // Mantém vivo
-    presenceInterval = setInterval(updateHeartbeat, 30000); 
-
-    // 3. Ouvir quem mais está na sala
-    const q = collection(db, 'pastas', noteId, 'active_users');
-    
-    presenceUnsubscribe = onSnapshot(q, (snapshot) => {
-        const now = Date.now();
-        // Filtra utilizadores ativos nos últimos 2 minutos
-        // (Remove fantasmas que fecharam a aba sem sair)
-        const activeUsers = snapshot.docs.filter(doc => {
-            const data = doc.data();
-            // serverTimestamp pode ser null brevemente (latência local), aceitamos isso
-            if (!data.lastSeen) return true; 
-            return (now - data.lastSeen.toMillis() < 120000);
-        });
-
-        const count = activeUsers.length;
-        updateLiveUI(count);
-    });
-
-    // 4. Limpar ao fechar a janela
-    window.addEventListener('beforeunload', cleanupPresence);
-}
-
-function cleanupPresence() {
-    // Pára de ouvir atualizações
-    if (presenceUnsubscribe) {
-        presenceUnsubscribe();
-        presenceUnsubscribe = null;
-    }
-    // Pára o heartbeat
-    if (presenceInterval) {
-        clearInterval(presenceInterval);
-        presenceInterval = null;
-    }
-    // Remove o meu utilizador da sala
-    if (myPresenceRef) {
-        deleteDoc(myPresenceRef).catch(() => {}); // Ignora erro se já não existir
-        myPresenceRef = null;
-    }
-    
-    // Remove listener de janela para não acumular
-    window.removeEventListener('beforeunload', cleanupPresence);
-    
-    // Reseta a UI
-    updateLiveUI(0); 
-}
-
+// Função de Atualização da Interface (GLOBAL)
 function updateLiveUI(count) {
     const toolbar = document.getElementById('editor-toolbar');
     const indicator = document.getElementById('live-indicator');
     const countSpan = document.getElementById('live-user-count');
 
-    // Lógica: Se houver > 1 pessoa (Eu + Alguém), ativa o modo LIVE
+    // Se houver mais de 1 pessoa (eu + outro)
     if (count > 1) {
         if (toolbar) toolbar.classList.add('live-mode-active');
         if (indicator) {
             indicator.style.display = 'flex';
-            countSpan.textContent = count;
+            if (countSpan) countSpan.textContent = count;
         }
     } else {
         // Se estiver sozinho (ou 0), desliga tudo
@@ -16669,6 +16658,159 @@ function updateLiveUI(count) {
     }
 }
 
+// Função de Limpeza (GLOBAL)
+function cleanupPresence() {
+    // 1. Desliga o "ouvido" da sala
+    if (presenceUnsubscribe) { 
+        presenceUnsubscribe(); 
+        presenceUnsubscribe = null; 
+    }
+
+    // 2. Desliga o "ouvido" do conteúdo
+    if (typeof contentUnsubscribe !== 'undefined' && contentUnsubscribe) { 
+        contentUnsubscribe(); 
+        contentUnsubscribe = null; 
+    }
+
+    // 3. Pára o batimento cardíaco
+    if (presenceInterval) { 
+        clearInterval(presenceInterval); 
+        presenceInterval = null; 
+    }
+    
+    // 4. Apaga o meu nome da sala
+    if (myPresenceRef) { 
+        deleteDoc(myPresenceRef).catch(err => console.log("Saída silenciosa")); 
+        myPresenceRef = null; 
+    }
+    
+    // 5. Remove listener de fechar janela
+    window.removeEventListener('beforeunload', cleanupPresence);
+    
+    // 6. Reseta a interface visual
+    updateLiveUI(0);
+    
+    // 7. Limpa cursores visuais
+    document.querySelectorAll('.remote-cursor, .remote-label').forEach(el => el.remove());
+}
+
+// Função Principal de Setup (GLOBAL)
+async function setupPresenceSystem(noteId) {
+    if (!auth.currentUser) return;
+    
+    cleanupPresence(); // Limpa anteriores
+
+    const userId = auth.currentUser.uid;
+    const userName = currentUserData?.nome || "Anónimo";
+    const myColor = stringToColor(userId); 
+    
+    // Referência da minha presença
+    const userPresenceDoc = doc(db, 'pastas', noteId, 'active_users', userId);
+    myPresenceRef = userPresenceDoc;
+
+    // --- A. HEARTBEAT + CURSOR (ENVIAR) ---
+    const updateHeartbeat = async () => {
+        // Calcular posição relativa ao editor
+        const coords = getCaretCoordinates();
+        let cursorData = null;
+
+        if (coords) {
+            const editorDiv = document.getElementById('note-content-editor');
+            if (editorDiv) {
+                const editorRect = editorDiv.getBoundingClientRect();
+                cursorData = {
+                    x: coords.x - editorRect.left + editorDiv.scrollLeft,
+                    y: coords.y - editorRect.top + editorDiv.scrollTop
+                };
+            }
+        }
+
+        try {
+            await setDoc(userPresenceDoc, {
+                name: userName,
+                color: myColor,
+                cursor: cursorData,
+                lastSeen: serverTimestamp()
+            });
+        } catch (e) { }
+    };
+
+    updateHeartbeat();
+    presenceInterval = setInterval(updateHeartbeat, 2000); 
+
+    const editorDiv = document.getElementById('note-content-editor');
+    const sendCursorUpdate = () => setTimeout(updateHeartbeat, 100);
+    
+    if (editorDiv) {
+        editorDiv.addEventListener('click', sendCursorUpdate);
+        editorDiv.addEventListener('keyup', sendCursorUpdate);
+    }
+
+    // --- B. OUVIR OS OUTROS (RECEBER CURSORES) ---
+    const qPresence = collection(db, 'pastas', noteId, 'active_users');
+    
+    presenceUnsubscribe = onSnapshot(qPresence, (snapshot) => {
+        const now = Date.now();
+        const editorDiv = document.getElementById('note-content-editor');
+        if (!editorDiv) return;
+
+        // Limpa cursores antigos
+        document.querySelectorAll('.remote-cursor, .remote-label').forEach(el => el.remove());
+
+        let activeCount = 0;
+
+        snapshot.docs.forEach(doc => {
+            const data = doc.data();
+            // Ignora a mim mesmo e fantasmas (> 2 min)
+            if (doc.id === userId) return; 
+            if (data.lastSeen && (now - data.lastSeen.toMillis() > 120000)) return;
+
+            activeCount++;
+
+            // DESENHAR CURSOR DO OUTRO
+            if (data.cursor) {
+                const cursorEl = document.createElement('div');
+                cursorEl.className = 'remote-cursor';
+                cursorEl.style.backgroundColor = data.color || '#f1c40f';
+                cursorEl.style.left = data.cursor.x + 'px';
+                cursorEl.style.top = data.cursor.y + 'px';
+                
+                const labelEl = document.createElement('div');
+                labelEl.className = 'remote-label';
+                labelEl.style.backgroundColor = data.color || '#f1c40f';
+                labelEl.textContent = data.name;
+                labelEl.style.left = data.cursor.x + 'px';
+                labelEl.style.top = (data.cursor.y - 20) + 'px'; 
+
+                editorDiv.appendChild(cursorEl);
+                editorDiv.appendChild(labelEl);
+            }
+        });
+
+        // Atualiza a UI (Eu + Outros)
+        updateLiveUI(activeCount + 1);
+    });
+
+    // --- C. OUVIR O CONTEÚDO ---
+    const noteDocRef = doc(db, 'pastas', noteId);
+    
+    contentUnsubscribe = onSnapshot(noteDocRef, (docSnap) => {
+        if (!docSnap.exists()) return;
+        const newData = docSnap.data();
+        const editor = document.getElementById('note-content-editor');
+        
+        // Se eu NÃO estou a escrever (sem foco), aceito as mudanças
+        if (editor && document.activeElement !== editor) {
+            if (editor.innerHTML !== newData.conteudo) {
+                console.log("🔄 Recebida atualização remota.");
+                editor.innerHTML = newData.conteudo;
+                if(typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
+            }
+        }
+    });
+
+    window.addEventListener('beforeunload', cleanupPresence);
+}
     </script>
 </body>
 </html>
