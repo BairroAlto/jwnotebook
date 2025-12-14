@@ -506,6 +506,8 @@ a[data-anexo-id] { color: inherit; text-decoration: none; border-bottom: 1px dot
 #selection-popup button:hover, #insertion-popup button:hover {
     background-color: var(--hover-color); transform: scale(1.15);
 }
+
+
 .popup-separator { width: 1px; height: 20px; background-color: var(--text-muted-color); opacity: 0.4; margin: 0 4px; }
 
 /* Popup de Sugestão (Tags/Entidades) */
@@ -2383,6 +2385,86 @@ a.board-link:hover {
     border-color: #f1c40f;
 }
 
+#selection-popup {
+    max-width: 95vw;       /* Ocupa no máximo 95% da largura do ecrã */
+    flex-wrap: wrap;       /* Permite que os botões passem para baixo se não houver espaço */
+    justify-content: center; 
+    left: 0 !important;    /* Prevenção extra */
+}
+
+/* Realce para a última nota ativa na lista */
+.list-item.last-active {
+    background-color: rgba(74, 144, 226, 0.15) !important; /* Azul suave */
+    border-left: 4px solid var(--accent-color) !important;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+/* Pequena etiqueta "A editar" */
+.list-item.last-active::after {
+    content: 'A editar...';
+    position: absolute;
+    right: 10px;
+    font-size: 0.7em;
+    color: var(--accent-color);
+    font-weight: bold;
+    opacity: 0.8;
+}
+
+/* Animação de "Flash" para chamar a atenção */
+@keyframes highlightPulse {
+    0% { background-color: rgba(74, 144, 226, 0.4); }
+    100% { background-color: rgba(74, 144, 226, 0.15); }
+}
+
+.list-item.last-active {
+    animation: highlightPulse 1s ease-out;
+}
+
+
+/* ============================================================
+   CORREÇÃO DE PISCAR NO MOBILE (FORÇA BRUTA)
+   ============================================================ */
+@media (max-width: 768px) {
+
+    /* 1. Garante que o Painel do Meio ocupa sempre o ecrã todo quando ativo */
+    body.mobile-view-middle #middle-panel {
+        display: flex !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+        width: 100% !important;
+        height: 100% !important;
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 60;
+    }
+
+    /* 2. O MAIS IMPORTANTE: Força o Cabeçalho a existir */
+    /* Isto impede que regras de desktop escondam o header */
+    #middle-panel .panel-header {
+        display: flex !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+        height: auto !important;
+        min-height: 50px; /* Garante altura mínima */
+        width: 100% !important;
+        flex-shrink: 0 !important; /* Impede de encolher a zero */
+    }
+
+    /* 3. Garante que o conteúdo do header (título e botões) está visível */
+    #middle-panel .panel-header > * {
+        display: block !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+    }
+    
+    /* 4. Corrige o botão de voltar no header da lista */
+    #middle-panel .panel-header #back-btn {
+        display: flex !important; /* Garante que é flex para centrar a seta */
+    }
+}
+
 
 
 /* No telemóvel, o efeito pode ser mais subtil ou apenas uma borda sólida */
@@ -3801,6 +3883,7 @@ let activeTopicIdForManagement = null; // Qual tópico está selecionado na esqu
 let presenceUnsubscribe = null; // Para desligar o listener ao sair
 let myPresenceRef = null;       // Referência do meu "sinal de vida"
 let presenceInterval = null;    // Heartbeat para manter vivo
+let currentShortcutId = null;
 let liveSaveTimeout = null;
 let topicTargetId = null; 
 let currentSuperfolderName = "";
@@ -3833,7 +3916,7 @@ let moveFolderLastDoc = null;
 
 
 // --- NOVA FUNÇÃO: Reconstruir caminho para uma Pasta ---
-async function reconstructFolderNavigation(targetFolderId) {
+async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) {
     let currentId = targetFolderId;
     const path = [];
     let safety = 0;
@@ -3846,18 +3929,20 @@ async function reconstructFolderNavigation(targetFolderId) {
         
         const data = docSnap.data();
         
-        // Adiciona ao INÍCIO do array (porque estamos a ir de baixo para cima)
+        // Adiciona ao INÍCIO do array
         path.unshift({ id: docSnap.id, name: data.nome });
         
-        // Define o próximo passo (o pai)
         currentId = data.parentId; 
-        
         safety++;
     }
 
-    // Define o histórico de navegação e atualiza a vista
+    // Define o histórico de navegação
     navigationStack = path;
-    updateNavigationView(false);
+    
+    // AQUI ESTÁ A CORREÇÃO:
+    // Passamos o targetNoteId (o ID da nota nova) para a função que desenha a lista.
+    // Assim a lista já nasce com a nota pintada de azul.
+    updateNavigationView(false, targetNoteId);
 }
 
 // --- PROTEÇÃO DE ROTA E CARREGAMENTO DE USUÁRIO ---
@@ -3917,72 +4002,57 @@ onAuthStateChanged(auth, async (user) => {
             }
         } catch (e) { console.error(e); }
 
-        // >>> LÓGICA 1: MODO LIVE (CO-EDIÇÃO) <<<
-        if (liveNoteId && mode === 'live') {
-            console.log("🔴 A entrar em MODO LIVE (Multiplayer)...");
-            
-            // Força visualização do editor em mobile
-            document.body.classList.add('mobile-view-editor');
-            
-            // Carrega a nota e ativa sistema de presença
-            await displayNote(liveNoteId, null, null);
-            
-            // Ativa efeitos visuais
-            const toolbar = document.getElementById('editor-toolbar');
-            const indicator = document.getElementById('live-indicator');
-            
-            if (toolbar) toolbar.classList.add('live-mode-active');
-            if (indicator) {
-                indicator.style.display = 'flex';
-                const countSpan = document.getElementById('live-user-count');
-                if(countSpan) countSpan.textContent = "1";
-            }
-            return; // Pára aqui, não carrega pastas
-        }
-
-        // >>> LÓGICA 2: CONFIGURAR VISTA INICIAL (PASTAS) <<<
-        if (SUPERFOLDER_ID) {
+      // 1. PRIMEIRO: Configurar a Barra Lateral e Lista (Esquerda/Meio)
+        if (openFolderId) {
+            // Se o URL diz para abrir uma pasta, abre a pasta E seleciona a nota (se houver)
+            await reconstructFolderNavigation(openFolderId, liveNoteId);
+        } 
+        else if (SUPERFOLDER_ID) {
+            // Lógica de Superpasta
             try {
                 const rootSnap = await getDoc(doc(db, 'pastas', SUPERFOLDER_ID));
-                
                 if (rootSnap.exists()) {
                     const data = rootSnap.data();
                     currentSuperfolderName = data.nome;
                     currentSuperfolderParentId = data.parentId; 
                     document.title = `${data.nome} - JW Notebook`;
-
+                    
+                    // Busca nome do pai para o botão de voltar
                     if (currentSuperfolderParentId) {
                         const parentDoc = await getDoc(doc(db, 'pastas', currentSuperfolderParentId));
-                        if (parentDoc.exists()) {
-                            currentSuperfolderParentName = parentDoc.data().nome;
-                        } else {
-                            currentSuperfolderParentName = "Pasta Desconhecida";
-                        }
+                        currentSuperfolderParentName = parentDoc.exists() ? parentDoc.data().nome : "Pasta Desconhecida";
                     } else {
                         currentSuperfolderParentName = "Raiz Global";
                     }
-                    
-                    updateNavigationView(); 
-                    
-                } else {
-                    alert("Superpasta não encontrada.");
-                    window.location.href = "note.html";
+                    updateNavigationView(false, liveNoteId);
                 }
-            } catch (e) { console.error("Erro superpasta:", e); }
-        } else {
-            // Se houver um ID de pasta para abrir (openFolderId), usamos a função de reconstrução
-            if (openFolderId) {
-                await reconstructFolderNavigation(openFolderId);
-            } else {
-                setLeftPanelTitle("Pastas");
-                updateNavigationView(); 
-            }
+            } catch (e) { console.error(e); }
+        } 
+        else {
+            // Abertura normal (Raiz)
+            setLeftPanelTitle("Pastas");
+            updateNavigationView(false, liveNoteId); 
         }
 
-        // >>> LÓGICA 3: REDIRECIONAR PARA NOTA ESPECÍFICA <<<
-        if (liveNoteId && !mode) { // Se tiver ID mas não for live
-            await reconstructNavigationPath(liveNoteId);
-            setTimeout(() => displayNote(liveNoteId, null, redirectSearch), 500);
+        // 2. SEGUNDO: Abrir a Nota no Editor (Direita)
+        // Só agora é que abrimos a nota, garantindo que a lista já está a carregar
+        if (liveNoteId) {
+            // Se for Live, ativa o modo mobile editor
+            if (mode === 'live') {
+                console.log("🔴 A entrar em MODO LIVE...");
+                document.body.classList.add('mobile-view-editor');
+                
+                // Força visual Live
+                setTimeout(() => {
+                    const toolbar = document.getElementById('editor-toolbar');
+                    const indicator = document.getElementById('live-indicator');
+                    if (toolbar) toolbar.classList.add('live-mode-active');
+                    if (indicator) indicator.style.display = 'flex';
+                }, 800);
+            }
+            
+            // Abre a nota finalmente
+            displayNote(liveNoteId, null, redirectSearch);
         }
 
         fetchAllEntities();
@@ -6539,6 +6609,8 @@ function updateMiddlePanelForFolderSelection(folderId, folderName, selectedEleme
 
 
 async function displayNote(noteId, noteElement, searchTerm = null, keepReferencesOpen = false) {
+      // Reset da memória se for uma nota normal
+    currentShortcutId = null;
     // 1. Lógica visual de seleção na lista
     document.querySelectorAll('#middle-panel .list-item.selected').forEach(el => el.classList.remove('selected'));
     
@@ -6567,59 +6639,58 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
     let data = noteSnap.data();
     let isReadOnly = false;
 
-    // --- VERIFICAÇÃO DE ATALHO ---
-    if (data.pointerId) {
-        console.log("🔗 Isto é um atalho...");
-        
-        try {
-            // (Código de carregar original mantém-se igual...)
-            const originalRef = doc(db, 'pastas', data.pointerId);
-            const originalSnap = await getDoc(originalRef);
-
-            if (originalSnap.exists()) {
-                const originalData = originalSnap.data();
+   // --- VERIFICAÇÃO DE ATALHO (CORRIGIDO) ---
+            if (data.pointerId) {
+                console.log("🔗 Isto é um atalho...");
                 
-                // VERIFICA SE A PARTILHA AINDA EXISTE
-                if (originalData.shareSettings && originalData.shareSettings.shared === true) {
-                    
-                    // --- NOVA LÓGICA AQUI: É LIVE OU LEITURA? ---
-                    
-                    // Se o meu atalho local diz "isLive: true" E a nota original permite co-edição
-                    if (data.isLive === true && originalData.shareSettings.allowCoEditing === true) {
-                        console.log("🔴 Atalho LIVE detetado. A ativar multiplayer...");
-                        
-                        // 1. Substitui dados
-                        data = originalData;
-                        
-                        // 2. Permite edição (porque é Live)
-                        isReadOnly = false; 
-                        
-                        // 3. Ativa o sistema visual de Live
-                        setTimeout(() => {
-                            setupPresenceSystem(data.pointerId || noteId); // Liga à sala original
-                            document.getElementById('editor-toolbar').classList.add('live-mode-active');
-                            document.getElementById('live-indicator').style.display = 'flex';
-                        }, 500);
+                try {
+                    const originalRef = doc(db, 'pastas', data.pointerId);
+                    const originalSnap = await getDoc(originalRef);
 
+                    if (originalSnap.exists()) {
+                        const originalData = originalSnap.data();
+                        
+                        // VERIFICA SE A PARTILHA AINDA EXISTE
+                        if (originalData.shareSettings && originalData.shareSettings.shared === true) {
+                            
+                            // Se for LIVE e permitido
+                            if (data.isLive === true && originalData.shareSettings.allowCoEditing === true) {
+                                console.log("🔴 Atalho LIVE detetado.");
+                                
+                                // >>> AQUI ESTÁ A CORREÇÃO MÁGICA <<<
+                                // Substituímos os dados do atalho (vazios) pelos dados originais (texto)
+                                // Guardamos o ID do atalho num sitio seguro para a lista saber quem iluminar
+                               const shortcutId = data.id; 
+                                
+                                // SALVAR NA MEMÓRIA GLOBAL
+                                currentShortcutId = shortcutId; 
+                                
+                                data = originalData; 
+                                data.isLiveShortcut = true;
+                                data.shortcutId = shortcutId;
+                                
+                                isReadOnly = false;
+
+                            } else {
+                                // MODO LEITURA
+                                data = originalData; // <--- Aqui também carregamos o conteúdo
+                                isReadOnly = true; 
+                                const status = document.getElementById('save-status-indicator');
+                                if(status) status.textContent = "👁️ Modo Leitura";
+                            }
+
+                        } else {
+                            throw new Error("Acesso revogado.");
+                        }
                     } else {
-                        // É APENAS LEITURA (Comportamento antigo)
-                        data = originalData;
-                        isReadOnly = true; 
-                        document.getElementById('save-status-indicator').textContent = "👁️ Modo Leitura";
+                        throw new Error("Nota original apagada.");
                     }
-
-                } else {
-                    throw new Error("Acesso revogado pelo proprietário.");
+                } catch (accessError) {
+                    console.error(accessError);
+                    alert("Erro: A nota original não está acessível.");
+                    return;
                 }
-            } else {
-                throw new Error("Nota original foi apagada.");
             }
-        } catch (accessError) {
-            // (Tratamento de erro mantém-se igual...)
-            // Se o dono revogou, o atalho ainda existe na lista do user, 
-            // mas ao clicar vai dar este erro.
-        }
-    }
             // ------------------------------------------------
 
             const { nome, conteudo, shareSettings } = data; 
@@ -6645,34 +6716,34 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
             }
 
             // Se for atalho, não ligamos o scan automático para não pesar
-           if (!isReadOnly) {
-          
-                // LÓGICA DO INDICADOR DE MARGEM (🔬)
-                const marginBtn = document.querySelector('button[data-action="open-margin-editor"]');
-                if (marginBtn) {
-                    if (data.marginElements && data.marginElements.length > 0) {
-                        marginBtn.style.backgroundColor = "rgba(241, 196, 15, 0.2)";
-                        marginBtn.style.borderColor = "#f1c40f";
-                        marginBtn.style.color = "#f1c40f";
-                    } else {
-                        marginBtn.style.backgroundColor = "";
-                        marginBtn.style.borderColor = "";
-                        marginBtn.style.color = "";
-                    }
-                }
-
-                // >>> CORREÇÃO DO LIVE (SALA ÚNICA) <<<
-                // Se for um atalho LIVE (pointerId), liga-se à sala da nota ORIGINAL.
-                // Se for nota normal, liga-se à sua própria sala.
+           // >>> CORREÇÃO FINAL DO LIVE <<<
+                
+                // 1. Determina a Sala Correta
                 const targetRoomId = (data.pointerId && data.isLive) ? data.pointerId : noteId;
-                
-                console.log(`📡 A conectar à sala Live ID: ${targetRoomId}`);
-                
-                // INICIAR SISTEMA LIVE
-                setupPresenceSystem(targetRoomId);
-            }
+                const isLiveSession = (data.pointerId && data.isLive === true);
 
-        }
+                console.log(`📡 A conectar à sala Live ID: ${targetRoomId} (É Atalho Live? ${isLiveSession})`);
+                
+                // 2. Conecta ao Firebase
+                setupPresenceSystem(targetRoomId);
+
+                // 3. FORÇA A ATUALIZAÇÃO VISUAL IMEDIATA
+                // Se for um atalho Live, ligamos logo a barra vermelha para o utilizador saber que está online
+                const toolbar = document.getElementById('editor-toolbar');
+                const indicator = document.getElementById('live-indicator');
+                const countSpan = document.getElementById('live-user-count');
+
+                if (isLiveSession) {
+                    toolbar.classList.add('live-mode-active');
+                    indicator.style.display = 'flex';
+                    // Começa com 1 (eu) até o Firebase atualizar os outros
+                    if(countSpan && countSpan.textContent === '0') countSpan.textContent = "1";
+                } else {
+                    // Se for nota normal, desliga até entrar alguém
+                    toolbar.classList.remove('live-mode-active');
+                    indicator.style.display = 'none';
+                }
+            }
     } catch (error) {
         console.error("Erro ao carregar nota:", error);
     }
@@ -7650,27 +7721,30 @@ newConfirmBtn.onclick = async () => {
         }
 
         try {
-            // --- VERIFICAÇÃO TRIPLA DE SEGURANÇA (PARA PROTEGER O LIVE) ---
-            const moveId = String(itemContext.id);
-            const currentId = String(selectedNoteId);
+           // --- VERIFICAÇÃO QUÁDRUPLA DE SEGURANÇA (FINAL) ---
+            const moveId = String(itemContext.id).trim();
+            const currentId = String(selectedNoteId).trim();
             const currentTitle = document.getElementById('note-title-input').value;
             
-            // Verifica se é o mesmo ID
+            // 1. É o ID da nota aberta?
             const matchID = (moveId === currentId);
             
-            // Verifica se é o mesmo Nome (Fallback muito útil)
+            // 2. É o ID do ATALHO que abriu a nota? (A CORREÇÃO PRINCIPAL)
+            const matchShortcut = (currentShortcutId && moveId === String(currentShortcutId));
+
+            // 3. É o mesmo Nome? (Fallback)
             const matchName = (itemContext.name === currentTitle);
             
-            // Verifica se o item movido aponta para a nota aberta (caso seja atalho)
+            // 4. É um pointer?
             let matchPointer = false;
             if (activeItemContext && activeItemContext.pointerId && activeItemContext.pointerId === currentId) {
                 matchPointer = true;
             }
 
             // Se QUALQUER um for verdade, é a mesma nota!
-            const isMovingCurrentNote = matchID || matchName || matchPointer;
+            const isMovingCurrentNote = matchID || matchShortcut || matchName || matchPointer;
 
-            console.log(`🛡️ PROTEÇÃO LIVE: ID[${matchID}] Nome[${matchName}] Pointer[${matchPointer}] -> Resultado: ${isMovingCurrentNote}`);
+            console.log(`🛡️ PROTEÇÃO LIVE: Mover[${moveId}] vs Atalho[${currentShortcutId}] -> É a mesma? ${isMovingCurrentNote}`);
 
             const itemRef = doc(db, 'pastas', itemContext.id);
             
@@ -11684,18 +11758,37 @@ if (backBtn) {
 
 // 4. Botão VOLTAR do Editor (Direita -> Meio)
 if (mobileBackBtn) {
-    mobileBackBtn.addEventListener('click', (e) => {
-        e.preventDefault(); // Previne comportamentos estranhos
+    mobileBackBtn.addEventListener('click', async (e) => {
+        e.preventDefault(); 
         
-        // 1. Gravar a nota atual antes de sair
-        if (typeof saveNote === 'function') saveNote(true);
+        // A. Guardar ID para scroll
+        const noteIdToHighlight = selectedNoteId; 
+
+        // B. Gravar
+        if (typeof saveNote === 'function') await saveNote(true);
         
-        // 2. Mudar o estado das classes no BODY
-        // Remove a vista do editor (Painel 3)
+        // C. REMOÇÃO CRÍTICA DAS CLASSES DE DESKTOP
+        // Isto impede que o CSS de "painel colapsado" interfira com o menu mobile
+        const container = document.querySelector('.notebook-container');
+        container.classList.remove('middle-panel-collapsed');
+        // Opcional: garantir que o painel esquerdo não interfere
+        // container.classList.add('left-panel-collapsed'); 
+
+        // D. Troca de Ecrã Mobile
         document.body.classList.remove('mobile-view-editor');
-        
-        // Adiciona FORÇOSAMENTE a vista do meio (Painel 2)
         document.body.classList.add('mobile-view-middle');
+
+        // E. Scroll e Destaque
+        if (noteIdToHighlight) {
+            setTimeout(() => {
+                const noteItem = document.querySelector(`#file-list .list-item[data-id="${noteIdToHighlight}"]`);
+                if (noteItem) {
+                    document.querySelectorAll('.list-item.last-active').forEach(el => el.classList.remove('last-active'));
+                    noteItem.classList.add('last-active');
+                    noteItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }, 150);
+        }
     });
 }
 
@@ -12276,25 +12369,47 @@ function handleTextSelection() {
         }
         // -----------------------------------------------------
 
-        currentSelectionRange = selection.getRangeAt(0).cloneRange();
+       currentSelectionRange = selection.getRangeAt(0).cloneRange();
         const rect = currentSelectionRange.getBoundingClientRect();
         
         if (selectionPopup) {
-            selectionPopup.style.display = 'flex';
+            selectionPopup.style.display = 'flex'; // Mostra primeiro para calcular a largura
             
-            // Posicionamento
-            const topPos = rect.bottom + window.scrollY + 8;
-            const leftPos = rect.left + (rect.width / 2) - (selectionPopup.offsetWidth / 2) + window.scrollX;
+            // --- CÁLCULO DE POSIÇÃO INTELIGENTE (CORREÇÃO MOBILE) ---
 
+            const popupWidth = selectionPopup.offsetWidth;
+            const windowWidth = window.innerWidth;
+            const scrollX = window.scrollX;
+            const padding = 10; // Margem de segurança das bordas (10px)
+
+            // 1. Tenta centralizar em relação ao texto selecionado
+            let leftPos = rect.left + (rect.width / 2) - (popupWidth / 2);
+
+            // 2. IMPEDE sair pela ESQUERDA (Se for negativo ou muito perto do 0)
+            if (leftPos < padding) {
+                leftPos = padding;
+            }
+
+            // 3. IMPEDE sair pela DIREITA (Se ultrapassar a largura do ecrã)
+            else if (leftPos + popupWidth > windowWidth - padding) {
+                leftPos = windowWidth - popupWidth - padding;
+            }
+
+            // 4. Adiciona o scroll da página (caso exista)
+            leftPos += scrollX;
+
+            // 5. Cálculo Vertical (Tenta pôr em baixo, se não couber, põe em cima)
+            let topPos = rect.bottom + window.scrollY + 8;
+            
+            // (Opcional: Se estiver muito no fundo do ecrã, mete a barra em cima do texto)
+            // if (rect.bottom > window.innerHeight - 50) {
+            //    topPos = rect.top + window.scrollY - 50;
+            // }
+
+            // APLICA AS POSIÇÕES FINAIS
             selectionPopup.style.top = `${topPos}px`;
             selectionPopup.style.left = `${leftPos}px`;
             selectionPopup.style.zIndex = '2000';
-        }
-    } 
-    // C. NENHUMA SELEÇÃO
-    else {
-        if (selectionPopup && !selectionPopup.matches(':hover')) {
-            selectionPopup.style.display = 'none';
         }
     }
 }
@@ -17035,15 +17150,19 @@ function updateLiveUI(count) {
     const indicator = document.getElementById('live-indicator');
     const countSpan = document.getElementById('live-user-count');
 
-    // Se houver mais de 1 pessoa (eu + outro)
-    if (count > 1) {
+    // Verifica se estamos num atalho Live (pela classe que adicionámos no displayNote)
+    const isForcedLive = toolbar && toolbar.classList.contains('live-mode-active');
+
+    // LÓGICA CORRIGIDA:
+    // Mostra se houver mais de 1 pessoa OU se for uma nota Live oficial (mesmo sozinho)
+    if (count > 1 || (isForcedLive && count > 0)) {
         if (toolbar) toolbar.classList.add('live-mode-active');
         if (indicator) {
             indicator.style.display = 'flex';
             if (countSpan) countSpan.textContent = count;
         }
     } else {
-        // Se estiver sozinho (ou 0), desliga tudo
+        // Só desliga se NÃO for uma nota Live
         if (toolbar) toolbar.classList.remove('live-mode-active');
         if (indicator) indicator.style.display = 'none';
     }
