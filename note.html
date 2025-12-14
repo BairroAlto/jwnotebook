@@ -4872,11 +4872,7 @@ function resetEditor() {
 }
 
 function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
-    if (!auth.currentUser) {
-        console.error("❌ [FETCH] Utilizador não autenticado.");
-        return;
-    }
-
+    if (!auth.currentUser) return;
 
     const itemsRef = collection(db, 'pastas');
     
@@ -4885,12 +4881,11 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
         itemsRef, 
         where('parentId', '==', parentId), 
         where('estado', '==', 'ativa'), 
-        where('userId', '==', auth.currentUser.uid), 
+        where('userId', '==', auth.currentUser.uid), // Garante que só vemos os NOSSOS atalhos
         orderBy('ordem')
     );
 
     return onSnapshot(q, (querySnapshot) => {
-        
         listElement.innerHTML = '';
         
         if (querySnapshot.empty) {
@@ -4908,12 +4903,10 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             li.dataset.name = item.nome;
             li.dataset.parentid = item.parentId || 'null';
 
-            // 1. Verifica se é Protegida
-            if (item.passe && item.passe.trim() !== "") {
-                li.setAttribute('data-protected', 'true'); 
-            }
-
-            // 2. Verifica se é Superpasta
+            // --- LÓGICA DE ÍCONES ---
+            let icon = "";
+            
+            // 1. É Superpasta?
             if (item.superpasta === true) {
                 li.dataset.superpasta = "true";
                 li.style.borderLeft = "3px solid var(--accent-color)";
@@ -4922,10 +4915,24 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
                 }
             }
 
+            // 2. É Atalho Partilhado? (CORREÇÃO AQUI)
+            // Se tiver pointerId, é uma nota partilhada connosco
+            if (item.pointerId) {
+                li.dataset.isShared = "true";
+                li.style.color = "#4a90e2"; // Azul para destacar
+                icon = "🔗 "; 
+            }
+
+            // 3. É Protegida?
+            if (item.passe && item.passe.trim() !== "") {
+                li.setAttribute('data-protected', 'true'); 
+                icon = "🔒 ";
+            }
+
             const nameSpan = document.createElement('span');
-            const lockIcon = (item.passe && item.passe.trim() !== "") ? "🔒 " : "";
-            nameSpan.textContent = `${lockIcon}${item.nome}`;
+            nameSpan.textContent = `${icon}${item.nome}`;
             
+            // Botão de menu (3 pontos)
             const menuBtn = document.createElement('button');
             menuBtn.className = 'item-menu-btn';
             menuBtn.innerHTML = '…';
@@ -14992,18 +14999,26 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
     else if (action === 'manage-topics') {
         openTopicsModal(itemContext.id, itemContext.type);
     } 
-    else if (action === 'hide') {
+  else if (action === 'hide') {
         const confirmed = await showConfirmation('Ocultar Item?', `Tem certeza que deseja ocultar "${itemContext.name}"?`);
         if (confirmed) {
+            // Se estivermos a ver a nota que vamos ocultar, limpa o editor
             if (selectedNoteId && itemContext.id === selectedNoteId) {
                 resetEditor();
             }
+
+            // IMPORTANTE: Aqui usamos 'itemContext.id'.
+            // Como a lista mostra os documentos da NOSSA coleção 'pastas' (sejam atalhos ou notas reais),
+            // atualizar este documento afeta APENAS a nossa visão.
+            // O atalho passa a 'estado: desativa', mas o documento original (que tem outro ID) não é tocado.
+            
             await updateDoc(doc(db, 'pastas', itemContext.id), { 
                 estado: 'desativa',
                 ultimaedicao: serverTimestamp()
             });
         }
-    } 
+    }
+
     else if (action === 'move-position') {
         await openMoveModal(itemContext); 
     } 
@@ -15813,6 +15828,10 @@ if (toggleDelBtn) {
 // -----------------------------------------------------------
 const deleteBtn = e.target.closest('button[data-action="delete-mini-note"]');
 if (deleteBtn) {
+     if (noteContentEditor.contentEditable === "false") {
+        alert("Não tem permissão para editar esta nota partilhada.");
+        return;
+    }
     e.preventDefault(); e.stopPropagation();
     const wrapper = deleteBtn.closest('.mini-note-wrapper');
     const isQuestion = wrapper.classList.contains('question-mode');
