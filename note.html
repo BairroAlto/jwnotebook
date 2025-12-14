@@ -8401,22 +8401,48 @@ function renderMoveList(items) {
 async function showHiddenItemsModal() {
     const modal = document.getElementById('hidden-items-modal');
     const list = document.getElementById('hidden-items-list');
-    list.innerHTML = 'Carregando...';
+    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar itens ocultos...</span></div>';
     modal.style.display = 'flex';
-    const q = query(collection(db, 'pastas'), where('estado', '==', 'desativa'), where('userId', '==', auth.currentUser.uid) 
-);
-    const snapshot = await getDocs(q);
-    list.innerHTML = '';
-    if (snapshot.empty) {
-        list.innerHTML = '<li>Nenhum item oculto.</li>';
-        return;
+
+    try {
+        const q = query(
+            collection(db, 'pastas'), 
+            where('estado', '==', 'desativa'), 
+            where('userId', '==', auth.currentUser.uid) 
+        );
+        const snapshot = await getDocs(q);
+        
+        list.innerHTML = '';
+        
+        if (snapshot.empty) {
+            list.innerHTML = '<li style="padding:15px; color:#888; text-align:center;">A reciclagem está vazia.</li>';
+            return;
+        }
+
+        snapshot.forEach(doc => {
+            const item = { id: doc.id, ...doc.data() };
+            const li = document.createElement('li');
+            li.style.display = 'flex';
+            li.style.justifyContent = 'space-between';
+            li.style.alignItems = 'center';
+            li.style.padding = '10px';
+            li.style.borderBottom = '1px solid var(--border-color)';
+
+            const icon = item.tipo === 'pasta' ? '📁' : '📄';
+
+            li.innerHTML = `
+                <span class="item-name" style="font-weight:500;">${icon} ${item.nome}</span> 
+                <div style="display:flex; gap:10px;">
+                    <button class="modal-btn primary" data-action="restore" data-id="${item.id}" style="font-size:0.8em; padding:5px 10px;">Restaurar</button>
+                    <button class="modal-btn" data-action="delete" data-id="${item.id}" style="background-color:#c0392b; color:white; font-size:0.8em; padding:5px 10px; border:none; border-radius:5px; cursor:pointer;">Eliminar</button>
+                </div>
+            `;
+            list.appendChild(li);
+        });
+    } catch (e) {
+        console.error(e);
+        list.innerHTML = '<li>Erro ao carregar itens.</li>';
     }
-    snapshot.forEach(doc => {
-        const item = { id: doc.id, ...doc.data() };
-        const li = document.createElement('li');
-        li.innerHTML = `<span class="item-name">${item.nome}</span> <button data-id="${item.id}">Restaurar</button>`;
-        list.appendChild(li);
-    });
 }
 
 function addUrlField(urlValue = '') {
@@ -12714,56 +12740,90 @@ async function loadBackupsForNote() {
      * Restaura um backup criando uma nova nota.
      * @param {string} backupId O ID do documento de backup.
      */
-    async function restoreBackup(backupId) {
-        if (!selectedNoteId) return;
+  async function restoreBackup(backupId) {
+    if (!selectedNoteId) return;
+    if (!auth.currentUser) {
+        alert("Sessão expirada. Recarregue a página.");
+        return;
+    }
+    
+    // Feedback visual
+    const modalContent = document.querySelector('#history-modal .modal-content');
+    modalContent.style.opacity = '0.5';
+    modalContent.style.pointerEvents = 'none';
+
+    try {
+        console.log("1. A tentar ler o backup...");
+        const backupRef = doc(db, 'pastas', selectedNoteId, 'backups', backupId);
+        const backupSnap = await getDoc(backupRef);
         
+        if (!backupSnap.exists()) throw new Error("O ficheiro de backup já não existe.");
+        const backupData = backupSnap.data();
+        console.log("✅ Backup lido com sucesso.");
+
+        console.log("2. A verificar nota original...");
+        const originalNoteRef = doc(db, 'pastas', selectedNoteId);
+        const originalNoteSnap = await getDoc(originalNoteRef);
+        
+        // Se a original não existir, usa null como parent (Raiz)
+        const parentId = originalNoteSnap.exists() ? originalNoteSnap.data().parentId : null;
+        console.log("✅ Dados da nota original obtidos (Parent: " + parentId + ")");
+        
+        // Preparar Título
+        const backupDate = formatTimestamp(backupData.timestamp);
+        const newTitle = `${backupData.titulo} (Restaurado ${backupDate})`;
+
+        // Calcular Ordem
+        let newOrder = 0;
         try {
-            // 1. Obter os dados do backup
-            const backupRef = doc(db, 'pastas', selectedNoteId, 'backups', backupId);
-            const backupSnap = await getDoc(backupRef);
-            if (!backupSnap.exists()) {
-                throw new Error("Backup não encontrado.");
-            }
-            const backupData = backupSnap.data();
-
-            // 2. Obter o parentId da nota original
-            const originalNoteRef = doc(db, 'pastas', selectedNoteId);
-            const originalNoteSnap = await getDoc(originalNoteRef);
-            if (!originalNoteSnap.exists()) {
-                throw new Error("Nota original não encontrada.");
-            }
-            const parentId = originalNoteSnap.data().parentId;
-            
-            // 3. Formatar o novo título
-            const backupDate = formatTimestamp(backupData.timestamp);
-            const newTitle = `${backupData.titulo} (Restaurado de ${backupDate})`;
-
-            // 4. Determinar a ordem da nova nota
             const q = query(collection(db, 'pastas'), where('parentId', '==', parentId), where('estado', '==', 'ativa'));
             const siblingsSnap = await getDocs(q);
-            const newOrder = siblingsSnap.size;
+            newOrder = siblingsSnap.size;
+        } catch(e) { console.warn("Erro ao calcular ordem, usando 0"); }
 
-            // 5. Criar a nova nota
-            await addDoc(collection(db, 'pastas'), {
-                nome: newTitle,
-                conteudo: backupData.conteudo,
-                parentId: parentId,
-                tipo: 'nota',
-                userId: auth.currentUser.uid, 
-                estado: 'ativa',
-                ordem: newOrder,
-                createdAt: serverTimestamp(),
-                ultimaedicao: serverTimestamp()
-            });
+        console.log("3. A criar nova nota restaurada...");
+        // Criar Nova Nota
+        const newDocRef = await addDoc(collection(db, 'pastas'), {
+            nome: newTitle,
+            conteudo: backupData.conteudo,
+            parentId: parentId,
+            tipo: 'nota',
+            userId: auth.currentUser.uid, // FUNDAMENTAL PARA AS REGRAS
+            estado: 'ativa',
+            ordem: newOrder,
+            createdAt: serverTimestamp(),
+            ultimaedicao: serverTimestamp(),
+            tags: []
+        });
+        console.log("✅ Nota criada com ID:", newDocRef.id);
 
-            alert(`Nota restaurada com sucesso como "${newTitle}".\nA lista de notas será atualizada.`);
-            document.getElementById('history-modal').style.display = 'none';
+        // Finalização
+        modalContent.style.opacity = '1';
+        modalContent.style.pointerEvents = 'auto';
+        document.getElementById('history-modal').style.display = 'none';
 
-        } catch (error) {
-            console.error("Erro ao restaurar backup:", error);
-            alert("Ocorreu um erro ao restaurar o backup.");
+        const confirmed = await showConfirmation(
+            "Cópia Restaurada!", 
+            `Foi criada uma nova nota: "${newTitle}".\nDeseja abrir a nota restaurada agora?`
+        );
+
+        if (confirmed) {
+            if (typeof navigateToNoteSmart === 'function') {
+                await navigateToNoteSmart(newDocRef.id);
+            } else {
+                displayNote(newDocRef.id, null);
+            }
+        } else {
+            updateNavigationView(true, selectedNoteId);
         }
+
+    } catch (error) {
+        console.error("❌ ERRO NO PROCESSO DE RESTAURO:", error);
+        alert("Ocorreu um erro de permissões ou rede.\nVerifique a consola para detalhes.");
+        modalContent.style.opacity = '1';
+        modalContent.style.pointerEvents = 'auto';
     }
+}
 
     /**
      * Exibe o conteúdo de um backup num modal de visualização.
@@ -15399,13 +15459,118 @@ document.getElementById('settings-modal').addEventListener('click', (e) => {
 });
 
 document.getElementById('hidden-items-list').addEventListener('click', async (e) => {
-    if (e.target.tagName === 'BUTTON') {
-        const id = e.target.dataset.id;
-        await updateDoc(doc(db, 'pastas', id), { 
-            estado: 'ativa',
-            ultimaedicao: serverTimestamp()
-        });
-        e.target.closest('li').remove();
+    const btn = e.target.closest('button');
+    if (!btn) return;
+
+    const action = btn.dataset.action;
+    const id = btn.dataset.id;
+    const listItem = btn.closest('li');
+
+    // ============================================================
+    // AÇÃO: RESTAURAR (Traz de volta, atualiza colunas e abre)
+    // ============================================================
+    if (action === 'restore') {
+        
+        // 1. TRUQUE Z-INDEX
+        const confirmModal = document.getElementById('confirm-modal');
+        confirmModal.style.zIndex = '9999';
+
+        // 2. Confirmação
+        const confirmed = await showConfirmation(
+            "Restaurar Item?",
+            "O item voltará para a sua pasta original e será aberto imediatamente."
+        );
+
+        confirmModal.style.zIndex = ''; // Limpeza
+
+        if (!confirmed) return;
+
+        try {
+            // A. Atualizar na Base de Dados (Espera terminar!)
+            await updateDoc(doc(db, 'pastas', id), { 
+                estado: 'ativa',
+                ultimaedicao: serverTimestamp()
+            });
+            
+            // B. Fechar o Modal de Itens Ocultos visualmente
+            document.getElementById('hidden-items-modal').style.display = 'none';
+
+            // C. NAVEGAÇÃO INTELIGENTE (Atualiza Colunas e Abre Nota)
+            // Esta função vai:
+            // 1. Descobrir a pasta pai da nota.
+            // 2. Atualizar a coluna da esquerda (Pastas).
+            // 3. Atualizar a coluna do meio (Lista de ficheiros).
+            // 4. Abrir a nota no editor.
+            if (typeof navigateToNoteSmart === 'function') {
+                console.log("🔄 A reconstruir caminho para a nota restaurada...");
+                await navigateToNoteSmart(id);
+            } else {
+                // Fallback de segurança
+                displayNote(id, null); 
+            }
+
+        } catch (err) {
+            console.error(err);
+            alert("Erro ao restaurar.");
+        }
+    }
+
+    // ============================================================
+    // AÇÃO: ELIMINAR (Mover para Blackbox) - MANTÉM-SE IGUAL
+    // ============================================================
+    else if (action === 'delete') {
+        const confirmModal = document.getElementById('confirm-modal');
+        confirmModal.style.zIndex = '9999';
+
+        const confirmed = await showConfirmation(
+            "Eliminar Permanentemente?", 
+            "Esta ação é irreversível. O item será apagado do sistema."
+        );
+
+        confirmModal.style.zIndex = ''; 
+
+        if (!confirmed) return;
+
+        btn.textContent = "A apagar...";
+        btn.disabled = true;
+
+        try {
+            const docRef = doc(db, 'pastas', id);
+            const docSnap = await getDoc(docRef);
+            
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+
+                // COPIAR PARA BLACKBOX
+                await addDoc(collection(db, 'blackbox'), {
+                    originalId: id,
+                    nome: data.nome,
+                    conteudo: data.conteudo || "",
+                    tipo: data.tipo,
+                    userId: auth.currentUser.uid,
+                    deletedAt: serverTimestamp(),
+                    reason: "Manual Delete from Hidden Menu",
+                    fullSnapshot: data
+                });
+
+                // APAGAR DA COLEÇÃO ORIGINAL
+                await deleteDoc(docRef);
+
+                // Remover da lista visualmente
+                listItem.style.opacity = '0';
+                setTimeout(() => listItem.remove(), 300);
+                
+                const list = document.getElementById('hidden-items-list');
+                if (list.children.length <= 1) {
+                    list.innerHTML = '<li style="padding:15px; color:#888; text-align:center;">A reciclagem está vazia.</li>';
+                }
+            }
+        } catch (error) {
+            console.error("Erro ao eliminar:", error);
+            alert("Ocorreu um erro ao tentar eliminar.");
+            btn.textContent = "Eliminar";
+            btn.disabled = false;
+        }
     }
 });
 
