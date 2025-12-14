@@ -3826,6 +3826,7 @@ let moveStack = []; // Histórico de navegação (como no Append/Aggregation)
 let itemToMoveRef = null; // Guarda o objeto do item que estamos a mover
 let selectedDestFolderId = null; // Guarda o ID da pasta destino selecionada
 let globalExplorerResults = []; // Guarda todos os resultados (Pastas + Notas)
+let lastContentEditTime = 0;
 let currentExplorerPage = 0;
 let moveFolderLastDoc = null;
 
@@ -7957,8 +7958,13 @@ async function openMoveModal(itemContext) {
 
         modal.style.display = 'none';
         
-        // Atualiza a vista atual para o item desaparecer da lista antiga
-        if (typeof updateNavigationView === 'function') updateNavigationView();
+     // Verifica se estamos a mover a nota que está aberta no editor neste momento
+const isMovingCurrentNote = (itemContext.id === selectedNoteId);
+
+// Passamos 'true' se for a nota atual, para impedir que o editor faça reset
+if (typeof updateNavigationView === 'function') {
+    updateNavigationView(isMovingCurrentNote);
+}
         
     } catch (error) {
         console.error("Erro ao mover:", error);
@@ -13220,6 +13226,7 @@ noteTitleInput.addEventListener('input', () => {
     saveNote();
 });
 noteContentEditor.addEventListener('input', () => {
+      lastContentEditTime = Date.now(); 
     updateSaveStatus('unsaved');
 
     // Verifica se estamos em MODO LIVE (Barra vermelha)
@@ -17138,48 +17145,56 @@ async function setupPresenceSystem(noteId) {
     });
 
    // --- C. OUVIR O CONTEÚDO (COM PROTEÇÃO DE CURSOR E ESCRITA) ---
-    const noteDocRef = doc(db, 'pastas', noteId);
+  const noteDocRef = doc(db, 'pastas', noteId);
+
+contentUnsubscribe = onSnapshot(noteDocRef, (docSnap) => {
+    // Se o documento não existe ou é uma escrita local minha que ainda não foi ao servidor
+    if (!docSnap.exists() || docSnap.metadata.hasPendingWrites) return;
+
+    const newData = docSnap.data();
+    const editor = document.getElementById('note-content-editor');
     
-    contentUnsubscribe = onSnapshot(noteDocRef, (docSnap) => {
-        if (!docSnap.exists()) return;
-        const newData = docSnap.data();
-        const editor = document.getElementById('note-content-editor');
-        
-        if (!editor) return;
+    if (!editor) return;
 
-        // 1. VERIFICAÇÃO DE SEGURANÇA (O PROBLEMA DO "TEXTO ELIMINADO")
-        // Se eu tiver alterações não guardadas (estou a escrever furiosamente),
-        // NÃO aceito a atualização de fora, senão o que estou a escrever desaparece.
-        // A minha versão vai sobrepor a do outro quando o meu timer de 1s disparar.
-        // É a lei do "Último a escrever ganha", mas protege a experiência local.
-        if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
-            console.log("🛡️ Bloqueando atualização externa enquanto escrevo...");
-            return; 
-        }
+    // =================================================================
+    // O ESCUDO DE PROTEÇÃO (CORREÇÃO DE BUGS)
+    // =================================================================
+    const timeSinceLastEdit = Date.now() - lastContentEditTime;
 
-        // Se o conteúdo for realmente diferente
-        if (editor.innerHTML !== newData.conteudo) {
-            console.log("🔄 A atualizar conteúdo remoto...");
+    // REGRA 1: Se eu escrevi algo nos últimos 3 segundos, BLOQUEIO a entrada.
+    // Isto impede que o texto desapareça enquanto estou a pensar ou a escrever.
+    if (timeSinceLastEdit < 3000) {
+        console.log(`🛡️ Escudo Ativo: Ignorei atualização externa (escrevi há ${timeSinceLastEdit}ms)`);
+        return; 
+    }
 
-            // 2. GUARDAR POSIÇÃO DO CURSOR
-            const currentCursorPos = (document.activeElement === editor) 
-                ? getCaretCharacterOffsetWithin(editor) 
-                : null;
+    // REGRA 2: Se o texto for igual, não faz nada (evita piscar o cursor)
+    if (editor.innerHTML === newData.conteudo) {
+        return;
+    }
 
-            // 3. ATUALIZAR HTML
-            editor.innerHTML = newData.conteudo;
-            
-            // 4. RESTAURAR FUNCIONALIDADES (Caixas, Botões)
-            if(typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
+    // Se passou as regras, atualiza o texto com segurança
+    console.log("🔄 A atualizar conteúdo remoto...");
 
-            // 5. RESTAURAR POSIÇÃO DO CURSOR
-            if (currentCursorPos !== null) {
-                setCaretPosition(editor, currentCursorPos);
-            }
-        }
-    }, (error) => {
-        console.error("Erro sync:", error);
-    });
+    // 1. Guardar posição do cursor
+    const currentCursorPos = (document.activeElement === editor) 
+        ? getCaretCharacterOffsetWithin(editor) 
+        : null;
+
+    // 2. Atualizar HTML
+    editor.innerHTML = newData.conteudo;
+    
+    // 3. Restaurar Funcionalidades
+    if(typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
+
+    // 4. Restaurar Cursor
+    if (currentCursorPos !== null) {
+        setCaretPosition(editor, currentCursorPos);
+    }
+
+}, (error) => {
+    console.error("Erro sync:", error);
+});
 
     // --- FUNÇÕES AUXILIARES PARA MANTER O CURSOR ---
 
