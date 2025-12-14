@@ -3846,41 +3846,24 @@ async function reconstructFolderNavigation(targetFolderId) {
 // --- PROTEÇÃO DE ROTA E CARREGAMENTO DE USUÁRIO ---
 onAuthStateChanged(auth, async (user) => {
     if (!user) {
+        // Se for um link LIVE, guardamos o destino para redirecionar depois do login
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('mode') === 'live') {
+            sessionStorage.setItem('redirectAfterLogin', window.location.href);
+        }
         window.location.href = "index.html";
     } else {
 
+        // 1. LER PARÂMETROS DO URL (A CORREÇÃO ESTÁ AQUI)
         const params = new URLSearchParams(window.location.search);
         const urlRootId = params.get('rootId');
-         // >>> NOVA LÓGICA: MODO LIVE (CO-EDIÇÃO) <<<
+        const openFolderId = params.get('openFolder'); // <--- ESTA LINHA FALTAVA
+        
+        // Novos parâmetros para Co-Edição
         const liveNoteId = params.get('noteId');
         const mode = params.get('mode');
+        const redirectSearch = params.get('search');
 
-        if (liveNoteId && mode === 'live') {
-            console.log("🔴 A entrar em MODO LIVE (Multiplayer)...");
-            
-            // 1. Forçar visualização do editor
-            document.body.classList.add('mobile-view-editor'); // Para mobile
-            
-            // 2. Carregar a nota partilhada
-            // Nota: displayNote vai iniciar o setupPresenceSystem
-            await displayNote(liveNoteId, null, null);
-            
-            // 3. Ativar efeitos visuais IMEDIATAMENTE
-            const toolbar = document.getElementById('editor-toolbar');
-            const indicator = document.getElementById('live-indicator');
-            
-            if (toolbar) toolbar.classList.add('live-mode-active');
-            if (indicator) {
-                indicator.style.display = 'flex';
-                indicator.querySelector('span').textContent = "1"; // Começa com 1
-            }
-
-            // 4. Se não formos o dono, esconder botões perigosos (opcional)
-            // ex: esconder botão de apagar nota ou mudar permissões
-            
-            return; // Impede que o resto do código de "Pastas" corra e atrapalhe
-        }
-        
         SUPERFOLDER_ID = urlRootId || null; 
 
         // Carregar Perfil
@@ -3901,11 +3884,46 @@ onAuthStateChanged(auth, async (user) => {
             if (configSnap.exists()) {
                 const savedSettings = configSnap.data();
                 appSettings = { ...appSettings, ...savedSettings };
-                // ... (updates de UI das checkboxes se necessário)
+                
+                // Atualiza checkboxes do modal de configurações
+                const tagCheck = document.getElementById('setting-search-tags');
+                if(tagCheck) tagCheck.checked = appSettings.searchTagsInProtected;
+                
+                const topicCheck = document.getElementById('setting-search-topics');
+                if(topicCheck) topicCheck.checked = appSettings.searchTopicsInProtected;
+                
+                const anchorCheck = document.getElementById('setting-search-anchors');
+                if(anchorCheck) anchorCheck.checked = appSettings.searchAnchorsInProtected;
+
+                const globalCheck = document.getElementById('setting-global-search-superfolder');
+                if(globalCheck) globalCheck.checked = appSettings.searchGlobalInSuperfolder;
             }
         } catch (e) { console.error(e); }
 
-        // CONFIGURAR VISTA INICIAL
+        // >>> LÓGICA 1: MODO LIVE (CO-EDIÇÃO) <<<
+        if (liveNoteId && mode === 'live') {
+            console.log("🔴 A entrar em MODO LIVE (Multiplayer)...");
+            
+            // Força visualização do editor em mobile
+            document.body.classList.add('mobile-view-editor');
+            
+            // Carrega a nota e ativa sistema de presença
+            await displayNote(liveNoteId, null, null);
+            
+            // Ativa efeitos visuais
+            const toolbar = document.getElementById('editor-toolbar');
+            const indicator = document.getElementById('live-indicator');
+            
+            if (toolbar) toolbar.classList.add('live-mode-active');
+            if (indicator) {
+                indicator.style.display = 'flex';
+                const countSpan = document.getElementById('live-user-count');
+                if(countSpan) countSpan.textContent = "1";
+            }
+            return; // Pára aqui, não carrega pastas
+        }
+
+        // >>> LÓGICA 2: CONFIGURAR VISTA INICIAL (PASTAS) <<<
         if (SUPERFOLDER_ID) {
             try {
                 const rootSnap = await getDoc(doc(db, 'pastas', SUPERFOLDER_ID));
@@ -3916,7 +3934,6 @@ onAuthStateChanged(auth, async (user) => {
                     currentSuperfolderParentId = data.parentId; 
                     document.title = `${data.nome} - JW Notebook`;
 
-                    // >>> NOVO: BUSCAR O NOME DA PASTA MÃE <<<
                     if (currentSuperfolderParentId) {
                         const parentDoc = await getDoc(doc(db, 'pastas', currentSuperfolderParentId));
                         if (parentDoc.exists()) {
@@ -3927,7 +3944,6 @@ onAuthStateChanged(auth, async (user) => {
                     } else {
                         currentSuperfolderParentName = "Raiz Global";
                     }
-                    // ----------------------------------------
                     
                     updateNavigationView(); 
                     
@@ -3937,6 +3953,7 @@ onAuthStateChanged(auth, async (user) => {
                 }
             } catch (e) { console.error("Erro superpasta:", e); }
         } else {
+            // Se houver um ID de pasta para abrir (openFolderId), usamos a função de reconstrução
             if (openFolderId) {
                 await reconstructFolderNavigation(openFolderId);
             } else {
@@ -3945,11 +3962,10 @@ onAuthStateChanged(auth, async (user) => {
             }
         }
 
-        const redirectNoteId = params.get('noteId');
-        const redirectSearch = params.get('search');
-        if (redirectNoteId) {
-            await reconstructNavigationPath(redirectNoteId);
-            setTimeout(() => displayNote(redirectNoteId, null, redirectSearch), 500);
+        // >>> LÓGICA 3: REDIRECIONAR PARA NOTA ESPECÍFICA <<<
+        if (liveNoteId && !mode) { // Se tiver ID mas não for live
+            await reconstructNavigationPath(liveNoteId);
+            setTimeout(() => displayNote(liveNoteId, null, redirectSearch), 500);
         }
 
         fetchAllEntities();
