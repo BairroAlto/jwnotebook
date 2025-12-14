@@ -3786,6 +3786,7 @@ let activeTopicIdForManagement = null; // Qual tópico está selecionado na esqu
 let presenceUnsubscribe = null; // Para desligar o listener ao sair
 let myPresenceRef = null;       // Referência do meu "sinal de vida"
 let presenceInterval = null;    // Heartbeat para manter vivo
+let liveSaveTimeout = null;
 let topicTargetId = null; 
 let currentSuperfolderName = "";
 let appSettings = {
@@ -13089,7 +13090,25 @@ noteTitleInput.addEventListener('input', () => {
 });
 noteContentEditor.addEventListener('input', () => {
     updateSaveStatus('unsaved');
-    saveNote();
+
+    // Verifica se estamos em MODO LIVE (Barra vermelha)
+    const isLive = document.getElementById('editor-toolbar').classList.contains('live-mode-active');
+
+    if (isLive) {
+        // --- MODO RÁPIDO (Google Docs) ---
+        // Cancela o timer anterior para não gravar a cada letra, mas sim quando pára de escrever
+        clearTimeout(liveSaveTimeout);
+        
+        liveSaveTimeout = setTimeout(() => {
+            // Grava após 1 segundo de pausa na escrita
+            executeSave();
+        }, 1000); 
+
+    } else {
+        // --- MODO NORMAL (Pessoal) ---
+        // Mantém a lógica original de 2 minutos
+        saveNote(); 
+    }
 });
 document.addEventListener('selectionchange', handleTextSelection);
 
@@ -16794,13 +16813,10 @@ function cleanupPresence() {
         myPresenceRef = null; 
     }
     
-    // 5. Remove listener de fechar janela
-    window.removeEventListener('beforeunload', cleanupPresence);
-    
-    // 6. Reseta a interface visual
+    // 5. Reseta a interface visual
     updateLiveUI(0);
     
-    // 7. Limpa cursores visuais
+    // 6. Limpa cursores visuais
     document.querySelectorAll('.remote-cursor, .remote-label').forEach(el => el.remove());
 }
 
@@ -16808,7 +16824,7 @@ function cleanupPresence() {
 async function setupPresenceSystem(noteId) {
     if (!auth.currentUser) return;
     
-    cleanupPresence(); // Limpa anteriores
+    cleanupPresence(); // Limpa anteriores para evitar duplicados
 
     const userId = auth.currentUser.uid;
     const userName = currentUserData?.nome || "Anónimo";
@@ -16818,8 +16834,14 @@ async function setupPresenceSystem(noteId) {
     const userPresenceDoc = doc(db, 'pastas', noteId, 'active_users', userId);
     myPresenceRef = userPresenceDoc;
 
-    // --- A. HEARTBEAT + CURSOR (ENVIAR) ---
+    // --- A. HEARTBEAT (BATIMENTO CARDÍACO) ---
     const updateHeartbeat = async () => {
+        // Se a página estiver escondida (outra aba), não envia sinal e apaga presença
+        if (document.hidden) {
+            if (myPresenceRef) deleteDoc(myPresenceRef).catch(() => {});
+            return;
+        }
+
         // Calcular posição relativa ao editor
         const coords = getCaretCoordinates();
         let cursorData = null;
@@ -16836,44 +16858,67 @@ async function setupPresenceSystem(noteId) {
         }
 
         try {
+            // Regista que "Estou aqui agora"
             await setDoc(userPresenceDoc, {
                 name: userName,
                 color: myColor,
                 cursor: cursorData,
-                lastSeen: serverTimestamp()
+                lastSeen: serverTimestamp() // Importante: Hora do servidor
             });
         } catch (e) { }
     };
 
+    // Inicia o batimento (a cada 2 segundos)
     updateHeartbeat();
     presenceInterval = setInterval(updateHeartbeat, 2000); 
 
+    // Envio rápido ao clicar/escrever
     const editorDiv = document.getElementById('note-content-editor');
-    const sendCursorUpdate = () => setTimeout(updateHeartbeat, 100);
+    const sendCursorUpdate = () => setTimeout(updateHeartbeat, 50);
     
     if (editorDiv) {
         editorDiv.addEventListener('click', sendCursorUpdate);
         editorDiv.addEventListener('keyup', sendCursorUpdate);
     }
 
+    // --- DETEÇÃO DE MUDANÇA DE ABA (VISIBILITY API) ---
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+            // Se mudou de aba: Apaga-me da sala imediatamente
+            if (myPresenceRef) deleteDoc(myPresenceRef);
+        } else {
+            // Se voltou: Volta a registar-me imediatamente
+            updateHeartbeat();
+        }
+    });
+
     // --- B. OUVIR OS OUTROS (RECEBER CURSORES) ---
     const qPresence = collection(db, 'pastas', noteId, 'active_users');
     
     presenceUnsubscribe = onSnapshot(qPresence, (snapshot) => {
-        const now = Date.now();
+        const now = Date.now(); // Hora local
         const editorDiv = document.getElementById('note-content-editor');
         if (!editorDiv) return;
 
-        // Limpa cursores antigos
+        // Limpa cursores antigos antes de desenhar novos
         document.querySelectorAll('.remote-cursor, .remote-label').forEach(el => el.remove());
 
         let activeCount = 0;
 
         snapshot.docs.forEach(doc => {
             const data = doc.data();
-            // Ignora a mim mesmo e fantasmas (> 2 min)
+            
+            // 1. Ignora a mim mesmo
             if (doc.id === userId) return; 
-            if (data.lastSeen && (now - data.lastSeen.toMillis() > 120000)) return;
+
+            // 2. FILTRO DE FANTASMAS (MUITO MAIS RÍGIDO: 15 SEGUNDOS)
+            // Se o utilizador não der sinal de vida há 15s (fechou browser à força), ignoramos
+            if (data.lastSeen) {
+                const lastSeenDate = data.lastSeen.toDate();
+                const diff = now - lastSeenDate.getTime();
+                // Se a diferença for maior que 15000ms (15s), consideramos offline
+                if (diff > 15000) return; 
+            }
 
             activeCount++;
 
@@ -16897,11 +16942,11 @@ async function setupPresenceSystem(noteId) {
             }
         });
 
-        // Atualiza a UI (Eu + Outros)
+        // Atualiza a UI (Contador = Eu + Outros Ativos)
         updateLiveUI(activeCount + 1);
     });
 
-    // --- C. OUVIR O CONTEÚDO ---
+    // --- C. OUVIR O CONTEÚDO (Igual à versão anterior corrigida) ---
     const noteDocRef = doc(db, 'pastas', noteId);
     
     contentUnsubscribe = onSnapshot(noteDocRef, (docSnap) => {
@@ -16909,17 +16954,27 @@ async function setupPresenceSystem(noteId) {
         const newData = docSnap.data();
         const editor = document.getElementById('note-content-editor');
         
-        // Se eu NÃO estou a escrever (sem foco), aceito as mudanças
-        if (editor && document.activeElement !== editor) {
-            if (editor.innerHTML !== newData.conteudo) {
-                console.log("🔄 Recebida atualização remota.");
-                editor.innerHTML = newData.conteudo;
-                if(typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
+        if (editor && editor.innerHTML !== newData.conteudo) {
+            // Tenta manter posição do cursor
+            const selection = window.getSelection();
+            const hadFocus = (document.activeElement === editor);
+            
+            editor.innerHTML = newData.conteudo;
+            if(typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
+
+            // Se estava focado, move para o fim para não perder o fio à meada
+            if (hadFocus) {
+                const range = document.createRange();
+                range.selectNodeContents(editor);
+                range.collapse(false);
+                selection.removeAllRanges();
+                selection.addRange(range);
             }
         }
-    });
+    }, (error) => { console.error("Erro sync:", error); });
 
-    window.addEventListener('beforeunload', cleanupPresence);
+    // Listener de fechar janela (pagehide é mais fiável que beforeunload em mobile)
+    window.addEventListener('pagehide', cleanupPresence);
 }
     </script>
 </body>
