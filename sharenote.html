@@ -224,7 +224,7 @@
         <button class="action-btn" id="btn-copy">📋 Copiar Texto</button>
         <button class="action-btn" id="btn-pdf">📥 PDF</button>
         <button class="action-btn import-btn" id="btn-import">
-            <span class="satellite-icon">🛰️</span> Adicionar na Minha Pasta (Atalho)
+            <span class="satellite-icon">🛰️</span> Adicionar na Minha Pasta
         </button>
     </div>
 
@@ -240,7 +240,7 @@
 <div id="import-modal" class="modal-overlay">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Guardar Nota (Atalho)</h3>
+            <h3>Guardar Nota</h3>
             <button onclick="document.getElementById('import-modal').style.display='none'" style="background:none; border:none; color:var(--text-muted); font-size:24px; cursor:pointer;">×</button>
         </div>
         <div class="modal-body">
@@ -249,7 +249,7 @@
                 <span id="import-path">Raiz</span>
             </div>
             
-            <p id="import-instruction" style="font-size:0.9em; color:var(--text-muted); margin-bottom:10px;">Selecione onde quer guardar o atalho para esta nota.</p>
+            <p id="import-instruction" style="font-size:0.9em; color:var(--text-muted); margin-bottom:10px;">Selecione onde quer guardar esta nota.</p>
 
             <ul id="import-list" class="import-list">
                 <!-- Preenchido via JS -->
@@ -258,14 +258,14 @@
             <!-- Opções ao selecionar uma Pasta -->
             <div id="folder-actions" class="import-options-container">
                 
-                <!-- OPÇÃO 1: CÓPIA EDITÁVEL (O que tu queres) -->
+                <!-- BOTÃO 1: CÓPIA FÍSICA (Editável) -->
                 <button class="import-option-btn" id="action-save-copy" style="border-color:var(--accent-color); color:var(--text-color); font-weight:bold; justify-content: center; margin-bottom: 8px; background-color: var(--hover-color);">
                     📄 Importar Cópia (Editável)
                 </button>
 
-                <!-- OPÇÃO 2: ATALHO (Apenas leitura) -->
+                <!-- BOTÃO 2: ATALHO (Leitura/Sincronizado) -->
                 <button class="import-option-btn" id="action-save-shortcut" style="border-color:var(--text-muted); color:var(--text-muted); justify-content: center; font-size: 0.85em;">
-                    🔗 Criar Atalho (Sincronizado/Leitura)
+                    🔗 Criar Atalho (Apenas Leitura)
                 </button>
             </div>
 
@@ -534,56 +534,96 @@
     });
 
     // =========================================================================
-    // GRAVAR NOVA NOTA (MODO ATALHO / ACESSO REVOGÁVEL)
+    // OPÇÃO 1: IMPORTAR CÓPIA EDITÁVEL (CRIA UMA NOTA NOVA E INDEPENDENTE)
     // =========================================================================
-  document.getElementById('action-save-new-note').addEventListener('click', async () => {
-        if (!sharedNoteData) return;
-        const btn = document.getElementById('action-save-new-note');
-        btn.innerHTML = "⏳ A criar...";
-        
-        try {
-            // 1. Preparar os dados base
-            const docData = {
-                nome: sharedNoteData.nome || "Sem Título",
-                parentId: selectedTargetId || null, // Garante null se undefined
-                tipo: 'nota',
-                userId: currentUser.uid,
-                estado: 'ativa',
-                ordem: 999,
-                createdAt: serverTimestamp(),
-                ultimaedicao: serverTimestamp()
-            };
+    const btnSaveCopy = document.getElementById('action-save-copy');
+    if (btnSaveCopy) {
+        btnSaveCopy.addEventListener('click', async () => {
+            if (!sharedNoteData) return;
+            
+            btnSaveCopy.innerHTML = "⏳ A copiar conteúdo...";
+            btnSaveCopy.disabled = true;
+            
+            try {
+                // Cria um documento NOVO com o CONTEÚDO FÍSICO
+                const newDoc = await addDoc(collection(db, 'pastas'), {
+                    nome: sharedNoteData.nome || "Cópia Importada",
+                    parentId: selectedTargetId || null,
+                    tipo: 'nota',
+                    
+                    // >>> IMPORTANTE: Copia o conteúdo real, NÃO cria pointerId <<<
+                    conteudo: sharedNoteData.conteudo || "", 
+                    
+                    userId: currentUser.uid,
+                    estado: 'ativa',
+                    ordem: 999,
+                    createdAt: serverTimestamp(),
+                    ultimaedicao: serverTimestamp(),
+                    tags: [] // Começa sem tags para evitar conflitos
+                });
+                
+                // Redireciona para a nota (agora será editável!)
+                window.location.href = `note.html?noteId=${newDoc.id}`;
+                
+            } catch (e) {
+                console.error(e);
+                alert("Erro ao copiar nota.");
+                btnSaveCopy.innerHTML = "📄 Importar Cópia (Editável)";
+                btnSaveCopy.disabled = false;
+            }
+        });
+    }
 
-            // 2. DECISÃO INTELIGENTE: Atalho ou Cópia?
-            // Verificamos se temos o ID original para fazer o link
-            if (sharedNoteData.originalNoteId) {
-                // --- MODO ATALHO (POINTER) ---
-                console.log("🔗 Criando atalho para:", sharedNoteData.originalNoteId);
-                
-                docData.pointerId = sharedNoteData.originalNoteId;
-                docData.originalAuthorId = sharedNoteData.authorId || null; // Evita undefined
-                docData.isSharedCopy = true;
-                // Nota: Não gravamos 'conteudo', ele será carregado do original
-            } else {
-                // --- MODO CÓPIA (FALLBACK) ---
-                // Se não sabemos o ID original, criamos uma cópia física do conteúdo
-                console.log("📄 ID original não encontrado. Criando cópia física.");
-                
-                docData.conteudo = sharedNoteData.conteudo || "";
+    // =========================================================================
+    // OPÇÃO 2: CRIAR ATALHO (POINTER - APENAS LEITURA)
+    // =========================================================================
+    const btnSaveShortcut = document.getElementById('action-save-shortcut');
+    if (btnSaveShortcut) {
+        btnSaveShortcut.addEventListener('click', async () => {
+            if (!sharedNoteData) return;
+            
+            // Validação: Só podemos criar atalho se a nota tiver ID original
+            if (!sharedNoteData.originalNoteId) {
+                alert("Esta nota é antiga e não suporta atalhos. Por favor use a opção 'Importar Cópia'.");
+                return;
             }
 
-            // 3. Gravar no Firestore
-            const newDoc = await addDoc(collection(db, 'pastas'), docData);
-            
-            // 4. Sucesso: Redirecionar
-            window.location.href = `note.html?noteId=${newDoc.id}`;
-            
-        } catch (e) {
-            console.error("Erro ao criar atalho:", e);
-            alert("Erro ao criar a nota: " + e.message);
-            btn.innerHTML = "🔗 Criar Atalho nesta Pasta";
-        }
-    });
+            btnSaveShortcut.innerHTML = "⏳ A vincular...";
+            btnSaveShortcut.disabled = true;
+
+            try {
+                const docData = {
+                    nome: sharedNoteData.nome || "Atalho",
+                    parentId: selectedTargetId || null,
+                    tipo: 'nota',
+                    userId: currentUser.uid,
+                    estado: 'ativa',
+                    ordem: 999,
+                    createdAt: serverTimestamp(),
+                    ultimaedicao: serverTimestamp(),
+                    
+                    // DADOS DE ATALHO
+                    pointerId: sharedNoteData.originalNoteId,
+                    originalAuthorId: sharedNoteData.authorId || null,
+                    isSharedCopy: true
+                };
+
+                await addDoc(collection(db, 'pastas'), docData);
+                
+                // Redireciona (aparecerá como leitura no note.html)
+                // Usamos window.location para garantir que recarrega limpo
+                // Nota: se selectedTargetId for null, vai para a raiz
+                const targetUrl = selectedTargetId ? `note.html?openFolder=${selectedTargetId}` : 'note.html';
+                window.location.href = targetUrl;
+
+            } catch (e) {
+                console.error(e);
+                alert("Erro ao criar atalho.");
+                btnSaveShortcut.innerHTML = "🔗 Criar Atalho (Apenas Leitura)";
+                btnSaveShortcut.disabled = false;
+            }
+        });
+    }
 
     // INSERIR EM NOTA EXISTENTE
     document.querySelectorAll('[data-insert-type]').forEach(btn => {
@@ -629,8 +669,6 @@
             }
         });
     });
-
-
 
     // --- LIMPEZA DE CONTEÚDO (Visual) ---
     function processContentForReading(htmlContent) {
@@ -704,54 +742,6 @@
 
    // ARRANQUE
    init();
-
-
-
- // =========================================================================
-    // AÇÃO: IMPORTAR CÓPIA EDITÁVEL (Resolve o problema de não conseguir editar)
-    // =========================================================================
-    document.getElementById('action-save-copy').addEventListener('click', async () => {
-        if (!sharedNoteData) return;
-        const btn = document.getElementById('action-save-copy');
-        btn.innerHTML = "⏳ A copiar conteúdo...";
-        
-        try {
-            // Cria um documento NOVO com o CONTEÚDO FÍSICO
-            const newDoc = await addDoc(collection(db, 'pastas'), {
-                nome: sharedNoteData.nome || "Cópia Importada",
-                parentId: selectedTargetId || null,
-                tipo: 'nota',
-                
-                // >>> IMPORTANTE: Copia o conteúdo, NÃO cria pointerId <<<
-                conteudo: sharedNoteData.conteudo || "", 
-                
-                userId: currentUser.uid,
-                estado: 'ativa',
-                ordem: 999,
-                createdAt: serverTimestamp(),
-                ultimaedicao: serverTimestamp(),
-                tags: [] // Começa sem tags para evitar conflitos
-            });
-            
-            // Redireciona para a nota (agora será editável!)
-            window.location.href = `note.html?noteId=${newDoc.id}`;
-            
-        } catch (e) {
-            console.error(e);
-            alert("Erro ao copiar nota.");
-            btn.innerHTML = "📄 Importar Cópia (Editável)";
-        }
-    });
-
-    // Mantenha o listener antigo do 'action-save-new-note' mas mude o ID para 'action-save-shortcut'
-    // se quiser manter a funcionalidade de atalhos.
-    document.getElementById('action-save-shortcut').addEventListener('click', async () => {
-         // ... (O código que já tinha para criar atalhos/pointers) ...
-         // Certifique-se que usa o código corrigido que enviei na resposta anterior (com a validação do pointerId)
-    });
-
-
-
 </script>
 
 </body>
