@@ -6498,78 +6498,124 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
     
     selectedNoteId = noteId;
     
-    // 2. Alternar visualização para o Editor
+    // 2. Alternar visualização
     editorPlaceholder.style.display = 'none';
     editorArea.style.display = 'flex';
     
-    // 3. LIMPEZA DE CONTEXTO (Lógica Alterada)
-    // Só fecha o painel SE o parâmetro keepReferencesOpen for FALSO.
     if (!keepReferencesOpen && notebookContainer.classList.contains('references-panel-visible')) {
         hideReferencesPanel();
     }
     
-    // 4. Carregar dados
+    // 3. CARREGAMENTO INTELIGENTE (ATALHO vs REAL)
     try {
         const noteRef = doc(db, 'pastas', noteId);
         const noteSnap = await getDoc(noteRef);
 
         if (noteSnap.exists()) {
-            const data = noteSnap.data();
+            let data = noteSnap.data();
+            let isReadOnly = false;
 
-// --- LÓGICA DO INDICADOR DE MARGEM (🔬) ---
-const marginBtn = document.querySelector('button[data-action="open-margin-editor"]');
-if (marginBtn) {
-    if (data.marginElements && data.marginElements.length > 0) {
-        // Tem edições: Fundo Amarelo/Dourado suave
-        marginBtn.style.backgroundColor = "rgba(241, 196, 15, 0.2)";
-        marginBtn.style.borderColor = "#f1c40f";
-        marginBtn.style.color = "#f1c40f";
-        marginBtn.title = "Editor de Margem (Contém anotações)";
-    } else {
-        // Não tem edições: Reset ao estilo padrão
-        marginBtn.style.backgroundColor = "";
-        marginBtn.style.borderColor = "";
-        marginBtn.style.color = "";
-        marginBtn.title = "Editor de Margem (Anotações)";
-    }
-      // INICIAR SISTEMA LIVE
-    setupPresenceSystem(noteId);
-}
+            // --- VERIFICAÇÃO DE ATALHO (ACESSO REVOGÁVEL) ---
+            if (data.pointerId) {
+                console.log("🔗 Isto é um atalho. A carregar nota original...");
+                
+                try {
+                    // Tenta carregar a original
+                    const originalRef = doc(db, 'pastas', data.pointerId);
+                    const originalSnap = await getDoc(originalRef);
+
+                    // Verifica se existe e se a partilha AINDA está ativa
+                    if (originalSnap.exists()) {
+                        const originalData = originalSnap.data();
+                        
+                        // SEGREDO DA REVOGAÇÃO: Verifica se o dono desligou a partilha
+                        if (originalData.shareSettings && originalData.shareSettings.shared === true) {
+                            // SUCESSO: Substitui os dados locais pelos dados reais da original
+                            data = originalData;
+                            
+                            // Define como Apenas Leitura (o visitante não pode editar a original diretamente aqui)
+                            // A menos que queiramos permitir edição direta (Live), mas isso requer regras de segurança extra.
+                            // Por segurança, começamos com Read-Only.
+                            isReadOnly = true; 
+                            
+                            // Aviso visual
+                            document.getElementById('save-status-indicator').textContent = "👁️ Modo Leitura (Partilhado)";
+                        } else {
+                            throw new Error("Acesso revogado pelo proprietário.");
+                        }
+                    } else {
+                        throw new Error("Nota original foi apagada.");
+                    }
+                } catch (accessError) {
+                    // SE FALHAR (REVOGADO): Mostra erro no editor
+                    noteTitleInput.value = "Acesso Indisponível";
+                    noteContentEditor.innerHTML = `
+                        <div style="text-align:center; padding:50px; color:#e74c3c;">
+                            <h2>🚫 Acesso Revogado</h2>
+                            <p>${accessError.message}</p>
+                            <p style="color:#888; font-size:0.9em;">O proprietário pode ter parado a partilha ou apagado a nota.</p>
+                        </div>
+                    `;
+                    noteContentEditor.contentEditable = "false";
+                    return;
+                }
+            }
+            // ------------------------------------------------
 
             const { nome, conteudo, shareSettings } = data; 
             
             noteTitleInput.value = nome || '';
             noteContentEditor.innerHTML = conteudo || '';
 
-            currentNoteShareData = shareSettings || { shared: false, shareId: null };
-            updateNoteSharingButtonUI(currentNoteShareData.shared);
+            // Bloqueia edição se for atalho
+            noteContentEditor.contentEditable = isReadOnly ? "false" : "true";
+            noteTitleInput.readOnly = isReadOnly;
 
+            currentNoteShareData = shareSettings || { shared: false, shareId: null };
+            if (!isReadOnly) updateNoteSharingButtonUI(currentNoteShareData.shared);
+
+            // ... (Resto do código de inicialização de plugins, igual ao anterior) ...
             fixLegacyMiniNotes(); 
             refreshAllCalendars();
 
-            // Scroll para o termo pesquisado (Nome da entidade)
             if (searchTerm) {
                 setTimeout(() => { scrollToAndHighlightText(searchTerm); }, 300);
             } else {
                 noteContentEditor.scrollTop = 0;
             }
 
-            setTimeout(() => { scanAndLinkEntities(); }, 1000); 
+            // Se for atalho, não ligamos o scan automático para não pesar
+            if (!isReadOnly) {
+                setTimeout(() => { scanAndLinkEntities(); }, 1000); 
+                
+                // LÓGICA DO INDICADOR DE MARGEM (🔬)
+                const marginBtn = document.querySelector('button[data-action="open-margin-editor"]');
+                if (marginBtn) {
+                    if (data.marginElements && data.marginElements.length > 0) {
+                        marginBtn.style.backgroundColor = "rgba(241, 196, 15, 0.2)";
+                        marginBtn.style.borderColor = "#f1c40f";
+                        marginBtn.style.color = "#f1c40f";
+                    } else {
+                        marginBtn.style.backgroundColor = "";
+                        marginBtn.style.borderColor = "";
+                        marginBtn.style.color = "";
+                    }
+                }
+                // INICIAR SISTEMA LIVE (Só se for a minha nota)
+                setupPresenceSystem(noteId);
+            }
+
         }
     } catch (error) {
         console.error("Erro ao carregar nota:", error);
     }
     
-    // 5. UI Mobile
+    // UI Mobile
     notebookContainer.classList.add('left-panel-collapsed');
     if (window.innerWidth <= 768) {
         notebookContainer.classList.add('middle-panel-collapsed');
         document.body.classList.remove('mobile-view-middle');
         document.body.classList.add('mobile-view-editor');
-        if (middlePanelToggleBtn) {
-            middlePanelToggleBtn.textContent = '»';
-            middlePanelToggleBtn.title = "Expandir Painel";
-        }
     }
 
     updateSaveStatus('saved');
