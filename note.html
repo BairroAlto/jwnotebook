@@ -3883,6 +3883,7 @@ let activeTopicIdForManagement = null; // Qual tópico está selecionado na esqu
 let presenceUnsubscribe = null; // Para desligar o listener ao sair
 let myPresenceRef = null;       // Referência do meu "sinal de vida"
 let presenceInterval = null;    // Heartbeat para manter vivo
+let isClosingNote = false;
 let currentShortcutId = null;
 let liveSaveTimeout = null;
 let topicTargetId = null; 
@@ -6609,6 +6610,7 @@ function updateMiddlePanelForFolderSelection(folderId, folderName, selectedEleme
 
 
 async function displayNote(noteId, noteElement, searchTerm = null, keepReferencesOpen = false) {
+     isClosingNote = false; 
       // Reset da memória se for uma nota normal
     currentShortcutId = null;
     // 1. Lógica visual de seleção na lista
@@ -6875,69 +6877,129 @@ function extractTopicsFromEditorHTML() {
 
 // Função que faz a gravação real no Firebase
 async function executeSave() {
+    // --- 1. TRAVA DE SEGURANÇA (CRÍTICO) ---
+    if (isClosingNote) {
+        console.warn("🚫 Gravação bloqueada: A nota está a ser fechada.");
+        return;
+    }
+
     if (!selectedNoteId) return;
 
-    // --- 1. Determinar o ID de Destino (Local vs Remoto) ---
-    let targetId = selectedNoteId; // Por defeito, grava no documento atual
-    
-    // Se estivermos em Modo Live ou a ver um Atalho, queremos gravar no ORIGINAL
-    // Verificamos se o elemento da lista tem um pointerId
+    // --- 2. Determinar o ID de Destino ---
+    let targetId = selectedNoteId;
     const listItem = document.querySelector(`.list-item[data-id="${selectedNoteId}"]`);
     
-    // Se for atalho live ou partilhado e tivermos acesso de escrita
     if (listItem && listItem.dataset.isLive === "true") {
-        // Precisamos de saber o ID original. 
-        // Felizmente, guardámo-lo quando carregámos a nota.
-        // Vamos buscar à memória global ou ler do documento se necessário.
-        
-        // Forma segura: Ler o pointerId do documento atual na BD antes de gravar
-        // (Para evitar erros, fazemos uma leitura rápida se não tivermos a certeza)
         try {
             const snap = await getDoc(doc(db, 'pastas', selectedNoteId));
             if (snap.exists() && snap.data().pointerId) {
-                targetId = snap.data().pointerId; // MUDA O ALVO PARA A NOTA ORIGINAL
-                console.log(`📡 Modo Live: A gravar na nota original (${targetId}) em vez do atalho.`);
+                targetId = snap.data().pointerId;
             }
-        } catch(e) { console.error("Erro ao resolver pointer:", e); }
+        } catch(e) { console.error("Erro pointer:", e); }
     }
 
     updateSaveStatus('saving');
 
     try {
-        // Fixar valores dos inputs
+        const noteRef = doc(db, 'pastas', targetId);
+        
+        // Preparar dados do HTML
         const miniNoteInputs = noteContentEditor.querySelectorAll('.mini-note-title-input');
         miniNoteInputs.forEach(input => input.setAttribute('value', input.value || ''));
 
-        // Usamos o targetId calculado acima
-        const noteRef = doc(db, 'pastas', targetId);
-        
         const finalTopicsIndex = extractTopicsFromEditorHTML();
         let finalTagNames = []; 
-        try { finalTagNames = Array.from(noteContentEditor.querySelectorAll('span.tag')).map(s => s.textContent.substring(1)); } catch(e){}
+        try { 
+            finalTagNames = Array.from(noteContentEditor.querySelectorAll('span.tag'))
+                .map(s => s.textContent.substring(1)); 
+        } catch(e){}
         
         const coloredWrappers = noteContentEditor.querySelectorAll('.mini-note-wrapper[data-highlight]');
         const uniqueColorsUsed = [...new Set(Array.from(coloredWrappers).map(el => el.dataset.highlight))];
 
+        const newContentHTML = noteContentEditor.innerHTML;
+        const newTextContent = noteContentEditor.innerText.trim();
+
+        // =================================================================
+        // 🛡️ MÓDULO DE SEGURANÇA MÁXIMA (BLACKBOX)
+        // =================================================================
+        
+        // Verifica se a nota vai ficar VAZIA (ou quase vazia)
+        if (newTextContent.length === 0) {
+            console.warn("⚠️ ALERTA DE SEGURANÇA: Detetada tentativa de apagar todo o conteúdo.");
+
+            // 1. Busca o que está atualmente na base de dados (A versão segura)
+            const currentSnap = await getDoc(noteRef);
+            
+            if (currentSnap.exists()) {
+                const dbData = currentSnap.data();
+                const oldContent = dbData.conteudo || "";
+                
+                // Remove tags HTML para ver se a versão antiga tinha texto real
+                const oldText = oldContent.replace(/<[^>]*>?/gm, '').trim();
+
+                // 2. Se a versão antiga tinha texto (> 5 letras) e a nova é vazia...
+                if (oldText.length > 5) {
+                    console.log("🚨 BLACKBOX ATIVADA: A salvar cópia de emergência...");
+                    
+                    try {
+                        // 3. Cria uma cópia na coleção 'blackbox'
+                        await addDoc(collection(db, 'blackbox'), {
+                            originalNoteId: targetId,
+                            noteName: dbData.nome,
+                            conteudo: oldContent, // Salva o HTML completo original
+                            deletedAt: serverTimestamp(),
+                            userId: auth.currentUser.uid,
+                            reason: "Safety Trigger: Content Wiped"
+                        });
+                        console.log("✅ Cópia de segurança salva na Blackbox com sucesso.");
+                    } catch (err) {
+                        console.error("❌ FALHA CRÍTICA NA BLACKBOX:", err);
+                        // Opcional: alert("Erro de segurança! Não foi possível fazer backup.");
+                    }
+                }
+            }
+        }
+        // =================================================================
+
+        // --- 3. GRAVAÇÃO PRINCIPAL ---
         await updateDoc(noteRef, { 
             nome: noteTitleInput.value, 
-            conteudo: noteContentEditor.innerHTML,
+            conteudo: newContentHTML,
             tags: finalTagNames,
             coresUsadas: uniqueColorsUsed,
             topicosSelecionados: finalTopicsIndex, 
             ultimaedicao: serverTimestamp()
         });
 
-        // Se gravámos no original, também atualizamos o nome no nosso atalho local para ficar igual
+        // Sincroniza nome do atalho local se necessário
         if (targetId !== selectedNoteId) {
             const shortcutRef = doc(db, 'pastas', selectedNoteId);
-            await updateDoc(shortcutRef, {
-                nome: noteTitleInput.value // Sincroniza apenas o nome
-            });
+            await updateDoc(shortcutRef, { nome: noteTitleInput.value });
         }
 
         // Atualiza UI
-        if (listItem) listItem.querySelector('span').textContent = (listItem.dataset.isLive ? "🗪 " : "📄 ") + noteTitleInput.value;
+        if (listItem) {
+            let icon = "📄 ";
+            if (listItem.dataset.isLive) icon = "🗪 ";
+            else if (listItem.hasAttribute('data-protected')) icon = "🔒 ";
+            const spanName = listItem.querySelector('span');
+            if (spanName) spanName.textContent = icon + noteTitleInput.value;
+        }
         
+        // Sincronização Pública
+        if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
+            try {
+                setDoc(doc(db, 'shared_notes', currentNoteShareData.shareId), {
+                    nome: noteTitleInput.value,
+                    conteudo: newContentHTML,
+                    authorName: currentUserData?.nome || "Anónimo",
+                    updatedAt: serverTimestamp(),
+                    type: 'full_note'
+                }, { merge: true }).catch(err => console.error("Erro sync partilha:", err));
+            } catch (e) {}
+        }
+
         updateSaveStatus('saved');
         return true; 
 
@@ -11757,31 +11819,43 @@ if (backBtn) {
 }
 
 // 4. Botão VOLTAR do Editor (Direita -> Meio)
-if (mobileBackBtn) {
+ if (mobileBackBtn) {
     mobileBackBtn.addEventListener('click', async (e) => {
         e.preventDefault(); 
         
-        // A. Guardar ID para scroll
-        const noteIdToHighlight = selectedNoteId; 
+        // 1. GRAVAR ÚLTIMO ESTADO (Enquanto ainda é seguro)
+        if (typeof saveNote === 'function' && selectedNoteId) {
+            await saveNote(true); // Grava o que está lá agora
+        }
 
-        // B. Gravar
-        if (typeof saveNote === 'function') await saveNote(true);
-        
-        // C. REMOÇÃO CRÍTICA DAS CLASSES DE DESKTOP
-        // Isto impede que o CSS de "painel colapsado" interfira com o menu mobile
+        // 2. ATIVAR ESCUDO (A partir daqui, NADA mais é gravado)
+        isClosingNote = true; 
+
+        // 3. LIMPAR TEMPORIZADORES PENDENTES
+        if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
+        if (typeof liveSaveTimeout !== 'undefined') clearTimeout(liveSaveTimeout);
+
+        // 4. DESLIGAR ID
+        const idToScroll = selectedNoteId;
+        selectedNoteId = null;
+
+        // 5. AGORA É SEGURO LIMPAR O VISUAL
+        // Como isClosingNote = true, o evento 'input' disparado aqui será ignorado pelo executeSave
+        const titleInput = document.getElementById('note-title-input');
+        const contentEditor = document.getElementById('note-content-editor');
+        if (titleInput) titleInput.value = "";
+        if (contentEditor) contentEditor.innerHTML = "";
+
+        // 6. MUDAR O ECRÃ
         const container = document.querySelector('.notebook-container');
-        container.classList.remove('middle-panel-collapsed');
-        // Opcional: garantir que o painel esquerdo não interfere
-        // container.classList.add('left-panel-collapsed'); 
-
-        // D. Troca de Ecrã Mobile
+        if (container) container.classList.remove('middle-panel-collapsed');
         document.body.classList.remove('mobile-view-editor');
         document.body.classList.add('mobile-view-middle');
 
-        // E. Scroll e Destaque
-        if (noteIdToHighlight) {
+        // 7. SCROLL
+        if (idToScroll) {
             setTimeout(() => {
-                const noteItem = document.querySelector(`#file-list .list-item[data-id="${noteIdToHighlight}"]`);
+                const noteItem = document.querySelector(`#file-list .list-item[data-id="${idToScroll}"]`);
                 if (noteItem) {
                     document.querySelectorAll('.list-item.last-active').forEach(el => el.classList.remove('last-active'));
                     noteItem.classList.add('last-active');
