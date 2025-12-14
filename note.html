@@ -4978,6 +4978,9 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
 
 async function updateNavigationView(keepEditorOpen = false, targetSelectId = null) {
+    console.log("🌲 [DEBUG NAV] updateNavigationView chamado.");
+    console.log("🌲 [DEBUG NAV] keepEditorOpen é:", keepEditorOpen);
+
     // Reset visual básico
     notebookContainer.classList.remove('left-panel-collapsed');
 
@@ -4985,7 +4988,12 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
     if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
     if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
     
-    if (!keepEditorOpen) resetEditor();
+   if (!keepEditorOpen) {
+        console.warn("❌ [DEBUG NAV] A fazer RESET ao editor (Live vai cair aqui!)");
+        resetEditor();
+    } else {
+        console.log("✅ [DEBUG NAV] Editor protegido. O Live deve continuar.");
+    }
 
     const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
@@ -6637,9 +6645,8 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
             }
 
             // Se for atalho, não ligamos o scan automático para não pesar
-            if (!isReadOnly) {
+           if (!isReadOnly) {
           
-                
                 // LÓGICA DO INDICADOR DE MARGEM (🔬)
                 const marginBtn = document.querySelector('button[data-action="open-margin-editor"]');
                 if (marginBtn) {
@@ -6653,8 +6660,16 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
                         marginBtn.style.color = "";
                     }
                 }
-                // INICIAR SISTEMA LIVE (Só se for a minha nota)
-                setupPresenceSystem(noteId);
+
+                // >>> CORREÇÃO DO LIVE (SALA ÚNICA) <<<
+                // Se for um atalho LIVE (pointerId), liga-se à sala da nota ORIGINAL.
+                // Se for nota normal, liga-se à sua própria sala.
+                const targetRoomId = (data.pointerId && data.isLive) ? data.pointerId : noteId;
+                
+                console.log(`📡 A conectar à sala Live ID: ${targetRoomId}`);
+                
+                // INICIAR SISTEMA LIVE
+                setupPresenceSystem(targetRoomId);
             }
 
         }
@@ -7618,24 +7633,65 @@ function requestPassword(mode, itemId) {
             desc.textContent = 'Escolha uma palavra-passe para este item.';
             newConfirmBtn.textContent = 'Proteger';
             
-            newConfirmBtn.onclick = async () => {
-                const pass = input.value.trim();
-                if (!pass) return alert("A palavra-passe não pode ser vazia.");
-                
-                // Grava no Firebase
-                try {
-                    await updateDoc(doc(db, 'pastas', itemId), {
-                        passe: pass,
-                        ultimaedicao: serverTimestamp()
-                    });
-                    cleanup();
-                    resolve(true);
-                } catch (e) {
-                    console.error(e);
-                    alert("Erro ao proteger item.");
-                    resolve(false);
-                }
-            };
+newConfirmBtn.onclick = async () => {
+        let targetId = selectedDestFolderId;
+        
+        // Fallback: Se não selecionou nada, assume a pasta atual da vista
+        if (targetId === null) {
+            const startRootId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
+            const currentViewId = moveStack.length > 0 ? moveStack[moveStack.length - 1].id : startRootId;
+            if(!confirm(`Mover "${itemContext.name}" para a pasta que está a ver agora?`)) return;
+            targetId = currentViewId;
+        }
+
+        if (targetId === itemContext.id) {
+            alert("Não pode mover uma pasta para dentro de si mesma.");
+            return;
+        }
+
+        try {
+            // --- VERIFICAÇÃO TRIPLA DE SEGURANÇA (PARA PROTEGER O LIVE) ---
+            const moveId = String(itemContext.id);
+            const currentId = String(selectedNoteId);
+            const currentTitle = document.getElementById('note-title-input').value;
+            
+            // Verifica se é o mesmo ID
+            const matchID = (moveId === currentId);
+            
+            // Verifica se é o mesmo Nome (Fallback muito útil)
+            const matchName = (itemContext.name === currentTitle);
+            
+            // Verifica se o item movido aponta para a nota aberta (caso seja atalho)
+            let matchPointer = false;
+            if (activeItemContext && activeItemContext.pointerId && activeItemContext.pointerId === currentId) {
+                matchPointer = true;
+            }
+
+            // Se QUALQUER um for verdade, é a mesma nota!
+            const isMovingCurrentNote = matchID || matchName || matchPointer;
+
+            console.log(`🛡️ PROTEÇÃO LIVE: ID[${matchID}] Nome[${matchName}] Pointer[${matchPointer}] -> Resultado: ${isMovingCurrentNote}`);
+
+            const itemRef = doc(db, 'pastas', itemContext.id);
+            
+            // 1. Atualizar na BD
+            await updateDoc(itemRef, {
+                parentId: targetId, 
+                ultimaedicao: serverTimestamp()
+            });
+
+            modal.style.display = 'none';
+            
+            // 2. Atualizar Vista (Passando a decisão de proteção)
+            if (typeof updateNavigationView === 'function') {
+                updateNavigationView(isMovingCurrentNote);
+            }
+            
+        } catch (error) {
+            console.error("Erro ao mover:", error);
+            alert("Erro ao mover o item.");
+        }
+    };
 
         } else { 
             // Modos: 'access' (abrir) ou 'remove' (tirar proteção)
@@ -7958,14 +8014,21 @@ async function openMoveModal(itemContext) {
         
       // >>> CORREÇÃO DO MODO LIVE <<<
             // 1. Verifica se estamos a mover a nota que está aberta no editor
-            const isMovingCurrentNote = (itemContext.id === selectedNoteId);
+           // >>> ADICIONE ESTES LOGS AQUI <<<
+console.log("🔍 [DEBUG MOVER] ID do Item a mover:", itemContext.id);
+console.log("🔍 [DEBUG MOVER] ID da Nota Aberta:", selectedNoteId);
 
+// Verifica se são iguais (tenta converter para string para garantir)
+const isMovingCurrentNote = (String(itemContext.id) === String(selectedNoteId));
+
+console.log("🔍 [DEBUG MOVER] É a mesma nota?", isMovingCurrentNote);
+
+            
             // 2. Chama a atualização da vista
             if (typeof updateNavigationView === 'function') {
-                // Passamos 'true' se for a nota atual.
-                // Isto diz ao sistema: "Atualiza a esquerda, mas NÃO faças reset ao editor nem ao Live!"
-                updateNavigationView(isMovingCurrentNote);
-            }
+               console.log("🔍 [DEBUG MOVER] A chamar updateNavigationView com:", isMovingCurrentNote);
+    updateNavigationView(isMovingCurrentNote);
+}
             
         } catch (error) {
             console.error("Erro ao mover:", error);
@@ -17183,7 +17246,8 @@ contentUnsubscribe = onSnapshot(noteDocRef, (docSnap) => {
         : null;
 
     // 2. Atualizar HTML
-    editor.innerHTML = newData.conteudo;
+   editor.innerHTML = (newData.conteudo !== undefined && newData.conteudo !== null) ? newData.conteudo : '';
+
     
     // 3. Restaurar Funcionalidades
     if(typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
