@@ -2389,7 +2389,6 @@ a.board-link:hover {
     max-width: 95vw;       /* Ocupa no máximo 95% da largura do ecrã */
     flex-wrap: wrap;       /* Permite que os botões passem para baixo se não houver espaço */
     justify-content: center; 
-    left: 0 !important;    /* Prevenção extra */
 }
 
 /* Realce para a última nota ativa na lista */
@@ -7239,10 +7238,9 @@ function updateMiddlePanelForFolderSelection(folderId, folderName, selectedEleme
 
 
 async function displayNote(noteId, noteElement, searchTerm = null, keepReferencesOpen = false) {
-    isClosingNote = false; 
-    // Reset da memória se for uma nota normal
+     isClosingNote = false; 
+      // Reset da memória se for uma nota normal
     currentShortcutId = null;
-    
     // 1. Lógica visual de seleção na lista
     document.querySelectorAll('#middle-panel .list-item.selected').forEach(el => el.classList.remove('selected'));
     
@@ -7267,11 +7265,11 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
         const noteRef = doc(db, 'pastas', noteId);
         const noteSnap = await getDoc(noteRef);
 
-        if (noteSnap.exists()) {
-            let data = noteSnap.data();
-            let isReadOnly = false;
+     if (noteSnap.exists()) {
+    let data = noteSnap.data();
+    let isReadOnly = false;
 
-            // --- VERIFICAÇÃO DE ATALHO (CORRIGIDO) ---
+   // --- VERIFICAÇÃO DE ATALHO (CORRIGIDO) ---
             if (data.pointerId) {
                 console.log("🔗 Isto é um atalho...");
                 
@@ -7292,7 +7290,7 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
                                 // >>> AQUI ESTÁ A CORREÇÃO MÁGICA <<<
                                 // Substituímos os dados do atalho (vazios) pelos dados originais (texto)
                                 // Guardamos o ID do atalho num sitio seguro para a lista saber quem iluminar
-                                const shortcutId = data.id; 
+                               const shortcutId = data.id; 
                                 
                                 // SALVAR NA MEMÓRIA GLOBAL
                                 currentShortcutId = shortcutId; 
@@ -7330,7 +7328,7 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
             noteTitleInput.value = nome || '';
             noteContentEditor.innerHTML = conteudo || '';
 
-            // Bloqueia edição se for atalho de leitura
+            // Bloqueia edição se for atalho
             noteContentEditor.contentEditable = isReadOnly ? "false" : "true";
             noteTitleInput.readOnly = isReadOnly;
 
@@ -7347,25 +7345,35 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
                 noteContentEditor.scrollTop = 0;
             }
 
-            // >>> CORREÇÃO FINAL DO LIVE <<<
+            // Se for atalho, não ligamos o scan automático para não pesar
+           // >>> CORREÇÃO FINAL DO LIVE <<<
                 
-            // 1. Determina a Sala Correta
-            const targetRoomId = (data.pointerId && data.isLive) ? data.pointerId : noteId;
-            
-            console.log(`📡 A conectar à sala Live ID: ${targetRoomId}`);
-            
-            // 2. Conecta ao Firebase (Ouve os outros)
-            setupPresenceSystem(targetRoomId);
+                // 1. Determina a Sala Correta
+                const targetRoomId = (data.pointerId && data.isLive) ? data.pointerId : noteId;
+                const isLiveSession = (data.pointerId && data.isLive === true);
 
-            // 3. RESET VISUAL INICIAL
-            // Começamos sempre com o visual "Normal" (limpo).
-            // Se o setupPresenceSystem detetar > 1 pessoa, ele ativará o vermelho.
-            const toolbar = document.getElementById('editor-toolbar');
-            const indicator = document.getElementById('live-indicator');
+                console.log(`📡 A conectar à sala Live ID: ${targetRoomId} (É Atalho Live? ${isLiveSession})`);
+                
+                // 2. Conecta ao Firebase
+                setupPresenceSystem(targetRoomId);
 
-            if (toolbar) toolbar.classList.remove('live-mode-active');
-            if (indicator) indicator.style.display = 'none';
-        }
+                // 3. FORÇA A ATUALIZAÇÃO VISUAL IMEDIATA
+                // Se for um atalho Live, ligamos logo a barra vermelha para o utilizador saber que está online
+                const toolbar = document.getElementById('editor-toolbar');
+                const indicator = document.getElementById('live-indicator');
+                const countSpan = document.getElementById('live-user-count');
+
+                if (isLiveSession) {
+                    toolbar.classList.add('live-mode-active');
+                    indicator.style.display = 'flex';
+                    // Começa com 1 (eu) até o Firebase atualizar os outros
+                    if(countSpan && countSpan.textContent === '0') countSpan.textContent = "1";
+                } else {
+                    // Se for nota normal, desliga até entrar alguém
+                    toolbar.classList.remove('live-mode-active');
+                    indicator.style.display = 'none';
+                }
+            }
     } catch (error) {
         console.error("Erro ao carregar nota:", error);
     }
@@ -7549,36 +7557,55 @@ async function executeSave() {
             console.warn("⚠️ ALERTA DE SEGURANÇA: Detetada tentativa de apagar todo o conteúdo.");
 
             // 1. Busca o que está atualmente na base de dados (A versão segura)
-            const currentSnap = await getDoc(noteRef);
+          // 1. Busca o que está atualmente na base de dados (A versão segura)
+        // Precisamos disto para comparar o tamanho antigo com o novo
+        const currentSnap = await getDoc(noteRef);
+        
+        if (currentSnap.exists()) {
+            const dbData = currentSnap.data();
+            const oldContent = dbData.conteudo || "";
             
-            if (currentSnap.exists()) {
-                const dbData = currentSnap.data();
-                const oldContent = dbData.conteudo || "";
-                
-                // Remove tags HTML para ver se a versão antiga tinha texto real
-                const oldText = oldContent.replace(/<[^>]*>?/gm, '').trim();
+            // Remove tags HTML para comparar apenas a massa de texto real
+            const oldText = oldContent.replace(/<[^>]*>?/gm, '').trim();
+            const newText = newTextContent; // Já calculado em cima (innerText)
 
-                // 2. Se a versão antiga tinha texto (> 5 letras) e a nova é vazia...
-                if (oldText.length > 5) {
-                    console.log("🚨 BLACKBOX ATIVADA: A salvar cópia de emergência...");
+            // Só ativa a regra se a nota original tivesse algum conteúdo relevante (> 20 caracteres)
+            if (oldText.length > 20) {
+                
+                // Cálculo da percentagem restante
+                const ratio = newText.length / oldText.length;
+                
+                // SE RESTAR MENOS DE 10% (Ou seja, apagou > 90% ou tudo)
+                if (ratio < 0.1) {
+                    console.warn(`🚨 ALERTA DE SEGURANÇA: Detetado apagamento massivo (${Math.round((1-ratio)*100)}%). A criar backup de emergência...`);
                     
                     try {
-                        // 3. Cria uma cópia na coleção 'blackbox'
-                        await addDoc(collection(db, 'blackbox'), {
-                            originalNoteId: targetId,
-                            noteName: dbData.nome,
-                            conteudo: oldContent, // Salva o HTML completo original
-                            deletedAt: serverTimestamp(),
-                            userId: auth.currentUser.uid,
-                            reason: "Safety Trigger: Content Wiped"
+                        // Grava na sub-coleção de BACKUPS da própria nota (para aparecer no histórico)
+                        const backupsRef = collection(db, 'pastas', targetId, 'backups');
+                        
+                        await addDoc(backupsRef, {
+                            titulo: dbData.nome + " (Auto-Segurança 🚨)",
+                            conteudo: oldContent, // Guarda o conteúdo ANTIGO (antes de apagar)
+                            timestamp: serverTimestamp(),
+                            isSafetyBackup: true, // <--- ESTA É A CHAVE PARA A NOVA SECÇÃO
+                            reason: `Apagamento massivo detetado`
                         });
-                        console.log("✅ Cópia de segurança salva na Blackbox com sucesso.");
+
+                        console.log("✅ Backup de segurança criado com sucesso no Histórico.");
+                        
+                        // Opcional: Feedback visual ao utilizador
+                        const statusEl = document.getElementById('save-status-indicator');
+                        if(statusEl) {
+                            statusEl.textContent = "🚨 Cópia de segurança criada!";
+                            setTimeout(() => updateSaveStatus('saved'), 3000);
+                        }
+
                     } catch (err) {
-                        console.error("❌ FALHA CRÍTICA NA BLACKBOX:", err);
-                        // Opcional: alert("Erro de segurança! Não foi possível fazer backup.");
+                        console.error("❌ FALHA NO BACKUP DE SEGURANÇA:", err);
                     }
                 }
             }
+        }
         }
         // =================================================================
 
@@ -13118,13 +13145,19 @@ function handleTextSelection() {
             // 4. Adiciona o scroll da página (caso exista)
             leftPos += scrollX;
 
-            // 5. Cálculo Vertical (Tenta pôr em baixo, se não couber, põe em cima)
-            let topPos = rect.bottom + window.scrollY + 8;
+        // 5. Cálculo Vertical (Padrão: EM CIMA ⬆️)
+            const popupHeight = selectionPopup.offsetHeight || 50; // Altura estimada se ainda não renderizou
+            const gap = 10; // Espaço entre o texto e a barra
+
+            // Calcula a posição acima do texto (Topo do texto - Altura da Barra - Espaço)
+            let topPos = (rect.top + window.scrollY) - popupHeight - gap;
             
-            // (Opcional: Se estiver muito no fundo do ecrã, mete a barra em cima do texto)
-            // if (rect.bottom > window.innerHeight - 50) {
-            //    topPos = rect.top + window.scrollY - 50;
-            // }
+            // PROTEÇÃO DE TOPO:
+            // Se o texto estiver muito no topo do ecrã (ex: 1ª linha) e a barra for ficar cortada...
+            // ...então muda automaticamente para BAIXO.
+            if (rect.top < (popupHeight + gap + 50)) { // +50 compensa a barra de ferramentas do editor
+               topPos = rect.bottom + window.scrollY + gap;
+            }
 
             // APLICA AS POSIÇÕES FINAIS
             selectionPopup.style.top = `${topPos}px`;
@@ -13164,12 +13197,12 @@ async function loadBackupsForNote() {
     listEl.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar histórico...</span></div>';
 
     try {
-        // 1. Carregar Backups Normais (Subcoleção)
+        // 1. Carregar Backups (Todos)
         const backupsRef = collection(db, 'pastas', selectedNoteId, 'backups');
         const qBackups = query(backupsRef, orderBy('timestamp', 'desc'));
         const backupsSnap = await getDocs(qBackups);
 
-        // 2. Carregar Itens Ocultos (Campo no documento principal)
+        // 2. Carregar Itens Ocultos (Subnotas)
         const noteDocRef = doc(db, 'pastas', selectedNoteId);
         const noteDocSnap = await getDoc(noteDocRef);
         const hiddenNotes = (noteDocSnap.exists() && noteDocSnap.data().subnotasocultas) 
@@ -13178,11 +13211,25 @@ async function loadBackupsForNote() {
 
         listEl.innerHTML = '';
 
-        // --- RENDERIZAR ITENS OCULTOS (RECICLAGEM) ---
+        // Separar os backups em dois grupos
+        const safetyBackups = [];
+        const manualBackups = [];
+
+        backupsSnap.forEach(doc => {
+            const data = { id: doc.id, ...doc.data() };
+            if (data.isSafetyBackup === true) {
+                safetyBackups.push(data);
+            } else {
+                manualBackups.push(data);
+            }
+        });
+
+        // ============================================================
+        // BLOCO 1: 🗑️ Reciclagem (Itens Ocultos)
+        // ============================================================
         if (Object.keys(hiddenNotes).length > 0) {
             const headerNotes = document.createElement('h4');
             headerNotes.textContent = "🗑️ Reciclagem (Itens Ocultos)";
-            headerNotes.style.marginTop = "0";
             headerNotes.style.color = "var(--text-muted-color)";
             headerNotes.style.borderBottom = "1px solid var(--border-color)";
             headerNotes.style.paddingBottom = "5px";
@@ -13195,82 +13242,29 @@ async function loadBackupsForNote() {
             });
 
             sortedHidden.forEach(note => {
+                let displayTitle = note.titulo || "Item Sem Título";
+                let borderColor = '#3498db'; 
+                let icon = '📘';
+                
+                if (note.tipo === 'question') { borderColor = '#2ecc71'; icon = '📗'; }
+                else if (note.tipo === 'free') { borderColor = '#e67e22'; icon = '📙'; }
+                else if (note.tipo === 'toggle') { borderColor = '#9b59b6'; icon = '☂'; }
+
                 const li = document.createElement('li');
                 li.style.justifyContent = 'space-between';
                 li.style.marginBottom = '6px';
                 li.style.backgroundColor = 'var(--bg-color)'; 
                 li.style.padding = '8px';
                 li.style.borderRadius = '4px';
-
-                // --- 1. LÓGICA DE CORES E ÍCONES ---
-                let borderColor, icon, label, labelColor, displayTitle;
-
-                // >>> NOVO: SUPORTE A TOGGLE <<<
-                if (note.tipo === 'toggle') {
-                    // ROXO (Para distinguir)
-                    borderColor = '#9b59b6'; 
-                    icon = '☂';
-                    label = 'Secção Expansível';
-                    labelColor = '#9b59b6';
-                    displayTitle = note.titulo || "Toggle Sem Título";
-                }
-                else if (note.tipo === 'question') {
-                    borderColor = '#2ecc71'; icon = '📗'; label = 'Questão'; labelColor = '#2ecc71';
-                    displayTitle = note.titulo || "Sem Título";
-                } 
-                else if (note.tipo === 'free') {
-                    borderColor = '#e67e22'; icon = '📙'; label = 'Contentor'; labelColor = '#e67e22';
-                    const tempDiv = document.createElement("div");
-                    tempDiv.innerHTML = note.conteudo || "";
-                    const plainText = tempDiv.textContent || "";
-                    const words = plainText.trim().split(/\s+/);
-                    if (words.length > 0 && words[0] !== "") {
-                        displayTitle = words.slice(0, 10).join(" ");
-                        if (words.length > 10) displayTitle += "...";
-                    } else {
-                        displayTitle = "Contentor (Vazio)";
-                    }
-                } 
-                else {
-                    borderColor = '#3498db'; icon = '📘'; label = 'SubNota'; labelColor = '#3498db';
-                    displayTitle = note.titulo || "Sem Título";
-                }
-
-                // --- 2. DATA DE ELIMINAÇÃO ---
-                let deletionDateStr = "Data desconhecida";
-                if (note.deletedAt && note.deletedAt.seconds) {
-                    const date = new Date(note.deletedAt.seconds * 1000);
-                    const day = String(date.getDate()).padStart(2, '0');
-                    const month = String(date.getMonth() + 1).padStart(2, '0');
-                    const hours = String(date.getHours()).padStart(2, '0');
-                    const minutes = String(date.getMinutes()).padStart(2, '0');
-                    deletionDateStr = `${day}/${month} às ${hours}:${minutes}`;
-                }
-
-                // --- 3. HTML ---
                 li.style.borderLeft = `4px solid ${borderColor}`;
-                
+
                 li.innerHTML = `
-                    <div style="display:flex; flex-direction:column; padding-left: 8px; flex: 1; min-width: 0;">
-                        <span style="font-weight:bold; font-size: 0.95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                            ${displayTitle}
-                        </span>
-                        
-                        <div style="display: flex; align-items: center; gap: 6px; margin-top: 3px;">
-                            <span style="font-size: 0.75em; background-color: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; color: ${labelColor}; border: 1px solid ${labelColor};">
-                                ${icon} ${label}
-                            </span>
-                            <small style="color:#666; font-size: 0.8em;">Apagado: ${deletionDateStr}</small>
-                        </div>
-                    </div>
-                    
-                    <button class="modal-btn primary" onclick="restoreHiddenMiniNote('${note.id}')" style="padding: 5px 12px; font-size: 0.8em; height: 32px; align-self: center; margin-left: 10px; flex-shrink: 0;">
-                        Restaurar
-                    </button>
+                    <span style="font-weight:bold; font-size: 0.95em;">${icon} ${displayTitle}</span>
+                    <button class="modal-btn primary" onclick="restoreHiddenMiniNote('${note.id}')" style="padding: 5px 12px; font-size: 0.8em;">Restaurar</button>
                 `;
                 listEl.appendChild(li);
             });
-            
+
             const hr = document.createElement('hr');
             hr.style.margin = "20px 0";
             hr.style.border = "0";
@@ -13278,20 +13272,21 @@ async function loadBackupsForNote() {
             listEl.appendChild(hr);
         }
 
-        // --- RENDERIZAR BACKUPS NORMAIS ---
+        // ============================================================
+        // BLOCO 2: 💾 Versões Anteriores (Manuais)
+        // ============================================================
         const headerBackups = document.createElement('h4');
         headerBackups.textContent = "💾 Versões Anteriores da Nota";
         listEl.appendChild(headerBackups);
 
-        if (backupsSnap.empty) {
+        if (manualBackups.length === 0) {
             const emptyLi = document.createElement('li');
-            emptyLi.textContent = "Nenhum backup de versão encontrado.";
+            emptyLi.textContent = "Nenhum backup manual encontrado.";
             emptyLi.style.fontStyle = "italic";
             emptyLi.style.color = "var(--text-muted-color)";
             listEl.appendChild(emptyLi);
         } else {
-            backupsSnap.forEach(doc => {
-                const backup = { id: doc.id, ...doc.data() };
+            manualBackups.forEach(backup => {
                 const li = document.createElement('li');
                 li.style.justifyContent = 'space-between';
                 const backupDate = formatTimestamp(backup.timestamp);
@@ -13301,6 +13296,48 @@ async function loadBackupsForNote() {
                     <div style="display:flex; gap: 5px;">
                         <button class="modal-btn secondary" data-action="view" data-backup-id="${backup.id}" style="padding: 5px 10px;">Ver</button>
                         <button class="modal-btn primary" data-action="restore" data-backup-id="${backup.id}" style="padding: 5px 10px;">Restaurar</button>
+                    </div>
+                `;
+                listEl.appendChild(li);
+            });
+        }
+
+        // ============================================================
+        // BLOCO 3: 🚨 Versões Guardadas por Segurança (NOVO LOCAL)
+        // ============================================================
+        if (safetyBackups.length > 0) {
+            // Separador antes da secção de perigo
+            const hrSafety = document.createElement('hr');
+            hrSafety.style.margin = "25px 0 10px 0";
+            hrSafety.style.border = "0";
+            hrSafety.style.borderTop = "1px solid var(--border-color)";
+            listEl.appendChild(hrSafety);
+
+            const headerSafety = document.createElement('h4');
+            headerSafety.textContent = "🚨 Versões Guardadas por Segurança";
+            headerSafety.style.color = "#e74c3c"; // Vermelho
+            headerSafety.style.marginTop = "0";
+            headerSafety.style.borderBottom = "1px solid #e74c3c";
+            headerSafety.style.paddingBottom = "5px";
+            listEl.appendChild(headerSafety);
+
+            safetyBackups.forEach(backup => {
+                const li = document.createElement('li');
+                li.style.justifyContent = 'space-between';
+                li.style.backgroundColor = "rgba(231, 76, 60, 0.1)"; // Fundo avermelhado
+                li.style.borderLeft = "4px solid #e74c3c";
+                li.style.marginTop = "5px";
+                
+                const backupDate = formatTimestamp(backup.timestamp);
+                
+                li.innerHTML = `
+                    <div style="display:flex; flex-direction:column;">
+                        <span style="font-weight:bold; color:#e74c3c;">${backupDate}</span>
+                        <small style="color:var(--text-muted-color);">Recuperação Automática</small>
+                    </div>
+                    <div style="display:flex; gap: 5px;">
+                        <button class="modal-btn secondary" data-action="view" data-backup-id="${backup.id}" style="padding: 5px 10px;">Ver</button>
+                        <button class="modal-btn primary" data-action="restore" data-backup-id="${backup.id}" style="padding: 5px 10px; background-color:#e74c3c;">Restaurar</button>
                     </div>
                 `;
                 listEl.appendChild(li);
