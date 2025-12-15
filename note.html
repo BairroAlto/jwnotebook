@@ -4882,41 +4882,35 @@ async function renderTopicsSelectionList() {
         return;
     }
 
-    snapshot.forEach(doc => {
-        const topic = { id: doc.id, ...doc.data() };
-        const isSelected = currentNoteTopics.hasOwnProperty(topic.id);
-        
-        const li = document.createElement('li');
-        if (topic.id === activeTopicIdForSelection) li.classList.add('active-topic');
+  snapshot.forEach(doc => {
+            const item = { id: doc.id, ...doc.data() };
+            const li = document.createElement('li');
+            li.style.display = 'flex';
+            li.style.justifyContent = 'space-between';
+            li.style.alignItems = 'center';
+            li.style.padding = '10px';
+            li.style.borderBottom = '1px solid var(--border-color)';
 
-        // Checkbox: Seleciona/Desseleciona o tópico para a nota
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.className = 'topic-checkbox';
-        checkbox.checked = isSelected;
-        checkbox.onclick = (e) => {
-            e.stopPropagation(); // Não ativa o click do li
-            toggleTopicSelection(topic.id, checkbox.checked);
-        };
+            const icon = item.tipo === 'pasta' ? '📁' : '📄';
 
-        const span = document.createElement('span');
-        span.textContent = topic.nome;
-        span.style.flexGrow = '1';
+            // --- LÓGICA DE PROTEÇÃO DE SISTEMA (NOVO) ---
+            // Verifica se é a pasta especial "Partilhadas" na raiz
+            const isSystemFolder = (item.nome === 'Partilhadas' && !item.parentId && item.tipo === 'pasta');
+            
+            // Define o estilo do botão Eliminar (Esconde se for sistema)
+            const deleteBtnStyle = isSystemFolder 
+                ? 'display:none;' 
+                : 'background-color:#c0392b; color:white; font-size:0.8em; padding:5px 10px; border:none; border-radius:5px; cursor:pointer;';
 
-        li.appendChild(checkbox);
-        li.appendChild(span);
-
-        // Click no LI: Carrega os subtópicos na direita
-        li.onclick = () => {
-            // Remove classe active dos outros
-            list.querySelectorAll('li').forEach(el => el.classList.remove('active-topic'));
-            li.classList.add('active-topic');
-            activeTopicIdForSelection = topic.id;
-            renderSubtopicsSelectionList(topic.id, topic.nome);
-        };
-
-        list.appendChild(li);
-    });
+            li.innerHTML = `
+                <span class="item-name" style="font-weight:500;">${icon} ${item.nome}</span> 
+                <div style="display:flex; gap:10px;">
+                    <button class="modal-btn primary" data-action="restore" data-id="${item.id}" style="font-size:0.8em; padding:5px 10px;">Restaurar</button>
+                    <button class="modal-btn" data-action="delete" data-id="${item.id}" style="${deleteBtnStyle}">Eliminar</button>
+                </div>
+            `;
+            list.appendChild(li);
+        });
 }
 
 async function renderSubtopicsSelectionList(topicId, topicName) {
@@ -5620,19 +5614,26 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             li.dataset.name = item.nome;
             li.dataset.parentid = item.parentId || 'null';
 
-            // --- LÓGICA DE ÍCONES CORRIGIDA ---
-            let icon = ""; // <-- DECLARADA AQUI, ANTES DOS IFS
+            // --- LÓGICA DE ÍCONES E REBORDOS ---
+            let icon = ""; 
 
             // 1. É Superpasta?
             if (item.superpasta === true) {
                 li.dataset.superpasta = "true";
-                li.style.borderLeft = "3px solid var(--accent-color)";
+                li.style.borderLeft = "3px solid #f1c40f"; // Amarelo (Superpasta)
                 if (item.customIcon) {
                     li.style.setProperty('--custom-icon', `"${item.customIcon}"`);
                 }
             }
 
-            // 2. É Atalho? (Prioridade sobre ícone normal)
+            // 2. É a Pasta "Partilhadas"? (NOVO)
+            // Se for pasta, tiver nome Partilhadas e estiver na raiz (sem parentId)
+            if (item.tipo === 'pasta' && item.nome === 'Partilhadas' && !item.parentId) {
+                li.style.borderLeft = "3px solid #e74c3c"; // Vermelho
+                li.dataset.systemFolder = "true"; // Opcional, para CSS futuro
+            }
+
+            // 3. É Atalho? (Prioridade sobre ícone normal)
             if (item.pointerId) {
                 // SE FOR MODO LIVE (🗪)
                 if (item.isLive === true) {
@@ -5648,14 +5649,11 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
                 }
             }
 
-            // 3. É Protegida? (Adiciona cadeado)
+            // 4. É Protegida? (Adiciona cadeado)
             if (item.passe && item.passe.trim() !== "") {
                 li.setAttribute('data-protected', 'true'); 
-                icon += "🔒 "; // Acumula (ex: "🗪 🔒")
+                icon += "🔒 "; 
             }
-
-            // Se não tiver ícone especial até agora, não põe nada (o CSS põe o padrão)
-            // Ou pode definir um padrão se preferir
 
             const nameSpan = document.createElement('span');
             nameSpan.textContent = `${icon}${item.nome}`;
@@ -7241,9 +7239,10 @@ function updateMiddlePanelForFolderSelection(folderId, folderName, selectedEleme
 
 
 async function displayNote(noteId, noteElement, searchTerm = null, keepReferencesOpen = false) {
-     isClosingNote = false; 
-      // Reset da memória se for uma nota normal
+    isClosingNote = false; 
+    // Reset da memória se for uma nota normal
     currentShortcutId = null;
+    
     // 1. Lógica visual de seleção na lista
     document.querySelectorAll('#middle-panel .list-item.selected').forEach(el => el.classList.remove('selected'));
     
@@ -7268,11 +7267,11 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
         const noteRef = doc(db, 'pastas', noteId);
         const noteSnap = await getDoc(noteRef);
 
-     if (noteSnap.exists()) {
-    let data = noteSnap.data();
-    let isReadOnly = false;
+        if (noteSnap.exists()) {
+            let data = noteSnap.data();
+            let isReadOnly = false;
 
-   // --- VERIFICAÇÃO DE ATALHO (CORRIGIDO) ---
+            // --- VERIFICAÇÃO DE ATALHO (CORRIGIDO) ---
             if (data.pointerId) {
                 console.log("🔗 Isto é um atalho...");
                 
@@ -7293,7 +7292,7 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
                                 // >>> AQUI ESTÁ A CORREÇÃO MÁGICA <<<
                                 // Substituímos os dados do atalho (vazios) pelos dados originais (texto)
                                 // Guardamos o ID do atalho num sitio seguro para a lista saber quem iluminar
-                               const shortcutId = data.id; 
+                                const shortcutId = data.id; 
                                 
                                 // SALVAR NA MEMÓRIA GLOBAL
                                 currentShortcutId = shortcutId; 
@@ -7331,7 +7330,7 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
             noteTitleInput.value = nome || '';
             noteContentEditor.innerHTML = conteudo || '';
 
-            // Bloqueia edição se for atalho
+            // Bloqueia edição se for atalho de leitura
             noteContentEditor.contentEditable = isReadOnly ? "false" : "true";
             noteTitleInput.readOnly = isReadOnly;
 
@@ -7348,35 +7347,25 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
                 noteContentEditor.scrollTop = 0;
             }
 
-            // Se for atalho, não ligamos o scan automático para não pesar
-           // >>> CORREÇÃO FINAL DO LIVE <<<
+            // >>> CORREÇÃO FINAL DO LIVE <<<
                 
-                // 1. Determina a Sala Correta
-                const targetRoomId = (data.pointerId && data.isLive) ? data.pointerId : noteId;
-                const isLiveSession = (data.pointerId && data.isLive === true);
+            // 1. Determina a Sala Correta
+            const targetRoomId = (data.pointerId && data.isLive) ? data.pointerId : noteId;
+            
+            console.log(`📡 A conectar à sala Live ID: ${targetRoomId}`);
+            
+            // 2. Conecta ao Firebase (Ouve os outros)
+            setupPresenceSystem(targetRoomId);
 
-                console.log(`📡 A conectar à sala Live ID: ${targetRoomId} (É Atalho Live? ${isLiveSession})`);
-                
-                // 2. Conecta ao Firebase
-                setupPresenceSystem(targetRoomId);
+            // 3. RESET VISUAL INICIAL
+            // Começamos sempre com o visual "Normal" (limpo).
+            // Se o setupPresenceSystem detetar > 1 pessoa, ele ativará o vermelho.
+            const toolbar = document.getElementById('editor-toolbar');
+            const indicator = document.getElementById('live-indicator');
 
-                // 3. FORÇA A ATUALIZAÇÃO VISUAL IMEDIATA
-                // Se for um atalho Live, ligamos logo a barra vermelha para o utilizador saber que está online
-                const toolbar = document.getElementById('editor-toolbar');
-                const indicator = document.getElementById('live-indicator');
-                const countSpan = document.getElementById('live-user-count');
-
-                if (isLiveSession) {
-                    toolbar.classList.add('live-mode-active');
-                    indicator.style.display = 'flex';
-                    // Começa com 1 (eu) até o Firebase atualizar os outros
-                    if(countSpan && countSpan.textContent === '0') countSpan.textContent = "1";
-                } else {
-                    // Se for nota normal, desliga até entrar alguém
-                    toolbar.classList.remove('live-mode-active');
-                    indicator.style.display = 'none';
-                }
-            }
+            if (toolbar) toolbar.classList.remove('live-mode-active');
+            if (indicator) indicator.style.display = 'none';
+        }
     } catch (error) {
         console.error("Erro ao carregar nota:", error);
     }
@@ -15821,6 +15810,34 @@ addItemBtn.addEventListener('click', async () => { // <--- Adicionado 'async' aq
         addAgregBtn.style.display = 'block'; 
         addNoteBtn.style.display = 'block';
     }
+
+     // --- NOVA LÓGICA DE BLOQUEIO ---
+    let isInSharedFolder = false;
+    if (navigationStack.length > 0) {
+        const currentFolder = navigationStack[navigationStack.length - 1];
+        // Verifica se estamos na pasta Partilhadas
+        if (currentFolder.name === 'Partilhadas') {
+            isInSharedFolder = true;
+        }
+    }
+
+    // Configura visibilidade
+    if (isInSharedFolder) {
+        // REGRA: Não pode criar pastas aqui dentro
+        addFolderBtn.style.display = 'none'; 
+        addAgregBtn.style.display = 'none'; // Opcional: Bloquear agregações também se quiser
+        addNoteBtn.style.display = 'block'; // Apenas notas
+    } else if (navigationStack.length === 0) {
+        // Na Raiz
+        addFolderBtn.style.display = 'block';
+        addAgregBtn.style.display = 'block'; 
+        addNoteBtn.style.display = 'none';
+    } else {
+        // Pastas normais
+        addFolderBtn.style.display = 'block';
+        addAgregBtn.style.display = 'block'; 
+        addNoteBtn.style.display = 'block';
+    }
     document.getElementById('add-item-modal').style.display = 'flex';
 });
 
@@ -15978,6 +15995,29 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
     // Guardamos o contexto numa variável local antes que seja limpo pelo hideContextMenu
     const itemContext = { ...activeItemContext };
     hideContextMenu(); 
+
+       // --- REGRA: BLOQUEAR MOVER A PASTA "PARTILHADAS" ---
+   if (action === 'move-folder') {
+        if (itemContext.type === 'pasta' && itemContext.name === 'Partilhadas' && !itemContext.parentId) {
+            alert("🚫 A pasta de sistema 'Partilhadas' não pode ser movida.");
+            return;
+        }
+    }
+
+    // --- REGRA: BLOQUEAR MOVER NOTAS DE DENTRO DE "PARTILHADAS" PARA FORA ---
+    if (action === 'move-folder') { // "Mover de Pasta"
+        // Verifica se o item atual está dentro da pasta Partilhadas
+        // Precisamos verificar o nome da pasta pai. Como o itemContext tem parentId,
+        // podemos verificar se estamos a visualizar a pasta Partilhadas no momento.
+        
+        // Verificação simples baseada na navegação atual (mais rápido)
+        const currentFolder = navigationStack.length > 0 ? navigationStack[navigationStack.length - 1] : null;
+        
+        if (currentFolder && currentFolder.name === 'Partilhadas') {
+            alert("🚫 As notas na pasta 'Partilhadas' não podem ser movidas para outra localização para garantir a sincronização.");
+            return;
+        }
+    }
 
     // --- AÇÃO: MUDAR ICON (CORRIGIDO) ---
     if (action === 'change-icon') {
@@ -18020,19 +18060,16 @@ function updateLiveUI(count) {
     const indicator = document.getElementById('live-indicator');
     const countSpan = document.getElementById('live-user-count');
 
-    // Verifica se estamos num atalho Live (pela classe que adicionámos no displayNote)
-    const isForcedLive = toolbar && toolbar.classList.contains('live-mode-active');
-
-    // LÓGICA CORRIGIDA:
-    // Mostra se houver mais de 1 pessoa OU se for uma nota Live oficial (mesmo sozinho)
-    if (count > 1 || (isForcedLive && count > 0)) {
+    // REGRA DO UTILIZADOR:
+    // O grafismo só aparece se houver 2 ou mais pessoas (Eu + Outro)
+    if (count >= 2) {
         if (toolbar) toolbar.classList.add('live-mode-active');
         if (indicator) {
             indicator.style.display = 'flex';
             if (countSpan) countSpan.textContent = count;
         }
     } else {
-        // Só desliga se NÃO for uma nota Live
+        // Se estiver sozinho (1) ou a carregar (0), mantém o visual normal/limpo
         if (toolbar) toolbar.classList.remove('live-mode-active');
         if (indicator) indicator.style.display = 'none';
     }
