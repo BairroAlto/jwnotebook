@@ -425,16 +425,97 @@
     
     document.getElementById('btn-import').addEventListener('click', openImportModal);
 
-    function openImportModal() {
-        if (!currentUser) {
-            alert("Precisa de iniciar sessão para guardar notas.");
-            window.location.href = "index.html";
-            return;
+  // =========================================================
+// LÓGICA DE IMPORTAÇÃO (MODAL "GUARDAR NOTA")
+// =========================================================
+
+// 1. Função Auxiliar: Garante que a pasta "Partilhadas" existe
+async function ensureSharedFolder() {
+    // Procura a pasta na Raiz (parentId == null)
+    const q = query(
+        collection(db, 'pastas'),
+        where('nome', '==', 'Partilhadas'),
+        where('parentId', '==', null),
+        where('userId', '==', currentUser.uid)
+    );
+
+    const snapshot = await getDocs(q);
+
+    if (!snapshot.empty) {
+        const folderDoc = snapshot.docs[0];
+        const data = folderDoc.data();
+
+        // REGRA CRÍTICA: Se estiver oculta, bloqueia.
+        if (data.estado === 'desativa') {
+            alert("⚠️ A pasta 'Partilhadas' está nos Itens Ocultos.\n\nPara guardar esta nota, vá às Configurações > Itens Ocultos e restaure a pasta 'Partilhadas' primeiro.");
+            return { status: 'hidden' };
         }
+
+        return { status: 'ok', id: folderDoc.id, name: data.nome };
+    } else {
+        // Se não existe, CRIA automaticamente
+        try {
+            const newDoc = await addDoc(collection(db, 'pastas'), {
+                nome: 'Partilhadas',
+                parentId: null, // Raiz
+                tipo: 'pasta',
+                userId: currentUser.uid,
+                estado: 'ativa',
+                ordem: 0, // Fica no topo
+                createdAt: serverTimestamp(),
+                ultimaedicao: serverTimestamp(),
+                isSystemFolder: true // Flag opcional para ajudar na gestão futura
+            });
+            return { status: 'ok', id: newDoc.id, name: 'Partilhadas' };
+        } catch (e) {
+            console.error(e);
+            alert("Erro ao criar pasta de sistema.");
+            return { status: 'error' };
+        }
+    }
+}
+
+// 2. Função Principal de Abertura
+async function openImportModal() {
+    if (!currentUser) {
+        alert("Precisa de iniciar sessão para guardar notas.");
+        window.location.href = "index.html";
+        return;
+    }
+
+    // Se for clonagem automática (Link ?action=clone)
+    if (actionParam === 'clone') {
+        const folderResult = await ensureSharedFolder();
+
+        if (folderResult.status === 'hidden' || folderResult.status === 'error') {
+            // Fecha o modal se houver erro ou estiver oculta
+            document.getElementById('import-modal').style.display = 'none';
+            return; 
+        }
+
+        // Configura a navegação para começar DENTRO da pasta Partilhadas
+        document.getElementById('import-modal').style.display = 'flex';
+        
+        // Simula que navegámos até lá
+        navigationStack = [{ id: folderResult.id, name: folderResult.name }];
+        
+        // Carrega o conteúdo dessa pasta diretamente
+        loadUserFolders(folderResult.id);
+        
+        // Esconde o botão de voltar para não deixar sair desta pasta neste fluxo
+        setTimeout(() => {
+            const backBtn = document.getElementById('import-back-btn');
+            if(backBtn) backBtn.style.display = 'none';
+            document.getElementById('import-path').textContent = "📂 Pasta Partilhadas (Obrigatória)";
+        }, 100);
+
+    } else {
+        // Fluxo normal (clique manual no botão importar) - Mantém comportamento antigo se quiser
         document.getElementById('import-modal').style.display = 'flex';
         navigationStack = [];
         loadUserFolders(null);
     }
+}
 
     async function loadUserFolders(parentId) {
         const list = document.getElementById('import-list');
@@ -468,38 +549,44 @@
                 btnLive.style.display = 'flex';
                 
                 // Configurar clique do Live
-                btnLive.onclick = async () => {
-                    btnLive.innerHTML = "⏳ A criar atalho Live...";
-                    btnLive.disabled = true;
+                 btnLive.onclick = async () => {
+                btnLive.innerHTML = "⏳ A criar atalho Live...";
+                btnLive.disabled = true;
 
-                    try {
-                        // 1. Cria o Atalho Especial na pasta selecionada
-                        await addDoc(collection(db, 'pastas'), {
-                            nome: sharedNoteData.nome, 
-                            parentId: selectedTargetId || null, 
-                            tipo: 'nota',
-                            userId: currentUser.uid,
-                            estado: 'ativa',
-                            ordem: 999,
-                            createdAt: serverTimestamp(),
-                            ultimaedicao: serverTimestamp(),
-                            
-                            // --- DADOS MÁGICOS ---
-                            pointerId: sharedNoteData.originalNoteId, 
-                            isLive: true, 
-                            originalAuthorId: sharedNoteData.authorId
-                        });
+                try {
+                    // 1. Cria o Atalho Especial na pasta selecionada
+                    const newDoc = await addDoc(collection(db, 'pastas'), {
+                        nome: sharedNoteData.nome, 
+                        parentId: selectedTargetId || null, // Onde o utilizador escolheu
+                        tipo: 'nota',
+                        userId: currentUser.uid,
+                        estado: 'ativa',
+                        ordem: 999,
+                        createdAt: serverTimestamp(),
+                        ultimaedicao: serverTimestamp(),
+                        
+                        // --- DADOS MÁGICOS ---
+                        pointerId: sharedNoteData.originalNoteId, 
+                        isLive: true, 
+                        originalAuthorId: sharedNoteData.authorId
+                    });
 
-                        // 2. Redireciona para o Editor
-                        window.location.href = `note.html?noteId=${sharedNoteData.originalNoteId}&mode=live`;
+                    // 2. PREPARAR REDIRECIONAMENTO INTELIGENTE
+                    // Definimos o ID da pasta. Se for null (Raiz), não enviamos nada para abrir a raiz.
+                    const folderParam = selectedTargetId ? `&openFolder=${selectedTargetId}` : '';
 
-                    } catch (e) {
-                        console.error("Erro ao criar atalho live:", e);
-                        alert("Erro ao criar atalho.");
-                        btnLive.innerHTML = "🔴 Entrar em Modo Live (Co-edição)";
-                        btnLive.disabled = false;
-                    }
-                };
+                    // 3. REDIRECIONAR
+                    // IMPORTANTE: Redirecionamos para o ID do NOVO ATALHO (newDoc.id), não o original.
+                    // Assim o note.html sabe qual item iluminar na lista.
+                    window.location.href = `note.html?noteId=${newDoc.id}&mode=live${folderParam}`;
+
+                } catch (e) {
+                    console.error("Erro ao criar atalho live:", e);
+                    alert("Erro ao criar atalho.");
+                    btnLive.innerHTML = "🔴 Entrar em Modo Live (Co-edição)";
+                    btnLive.disabled = false;
+                }
+            };
             } else {
                 btnLive.style.display = 'none';
             }
