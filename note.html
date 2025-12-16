@@ -4667,6 +4667,7 @@ let myPresenceRef = null;       // Referência do meu "sinal de vida"
 let presenceInterval = null;    // Heartbeat para manter vivo
 let currentViewMode = 'local'; // 'local' ou 'shared'
 let systemSharedFolderId = null; // Vai guardar o ID da pasta "Partilhadas"
+let contentUnsubscribe = null;
 let lastServerVersionTime = 0;
 let cursorDebounceTimer = null;
 let lastKnownCursor = null;
@@ -5732,6 +5733,11 @@ async function fetchAllEntities() {
 
 function resetEditor() {
      cleanupPresence();
+       if (contentUnsubscribe) {
+        contentUnsubscribe(); // Para de ouvir as atualizações de texto
+        contentUnsubscribe = null;
+    }
+    
     selectedNoteId = null;
     editorArea.style.display = 'none';
     editorPlaceholder.style.display = 'flex';
@@ -7534,6 +7540,8 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
                 noteContentEditor.scrollTop = 0;
             }
 
+  setupRealTimeListener(realDataId); // Usa realDataId para garantir que funciona em atalhos
+
             // 5. CONFIGURAÇÃO DO MODO LIVE / PRESENÇA
             // Determina a Sala Correta (Se é atalho live, usa o ID original)
             const targetRoomId = (data.isLiveShortcut || (data.pointerId && data.isLive)) ? data.pointerId : noteId;
@@ -7727,7 +7735,7 @@ function extractTopicsFromEditorHTML() {
 async function executeSave() {
     if (!selectedNoteId) return;
     
-    // Atualiza status visual
+    // Atualiza status visual (se não for invisível)
     const statusEl = document.getElementById('save-status-indicator');
     if(statusEl && statusEl.textContent !== 'A guardar...') {
        updateSaveStatus('saving');
@@ -7743,83 +7751,96 @@ async function executeSave() {
     const noteRef = doc(db, 'pastas', targetId);
 
     try {
-        // 1. LEITURA ANTES DA ESCRITA (O Segredo para não apagar dados dos outros)
+        // 1. LEITURA ANTES DA ESCRITA
         const checkSnap = await getDoc(noteRef);
         let finalContentHTML = noteContentEditor.innerHTML;
         let merged = false;
 
         if (checkSnap.exists()) {
             const serverData = checkSnap.data();
-            // Verifica a data da última edição no servidor
+            
+            // =================================================================
+            // 🚨 BLOCO DE SEGURANÇA (BACKUP AUTOMÁTICO EM CASO DE APAGÃO)
+            // =================================================================
+            const oldContent = serverData.conteudo || "";
+            const newContentRaw = noteContentEditor.innerText.trim(); // Texto puro atual
+            const oldContentRaw = oldContent.replace(/<[^>]*>/g, '').trim(); // Texto puro antigo (remove HTML)
+
+            // REGRA: Se a nota tinha mais de 100 caracteres e agora tem menos de 10...
+            // ...CRIAR BACKUP DE EMERGÊNCIA ANTES DE APAGAR!
+            if (oldContentRaw.length > 100 && newContentRaw.length < 10) {
+                console.warn("🚨 APAGÃO DETETADO! A criar backup de segurança automático...");
+                
+                try {
+                    const backupsRef = collection(db, 'pastas', targetId, 'backups');
+                    await addDoc(backupsRef, {
+                        titulo: (serverData.nome || "Sem Nome") + " (Auto-Safety)",
+                        conteudo: oldContent, // Guarda o conteúdo QUE VAI SER APAGADO
+                        timestamp: serverTimestamp(),
+                        isSafetyBackup: true // Marca especial
+                    });
+                    console.log("✅ Backup de segurança criado com sucesso.");
+                } catch (errBackup) {
+                    console.error("Erro ao criar backup de segurança:", errBackup);
+                }
+            }
+            // =================================================================
+
+            // Verifica a data da última edição no servidor para o Smart Merge
             const serverTime = serverData.ultimaedicao ? serverData.ultimaedicao.toMillis() : 0;
 
             // Se o servidor tem uma versão MAIS RECENTE do que a que eu carreguei...
-            // ...significa que alguém escreveu enquanto eu estava a escrever.
             if (serverTime > lastServerVersionTime) {
-                console.log("🔄 Conflito detetado: Alguém escreveu. A iniciar fusão inteligente...");
+                console.log("🔄 Conflito detetado. A iniciar fusão inteligente...");
 
-                // A. Identificar a MINHA linha atual (onde está o meu cursor)
+                // A. Identificar a MINHA linha
                 const selection = window.getSelection();
                 let myLineIndex = -1;
 
                 if (selection.rangeCount > 0) {
                     const range = selection.getRangeAt(0);
-                    // Encontra o bloco de linha atual (p, div, h1, etc.)
                     const currentBlock = range.startContainer.nodeType === 3 
                         ? range.startContainer.parentNode.closest('#note-content-editor > *') 
                         : range.startContainer.closest('#note-content-editor > *');
                     
                     if (currentBlock && editorEl.contains(currentBlock)) {
-                        // Calcula qual é o número da minha linha
                         myLineIndex = Array.from(editorEl.children).indexOf(currentBlock);
                     }
                 }
 
                 // B. Preparar a Fusão
-                // Criamos um editor "fantasma" com o conteúdo MAIS RECENTE do servidor (o do outro user)
                 const serverDOM = document.createElement('div');
                 serverDOM.innerHTML = serverData.conteudo;
 
-                // C. Injetar a MINHA linha no conteúdo do SERVIDOR
-                // Lógica: "O servidor tem razão em tudo, EXCETO na linha que eu estou a editar agora"
+                // C. Injetar a MINHA linha
                 if (myLineIndex > -1 && serverDOM.children[myLineIndex] && editorEl.children[myLineIndex]) {
-                    
-                    // Substitui a linha do servidor pela minha linha atualizada
                     serverDOM.children[myLineIndex].outerHTML = editorEl.children[myLineIndex].outerHTML;
-                    
-                    // O resultado final é: Texto do Outro + Minha Linha Atualizada
                     finalContentHTML = serverDOM.innerHTML;
                     merged = true;
-                    console.log(`✅ Fusão concluída na linha ${myLineIndex}.`);
                 } else {
-                    // Fallback: Se a estrutura mudou drasticamente (ex: apagaram linhas),
-                    // mantemos a versão local para não perder o que você escreveu agora,
-                    // mas isto é raro se o bloqueio visual estiver a funcionar.
-                    console.warn("⚠️ Estrutura divergiu muito. A forçar versão local.");
+                    // Se apagaste tudo, não há linhas para fundir.
+                    // Mantemos o teu "vazio" (mas já fizemos o backup de segurança acima!)
                     finalContentHTML = noteContentEditor.innerHTML;
                 }
             }
         }
 
-        // 2. GRAVAÇÃO FINAL (Com o conteúdo fundido)
+        // 2. GRAVAÇÃO FINAL
         await updateDoc(noteRef, { 
             nome: document.getElementById('note-title-input').value, 
-            conteudo: finalContentHTML, // Envia o HTML combinado
-            ultimaedicao: serverTimestamp() // Atualiza o timestamp
+            conteudo: finalContentHTML,
+            ultimaedicao: serverTimestamp()
         });
 
-        // Atualiza a nossa memória local para saber que estamos sincronizados
         lastServerVersionTime = Date.now(); 
 
-        // 3. ATUALIZAÇÃO DO ECRÃ (Apenas se houve fusão)
-        // Se fundimos, temos de atualizar o nosso ecrã para ver o que o outro escreveu
+        // 3. ATUALIZAÇÃO DO ECRÃ (Se houve fusão)
         if (merged) {
-            // Guardar posição do cursor
             const selection = window.getSelection();
             const savedRange = selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
             const savedOffset = savedRange ? savedRange.startOffset : 0;
             
-            // Encontra a linha onde estávamos ANTES de atualizar o HTML
+            // Tenta encontrar linha antiga
             let myLineIndex = -1;
             if (savedRange) {
                  const currentBlock = savedRange.startContainer.nodeType === 3 
@@ -7828,25 +7849,22 @@ async function executeSave() {
                  if(currentBlock) myLineIndex = Array.from(editorEl.children).indexOf(currentBlock);
             }
 
-            // Atualiza o editor com o novo mix (Texto deles + Meu Texto)
             noteContentEditor.innerHTML = finalContentHTML;
 
-            // Restaura o cursor na mesma linha
+            // Restaura cursor
             if (myLineIndex > -1 && editorEl.children[myLineIndex]) {
                 try {
                     const newLine = editorEl.children[myLineIndex];
                     const newRange = document.createRange();
-                    // Tenta focar no texto da linha
                     if (newLine.firstChild) {
                         const targetNode = newLine.firstChild.nodeType === 3 ? newLine.firstChild : newLine;
-                        // Garante que o offset não ultrapassa o tamanho do texto
                         const safeOffset = Math.min(savedOffset, targetNode.textContent.length);
                         newRange.setStart(targetNode, safeOffset);
                         newRange.collapse(true);
                         selection.removeAllRanges();
                         selection.addRange(newRange);
                     }
-                } catch(e) { console.log("Cursor reset ligeiro após fusão"); }
+                } catch(e) {}
             }
         }
 
@@ -13425,7 +13443,7 @@ async function loadBackupsForNote() {
         const qBackups = query(backupsRef, orderBy('timestamp', 'desc'));
         const backupsSnap = await getDocs(qBackups);
 
-        // 2. Carregar Itens Ocultos (Subnotas)
+        // 2. Carregar Itens Ocultos (Subnotas/Reciclagem)
         const noteDocRef = doc(db, 'pastas', selectedNoteId);
         const noteDocSnap = await getDoc(noteDocRef);
         const hiddenNotes = (noteDocSnap.exists() && noteDocSnap.data().subnotasocultas) 
@@ -13448,7 +13466,7 @@ async function loadBackupsForNote() {
         });
 
         // ============================================================
-        // BLOCO 1: 🗑️ Reciclagem (Itens Ocultos)
+        // BLOCO 1: 🗑️ Reciclagem (Itens Ocultos / Caixas Apagadas)
         // ============================================================
         if (Object.keys(hiddenNotes).length > 0) {
             const headerNotes = document.createElement('h4');
@@ -13496,10 +13514,55 @@ async function loadBackupsForNote() {
         }
 
         // ============================================================
-        // BLOCO 2: 💾 Versões Anteriores (Manuais)
+        // BLOCO 2: 🚨 Versões Guardadas por Segurança (AUTO-SAFETY)
+        // ============================================================
+        // Mostramos estes PRIMEIRO porque geralmente são os mais urgentes
+        if (safetyBackups.length > 0) {
+            const headerSafety = document.createElement('h4');
+            headerSafety.textContent = "🚨 Backups de Emergência (Auto)";
+            headerSafety.style.color = "#e74c3c"; // Vermelho
+            headerSafety.style.borderBottom = "1px solid #e74c3c";
+            headerSafety.style.paddingBottom = "5px";
+            headerSafety.style.marginTop = "0";
+            listEl.appendChild(headerSafety);
+
+            safetyBackups.forEach(backup => {
+                const li = document.createElement('li');
+                li.style.justifyContent = 'space-between';
+                // Estilo de alerta
+                li.style.backgroundColor = "rgba(231, 76, 60, 0.1)"; 
+                li.style.borderLeft = "4px solid #e74c3c";
+                li.style.marginTop = "5px";
+                li.style.padding = "10px";
+                
+                const backupDate = formatTimestamp(backup.timestamp);
+                
+                li.innerHTML = `
+                    <div style="display:flex; flex-direction:column;">
+                        <span style="font-weight:bold; color:#e74c3c;">${backupDate}</span>
+                        <small style="color:var(--text-muted-color);">Recuperação Automática (Apagão Detetado)</small>
+                    </div>
+                    <div style="display:flex; gap: 5px;">
+                        <button class="modal-btn secondary" data-action="view" data-backup-id="${backup.id}" style="padding: 5px 10px;">Ver</button>
+                        <button class="modal-btn primary" data-action="restore" data-backup-id="${backup.id}" style="padding: 5px 10px; background-color:#e74c3c;">Restaurar</button>
+                    </div>
+                `;
+                listEl.appendChild(li);
+            });
+
+            // Separador
+            const hrSafety = document.createElement('hr');
+            hrSafety.style.margin = "25px 0 10px 0";
+            hrSafety.style.border = "0";
+            hrSafety.style.borderTop = "1px solid var(--border-color)";
+            listEl.appendChild(hrSafety);
+        }
+
+        // ============================================================
+        // BLOCO 3: 💾 Versões Anteriores (Manuais)
         // ============================================================
         const headerBackups = document.createElement('h4');
-        headerBackups.textContent = "💾 Versões Anteriores da Nota";
+        headerBackups.textContent = "💾 Versões Guardadas Manualmente";
         listEl.appendChild(headerBackups);
 
         if (manualBackups.length === 0) {
@@ -13507,11 +13570,15 @@ async function loadBackupsForNote() {
             emptyLi.textContent = "Nenhum backup manual encontrado.";
             emptyLi.style.fontStyle = "italic";
             emptyLi.style.color = "var(--text-muted-color)";
+            emptyLi.style.padding = "10px";
             listEl.appendChild(emptyLi);
         } else {
             manualBackups.forEach(backup => {
                 const li = document.createElement('li');
                 li.style.justifyContent = 'space-between';
+                li.style.padding = "10px";
+                li.style.borderBottom = "1px solid var(--border-color)";
+                
                 const backupDate = formatTimestamp(backup.timestamp);
                 
                 li.innerHTML = `
@@ -13525,51 +13592,9 @@ async function loadBackupsForNote() {
             });
         }
 
-        // ============================================================
-        // BLOCO 3: 🚨 Versões Guardadas por Segurança (NOVO LOCAL)
-        // ============================================================
-        if (safetyBackups.length > 0) {
-            // Separador antes da secção de perigo
-            const hrSafety = document.createElement('hr');
-            hrSafety.style.margin = "25px 0 10px 0";
-            hrSafety.style.border = "0";
-            hrSafety.style.borderTop = "1px solid var(--border-color)";
-            listEl.appendChild(hrSafety);
-
-            const headerSafety = document.createElement('h4');
-            headerSafety.textContent = "🚨 Versões Guardadas por Segurança";
-            headerSafety.style.color = "#e74c3c"; // Vermelho
-            headerSafety.style.marginTop = "0";
-            headerSafety.style.borderBottom = "1px solid #e74c3c";
-            headerSafety.style.paddingBottom = "5px";
-            listEl.appendChild(headerSafety);
-
-            safetyBackups.forEach(backup => {
-                const li = document.createElement('li');
-                li.style.justifyContent = 'space-between';
-                li.style.backgroundColor = "rgba(231, 76, 60, 0.1)"; // Fundo avermelhado
-                li.style.borderLeft = "4px solid #e74c3c";
-                li.style.marginTop = "5px";
-                
-                const backupDate = formatTimestamp(backup.timestamp);
-                
-                li.innerHTML = `
-                    <div style="display:flex; flex-direction:column;">
-                        <span style="font-weight:bold; color:#e74c3c;">${backupDate}</span>
-                        <small style="color:var(--text-muted-color);">Recuperação Automática</small>
-                    </div>
-                    <div style="display:flex; gap: 5px;">
-                        <button class="modal-btn secondary" data-action="view" data-backup-id="${backup.id}" style="padding: 5px 10px;">Ver</button>
-                        <button class="modal-btn primary" data-action="restore" data-backup-id="${backup.id}" style="padding: 5px 10px; background-color:#e74c3c;">Restaurar</button>
-                    </div>
-                `;
-                listEl.appendChild(li);
-            });
-        }
-
     } catch (error) {
         console.error("Erro ao carregar histórico:", error);
-        listEl.innerHTML = '<li>Ocorreu um erro ao carregar os dados.</li>';
+        listEl.innerHTML = '<li style="color:#e74c3c;">Ocorreu um erro ao carregar os dados.</li>';
     }
 }
     
@@ -18443,8 +18468,6 @@ function getCursorLocation() {
 // SISTEMA DE PRESENÇA EM TEMPO REAL (LIVE) - VERSÃO CORRIGIDA
 // ============================================================
 
-// Variável para controlar o listener de conteúdo
-let contentUnsubscribe = null; 
 
 // Função de Atualização da Interface (GLOBAL)
 function updateLiveUI(count) {
@@ -18960,6 +18983,79 @@ function applyRemoteLocks(activeUsers) {
                 targetLine.style.backgroundColor = `${user.color}15`; // Transparência
             }
         }
+    });
+}
+
+
+function setupRealTimeListener(noteId) {
+    // 1. Limpa o listener anterior se existir (para não teres 2 notas a atualizar ao mesmo tempo)
+    if (contentUnsubscribe) {
+        contentUnsubscribe();
+        contentUnsubscribe = null;
+    }
+
+    const noteRef = doc(db, 'pastas', noteId);
+
+    // 2. Cria o novo listener
+    contentUnsubscribe = onSnapshot(noteRef, (docSnap) => {
+        // Se a nota foi apagada, não faz nada
+        if (!docSnap.exists()) return;
+
+        const data = docSnap.data();
+        const serverTime = data.ultimaedicao ? data.ultimaedicao.toMillis() : 0;
+
+        // 3. VERIFICAÇÃO DE SEGURANÇA
+        // Se a versão do servidor é mais antiga ou igual à que eu tenho na memória,
+        // significa que FUI EU que acabei de gravar. Não preciso de atualizar o meu próprio ecrã.
+        if (serverTime <= lastServerVersionTime) {
+            return;
+        }
+
+        // 4. ATUALIZAÇÃO DO ECRÃ (Porque foi OUTRA pessoa que gravou)
+        const editor = document.getElementById('note-content-editor');
+        
+        // Verifica se o conteúdo é realmente diferente para evitar "piscar" desnecessário
+        if (editor.innerHTML !== data.conteudo) {
+            console.log("📡 Recebida alteração remota. A atualizar editor...");
+
+            // A. Guardar a posição do cursor atual
+            const selection = window.getSelection();
+            let savedRange = null;
+            if (selection.rangeCount > 0) {
+                savedRange = selection.getRangeAt(0).cloneRange();
+            }
+
+            // B. Atualizar o HTML
+            editor.innerHTML = data.conteudo;
+            
+            // C. Atualizar a memória da versão
+            lastServerVersionTime = serverTime;
+
+            // D. Restaurar o cursor (Tenta manter o foco onde estava)
+            if (savedRange) {
+                try {
+                    // Nota: Isto é uma tentativa de restauro simples. 
+                    // Se o texto onde estavas foi apagado pelo outro, o cursor vai para o início.
+                    // Mas na maioria dos casos, mantém-se estável.
+                    const newRange = document.createRange();
+                    newRange.setStart(editor, 0);
+                    newRange.collapse(true);
+                    selection.removeAllRanges();
+                    selection.addRange(newRange);
+                } catch (e) {
+                    console.log("Cursor reset após sync remoto");
+                }
+            }
+        }
+        
+        // Atualiza também o título se mudou
+        const titleInput = document.getElementById('note-title-input');
+        if (titleInput && titleInput.value !== data.nome) {
+            titleInput.value = data.nome;
+        }
+
+    }, (error) => {
+        console.error("Erro no listener de tempo real:", error);
     });
 }
 
