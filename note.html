@@ -5737,7 +5737,7 @@ function resetEditor() {
         contentUnsubscribe(); // Para de ouvir as atualizações de texto
         contentUnsubscribe = null;
     }
-    
+
     selectedNoteId = null;
     editorArea.style.display = 'none';
     editorPlaceholder.style.display = 'flex';
@@ -18988,7 +18988,7 @@ function applyRemoteLocks(activeUsers) {
 
 
 function setupRealTimeListener(noteId) {
-    // 1. Limpa o listener anterior se existir (para não teres 2 notas a atualizar ao mesmo tempo)
+    // 1. Limpa o listener anterior
     if (contentUnsubscribe) {
         contentUnsubscribe();
         contentUnsubscribe = null;
@@ -18996,49 +18996,57 @@ function setupRealTimeListener(noteId) {
 
     const noteRef = doc(db, 'pastas', noteId);
 
-    // 2. Cria o novo listener
-    contentUnsubscribe = onSnapshot(noteRef, (docSnap) => {
+    console.log(`📡 A iniciar escuta LIVE na nota: ${noteId}`);
+
+    // 2. Cria o novo listener com metadata
+    contentUnsubscribe = onSnapshot(noteRef, { includeMetadataChanges: true }, (docSnap) => {
         // Se a nota foi apagada, não faz nada
         if (!docSnap.exists()) return;
 
         const data = docSnap.data();
-        const serverTime = data.ultimaedicao ? data.ultimaedicao.toMillis() : 0;
-
-        // 3. VERIFICAÇÃO DE SEGURANÇA
-        // Se a versão do servidor é mais antiga ou igual à que eu tenho na memória,
-        // significa que FUI EU que acabei de gravar. Não preciso de atualizar o meu próprio ecrã.
-        if (serverTime <= lastServerVersionTime) {
+        
+        // --- AQUI ESTÁ A CORREÇÃO MÁGICA ---
+        // Se 'hasPendingWrites' for true, significa que a alteração aconteceu NESTE computador
+        // e ainda está a viajar para o servidor. Logo, não precisamos de atualizar o ecrã
+        // (porque nós é que escrevemos!).
+        if (docSnap.metadata.hasPendingWrites) {
+            // console.log("Ignorando atualização local (fui eu que escrevi)");
             return;
         }
+        // ------------------------------------
 
-        // 4. ATUALIZAÇÃO DO ECRÃ (Porque foi OUTRA pessoa que gravou)
         const editor = document.getElementById('note-content-editor');
-        
-        // Verifica se o conteúdo é realmente diferente para evitar "piscar" desnecessário
-        if (editor.innerHTML !== data.conteudo) {
-            console.log("📡 Recebida alteração remota. A atualizar editor...");
+        const currentHTML = editor.innerHTML;
+        const newHTML = data.conteudo || "";
 
-            // A. Guardar a posição do cursor atual
+        // 3. ATUALIZAÇÃO DO ECRÃ (Só se o conteúdo for diferente)
+        if (currentHTML !== newHTML) {
+            console.log("📥 Recebido texto novo do servidor. A atualizar...");
+
+            // A. Guardar a posição do cursor (para não saltar para o início)
             const selection = window.getSelection();
             let savedRange = null;
             if (selection.rangeCount > 0) {
-                savedRange = selection.getRangeAt(0).cloneRange();
+                try {
+                    savedRange = selection.getRangeAt(0).cloneRange();
+                } catch(e) {}
             }
 
             // B. Atualizar o HTML
-            editor.innerHTML = data.conteudo;
+            editor.innerHTML = newHTML;
             
-            // C. Atualizar a memória da versão
-            lastServerVersionTime = serverTime;
+            // C. Atualizar a memória da versão (para o Smart Merge do executeSave)
+            if (data.ultimaedicao) {
+                lastServerVersionTime = data.ultimaedicao.toMillis();
+            }
 
-            // D. Restaurar o cursor (Tenta manter o foco onde estava)
+            // D. Restaurar o cursor (Tentativa de manter o foco)
             if (savedRange) {
                 try {
-                    // Nota: Isto é uma tentativa de restauro simples. 
-                    // Se o texto onde estavas foi apagado pelo outro, o cursor vai para o início.
-                    // Mas na maioria dos casos, mantém-se estável.
+                    // O restauro perfeito é difícil porque o HTML mudou, 
+                    // mas tentamos focar no início para garantir que o scroll se mantém
                     const newRange = document.createRange();
-                    newRange.setStart(editor, 0);
+                    newRange.setStart(editor, 0); // Foca no início como fallback
                     newRange.collapse(true);
                     selection.removeAllRanges();
                     selection.addRange(newRange);
@@ -19055,7 +19063,7 @@ function setupRealTimeListener(noteId) {
         }
 
     }, (error) => {
-        console.error("Erro no listener de tempo real:", error);
+        console.error("❌ Erro no listener de tempo real:", error);
     });
 }
 
