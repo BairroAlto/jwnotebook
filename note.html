@@ -7338,12 +7338,15 @@ function updateMiddlePanelForFolderSelection(folderId, folderName, selectedEleme
 
 
 async function displayNote(noteId, noteElement, searchTerm = null, keepReferencesOpen = false) {
-     isClosingNote = false; 
-      // Reset da memória se for uma nota normal
+    isClosingNote = false; 
+    
+    // Reset da memória se for uma nota normal
     currentShortcutId = null;
-    // 1. Lógica visual de seleção na lista
+
+    // 1. Lógica visual de seleção na lista (UI)
     document.querySelectorAll('#middle-panel .list-item.selected').forEach(el => el.classList.remove('selected'));
     
+    // Se não passámos o elemento visual, tenta encontrá-lo
     if (!noteElement) {
         noteElement = document.querySelector(`#middle-panel-list .list-item[data-id="${noteId}"]`) || 
                       document.querySelector(`#file-list .list-item[data-id="${noteId}"]`);
@@ -7352,10 +7355,11 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
     
     selectedNoteId = noteId;
     
-    // 2. Alternar visualização
+    // 2. Alternar visualização para o Editor
     editorPlaceholder.style.display = 'none';
     editorArea.style.display = 'flex';
     
+    // Fecha o painel de referências se não for para manter
     if (!keepReferencesOpen && notebookContainer.classList.contains('references-panel-visible')) {
         hideReferencesPanel();
     }
@@ -7365,12 +7369,16 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
         const noteRef = doc(db, 'pastas', noteId);
         const noteSnap = await getDoc(noteRef);
 
-     if (noteSnap.exists()) {
-    let data = noteSnap.data();
-    let isReadOnly = false;
+        if (noteSnap.exists()) {
+            let data = noteSnap.data();
+            let isReadOnly = false;
+            
+            // Variável para saber qual é o ID Real onde os dados estão (importante para o Inbox)
+            let realDataId = noteId; 
 
-   // --- VERIFICAÇÃO DE ATALHO (CORRIGIDO) ---
+            // --- VERIFICAÇÃO DE ATALHO (POINTER) ---
             if (data.pointerId) {
+                console.log("🔗 Isto é um atalho...");
                 
                 try {
                     const originalRef = doc(db, 'pastas', data.pointerId);
@@ -7382,13 +7390,14 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
                         // VERIFICA SE A PARTILHA AINDA EXISTE
                         if (originalData.shareSettings && originalData.shareSettings.shared === true) {
                             
+                            // Define o ID Real como o ID da nota original
+                            realDataId = data.pointerId;
+
                             // Se for LIVE e permitido
                             if (data.isLive === true && originalData.shareSettings.allowCoEditing === true) {
+                                console.log("🔴 Atalho LIVE detetado.");
                                 
-                                // >>> AQUI ESTÁ A CORREÇÃO MÁGICA <<<
-                                // Substituímos os dados do atalho (vazios) pelos dados originais (texto)
-                                // Guardamos o ID do atalho num sitio seguro para a lista saber quem iluminar
-                               const shortcutId = data.id; 
+                                const shortcutId = data.id; 
                                 
                                 // SALVAR NA MEMÓRIA GLOBAL
                                 currentShortcutId = shortcutId; 
@@ -7401,7 +7410,7 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
 
                             } else {
                                 // MODO LEITURA
-                                data = originalData; // <--- Aqui também carregamos o conteúdo
+                                data = originalData; 
                                 isReadOnly = true; 
                                 const status = document.getElementById('save-status-indicator');
                                 if(status) status.textContent = "👁️ Modo Leitura";
@@ -7421,61 +7430,101 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
             }
             // ------------------------------------------------
 
+            // 4. RENDERIZAÇÃO DO CONTEÚDO
             const { nome, conteudo, shareSettings } = data; 
             
             noteTitleInput.value = nome || '';
+            
+            // Importante: innerHTML substitui tudo o que estava lá
             noteContentEditor.innerHTML = conteudo || '';
 
-            // Bloqueia edição se for atalho
+            // Bloqueia edição se for apenas leitura
             noteContentEditor.contentEditable = isReadOnly ? "false" : "true";
             noteTitleInput.readOnly = isReadOnly;
 
+            // Configurações de Partilha
             currentNoteShareData = shareSettings || { shared: false, shareId: null };
             if (!isReadOnly) updateNoteSharingButtonUI(currentNoteShareData.shared);
 
-            // ... (Resto do código de inicialização de plugins, igual ao anterior) ...
-            fixLegacyMiniNotes(); 
-            refreshAllCalendars();
+            // Funções Auxiliares
+            if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
+            if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
 
+            // Scroll para pesquisa (se houver)
             if (searchTerm) {
                 setTimeout(() => { scrollToAndHighlightText(searchTerm); }, 300);
             } else {
                 noteContentEditor.scrollTop = 0;
             }
 
-            // Se for atalho, não ligamos o scan automático para não pesar
-           // >>> CORREÇÃO FINAL DO LIVE <<<
-                
-                // 1. Determina a Sala Correta
-                const targetRoomId = (data.pointerId && data.isLive) ? data.pointerId : noteId;
-                const isLiveSession = (data.pointerId && data.isLive === true);
+            // 5. CONFIGURAÇÃO DO MODO LIVE / PRESENÇA
+            // Determina a Sala Correta (Se é atalho live, usa o ID original)
+            const targetRoomId = (data.isLiveShortcut || (data.pointerId && data.isLive)) ? data.pointerId : noteId;
+            const isLiveSession = (data.isLiveShortcut || (data.pointerId && data.isLive === true));
 
-                
-                // 2. Conecta ao Firebase
+            console.log(`📡 A conectar à sala Live ID: ${targetRoomId}`);
+            
+            if (typeof setupPresenceSystem === 'function') {
                 setupPresenceSystem(targetRoomId);
-
-                // 3. FORÇA A ATUALIZAÇÃO VISUAL IMEDIATA
-                // Se for um atalho Live, ligamos logo a barra vermelha para o utilizador saber que está online
-                const toolbar = document.getElementById('editor-toolbar');
-                const indicator = document.getElementById('live-indicator');
-                const countSpan = document.getElementById('live-user-count');
-
-                if (isLiveSession) {
-                    toolbar.classList.add('live-mode-active');
-                    indicator.style.display = 'flex';
-                    // Começa com 1 (eu) até o Firebase atualizar os outros
-                    if(countSpan && countSpan.textContent === '0') countSpan.textContent = "1";
-                } else {
-                    // Se for nota normal, desliga até entrar alguém
-                    toolbar.classList.remove('live-mode-active');
-                    indicator.style.display = 'none';
-                }
             }
+
+            // Atualização Visual da Barra Vermelha
+            const toolbar = document.getElementById('editor-toolbar');
+            const indicator = document.getElementById('live-indicator');
+            const countSpan = document.getElementById('live-user-count');
+
+            if (isLiveSession) {
+                toolbar.classList.add('live-mode-active');
+                indicator.style.display = 'flex';
+                if(countSpan && countSpan.textContent === '0') countSpan.textContent = "1";
+            } else {
+                toolbar.classList.remove('live-mode-active');
+                indicator.style.display = 'none';
+            }
+
+            // ============================================================
+            // 6. SISTEMA DE INBOX (CAIXA DE CORREIO) - NOVO!
+            // ============================================================
+            // Este listener fica à espera que alguém envie uma caixa (🧬)
+            // para a colar no fundo sem destruir o que estamos a escrever.
+            
+            // A. Limpa listener antigo para não duplicar
+            if (window.inboxUnsubscribe) {
+                window.inboxUnsubscribe();
+                window.inboxUnsubscribe = null;
+            }
+
+            // B. Cria novo listener na Nota Real (onde os dados são gravados)
+            if (!isReadOnly) {
+                // Importante: usamos onSnapshot para reagir em tempo real
+                const realNoteRef = doc(db, 'pastas', realDataId);
+                
+                window.inboxUnsubscribe = onSnapshot(realNoteRef, (docSnap) => {
+                    // Só processa se o documento existir e tiver dados
+                    if (docSnap.exists()) {
+                        const liveData = docSnap.data();
+                        
+                        // Verifica se há correio novo na fila 'inboxQueue'
+                        if (liveData.inboxQueue && liveData.inboxQueue.length > 0) {
+                            // Chama a função que criámos anteriormente para colar e limpar
+                            if (typeof processInboxQueue === 'function') {
+                                processInboxQueue(realDataId, liveData);
+                            }
+                        }
+                    }
+                }, (error) => {
+                    console.warn("Erro no listener de Inbox:", error);
+                });
+            }
+            // ============================================================
+
+        }
     } catch (error) {
         console.error("Erro ao carregar nota:", error);
+        alert("Erro ao abrir a nota. Verifique a consola.");
     }
     
-    // UI Mobile
+    // UI Mobile: Colapsar painéis laterais
     notebookContainer.classList.add('left-panel-collapsed');
     if (window.innerWidth <= 768) {
         notebookContainer.classList.add('middle-panel-collapsed');
@@ -15633,7 +15682,7 @@ async function confirmAppendToNote(targetId, targetName) {
     // 2. Confirmação
     const confirmed = await showConfirmation(
         "Confirmar Envio", 
-        `Deseja adicionar esta caixa ao final da nota "${targetName}"?`
+        `Deseja enviar esta caixa para "${targetName}"?`
     );
 
     if (!confirmed) {
@@ -15648,39 +15697,27 @@ async function confirmAppendToNote(targetId, targetName) {
     try {
         const noteRef = doc(db, 'pastas', targetId);
 
-        // --- A MAGIA ACONTECE AQUI: TRANSAÇÃO ---
-        await runTransaction(db, async (transaction) => {
-            
-            // A. Lê a versão mais recente do servidor (Bloqueia escrita de outros por milissegundos)
-            const noteDoc = await transaction.get(noteRef);
-            if (!noteDoc.exists()) throw "Nota não encontrada!";
+        // --- NOVA LÓGICA SEGURA ---
+        // Em vez de alterar o HTML diretamente (que causa conflitos),
+        // adicionamos o HTML a um array de "pendentes" (inboxQueue).
+        // A próxima pessoa que tiver a nota aberta vai "consumir" este array.
+        
+        // Importar arrayUnion se ainda não estiver importado no topo
+        const { arrayUnion } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
-            const currentContent = noteDoc.data().conteudo || "";
-
-            // B. Prepara o conteúdo limpo
-            // Adiciona quebras de linha (<p><br></p>) para garantir que não cola na última palavra
-            // Adiciona um comentário invisível para separar visualmente no código
-            const separator = `<p><br></p><!-- APPENDED START -->`;
-            
-            // C. Constrói o novo HTML
-            const newContent = currentContent + separator + htmlToAppend;
-
-            // D. Grava a nova versão completa
-            transaction.update(noteRef, {
-                conteudo: newContent,
-                ultimaedicao: serverTimestamp()
-            });
+        await updateDoc(noteRef, {
+            inboxQueue: arrayUnion(htmlToAppend),
+            ultimaedicao: serverTimestamp()
         });
 
         // 4. Sucesso
         document.getElementById('append-to-note-modal').style.display = 'none';
         confirmModal.style.zIndex = ''; 
         
-        // Notificação discreta
         const statusEl = document.getElementById('save-status-indicator');
         if(statusEl) {
             const oldText = statusEl.textContent;
-            statusEl.textContent = `Enviado para "${targetName}"!`;
+            statusEl.textContent = `Enviado para a fila de "${targetName}"!`;
             statusEl.style.color = "#2ecc71";
             setTimeout(() => { 
                 statusEl.textContent = oldText; 
@@ -15690,11 +15727,66 @@ async function confirmAppendToNote(targetId, targetName) {
 
     } catch (e) {
         console.error("Erro ao enviar:", e);
-        alert("Erro ao gravar. A nota pode ter sido apagada ou não tem permissão.");
-        if(btn) btn.textContent = "❌";
+        // Fallback: Se der erro (ex: campo não existe), tenta criar
+        try {
+             // Se falhar, tenta setDoc com merge para criar o campo
+             const { setDoc, arrayUnion } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+             await setDoc(doc(db, 'pastas', targetId), {
+                 inboxQueue: arrayUnion(htmlToAppend)
+             }, { merge: true });
+             document.getElementById('append-to-note-modal').style.display = 'none';
+             confirmModal.style.zIndex = ''; 
+        } catch(err2) {
+             alert("Erro crítico ao enviar. A nota pode estar inacessível.");
+             if(btn) btn.textContent = "❌";
+        }
     }
 }
 
+// --- PROCESSADOR DE MENSAGENS RECEBIDAS (INBOX) ---
+async function processInboxQueue(noteId, currentData) {
+    // Se não houver fila ou estiver vazia, não faz nada
+    if (!currentData.inboxQueue || currentData.inboxQueue.length === 0) return;
+
+    console.log("📬 Novos itens recebidos na fila! A processar...");
+
+    const editor = document.getElementById('note-content-editor');
+    const itemsToAppend = currentData.inboxQueue;
+
+    // 1. Adicionar ao Editor (Visualmente)
+    itemsToAppend.forEach(html => {
+        // Cria um elemento temporário para limpar e preparar
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = html;
+        
+        // Insere no final do editor
+        // Adicionamos <p><br></p> para garantir espaçamento
+        editor.insertAdjacentHTML('beforeend', `<p><br></p>${tempDiv.innerHTML}`);
+    });
+
+    // 2. Scroll para mostrar que chegou algo novo
+    editor.scrollTop = editor.scrollHeight;
+
+    // 3. Efeito visual (Flash)
+    editor.classList.add('temporary-highlight');
+    setTimeout(() => editor.classList.remove('temporary-highlight'), 1000);
+
+    // 4. LIMPAR A FILA NA BASE DE DADOS
+    // Isto é crucial: removemos os itens da BD porque já os temos no ecrã.
+    // Assim, quando gravarmos a nota a seguir, eles ficam gravados no 'conteudo' permanentemente.
+    try {
+        const noteRef = doc(db, 'pastas', noteId);
+        await updateDoc(noteRef, {
+            inboxQueue: [] // Esvazia o array
+        });
+        
+        // Força uma gravação local para consolidar o novo HTML no campo 'conteudo'
+        saveNote(true);
+        
+    } catch (e) {
+        console.error("Erro ao limpar inbox:", e);
+    }
+}
 
 // --- FUNÇÃO UNIFICADA DE PARTILHA E CO-EDIÇÃO ---
 async function updateSharingSettings() {
@@ -15914,7 +16006,7 @@ addItemBtn.addEventListener('click', async () => { // <--- Adicionado 'async' aq
         return;
     }
     // -----------------------------
-    
+
     // >>> 1. NOVA GRAVAÇÃO DE SEGURANÇA <<<
     if (currentSaveStatus === 'unsaved') {
         
