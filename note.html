@@ -90,6 +90,50 @@ body {
     transition: all 0.3s ease;
 }
 
+/* ESTILOS DO SELETOR LOCAL | PARTILHA */
+.folder-mode-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--text-muted-color);
+}
+
+.folder-mode-item {
+    cursor: pointer;
+    transition: color 0.2s, text-shadow 0.2s;
+    user-select: none;
+    position: relative;
+}
+
+.folder-mode-item:hover {
+    color: var(--text-color);
+}
+
+.folder-mode-item.active {
+    color: var(--text-color);
+    font-weight: bold;
+}
+
+/* Pequeno ponto azul por baixo do ativo */
+.folder-mode-item.active::after {
+    content: '';
+    position: absolute;
+    bottom: -4px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background-color: var(--accent-color);
+    border-radius: 2px;
+}
+
+.folder-mode-separator {
+    color: var(--border-color);
+    font-weight: normal;
+    font-size: 0.9em;
+}
+
 /* ============================================================
    4. PAINEL DE REFERÊNCIAS (4ª COLUNA) - AJUSTE DE TAMANHO
    ============================================================ */
@@ -3087,6 +3131,16 @@ a.board-link:hover {
     background-color: var(--selected-color) !important;
 }
 
+/* ESTILO ESPECÍFICO PARA O MODO PARTILHA (VERMELHO) */
+.folder-mode-item.active.mode-shared {
+    color: #e74c3c; /* Texto vermelho */
+}
+
+.folder-mode-item.active.mode-shared::after {
+    background-color: #e74c3c !important; /* Linha vermelha forçada */
+    height: 3px; /* Um pouco mais grossa para destaque */
+}
+
 
 /* --- CONFIGURAÇÃO MOBILE (LAYOUT 2 LINHAS NO TOPO) --- */
 @media (max-width: 768px) {
@@ -3334,28 +3388,44 @@ a.board-link:hover {
 
     <div class="notebook-container">
         <!-- PAINEL DA ESQUERDA -->
-        <aside id="left-panel">
-            <button id="left-panel-toggle-btn" title="Mostrar Painel">☰</button>
-            <div class="panel-content">
-                <div class="tabs-container">
-                    <button class="active" data-tab="note">Note</button>
-                    <button data-tab="lists">Lists</button>
-                    <button data-tab="book">Book</button>
-                </div>
-                <hr>
-                <div class="panel-header">
-                    <h2 id="left-panel-title">Pastas</h2>
-                </div>
-                <ul id="left-panel-list">
-                    <!-- Itens da coluna esquerda -->
-                </ul>
+    <aside id="left-panel">
+    <button id="left-panel-toggle-btn" title="Mostrar Painel">☰</button>
+    
+    <!-- WRAPPER DE CONTEÚDO (Mantém tudo alinhado no topo) -->
+    <div class="panel-content">
+        
+        <!-- 1. Tabs (Note, Lists, Book) -->
+        <div class="tabs-container">
+            <button class="active" data-tab="note">Note</button>
+            <button data-tab="lists">Lists</button>
+            <button data-tab="book">Book</button>
+        </div>
+        
+        <hr>
+        
+        <!-- 2. O Cabeçalho com o Seletor (TEM DE ESTAR ANTES DA LISTA) -->
+        <div class="panel-header">
+            <div id="left-panel-title" class="folder-mode-container">
+                <!-- O JavaScript vai preencher isto, mas deixamos o padrão aqui -->
+                <span class="folder-mode-item active" onclick="window.switchFolderView('local')">Local</span>
+                <span class="folder-mode-separator">|</span>
+                <span class="folder-mode-item" onclick="window.switchFolderView('shared')">Partilha</span>
             </div>
-            <div class="panel-footer">
-                <button id="settings-btn" title="Configurações">⚙️</button>
-                 <button id="global-search-btn" title="Pesquisa Global">🔎</button>
-                 <button id="account-btn" title="Minha Conta">👤</button>
-            </div>
-        </aside>
+        </div>
+        
+        <!-- 3. A Lista de Pastas (Ocupa o espaço restante) -->
+        <ul id="left-panel-list">
+            <!-- Itens da coluna esquerda gerados via JS -->
+        </ul>
+    </div>
+
+    <!-- 4. Rodapé (Fixo em baixo) -->
+    <div class="panel-footer">
+        <button id="settings-btn" title="Configurações">⚙️</button>
+        <button id="global-search-btn" title="Pesquisa Global">🔎</button>
+        <button id="account-btn" title="Minha Conta">👤</button>
+    </div>
+</aside>
 
       <!-- PAINEL DO MEIO -->
         <main id="middle-panel">
@@ -4537,6 +4607,10 @@ let activeTopicIdForManagement = null; // Qual tópico está selecionado na esqu
 let presenceUnsubscribe = null; // Para desligar o listener ao sair
 let myPresenceRef = null;       // Referência do meu "sinal de vida"
 let presenceInterval = null;    // Heartbeat para manter vivo
+let currentViewMode = 'local'; // 'local' ou 'shared'
+let systemSharedFolderId = null; // Vai guardar o ID da pasta "Partilhadas"
+let cursorDebounceTimer = null;
+let lastKnownCursor = null;
 let isClosingNote = false;
 let currentShortcutId = null;
 let liveSaveTimeout = null;
@@ -5630,6 +5704,10 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
         querySnapshot.forEach((doc) => {
             const item = { id: doc.id, ...doc.data() };
 
+             if (item.nome === 'Partilhadas' && !item.parentId) {
+                return; // Pula este item e passa para o próximo
+            }
+
             const li = document.createElement('li');
             li.className = 'list-item';
             li.dataset.id = item.id;
@@ -5701,8 +5779,6 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
 
 async function updateNavigationView(keepEditorOpen = false, targetSelectId = null) {
-    console.log("🌲 [DEBUG NAV] updateNavigationView chamado.");
-    console.log("🌲 [DEBUG NAV] keepEditorOpen é:", keepEditorOpen);
 
     // Reset visual básico
     notebookContainer.classList.remove('left-panel-collapsed');
@@ -5715,8 +5791,21 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
         console.warn("❌ [DEBUG NAV] A fazer RESET ao editor (Live vai cair aqui!)");
         resetEditor();
     } else {
-        console.log("✅ [DEBUG NAV] Editor protegido. O Live deve continuar.");
     }
+
+  // ============================================================
+    // >>> NOVA LÓGICA: ESCONDER BOTÃO "+" NO MODO PARTILHA <<<
+    // ============================================================
+    const addItemBtn = document.getElementById('add-item-btn');
+    
+    if (currentViewMode === 'shared') {
+        // Se estamos em "Partilha", esconde o botão de criar
+        if(addItemBtn) addItemBtn.style.display = 'none';
+    } else {
+        // Se estamos em "Local", mostra o botão
+        if(addItemBtn) addItemBtn.style.display = 'flex';
+    }
+    // ============================================================
 
     const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
@@ -6115,62 +6204,57 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
     // ============================================================
     // MODO: NOTE (Padrão)
     // ============================================================
-    const depth = navigationStack.length;
+  const depth = navigationStack.length;
     
-    const setSuperfolderExitTitle = () => {
-        const titleEl = document.getElementById('left-panel-title');
-        const exitName = (typeof currentSuperfolderParentName !== 'undefined') ? currentSuperfolderParentName : "Raiz Global";
-        
-        titleEl.innerHTML = `<span style="font-size:0.8em; opacity:0.7; margin-right:5px; cursor:pointer;">🔙</span> ${exitName}`;
-        titleEl.style.cursor = "pointer";
-        titleEl.title = `Sair e voltar para "${exitName}"`;
-
-        titleEl.onclick = () => {
-            navigateWithUnsavedCheck(() => {
-                if (typeof currentSuperfolderParentId !== 'undefined' && currentSuperfolderParentId) {
-                    window.location.href = `note.html?openFolder=${currentSuperfolderParentId}`;
-                } else {
-                    window.location.href = "note.html";
-                }
-            });
-        };
-    };
-
-    let leftPanelParentId = null, middlePanelParentId = null, leftPanelSelectedId = null;
-
+    // Configura o título/seletor do topo
     if (depth === 0) {
-        if (isSuperContext) {
-            leftPanelParentId = SUPERFOLDER_ID;
-            setSuperfolderExitTitle();
+        setLeftPanelTitle('Pastas'); // O conteúdo exato é decidido dentro desta função agora
+    } else {
+        const parentFolder = (depth > 1) ? navigationStack[depth - 2] : null;
+        const parentName = parentFolder ? parentFolder.name : (currentViewMode === 'shared' ? 'Partilhadas' : 'Pastas');
+        setLeftPanelTitle(parentName, true);
+    }
+
+    let leftPanelParentId = null;
+    let middlePanelParentId = null;
+    let leftPanelSelectedId = null;
+
+    // --- LÓGICA DE DEFINIÇÃO DE IDs ---
+    if (depth === 0) {
+        // ESTAMOS NA RAIZ
+        
+        if (currentViewMode === 'local') {
+            // Modo Local: Mostra pastas da raiz (null) ou da Superpasta URL
+            leftPanelParentId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
         } else {
-            leftPanelParentId = null;
-            setLeftPanelTitle('Pastas');
+            // Modo Partilha: A "Raiz" passa a ser a pasta Partilhadas
+            leftPanelParentId = systemSharedFolderId;
         }
+        
         middlePanelTitle.textContent = 'Selecione';
         backBtn.style.display = 'none';
         middlePanelList.innerHTML = '';
+        
     } else {
+        // ESTAMOS DENTRO DE UMA PASTA (Navegação normal)
         const currentFolder = navigationStack[depth - 1];
         middlePanelParentId = currentFolder.id;
         middlePanelTitle.textContent = currentFolder.name;
         backBtn.style.display = 'flex';
         
-        if (depth > 1) {
-            const parentFolder = navigationStack[depth - 2];
-            leftPanelParentId = parentFolder.id;
-            if (isSuperContext) setSuperfolderExitTitle();
-            else setLeftPanelTitle(parentFolder.name, true);
-            leftPanelSelectedId = currentFolder.id;
-        } else {
-            if (isSuperContext) {
-                leftPanelParentId = SUPERFOLDER_ID;
-                setSuperfolderExitTitle();
+        if (depth === 1) {
+            // Nível 1: O pai é a Raiz do modo atual
+            if (currentViewMode === 'local') {
+                leftPanelParentId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
             } else {
-                leftPanelParentId = null;
-                setLeftPanelTitle('Pastas');
+                leftPanelParentId = systemSharedFolderId;
             }
-            leftPanelSelectedId = currentFolder.id;
+        } else {
+            // Nível 2+: O pai é a pasta anterior da pilha
+            leftPanelParentId = navigationStack[depth - 2].id;
         }
+        
+        leftPanelSelectedId = currentFolder.id;
     }
     
     unsubscribeLeftPanel = fetchAndDisplayItems(leftPanelParentId, leftPanelList, leftPanelSelectedId);
@@ -7287,7 +7371,6 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
 
    // --- VERIFICAÇÃO DE ATALHO (CORRIGIDO) ---
             if (data.pointerId) {
-                console.log("🔗 Isto é um atalho...");
                 
                 try {
                     const originalRef = doc(db, 'pastas', data.pointerId);
@@ -7301,7 +7384,6 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
                             
                             // Se for LIVE e permitido
                             if (data.isLive === true && originalData.shareSettings.allowCoEditing === true) {
-                                console.log("🔴 Atalho LIVE detetado.");
                                 
                                 // >>> AQUI ESTÁ A CORREÇÃO MÁGICA <<<
                                 // Substituímos os dados do atalho (vazios) pelos dados originais (texto)
@@ -7368,7 +7450,6 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
                 const targetRoomId = (data.pointerId && data.isLive) ? data.pointerId : noteId;
                 const isLiveSession = (data.pointerId && data.isLive === true);
 
-                console.log(`📡 A conectar à sala Live ID: ${targetRoomId} (É Atalho Live? ${isLiveSession})`);
                 
                 // 2. Conecta ao Firebase
                 setupPresenceSystem(targetRoomId);
@@ -7596,7 +7677,6 @@ async function executeSave() {
                                 reason: `Apagamento massivo detetado`
                             });
 
-                            console.log("✅ Backup de segurança criado com sucesso no Histórico.");
                             
                             // Feedback visual ao utilizador
                             const statusEl = document.getElementById('save-status-indicator');
@@ -8801,18 +8881,16 @@ async function openMoveModal(itemContext) {
       // >>> CORREÇÃO DO MODO LIVE <<<
             // 1. Verifica se estamos a mover a nota que está aberta no editor
            // >>> ADICIONE ESTES LOGS AQUI <<<
-console.log("🔍 [DEBUG MOVER] ID do Item a mover:", itemContext.id);
-console.log("🔍 [DEBUG MOVER] ID da Nota Aberta:", selectedNoteId);
 
 // Verifica se são iguais (tenta converter para string para garantir)
 const isMovingCurrentNote = (String(itemContext.id) === String(selectedNoteId));
 
-console.log("🔍 [DEBUG MOVER] É a mesma nota?", isMovingCurrentNote);
+
 
             
             // 2. Chama a atualização da vista
             if (typeof updateNavigationView === 'function') {
-               console.log("🔍 [DEBUG MOVER] A chamar updateNavigationView com:", isMovingCurrentNote);
+
     updateNavigationView(isMovingCurrentNote);
 }
             
@@ -13445,21 +13523,18 @@ async function loadBackupsForNote() {
     modalContent.style.pointerEvents = 'none';
 
     try {
-        console.log("1. A tentar ler o backup...");
+
         const backupRef = doc(db, 'pastas', selectedNoteId, 'backups', backupId);
         const backupSnap = await getDoc(backupRef);
         
         if (!backupSnap.exists()) throw new Error("O ficheiro de backup já não existe.");
         const backupData = backupSnap.data();
-        console.log("✅ Backup lido com sucesso.");
 
-        console.log("2. A verificar nota original...");
         const originalNoteRef = doc(db, 'pastas', selectedNoteId);
         const originalNoteSnap = await getDoc(originalNoteRef);
         
         // Se a original não existir, usa null como parent (Raiz)
         const parentId = originalNoteSnap.exists() ? originalNoteSnap.data().parentId : null;
-        console.log("✅ Dados da nota original obtidos (Parent: " + parentId + ")");
         
         // Preparar Título
         const backupDate = formatTimestamp(backupData.timestamp);
@@ -13487,7 +13562,6 @@ async function loadBackupsForNote() {
             ultimaedicao: serverTimestamp(),
             tags: []
         });
-        console.log("✅ Nota criada com ID:", newDocRef.id);
 
         // Finalização
         modalContent.style.opacity = '1';
@@ -13902,46 +13976,52 @@ window.addEventListener('beforeunload', (event) => {
 function setLeftPanelTitle(text, isBackAction = false) {
     const titleEl = document.getElementById('left-panel-title');
     
+    // CASO 1: NAVEGAÇÃO PROFUNDA (Botão Voltar)
+    // Acontece quando entra numa pasta, seja em Note ou Lists
     if (isBackAction) {
-        // --- MODO DE NAVEGAÇÃO PROFUNDA (Nível 2+) ---
-        // O título serve como botão para subir um nível na hierarquia
-        titleEl.innerHTML = `<span style="font-size: 0.8em; opacity: 0.7; margin-right: 8px;">🔙</span> ${text}`;
-        titleEl.style.cursor = "pointer";
+        titleEl.className = ''; 
+        titleEl.style.display = 'block';
+        titleEl.innerHTML = `<h2 style="font-size:18px; cursor:pointer;"><span style="font-size: 0.8em; opacity: 0.7; margin-right: 8px;">🔙</span> ${text}</h2>`;
         titleEl.title = `Voltar para "${text}"`;
         
         titleEl.onclick = () => {
-            // Verifica e grava antes de navegar
             navigateWithUnsavedCheck(() => {
-                // Remove o último item da pilha (volta para a pasta anterior)
                 if (navigationStack.length > 0) {
                     navigationStack.pop();
                     updateNavigationView();
                 }
             });
         };
-    } else {
-        // --- MODO DE TÍTULO PADRÃO (Nível 0 ou 1) ---
-        titleEl.innerHTML = text;
+        return;
+    } 
+
+    // CASO 2: RAIZ DA ABA "NOTE" (Mostrar Seletor Local | Partilha)
+    if (currentTab === 'note') {
+        titleEl.className = 'folder-mode-container';
+        titleEl.style.display = 'flex';
+        titleEl.onclick = null;
+        titleEl.title = "";
+
+        // Classes condicionais
+        const localClass = currentViewMode === 'local' ? 'active' : '';
+        const sharedClass = currentViewMode === 'shared' ? 'active mode-shared' : '';
+
+        titleEl.innerHTML = `
+            <span class="folder-mode-item ${localClass}" onclick="window.switchFolderView('local')">Local</span>
+            <span class="folder-mode-separator">|</span>
+            <span class="folder-mode-item ${sharedClass}" onclick="window.switchFolderView('shared')">Partilha</span>
+        `;
+    } 
+    
+    // CASO 3: RAIZ DA ABA "LISTS" OU "BOOK" (Mostrar apenas Título Simples)
+    else {
+        titleEl.className = ''; // Remove o estilo flex do seletor
+        titleEl.style.display = 'block';
+        titleEl.onclick = null;
+        titleEl.title = "";
         
-        // Se estivermos no Nível 1 (dentro de uma pasta da raiz),
-        // o título serve para voltar à Raiz absoluta.
-        if (navigationStack.length === 1) {
-            titleEl.style.cursor = "pointer";
-            titleEl.title = "Voltar ao início";
-            
-            titleEl.onclick = () => {
-                navigateWithUnsavedCheck(() => {
-                    navigationStack = []; // Limpa todo o histórico
-                    updateNavigationView(); // Carrega a raiz
-                });
-            };
-        } 
-        // Se estivermos na Raiz absoluta (stack vazio)
-        else {
-            titleEl.style.cursor = "default";
-            titleEl.onclick = null;
-            titleEl.title = "";
-        }
+        // Mostra apenas o texto (ex: "Categorias")
+        titleEl.innerHTML = `<h2 style="font-size:18px; margin:0;">${text}</h2>`;
     }
 }
 // ====================================================================
@@ -15828,9 +15908,15 @@ leftPanelToggleBtn.addEventListener('click', () => {
 // Listener do botão "+" (Adicionar Item)
 addItemBtn.addEventListener('click', async () => { // <--- Adicionado 'async' aqui
     
+  // >>> BLOQUEIO DE SEGURANÇA <<<
+    if (currentViewMode === 'shared') {
+        alert("🚫 Esta é uma pasta de sistema para notas recebidas.\nNão pode criar notas manualmente aqui.");
+        return;
+    }
+    // -----------------------------
+    
     // >>> 1. NOVA GRAVAÇÃO DE SEGURANÇA <<<
     if (currentSaveStatus === 'unsaved') {
-        console.log("🔒 Gravação de segurança antes de adicionar item...");
         
         // Muda o indicador visual para o utilizador saber
         updateSaveStatus('saving');
@@ -17981,6 +18067,190 @@ noteContentEditor.addEventListener('keydown', (e) => {
 });
 
 
+
+// ============================================================
+// SISTEMA LIVE / MULTIPLAYER (COMPLETO E OTIMIZADO)
+// ============================================================
+
+/**
+ * 1. INICIALIZAR O SISTEMA
+ * Chamado ao abrir uma nota (displayNote)
+ */
+async function setupPresenceSystem(roomId) {
+    if (!auth.currentUser) return;
+
+    // Limpa sessões anteriores
+    cleanupPresence();
+
+    const userId = auth.currentUser.uid;
+    const userName = currentUserData?.nome || "Anónimo";
+    const userColor = stringToColor(userId); // Gera cor consistente
+
+    // Referência ao meu documento de presença
+    myPresenceRef = doc(db, 'pastas', roomId, 'live_presence', userId);
+
+    // A. Função para atualizar dados no Firebase (Genérica)
+    const updateMyStatus = async (cursorData = null) => {
+        try {
+            const payload = {
+                name: userName,
+                color: userColor,
+                lastSeen: serverTimestamp(), // Mantém-me online
+                status: 'online'
+            };
+
+            // Se houver dados de cursor, adiciona-os
+            if (cursorData) {
+                payload.cursor = cursorData;
+            }
+
+            await setDoc(myPresenceRef, payload, { merge: true });
+        } catch (e) {
+            console.warn("Live sync: falha menor na rede.");
+        }
+    };
+
+    // B. Enviar "Sinal de Vida" (Heartbeat) - A cada 5 segundos
+    // Serve apenas para dizer "ainda estou aqui" mesmo que não mexa o rato
+    await updateMyStatus(); // Imediato
+    presenceInterval = setInterval(() => updateMyStatus(lastKnownCursor), 5000);
+
+    // C. Listener de Movimento do Cursor (Otimizado com Debounce)
+    const onSelectionChange = () => {
+        // Cancela o envio anterior se o utilizador ainda estiver a mexer-se
+        if (cursorDebounceTimer) clearTimeout(cursorDebounceTimer);
+
+        // Agenda novo envio para daqui a 200ms (reduz escritas no Firebase)
+        cursorDebounceTimer = setTimeout(() => {
+            const cursor = getCursorLocation();
+            if (cursor) {
+                lastKnownCursor = cursor; // Memoriza para o heartbeat
+                updateMyStatus(cursor);
+            }
+        }, 200);
+    };
+    
+    document.addEventListener('selectionchange', onSelectionChange);
+    // Guardamos a referência para remover o listener depois
+    window.liveSelectionListener = onSelectionChange;
+
+
+    // D. OUVIR OS OUTROS (Receber dados)
+    const presenceCollection = collection(db, 'pastas', roomId, 'live_presence');
+    
+    presenceUnsubscribe = onSnapshot(presenceCollection, (snapshot) => {
+        const activeUsers = [];
+        const now = Date.now();
+
+        // Limpa cursores visuais antigos antes de desenhar novos
+        document.querySelectorAll('.remote-cursor, .remote-label').forEach(el => el.remove());
+
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            const remoteId = doc.id;
+
+            // Ignora o meu próprio cursor
+            if (remoteId === userId) return;
+
+            // Calcular tempo desde o último sinal
+            let secondsAgo = 999;
+            if (data.lastSeen && data.lastSeen.seconds) {
+                secondsAgo = (now - (data.lastSeen.seconds * 1000)) / 1000;
+            } else if (data.lastSeen) { // Fallback se for millis
+                secondsAgo = (now - data.lastSeen) / 1000;
+            } else {
+                secondsAgo = 0; // Acabou de entrar
+            }
+
+            // Só mostra quem esteve ativo nos últimos 20 segundos
+            if (secondsAgo < 20) {
+                activeUsers.push(data);
+                
+                // Desenha o cursor do colega se ele tiver enviado posição
+                if (data.cursor) {
+                    renderRemoteCursor(remoteId, data.color, data.name, data.cursor);
+                }
+            }
+        });
+
+        // Atualiza a barra vermelha no topo (Eu + Outros)
+        updateLiveUI(activeUsers.length + 1);
+
+    }, (error) => {
+        console.error("Erro no listener Live:", error);
+    });
+
+}
+
+/**
+ * 2. LIMPEZA (Ao sair da nota)
+ */
+function cleanupPresence() {
+    // Parar listeners do Firebase
+    if (presenceUnsubscribe) { 
+        presenceUnsubscribe(); 
+        presenceUnsubscribe = null; 
+    }
+
+    // Parar batimento cardíaco
+    if (presenceInterval) { 
+        clearInterval(presenceInterval); 
+        presenceInterval = null; 
+    }
+
+    // Parar listener do DOM
+    if (window.liveSelectionListener) {
+        document.removeEventListener('selectionchange', window.liveSelectionListener);
+        window.liveSelectionListener = null;
+    }
+
+    // Tenta apagar a presença (diz "offline")
+    if (myPresenceRef) { 
+        deleteDoc(myPresenceRef).catch(() => {}); 
+        myPresenceRef = null; 
+    }
+
+    // Limpeza Visual
+    document.querySelectorAll('.remote-cursor, .remote-label').forEach(el => el.remove());
+    updateLiveUI(0);
+}
+
+/**
+ * 3. CALCULAR ONDE ESTOU (Para enviar)
+ * Retorna o índice do bloco HTML e o offset do texto
+ */
+function getCursorLocation() {
+    const selection = window.getSelection();
+    if (!selection.rangeCount) return null;
+
+    const range = selection.getRangeAt(0);
+    const editor = document.getElementById('note-content-editor');
+    
+    // Verifica se estou dentro do editor
+    if (!editor.contains(range.startContainer)) return null;
+
+    let targetNode = range.startContainer;
+    
+    // Se for texto, sobe para o elemento pai (p, div, h1...)
+    if (targetNode.nodeType === Node.TEXT_NODE) {
+        targetNode = targetNode.parentNode;
+    }
+
+    // Calcula índice do elemento (ex: é o 5º parágrafo)
+    // Usamos Array.from para garantir compatibilidade
+    const allElements = Array.from(editor.querySelectorAll('*'));
+    const index = allElements.indexOf(targetNode);
+
+    return {
+        index: index,
+        offset: range.startOffset
+    };
+}
+
+
+
+
+
 // ============================================================
 // SISTEMA DE PRESENÇA EM TEMPO REAL (LIVE) - VERSÃO CORRIGIDA
 // ============================================================
@@ -18009,70 +18279,7 @@ function updateLiveUI(count) {
     }
 }
 
-// Função de Limpeza (GLOBAL)
-function cleanupPresence() {
-    // 1. Desliga o "ouvido" da sala
-    if (presenceUnsubscribe) { 
-        presenceUnsubscribe(); 
-        presenceUnsubscribe = null; 
-    }
 
-    // 2. Desliga o "ouvido" do conteúdo
-    if (typeof contentUnsubscribe !== 'undefined' && contentUnsubscribe) { 
-        contentUnsubscribe(); 
-        contentUnsubscribe = null; 
-    }
-
-    // 3. Pára o batimento cardíaco
-    if (presenceInterval) { 
-        clearInterval(presenceInterval); 
-        presenceInterval = null; 
-    }
-    
-    // 4. Apaga o meu nome da sala
-    if (myPresenceRef) { 
-        deleteDoc(myPresenceRef).catch(err => console.log("Saída silenciosa")); 
-        myPresenceRef = null; 
-    }
-    
-    // 5. Reseta a interface visual
-    updateLiveUI(0);
-    
-    // 6. Limpa cursores visuais
-    document.querySelectorAll('.remote-cursor, .remote-label').forEach(el => el.remove());
-}
-
-// --- NOVO FICHEIRO OU SECÇÃO: cursor-logic.js ---
-
-// 1. Obter a "morada" do cursor (Caminho relativo ao Editor)
-function getCursorLocation() {
-    const selection = window.getSelection();
-    if (selection.rangeCount === 0) return null;
-
-    const range = selection.getRangeAt(0);
-    const editor = document.getElementById('note-content-editor');
-    
-    // Garante que a seleção está dentro do editor
-    if (!editor.contains(range.startContainer)) return null;
-
-    let container = range.startContainer;
-    let offset = range.startOffset;
-
-    // Se for nó de texto, sobe para o elemento pai
-    if (container.nodeType === Node.TEXT_NODE) {
-        container = container.parentNode;
-    }
-
-    // Calcular o índice deste elemento dentro do editor (ex: é o 5º <p>)
-    // Nota: Isto é simplificado. Para produção, precisaria de um TreeWalker.
-    const allElements = Array.from(editor.querySelectorAll('*'));
-    const index = allElements.indexOf(container);
-
-    return {
-        elementIndex: index, // Qual o elemento (ex: 12)
-        textOffset: offset   // Posição do cursor no texto (ex: 5)
-    };
-}
 
 // 2. Desenhar o cursor do colega na posição correta
 function renderRemoteCursor(userId, color, name, cursorData) {
@@ -18472,90 +18679,53 @@ noteContentEditor.addEventListener('drop', (e) => {
     }
 });
 
-// ============================================================
-// FUNÇÃO EM FALTA: SISTEMA DE PRESENÇA (LIVE)
-// ============================================================
-async function setupPresenceSystem(roomId) {
-    if (!auth.currentUser) return;
+// --- NOVA FUNÇÃO: MUDAR ENTRE LOCAL E PARTILHA ---
+async function switchFolderView(mode) {
+    // Se clicar no modo que já está ativo, não faz nada
+    if (mode === currentViewMode && navigationStack.length === 0) return;
 
-    // 1. Limpa qualquer presença anterior para não duplicar
-    cleanupPresence();
+    if (mode === 'local') {
+        currentViewMode = 'local';
+        navigationStack = []; // Limpa navegação
+        updateNavigationView(true);
+    } 
+    else if (mode === 'shared') {
+        // Se já temos o ID em cache, usamos direto
+        if (systemSharedFolderId) {
+            currentViewMode = 'shared';
+            navigationStack = []; // Limpa navegação (a raiz será a pasta partilhada)
+            updateNavigationView(true);
+            return;
+        }
 
-    const userId = auth.currentUser.uid;
-    const userName = currentUserData?.nome || "Anónimo";
-    // Gera uma cor baseada no ID para os cursores
-    const userColor = stringToColor(userId);
-
-    // Define onde a presença será guardada na BD
-    // Estrutura: pastas -> {ID_DA_NOTA} -> live_presence -> {ID_USER}
-    myPresenceRef = doc(db, 'pastas', roomId, 'live_presence', userId);
-
-    // 2. FUNÇÃO DE HEARTBEAT (Sinal de vida)
-    // Envia um sinal a cada X segundos para dizer "estou aqui"
-    const sendHeartbeat = async () => {
+        // Se não temos o ID, vamos buscar à base de dados
         try {
-            await setDoc(myPresenceRef, {
-                name: userName,
-                color: userColor,
-                lastSeen: serverTimestamp(), // Hora do servidor
-                status: 'online'
-            }, { merge: true });
-        } catch (e) {
-            console.warn("Aviso: Falha momentânea no heartbeat live (rede instável?)");
-        }
-    };
-
-    // Envia o primeiro sinal imediatamente
-    await sendHeartbeat();
-
-    // 3. INICIAR O PULSO (A cada 5 segundos)
-    presenceInterval = setInterval(sendHeartbeat, 5000);
-
-    // 4. OUVIR OS OUTROS (Quem mais está na sala?)
-    const presenceCollection = collection(db, 'pastas', roomId, 'live_presence');
-    
-    presenceUnsubscribe = onSnapshot(presenceCollection, (snapshot) => {
-        const activeUsers = [];
-        const now = Date.now();
-
-        snapshot.forEach(doc => {
-            const data = doc.data();
+            const q = query(
+                collection(db, 'pastas'),
+                where('nome', '==', 'Partilhadas'),
+                where('parentId', '==', null),
+                where('userId', '==', auth.currentUser.uid),
+                where('tipo', '==', 'pasta')
+            );
             
-            // Calcular há quanto tempo o utilizador deu sinal de vida
-            let secondsAgo = 999;
+            const snapshot = await getDocs(q);
             
-            // Compatibilidade com diferentes tipos de Timestamp do Firebase
-            if (data.lastSeen && typeof data.lastSeen.toMillis === 'function') {
-                secondsAgo = (now - data.lastSeen.toMillis()) / 1000;
-            } else if (data.lastSeen && data.lastSeen.seconds) {
-                secondsAgo = (now - (data.lastSeen.seconds * 1000)) / 1000;
+            if (!snapshot.empty) {
+                systemSharedFolderId = snapshot.docs[0].id;
+                currentViewMode = 'shared';
+                navigationStack = []; // Importante: Resetamos a pilha porque esta pasta será a "Raiz" visual
+                updateNavigationView(true);
             } else {
-                // Se acabou de entrar, assume 0
-                secondsAgo = 0;
+                alert("A pasta 'Partilhadas' ainda não existe. Crie uma importação primeiro.");
             }
-
-            // Considera "Online" apenas quem deu sinal nos últimos 15 segundos
-            if (secondsAgo < 15) {
-                activeUsers.push({ id: doc.id, ...data });
-            }
-        });
-
-        // 5. ATUALIZAR INTERFACE
-        // Se houver 2 ou mais pessoas (eu + outro), liga a barra vermelha
-        updateLiveUI(activeUsers.length);
-        
-        // (Opcional) Desenhar cursores dos outros (se a função existir)
-        if (typeof renderRemoteCursors === 'function') {
-            const others = activeUsers.filter(u => u.id !== userId);
-            renderRemoteCursors(others);
+        } catch (e) {
+            console.error("Erro ao mudar para Partilha:", e);
         }
-
-    }, (error) => {
-        console.error("Erro no listener de presença:", error);
-    });
-    
-    console.log("✅ Sistema Live iniciado para a sala:", roomId);
+    }
 }
+window.switchFolderView = switchFolderView;
+
+
 
     </script>
 </body>
