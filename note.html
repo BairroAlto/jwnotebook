@@ -4609,6 +4609,7 @@ let myPresenceRef = null;       // Referência do meu "sinal de vida"
 let presenceInterval = null;    // Heartbeat para manter vivo
 let currentViewMode = 'local'; // 'local' ou 'shared'
 let systemSharedFolderId = null; // Vai guardar o ID da pasta "Partilhadas"
+let lastServerVersionTime = 0;
 let cursorDebounceTimer = null;
 let lastKnownCursor = null;
 let isClosingNote = false;
@@ -7371,6 +7372,7 @@ async function displayNote(noteId, noteElement, searchTerm = null, keepReference
 
         if (noteSnap.exists()) {
             let data = noteSnap.data();
+             lastServerVersionTime = data.ultimaedicao ? data.ultimaedicao.toMillis() : 0;
             let isReadOnly = false;
             
             // Variável para saber qual é o ID Real onde os dados estão (importante para o Inbox)
@@ -7651,97 +7653,72 @@ function extractTopicsFromEditorHTML() {
 
 // Função que faz a gravação real no Firebase
 async function executeSave() {
-    // 1. Verificações iniciais
     if (!selectedNoteId) return;
     updateSaveStatus('saving');
 
     const targetId = selectedNoteId;
-    // Define o listItem para atualizar o nome na barra lateral visualmente
-    const listItem = document.querySelector(`.list-item[data-id="${targetId}"]`);
+    const noteRef = doc(db, 'pastas', targetId);
 
     try {
-        const noteRef = doc(db, 'pastas', targetId);
+        // =================================================================
+        // 🛡️ VERIFICAÇÃO DE SEGURANÇA (DETEÇÃO DE CONFLITOS)
+        // =================================================================
         
-        // Preparar dados do HTML do Editor
+        // 1. Antes de gravar, vamos ver como está a nota no servidor AGORA
+        const checkSnap = await getDoc(noteRef);
+        
+        if (checkSnap.exists()) {
+            const serverData = checkSnap.data();
+            const serverTime = serverData.ultimaedicao ? serverData.ultimaedicao.toMillis() : 0;
+
+            // 2. Se a versão do servidor for MAIS RECENTE que a nossa memória
+            // E a diferença for maior que 2 segundos (margem para a nossa própria latência)
+            if (serverTime > lastServerVersionTime + 2000) {
+                
+                console.warn("⚠️ CONFLITO DETETADO: A nota foi alterada por outro utilizador.");
+
+                // A. SALVAR O NOSSO TRABALHO NO HISTÓRICO (Para não perder nada)
+                const backupsRef = collection(db, 'pastas', targetId, 'backups');
+                await addDoc(backupsRef, {
+                    titulo: noteTitleInput.value + " (Conflito de Edição)",
+                    conteudo: noteContentEditor.innerHTML,
+                    timestamp: serverTimestamp(),
+                    isSafetyBackup: true,
+                    reason: "Conflito de edição simultânea"
+                });
+
+                // B. AVISAR O UTILIZADOR
+                alert("⚠️ ATENÇÃO: CONFLITO DE EDIÇÃO\n\nOutra pessoa gravou alterações nesta nota enquanto você escrevia.\n\nPara proteger o trabalho de ambos:\n1. A sua gravação foi cancelada.\n2. O seu texto foi guardado no 'Histórico' como Cópia de Segurança.\n3. A nota vai recarregar para mostrar as alterações da outra pessoa.");
+
+                // C. RECARREGAR A NOTA (Para ver o que o outro escreveu)
+                if (typeof navigateToNoteSmart === 'function') {
+                    navigateToNoteSmart(targetId);
+                } else {
+                    displayNote(targetId, null);
+                }
+                
+                return false; // Cancela a gravação principal
+            }
+        }
+        // =================================================================
+
+        // Se passou na verificação, continuamos com a gravação normal...
+
+        // Preparar dados do HTML
         const miniNoteInputs = noteContentEditor.querySelectorAll('.mini-note-title-input');
         miniNoteInputs.forEach(input => input.setAttribute('value', input.value || ''));
 
-        // Extrair Tópicos
-        const finalTopicsIndex = typeof extractTopicsFromEditorHTML === 'function' 
-            ? extractTopicsFromEditorHTML() 
-            : {};
-
-        // Extrair Tags
+        const finalTopicsIndex = typeof extractTopicsFromEditorHTML === 'function' ? extractTopicsFromEditorHTML() : {};
+        
         let finalTagNames = []; 
         try { 
-            finalTagNames = Array.from(noteContentEditor.querySelectorAll('span.tag'))
-                .map(s => s.textContent.substring(1)); 
+            finalTagNames = Array.from(noteContentEditor.querySelectorAll('span.tag')).map(s => s.textContent.substring(1)); 
         } catch(e){}
         
-        // Extrair Cores usadas
         const coloredWrappers = noteContentEditor.querySelectorAll('.mini-note-wrapper[data-highlight]');
         const uniqueColorsUsed = [...new Set(Array.from(coloredWrappers).map(el => el.dataset.highlight))];
 
         const newContentHTML = noteContentEditor.innerHTML;
-        const newTextContent = noteContentEditor.innerText.trim();
-
-        // =================================================================
-        // 🛡️ MÓDULO DE SEGURANÇA MÁXIMA (BLACKBOX)
-        // =================================================================
-        
-        // Verifica se a nota vai ficar VAZIA (ou quase vazia)
-        if (newTextContent.length === 0) {
-            console.warn("⚠️ ALERTA DE SEGURANÇA: Detetada tentativa de apagar todo o conteúdo.");
-
-            // 1. Busca o que está atualmente na base de dados (A versão segura)
-            const currentSnap = await getDoc(noteRef);
-            
-            if (currentSnap.exists()) {
-                const dbData = currentSnap.data();
-                const oldContent = dbData.conteudo || "";
-                
-                // Remove tags HTML para comparar apenas a massa de texto real
-                const oldText = oldContent.replace(/<[^>]*>?/gm, '').trim();
-                const newText = newTextContent; // Já calculado em cima (innerText)
-
-                // Só ativa a regra se a nota original tivesse algum conteúdo relevante (> 20 caracteres)
-                if (oldText.length > 20) {
-                    
-                    // Cálculo da percentagem restante
-                    const ratio = newText.length / oldText.length;
-                    
-                    // SE RESTAR MENOS DE 10% (Ou seja, apagou > 90% ou tudo)
-                    if (ratio < 0.1) {
-                        console.warn(`🚨 ALERTA DE SEGURANÇA: Detetado apagamento massivo (${Math.round((1-ratio)*100)}%). A criar backup de emergência...`);
-                        
-                        try {
-                            // Grava na sub-coleção de BACKUPS da própria nota
-                            const backupsRef = collection(db, 'pastas', targetId, 'backups');
-                            
-                            await addDoc(backupsRef, {
-                                titulo: dbData.nome + " (Auto-Segurança 🚨)",
-                                conteudo: oldContent, // Guarda o conteúdo ANTIGO
-                                timestamp: serverTimestamp(),
-                                isSafetyBackup: true,
-                                reason: `Apagamento massivo detetado`
-                            });
-
-                            
-                            // Feedback visual ao utilizador
-                            const statusEl = document.getElementById('save-status-indicator');
-                            if(statusEl) {
-                                statusEl.textContent = "🚨 Cópia de segurança criada!";
-                                setTimeout(() => updateSaveStatus('saved'), 3000);
-                            }
-
-                        } catch (err) {
-                            console.error("❌ FALHA NO BACKUP DE SEGURANÇA:", err);
-                        }
-                    }
-                }
-            }
-        }
-        // =================================================================
 
         // --- 3. GRAVAÇÃO PRINCIPAL ---
         await updateDoc(noteRef, { 
@@ -7753,29 +7730,25 @@ async function executeSave() {
             ultimaedicao: serverTimestamp()
         });
 
-        // Sincroniza nome do atalho local se necessário
-        if (targetId !== selectedNoteId) { // Caso selectedNoteId seja diferente (ex: ponteiro)
-            const shortcutRef = doc(db, 'pastas', selectedNoteId);
-            await updateDoc(shortcutRef, { nome: noteTitleInput.value });
-        }
+        // ATUALIZAÇÃO CRÍTICA: 
+        // Como acabámos de gravar, atualizamos a nossa memória do tempo para "Agora".
+        // Assim, a próxima gravação daqui a 10 segundos saberá que esta versão é nossa.
+        lastServerVersionTime = Date.now(); 
 
-        // Atualiza UI da Lista (Lateral)
+        // Atualiza UI da Lista
+        const listItem = document.querySelector(`.list-item[data-id="${targetId}"]`);
         if (listItem) {
             let icon = "📄 ";
             if (listItem.dataset.isLive) icon = "🗪 ";
             else if (listItem.hasAttribute('data-protected')) icon = "🔒 ";
-            
-            // Verifica se é superpasta
-            if (listItem.dataset.superpasta === "true") icon = "🗃️ "; // ou o ícone customizado
-
+            if (listItem.dataset.superpasta === "true") icon = "🗃️ ";
             const spanName = listItem.querySelector('span');
             if (spanName) spanName.textContent = icon + noteTitleInput.value;
         }
         
-        // 4. SINCRONIZAÇÃO PÚBLICA (Se a nota estiver partilhada)
+        // Sincronização Pública (Se existir)
         if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
             try {
-                // Grava na coleção 'shared_notes'
                 setDoc(doc(db, 'shared_notes', currentNoteShareData.shareId), {
                     nome: noteTitleInput.value,
                     conteudo: newContentHTML,
@@ -7783,10 +7756,7 @@ async function executeSave() {
                     updatedAt: serverTimestamp(),
                     type: 'full_note' 
                 }, { merge: true }).catch(err => console.error("Erro sync partilha:", err));
-                
-            } catch (e) {
-                console.warn("Falha silenciosa ao sincronizar partilha pública.");
-            }
+            } catch (e) { }
         }
 
         updateSaveStatus('saved');
