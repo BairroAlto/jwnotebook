@@ -3141,6 +3141,39 @@ a.board-link:hover {
     height: 3px; /* Um pouco mais grossa para destaque */
 }
 
+/* PROTEÇÃO LIVE (Bloqueio de Linha) */
+.remote-locked-line {
+    position: relative;
+    outline: 2px solid transparent; /* Cor definida via JS */
+    background-color: rgba(0, 0, 0, 0.05); /* Fundo ligeiramente escuro */
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+/* A Etiqueta com o Nome */
+.remote-locked-line::after {
+    content: attr(data-locked-by); /* Lê o nome do atributo HTML */
+    position: absolute;
+    top: -18px;
+    right: 0;
+    font-size: 10px;
+    font-weight: bold;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 4px 4px 0 0;
+    background-color: inherit; /* Herda a cor da borda */
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 10;
+    opacity: 0.9;
+}
+
+/* Efeito de "Proibido" ao passar o rato */
+.remote-locked-line:hover {
+    cursor: not-allowed;
+    background-color: rgba(231, 76, 60, 0.1); /* Vermelho suave */
+}
+
 
 /* --- CONFIGURAÇÃO MOBILE (LAYOUT 2 LINHAS NO TOPO) --- */
 @media (max-width: 768px) {
@@ -7670,38 +7703,33 @@ async function executeSave() {
     if (!selectedNoteId) return;
     updateSaveStatus('saving');
 
-      let targetId = selectedNoteId;
-
- // 1. Tentar ler o ID real de um atributo que vamos colocar no editor (mais seguro)
+    // 1. Determinar o ID Real (Suporte a Atalhos Live)
+    let targetId = selectedNoteId;
     const editorEl = document.getElementById('note-content-editor');
-    const realId = editorEl.getAttribute('data-real-id');
+    const realId = editorEl ? editorEl.getAttribute('data-real-id') : null;
     
     if (realId) {
         targetId = realId;
         console.log(`📝 LIVE: A gravar na nota original (${targetId}) em vez do atalho.`);
     }
-    
+
     const noteRef = doc(db, 'pastas', targetId);
 
     try {
         // =================================================================
-        // 🛡️ VERIFICAÇÃO DE SEGURANÇA (DETEÇÃO DE CONFLITOS)
+        // 🛡️ CAMADA 1: VERIFICAÇÃO DE CONFLITOS (Servidor vs Local)
         // =================================================================
-        
-        // 1. Antes de gravar, vamos ver como está a nota no servidor AGORA
         const checkSnap = await getDoc(noteRef);
         
         if (checkSnap.exists()) {
             const serverData = checkSnap.data();
             const serverTime = serverData.ultimaedicao ? serverData.ultimaedicao.toMillis() : 0;
 
-            // 2. Se a versão do servidor for MAIS RECENTE que a nossa memória
-            // E a diferença for maior que 2 segundos (margem para a nossa própria latência)
+            // Se o servidor for mais recente que a nossa memória (+2s margem)
             if (serverTime > lastServerVersionTime + 2000) {
-                
-                console.warn("⚠️ CONFLITO DETETADO: A nota foi alterada por outro utilizador.");
+                console.warn("⚠️ CONFLITO DETETADO: A nota foi alterada externamente.");
 
-                // A. SALVAR O NOSSO TRABALHO NO HISTÓRICO (Para não perder nada)
+                // A. Backup de Emergência
                 const backupsRef = collection(db, 'pastas', targetId, 'backups');
                 await addDoc(backupsRef, {
                     titulo: noteTitleInput.value + " (Conflito de Edição)",
@@ -7711,40 +7739,89 @@ async function executeSave() {
                     reason: "Conflito de edição simultânea"
                 });
 
-                // B. AVISAR O UTILIZADOR
-                alert("⚠️ ATENÇÃO: CONFLITO DE EDIÇÃO\n\nOutra pessoa gravou alterações nesta nota enquanto você escrevia.\n\nPara proteger o trabalho de ambos:\n1. A sua gravação foi cancelada.\n2. O seu texto foi guardado no 'Histórico' como Cópia de Segurança.\n3. A nota vai recarregar para mostrar as alterações da outra pessoa.");
+                alert("⚠️ ATENÇÃO: CONFLITO DE EDIÇÃO\n\nOutra pessoa gravou alterações. A sua versão foi salva no Histórico. A nota será recarregada.");
 
-                // C. RECARREGAR A NOTA (Para ver o que o outro escreveu)
-                if (typeof navigateToNoteSmart === 'function') {
-                    navigateToNoteSmart(targetId);
-                } else {
-                    displayNote(targetId, null);
-                }
+                // B. Recarregar Nota
+                if (typeof navigateToNoteSmart === 'function') navigateToNoteSmart(targetId);
+                else displayNote(targetId, null);
                 
-                return false; // Cancela a gravação principal
+                return false; // Aborta gravação
             }
         }
+
         // =================================================================
+        // 🛡️ CAMADA 2: LIMPEZA DE BLOQUEIOS LIVE (Para não gravar lixo visual)
+        // =================================================================
+        const locksToRestore = [];
+        const lockedEls = noteContentEditor.querySelectorAll('.remote-locked-line');
+        
+        lockedEls.forEach(el => {
+            // Guarda estado para repor depois
+            locksToRestore.push({
+                element: el,
+                contentEditable: el.getAttribute('contenteditable'),
+                class: 'remote-locked-line',
+                lockedBy: el.getAttribute('data-locked-by'),
+                outline: el.style.outlineColor,
+                bg: el.style.backgroundColor
+            });
 
-        // Se passou na verificação, continuamos com a gravação normal...
+            // Limpa o HTML
+            el.removeAttribute('contenteditable');
+            el.classList.remove('remote-locked-line');
+            el.removeAttribute('data-locked-by');
+            el.style.outlineColor = '';
+            el.style.backgroundColor = '';
+            
+            // Remove styles injetados
+            const styleTag = el.querySelector('style');
+            if(styleTag) styleTag.remove();
+        });
 
-        // Preparar dados do HTML
+        // =================================================================
+        // 🛡️ CAMADA 3: SEGURANÇA CONTRA APAGAMENTO MASSIVO
+        // =================================================================
+        const newContentHTML = noteContentEditor.innerHTML;
+        const newTextContent = noteContentEditor.innerText.trim();
+
+        if (newTextContent.length === 0 && checkSnap.exists()) {
+            const dbData = checkSnap.data();
+            const oldContent = dbData.conteudo || "";
+            const oldText = oldContent.replace(/<[^>]*>?/gm, '').trim();
+
+            if (oldText.length > 20) {
+                const ratio = newTextContent.length / oldText.length;
+                if (ratio < 0.1) {
+                    console.warn(`🚨 Apagamento massivo detetado. Criando backup...`);
+                    const backupsRef = collection(db, 'pastas', targetId, 'backups');
+                    await addDoc(backupsRef, {
+                        titulo: dbData.nome + " (Auto-Segurança 🚨)",
+                        conteudo: oldContent,
+                        timestamp: serverTimestamp(),
+                        isSafetyBackup: true,
+                        reason: `Apagamento massivo detetado`
+                    });
+                }
+            }
+        }
+
+        // =================================================================
+        // 💾 GRAVAÇÃO FINAL
+        // =================================================================
+        
+        // Preparar Metadados (Tópicos, Tags, Cores)
         const miniNoteInputs = noteContentEditor.querySelectorAll('.mini-note-title-input');
         miniNoteInputs.forEach(input => input.setAttribute('value', input.value || ''));
 
         const finalTopicsIndex = typeof extractTopicsFromEditorHTML === 'function' ? extractTopicsFromEditorHTML() : {};
         
         let finalTagNames = []; 
-        try { 
-            finalTagNames = Array.from(noteContentEditor.querySelectorAll('span.tag')).map(s => s.textContent.substring(1)); 
-        } catch(e){}
+        try { finalTagNames = Array.from(noteContentEditor.querySelectorAll('span.tag')).map(s => s.textContent.substring(1)); } catch(e){}
         
         const coloredWrappers = noteContentEditor.querySelectorAll('.mini-note-wrapper[data-highlight]');
         const uniqueColorsUsed = [...new Set(Array.from(coloredWrappers).map(el => el.dataset.highlight))];
 
-        const newContentHTML = noteContentEditor.innerHTML;
-
-        // --- 3. GRAVAÇÃO PRINCIPAL ---
+        // Enviar para Firebase
         await updateDoc(noteRef, { 
             nome: noteTitleInput.value, 
             conteudo: newContentHTML,
@@ -7754,32 +7831,53 @@ async function executeSave() {
             ultimaedicao: serverTimestamp()
         });
 
-        // ATUALIZAÇÃO CRÍTICA: 
-        // Como acabámos de gravar, atualizamos a nossa memória do tempo para "Agora".
-        // Assim, a próxima gravação daqui a 10 segundos saberá que esta versão é nossa.
+        // Atualizar Memória de Tempo (Agora somos a versão mais recente)
         lastServerVersionTime = Date.now(); 
+
+        // =================================================================
+        // 🔄 RESTAURO PÓS-GRAVAÇÃO
+        // =================================================================
+        
+        // Devolve os bloqueios visuais ao ecrã
+        locksToRestore.forEach(item => {
+            const el = item.element;
+            if (el) {
+                el.setAttribute('contenteditable', item.contentEditable);
+                el.classList.add(item.class);
+                el.setAttribute('data-locked-by', item.lockedBy);
+                el.style.outlineColor = item.outline;
+                el.style.backgroundColor = item.bg;
+            }
+        });
 
         // Atualiza UI da Lista
         const listItem = document.querySelector(`.list-item[data-id="${targetId}"]`);
-        if (listItem) {
+        // Se for um atalho, o ID na lista é diferente do targetId
+        const shortcutItem = currentShortcutId ? document.querySelector(`.list-item[data-id="${currentShortcutId}"]`) : null;
+        
+        const itemToUpdate = shortcutItem || listItem;
+
+        if (itemToUpdate) {
             let icon = "📄 ";
-            if (listItem.dataset.isLive) icon = "🗪 ";
-            else if (listItem.hasAttribute('data-protected')) icon = "🔒 ";
-            if (listItem.dataset.superpasta === "true") icon = "🗃️ ";
-            const spanName = listItem.querySelector('span');
+            if (itemToUpdate.dataset.isLive) icon = "🗪 ";
+            else if (itemToUpdate.hasAttribute('data-protected')) icon = "🔒 ";
+            if (itemToUpdate.dataset.superpasta === "true") icon = "🗃️ ";
+            
+            const spanName = itemToUpdate.querySelector('span');
             if (spanName) spanName.textContent = icon + noteTitleInput.value;
         }
         
-        // Sincronização Pública (Se existir)
+        // Sincronização Pública (Opcional)
         if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
             try {
+                const { setDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
                 setDoc(doc(db, 'shared_notes', currentNoteShareData.shareId), {
                     nome: noteTitleInput.value,
                     conteudo: newContentHTML,
                     authorName: currentUserData?.nome || "Anónimo",
                     updatedAt: serverTimestamp(),
                     type: 'full_note' 
-                }, { merge: true }).catch(err => console.error("Erro sync partilha:", err));
+                }, { merge: true }).catch(() => {});
             } catch (e) { }
         }
 
@@ -18154,6 +18252,56 @@ noteContentEditor.addEventListener('keydown', (e) => {
 
 
 
+function applyRemoteLocks(activeUsers) {
+    const editor = document.getElementById('note-content-editor');
+    // Converte os filhos do editor num Array para podermos usar índices
+    const editorLines = Array.from(editor.children);
+
+    // 1. LIMPEZA: Remover todos os bloqueios antigos primeiro
+    const lockedElements = editor.querySelectorAll('.remote-locked-line');
+    lockedElements.forEach(el => {
+        el.classList.remove('remote-locked-line');
+        el.removeAttribute('data-locked-by');
+        el.removeAttribute('contenteditable'); // Devolve o controlo
+        el.style.outlineColor = '';
+        el.style.backgroundColor = '';
+        
+        // Remove a cor de fundo da etiqueta pseudo-elemento (via style inline não dá, 
+        // mas o CSS trata disso herdando a outlineColor se definirmos uma var)
+        el.style.removeProperty('--user-color');
+    });
+
+    // 2. APLICAÇÃO: Bloquear as linhas onde estão os outros
+    activeUsers.forEach(user => {
+        // Se o utilizador tiver cursor e índice válido
+        if (user.cursor && typeof user.cursor.index === 'number') {
+            
+            const targetLine = editorLines[user.cursor.index];
+
+            if (targetLine) {
+                // A. Bloqueio Literal (Impede escrever)
+                targetLine.setAttribute('contenteditable', 'false');
+                
+                // B. Bloqueio Visual
+                targetLine.classList.add('remote-locked-line');
+                targetLine.setAttribute('data-locked-by', `🔒 ${user.name} a editar...`);
+                
+                // C. Cores Dinâmicas
+                targetLine.style.outlineColor = user.color;
+                // Truque para o ::after usar a mesma cor no background
+                targetLine.style.backgroundColor = `${user.color}15`; // 15 = transparência
+                
+                // Injetamos uma variável CSS para o pseudo-elemento usar (se o browser suportar)
+                // Caso contrário, o CSS fallback funciona bem.
+                const styleSheet = document.createElement("style");
+                styleSheet.innerText = `.remote-locked-line[data-locked-by="${user.name}"]::after { background-color: ${user.color}; }`;
+                targetLine.appendChild(styleSheet);
+            }
+        }
+    });
+}
+
+
 // ============================================================
 // SISTEMA LIVE / MULTIPLAYER (COMPLETO E OTIMIZADO)
 // ============================================================
@@ -18230,6 +18378,7 @@ async function setupPresenceSystem(roomId) {
 
         // Limpa cursores visuais antigos antes de desenhar novos
         document.querySelectorAll('.remote-cursor, .remote-label').forEach(el => el.remove());
+         document.querySelectorAll('#note-content-editor style').forEach(s => s.remove());
 
         snapshot.forEach(doc => {
             const data = doc.data();
@@ -18258,6 +18407,9 @@ async function setupPresenceSystem(roomId) {
                 }
             }
         });
+
+         // >>> LINHA NOVA: APLICAR BLOQUEIOS <<<
+        applyRemoteLocks(activeUsers); 
 
         // Atualiza a barra vermelha no topo (Eu + Outros)
         updateLiveUI(activeUsers.length + 1);
