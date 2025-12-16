@@ -295,6 +295,9 @@ body {
     -webkit-overflow-scrolling: touch; /* Ativa o scroll suave (inércia) no iPhone/Android */
     overscroll-behavior-y: contain;    /* Impede que o scroll "puxe" a página toda */
     touch-action: pan-y;               /* Melhora a deteção do dedo para scroll vertical */
+     overflow-wrap: break-word; 
+    word-wrap: break-word;
+    word-break: break-word;
 }
 
 /* Adicione isto em qualquer lugar no seu CSS principal */
@@ -2006,29 +2009,47 @@ a.board-link:hover {
 /* ============================================================
    WIDGET CARD DE LINK (🎴)
    ============================================================ */
-   .url-card-widget {
-    display: inline-flex;
+  .url-card-widget {
+    /* MUDANÇA 1: inline-flex permite que fiquem lado a lado */
+    display: inline-flex; 
     flex-direction: column;
-    width: 250px;             /* Tamanho médio */
+    width: 240px;             
     height: 180px;
     border: 1px solid var(--border-color);
     border-radius: 12px;
     overflow: hidden;
-    margin: 10px 5px;
+    margin: 5px; 
+    vertical-align: top; /* Alinha pelo topo quando há texto ao lado */
     position: relative;
-    vertical-align: top;
     background-color: var(--panel-color);
     box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-    transition: transform 0.2s, box-shadow 0.2s;
+    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
     user-select: none;
-    text-decoration: none; /* Remove sublinhado de link se houver */
-    cursor: pointer;
+    text-decoration: none;
+    cursor: grab; /* Mãozinha para indicar que pode arrastar */
 }
 
 .url-card-widget:hover {
     transform: translateY(-3px);
     box-shadow: 0 8px 20px rgba(0,0,0,0.3);
     border-color: var(--accent-color);
+}
+
+/* Estado enquanto está a ser arrastado (Fica transparente) */
+.url-card-widget.sortable-dragging {
+    opacity: 0.4;
+    border: 2px dashed var(--accent-color);
+}
+
+/* Indicadores de onde vai cair (Esquerda ou Direita) */
+.url-card-widget.drop-target-left {
+    border-left: 4px solid var(--accent-color) !important;
+    transform: none !important;
+}
+
+.url-card-widget.drop-target-right {
+    border-right: 4px solid var(--accent-color) !important;
+    transform: none !important;
 }
 
 /* Área da Imagem */
@@ -4347,11 +4368,14 @@ a.board-link:hover {
 </body>
 
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
    <script type="module">
     
   // 1. Importações de Configuração
     import { db, auth } from './js/firebase-config.js';
     import { BIBLE_DATA, BIBLICAL_BOOKS } from './js/bible-data.js';
+    import { sanitizeHTML, debounce, removeAccents, escapeRegExp } from './js/utils.js';
+
 
     // 2. Importações do Firestore
     import { 
@@ -6162,14 +6186,6 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
 
 
 
-
-
-// 1. Remove acentos (ex: "João" -> "joao")
-function removeAccents(str) {
-    if (!str) return "";
-    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-}
-
 // 2. Cria Regex que entende acentos (ex: "joao" vira regex para encontrar "joão", "João", "JÒAO")
 function getAccentInsensitiveRegex(term) {
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // Escapa caracteres especiais
@@ -7505,43 +7521,34 @@ function extractTopicsFromEditorHTML() {
 
 // Função que faz a gravação real no Firebase
 async function executeSave() {
-    // --- 1. TRAVA DE SEGURANÇA (CRÍTICO) ---
-    if (isClosingNote) {
-        console.warn("🚫 Gravação bloqueada: A nota está a ser fechada.");
-        return;
-    }
-
+    // 1. Verificações iniciais
     if (!selectedNoteId) return;
-
-    // --- 2. Determinar o ID de Destino ---
-    let targetId = selectedNoteId;
-    const listItem = document.querySelector(`.list-item[data-id="${selectedNoteId}"]`);
-    
-    if (listItem && listItem.dataset.isLive === "true") {
-        try {
-            const snap = await getDoc(doc(db, 'pastas', selectedNoteId));
-            if (snap.exists() && snap.data().pointerId) {
-                targetId = snap.data().pointerId;
-            }
-        } catch(e) { console.error("Erro pointer:", e); }
-    }
-
     updateSaveStatus('saving');
+
+    const targetId = selectedNoteId;
+    // Define o listItem para atualizar o nome na barra lateral visualmente
+    const listItem = document.querySelector(`.list-item[data-id="${targetId}"]`);
 
     try {
         const noteRef = doc(db, 'pastas', targetId);
         
-        // Preparar dados do HTML
+        // Preparar dados do HTML do Editor
         const miniNoteInputs = noteContentEditor.querySelectorAll('.mini-note-title-input');
         miniNoteInputs.forEach(input => input.setAttribute('value', input.value || ''));
 
-        const finalTopicsIndex = extractTopicsFromEditorHTML();
+        // Extrair Tópicos
+        const finalTopicsIndex = typeof extractTopicsFromEditorHTML === 'function' 
+            ? extractTopicsFromEditorHTML() 
+            : {};
+
+        // Extrair Tags
         let finalTagNames = []; 
         try { 
             finalTagNames = Array.from(noteContentEditor.querySelectorAll('span.tag'))
                 .map(s => s.textContent.substring(1)); 
         } catch(e){}
         
+        // Extrair Cores usadas
         const coloredWrappers = noteContentEditor.querySelectorAll('.mini-note-wrapper[data-highlight]');
         const uniqueColorsUsed = [...new Set(Array.from(coloredWrappers).map(el => el.dataset.highlight))];
 
@@ -7557,55 +7564,53 @@ async function executeSave() {
             console.warn("⚠️ ALERTA DE SEGURANÇA: Detetada tentativa de apagar todo o conteúdo.");
 
             // 1. Busca o que está atualmente na base de dados (A versão segura)
-          // 1. Busca o que está atualmente na base de dados (A versão segura)
-        // Precisamos disto para comparar o tamanho antigo com o novo
-        const currentSnap = await getDoc(noteRef);
-        
-        if (currentSnap.exists()) {
-            const dbData = currentSnap.data();
-            const oldContent = dbData.conteudo || "";
+            const currentSnap = await getDoc(noteRef);
             
-            // Remove tags HTML para comparar apenas a massa de texto real
-            const oldText = oldContent.replace(/<[^>]*>?/gm, '').trim();
-            const newText = newTextContent; // Já calculado em cima (innerText)
+            if (currentSnap.exists()) {
+                const dbData = currentSnap.data();
+                const oldContent = dbData.conteudo || "";
+                
+                // Remove tags HTML para comparar apenas a massa de texto real
+                const oldText = oldContent.replace(/<[^>]*>?/gm, '').trim();
+                const newText = newTextContent; // Já calculado em cima (innerText)
 
-            // Só ativa a regra se a nota original tivesse algum conteúdo relevante (> 20 caracteres)
-            if (oldText.length > 20) {
-                
-                // Cálculo da percentagem restante
-                const ratio = newText.length / oldText.length;
-                
-                // SE RESTAR MENOS DE 10% (Ou seja, apagou > 90% ou tudo)
-                if (ratio < 0.1) {
-                    console.warn(`🚨 ALERTA DE SEGURANÇA: Detetado apagamento massivo (${Math.round((1-ratio)*100)}%). A criar backup de emergência...`);
+                // Só ativa a regra se a nota original tivesse algum conteúdo relevante (> 20 caracteres)
+                if (oldText.length > 20) {
                     
-                    try {
-                        // Grava na sub-coleção de BACKUPS da própria nota (para aparecer no histórico)
-                        const backupsRef = collection(db, 'pastas', targetId, 'backups');
+                    // Cálculo da percentagem restante
+                    const ratio = newText.length / oldText.length;
+                    
+                    // SE RESTAR MENOS DE 10% (Ou seja, apagou > 90% ou tudo)
+                    if (ratio < 0.1) {
+                        console.warn(`🚨 ALERTA DE SEGURANÇA: Detetado apagamento massivo (${Math.round((1-ratio)*100)}%). A criar backup de emergência...`);
                         
-                        await addDoc(backupsRef, {
-                            titulo: dbData.nome + " (Auto-Segurança 🚨)",
-                            conteudo: oldContent, // Guarda o conteúdo ANTIGO (antes de apagar)
-                            timestamp: serverTimestamp(),
-                            isSafetyBackup: true, // <--- ESTA É A CHAVE PARA A NOVA SECÇÃO
-                            reason: `Apagamento massivo detetado`
-                        });
+                        try {
+                            // Grava na sub-coleção de BACKUPS da própria nota
+                            const backupsRef = collection(db, 'pastas', targetId, 'backups');
+                            
+                            await addDoc(backupsRef, {
+                                titulo: dbData.nome + " (Auto-Segurança 🚨)",
+                                conteudo: oldContent, // Guarda o conteúdo ANTIGO
+                                timestamp: serverTimestamp(),
+                                isSafetyBackup: true,
+                                reason: `Apagamento massivo detetado`
+                            });
 
-                        console.log("✅ Backup de segurança criado com sucesso no Histórico.");
-                        
-                        // Opcional: Feedback visual ao utilizador
-                        const statusEl = document.getElementById('save-status-indicator');
-                        if(statusEl) {
-                            statusEl.textContent = "🚨 Cópia de segurança criada!";
-                            setTimeout(() => updateSaveStatus('saved'), 3000);
+                            console.log("✅ Backup de segurança criado com sucesso no Histórico.");
+                            
+                            // Feedback visual ao utilizador
+                            const statusEl = document.getElementById('save-status-indicator');
+                            if(statusEl) {
+                                statusEl.textContent = "🚨 Cópia de segurança criada!";
+                                setTimeout(() => updateSaveStatus('saved'), 3000);
+                            }
+
+                        } catch (err) {
+                            console.error("❌ FALHA NO BACKUP DE SEGURANÇA:", err);
                         }
-
-                    } catch (err) {
-                        console.error("❌ FALHA NO BACKUP DE SEGURANÇA:", err);
                     }
                 }
             }
-        }
         }
         // =================================================================
 
@@ -7620,31 +7625,39 @@ async function executeSave() {
         });
 
         // Sincroniza nome do atalho local se necessário
-        if (targetId !== selectedNoteId) {
+        if (targetId !== selectedNoteId) { // Caso selectedNoteId seja diferente (ex: ponteiro)
             const shortcutRef = doc(db, 'pastas', selectedNoteId);
             await updateDoc(shortcutRef, { nome: noteTitleInput.value });
         }
 
-        // Atualiza UI
+        // Atualiza UI da Lista (Lateral)
         if (listItem) {
             let icon = "📄 ";
             if (listItem.dataset.isLive) icon = "🗪 ";
             else if (listItem.hasAttribute('data-protected')) icon = "🔒 ";
+            
+            // Verifica se é superpasta
+            if (listItem.dataset.superpasta === "true") icon = "🗃️ "; // ou o ícone customizado
+
             const spanName = listItem.querySelector('span');
             if (spanName) spanName.textContent = icon + noteTitleInput.value;
         }
         
-        // Sincronização Pública
+        // 4. SINCRONIZAÇÃO PÚBLICA (Se a nota estiver partilhada)
         if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
             try {
+                // Grava na coleção 'shared_notes'
                 setDoc(doc(db, 'shared_notes', currentNoteShareData.shareId), {
                     nome: noteTitleInput.value,
                     conteudo: newContentHTML,
                     authorName: currentUserData?.nome || "Anónimo",
                     updatedAt: serverTimestamp(),
-                    type: 'full_note'
+                    type: 'full_note' 
                 }, { merge: true }).catch(err => console.error("Erro sync partilha:", err));
-            } catch (e) {}
+                
+            } catch (e) {
+                console.warn("Falha silenciosa ao sincronizar partilha pública.");
+            }
         }
 
         updateSaveStatus('saved');
@@ -7653,6 +7666,7 @@ async function executeSave() {
     } catch (error) {
         console.error("ERRO AO GUARDAR:", error);
         updateSaveStatus('error');
+        return false;
     }
 }
 
@@ -8259,11 +8273,6 @@ function maintainEntityProtection() {
 }
 
 
-function escapeRegExp(string) {
-  // $& significa a string inteira que foi encontrada
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
-}
-
     async function validateAndReconcileAllEntities() {
     // Estilos para os logs na consola
     const logStyles = {
@@ -8627,13 +8636,7 @@ function hideContextMenu() {
     activeItemContext = null;
 }
 
-function debounce(func, delay) {
-    let timeout;
-    return function(...args) {
-        clearTimeout(timeout);
-        timeout = setTimeout(() => func.apply(this, args), delay);
-    };
-}
+
 
  function showConfirmation(title, message) {
     const modal = document.getElementById('confirm-modal');
@@ -12168,70 +12171,120 @@ async function hideReferencesPanel() {
 // FUNÇÃO: CONVERTER SELEÇÃO EM CARTÃO WEB (Com Timeout de 10s)
 // ====================================================================
 async function convertSelectionToUrlCard() {
-    const selection = window.getSelection();
+    let selection = window.getSelection();
+    
+    // --- 1. SMART SELECT (Correção para o seu problema) ---
+    // Se não houver nada selecionado (cursor apenas a piscar),
+    // ou se estivermos dentro de um link, vamos tentar selecionar o elemento todo.
+    
+    const anchorNode = selection.anchorNode ? (selection.anchorNode.nodeType === 3 ? selection.anchorNode.parentElement : selection.anchorNode) : null;
+    const linkElement = anchorNode ? anchorNode.closest('a') : null;
+
+    if (linkElement) {
+        // Se o cursor estiver dentro de um <a>, seleciona o <a> inteiro
+        const range = document.createRange();
+        range.selectNode(linkElement);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    } 
+    else if (selection.isCollapsed && anchorNode) {
+        // Se for texto solto (não link) e não houver seleção,
+        // tenta selecionar a "palavra" inteira onde o cursor está (o URL gigante)
+        if (selection.modify) {
+            selection.modify('move', 'backward', 'word');
+            selection.modify('extend', 'forward', 'word');
+        }
+    }
+    // -----------------------------------------------------
+
     if (!selection.rangeCount) return;
 
-    // 1. Obter e Validar URL
-    let url = selection.toString().trim();
-    const anchorNode = selection.anchorNode.parentElement.closest('a');
-    
-    if (anchorNode) url = anchorNode.href;
+    // Guardar o texto para usar como título se necessário
+    const userSelectedText = selection.toString().trim();
 
-    if (!url.startsWith('http')) {
-        if (url.includes('.')) url = 'https://' + url;
-        else { alert("Link inválido."); return; }
+    // 2. Obter URL
+    let url = userSelectedText;
+    
+    // Se acabámos de selecionar um elemento <a>, usamos o href real
+    if (selection.anchorNode) {
+        const parentA = selection.anchorNode.parentElement.closest('a');
+        if (parentA) url = parentA.href;
     }
 
-    // 2. Criar Placeholder (Loading) com ID único
+    if (!url || !url.includes('.')) { 
+        alert("Selecione um link válido primeiro."); 
+        return; 
+    }
+
+    if (!url.startsWith('http')) url = 'https://' + url;
+
+    // 3. Criar Placeholder
     const cardId = `card_${Date.now()}`;
+    
+    // NOTA: Adicionamos um espaço &nbsp; no fim para o cursor poder sair do card
     const cardHtml = `
-        <div class="url-card-widget" id="${cardId}" contenteditable="false" data-original-url="${url}">
+        <div class="url-card-widget" id="${cardId}" draggable="true" contenteditable="false" data-original-url="${url}">
             <div class="url-card-loading">
                 <div class="spinner" style="width:20px; height:20px; border-width:2px; margin-right:10px;"></div>
-                A gerar pré-visualização...
+                A gerar...
             </div>
             <div class="url-card-close" title="Reverter para texto">✕</div>
-        </div>
-        &nbsp;
+        </div><span>&nbsp;</span>
     `;
 
+    // 4. SUBSTITUIÇÃO TOTAL
+    // Como garantimos a seleção no passo 1, este comando vai apagar o texto do link
+    // e colocar o card no lugar dele.
     document.execCommand('insertHTML', false, cardHtml);
-    document.getElementById('selection-popup').style.display = 'none';
-
-    // --- FUNÇÕES AUXILIARES ---
     
+    // Esconder popup se estiver aberto
+    if(document.getElementById('selection-popup')) 
+        document.getElementById('selection-popup').style.display = 'none';
+
+    // --- FUNÇÕES AUXILIARES (Mantêm-se iguais) ---
     const getRandomImage = () => {
         const images = [
-            "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=400&q=80", // Abstrato Escuro
-            "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=400&q=80", // Gradiente
-            "https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=400&q=80", // Natureza
-            "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&q=80", // Óleo
-            "https://images.unsplash.com/photo-1506259091721-347f7d3bbcff?w=400&q=80"  // Textura
+            "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=400&q=80",
+            "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=400&q=80",
+            "https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=400&q=80",
+            "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&q=80",
+            "https://images.unsplash.com/photo-1506259091721-347f7d3bbcff?w=400&q=80"
         ];
         return images[Math.floor(Math.random() * images.length)];
     };
 
     const formatFallbackTitle = (link) => {
+        if (userSelectedText && userSelectedText !== link && !userSelectedText.startsWith('http')) {
+            return userSelectedText;
+        }
         try {
             const urlObj = new URL(link);
-            let title = urlObj.hostname.replace('www.', '');
-            if (urlObj.pathname.length > 1) {
-                const parts = urlObj.pathname.split('/').filter(p => p);
-                if (parts.length > 0) return parts[parts.length - 1].replace(/[-_]/g, ' ');
+            if (urlObj.hostname.includes('jw.org') || urlObj.hostname.includes('wol.jw')) {
+                return "Publicação JW";
             }
-            return title.charAt(0).toUpperCase() + title.slice(1);
+            return urlObj.hostname.replace('www.', '');
         } catch (e) { return "Ligação Externa"; }
     };
 
-    // Função que aplica o visual "Bonito" (usada no sucesso e no erro)
     const updateCardUI = (title, image, logo, publisher) => {
         const cardEl = document.getElementById(cardId);
-        if (!cardEl) return; // Se o utilizador já apagou o card, sai.
+        if (!cardEl) return;
+
+        let displayTitle = title;
+        if (!displayTitle || displayTitle.toLowerCase() === 'finder' || displayTitle.toLowerCase() === 'watchtower online library') {
+            displayTitle = null;
+        }
+        if (!displayTitle && userSelectedText && !userSelectedText.startsWith('http')) {
+            displayTitle = userSelectedText;
+        }
+        if (!displayTitle) {
+            displayTitle = formatFallbackTitle(url);
+        }
 
         cardEl.innerHTML = `
             <div class="url-card-image" style="background-image: url('${image}');"></div>
             <div class="url-card-info">
-                <div class="url-card-title">${title}</div>
+                <div class="url-card-title">${displayTitle}</div>
                 <div class="url-card-domain">
                     <img src="${logo}" style="width:12px; height:12px; vertical-align:middle; margin-right:4px; border-radius:50%;">
                     ${publisher}
@@ -12242,42 +12295,24 @@ async function convertSelectionToUrlCard() {
         saveNote();
     };
 
-    // --- LÓGICA DE CORRIDA (RACE) ---
-    
-    // Promessa de Timeout: Rejeita automaticamente ao fim de 10s
-    const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Timeout de 10s atingido")), 10000)
-    );
-
-    // Promessa da API
-    const fetchPromise = fetch(`https://api.microlink.io/?url=${encodeURIComponent(url)}`)
-        .then(res => res.json());
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 10000));
+    const fetchPromise = fetch(`https://api.microlink.io/?url=${encodeURIComponent(url)}`).then(res => res.json());
 
     try {
-        // A magia acontece aqui: Quem terminar primeiro ganha.
-        // Se o fetch demorar mais de 10s, o timeout ganha e lança um erro, ativando o catch.
         const data = await Promise.race([fetchPromise, timeoutPromise]);
-
-        // SUCESSO DA API
         const meta = (data.status === 'success' && data.data) ? data.data : {};
         
-        const finalTitle = meta.title || formatFallbackTitle(url);
+        const finalTitle = meta.title;
         const finalImage = meta.image?.url || getRandomImage();
         const finalPublisher = meta.publisher || new URL(url).hostname;
         const finalLogo = meta.logo?.url || 'https://cdn-icons-png.flaticon.com/128/1006/1006771.png';
 
         updateCardUI(finalTitle, finalImage, finalLogo, finalPublisher);
-
     } catch (err) {
-        // FALHA OU TIMEOUT
-        console.warn("API demorou demasiado ou falhou. A aplicar fallback.", err);
-        
-        // Dados de recurso (Fallback)
         const fallbackTitle = formatFallbackTitle(url);
         const fallbackImg = getRandomImage();
         const domain = new URL(url).hostname;
-        const fallbackLogo = 'https://cdn-icons-png.flaticon.com/128/1006/1006771.png';
-
+        const fallbackLogo = 'https://upload.wikimedia.org/wikipedia/commons/c/c4/Globe_icon.svg';
         updateCardUI(fallbackTitle, fallbackImg, fallbackLogo, domain);
     }
 }
@@ -13069,7 +13104,7 @@ function handleTextSelection() {
         }
     }
 
-    // 2. VERIFICAÇÃO DE INPUTS (Títulos de subnotas)
+    // 2. VERIFICAÇÃO DE INPUTS
     let hasInputSelection = false;
     const activeEl = document.activeElement;
     if (activeEl && activeEl.tagName === 'INPUT' && activeEl.classList.contains('mini-note-title-input') && noteContentEditor.contains(activeEl)) {
@@ -13082,65 +13117,87 @@ function handleTextSelection() {
     // LÓGICA DE VISIBILIDADE
     // =========================================================
 
-    // A. SE HOUVER SELEÇÃO DE TEXTO:
+    // A. ESCONDER MENU DE INSERÇÃO (📘) se houver seleção
+    if (hasStandardSelection || hasInputSelection) {
+        if (insertionPopup) insertionPopup.style.display = 'none';
+    }
+
+    // B. MOSTRAR MENU DE FORMATAÇÃO (🔗 🎴)
     if (hasStandardSelection) {
         
-        // 1. Esconde o menu de inserção rápida (o do botão azul)
-        if (insertionPopup) insertionPopup.style.display = 'none';
-
         // --- LÓGICA INTELIGENTE DO BOTÃO 🎴 (CARTÃO WEB) ---
         const btnCard = selectionPopup.querySelector('button[data-action="create-url-card"]');
         if (btnCard) {
             const selectedText = selection.toString().trim();
+            
+            // 1. Verifica se o texto parece um URL (Regex)
+            // Aceita: http://, https://, www. ou domínios comuns (ex: sicnoticias.pt)
             const urlRegex = /^(https?:\/\/|www\.)|[\w-]+\.[a-z]{2,}(\/.*)?$/i;
             const looksLikeUrl = urlRegex.test(selectedText);
-            
+
+            // 2. Verifica se a seleção está DENTRO de um link <a> existente
             let isInsideLink = false;
             if (selection.anchorNode) {
                 const anchorEl = selection.anchorNode.nodeType === 3 ? selection.anchorNode.parentElement : selection.anchorNode;
                 isInsideLink = !!anchorEl.closest('a');
             }
 
-            if (looksLikeUrl || isInsideLink) btnCard.style.display = 'flex';
-            else btnCard.style.display = 'none';
+            // Decisão: Mostra ou Esconde o 🎴
+            if (looksLikeUrl || isInsideLink) {
+                btnCard.style.display = 'flex'; // Mostra
+            } else {
+                btnCard.style.display = 'none'; // Esconde
+            }
         }
         // -----------------------------------------------------
 
-        currentSelectionRange = selection.getRangeAt(0).cloneRange();
+       currentSelectionRange = selection.getRangeAt(0).cloneRange();
         const rect = currentSelectionRange.getBoundingClientRect();
         
         if (selectionPopup) {
-            selectionPopup.style.display = 'flex'; // MOSTRA O POPUP
+            selectionPopup.style.display = 'flex'; // Mostra primeiro para calcular a largura
             
-            // --- CÁLCULO DE POSIÇÃO ---
-            const popupWidth = selectionPopup.offsetWidth || 300;
-            const popupHeight = selectionPopup.offsetHeight || 50; 
+            // --- CÁLCULO DE POSIÇÃO INTELIGENTE (CORREÇÃO MOBILE) ---
+
+            const popupWidth = selectionPopup.offsetWidth;
             const windowWidth = window.innerWidth;
             const scrollX = window.scrollX;
-            const padding = 10;
+            const padding = 10; // Margem de segurança das bordas (10px)
 
+            // 1. Tenta centralizar em relação ao texto selecionado
             let leftPos = rect.left + (rect.width / 2) - (popupWidth / 2);
-            if (leftPos < padding) leftPos = padding;
-            else if (leftPos + popupWidth > windowWidth - padding) leftPos = windowWidth - popupWidth - padding;
-            leftPos += scrollX;
 
-            let topPos = (rect.top + window.scrollY) - popupHeight - 10;
-            if (rect.top < (popupHeight + 60)) { 
-               topPos = rect.bottom + window.scrollY + 10;
+            // 2. IMPEDE sair pela ESQUERDA (Se for negativo ou muito perto do 0)
+            if (leftPos < padding) {
+                leftPos = padding;
             }
 
+            // 3. IMPEDE sair pela DIREITA (Se ultrapassar a largura do ecrã)
+            else if (leftPos + popupWidth > windowWidth - padding) {
+                leftPos = windowWidth - popupWidth - padding;
+            }
+
+            // 4. Adiciona o scroll da página (caso exista)
+            leftPos += scrollX;
+
+        // 5. Cálculo Vertical (Padrão: EM CIMA ⬆️)
+            const popupHeight = selectionPopup.offsetHeight || 50; // Altura estimada se ainda não renderizou
+            const gap = 10; // Espaço entre o texto e a barra
+
+            // Calcula a posição acima do texto (Topo do texto - Altura da Barra - Espaço)
+            let topPos = (rect.top + window.scrollY) - popupHeight - gap;
+            
+            // PROTEÇÃO DE TOPO:
+            // Se o texto estiver muito no topo do ecrã (ex: 1ª linha) e a barra for ficar cortada...
+            // ...então muda automaticamente para BAIXO.
+            if (rect.top < (popupHeight + gap + 50)) { // +50 compensa a barra de ferramentas do editor
+               topPos = rect.bottom + window.scrollY + gap;
+            }
+
+            // APLICA AS POSIÇÕES FINAIS
             selectionPopup.style.top = `${topPos}px`;
             selectionPopup.style.left = `${leftPos}px`;
-        }
-    } 
-    // B. SE NÃO HOUVER SELEÇÃO (O ELSEN ESSENCIAL):
-    else {
-        // ESCONDE O POPUP DE SELEÇÃO
-        if (selectionPopup) selectionPopup.style.display = 'none';
-        
-        // (Opcional) Esconde o de inserção se não for input
-        if (hasInputSelection) {
-             if (insertionPopup) insertionPopup.style.display = 'none';
+            selectionPopup.style.zIndex = '2000';
         }
     }
 }
@@ -14100,28 +14157,6 @@ function checkToolbarStatus() {
 }
 
 
-
-// Função para obter coordenadas exatas do cursor (Caret)
-function getCaretCoordinates() {
-    const selection = window.getSelection();
-    if (selection.rangeCount === 0) return null;
-
-    const range = selection.getRangeAt(0);
-    const rects = range.getClientRects();
-    
-    // Se não houver rects (cursor parado numa linha vazia), tenta usar o elemento
-    if (rects.length === 0) {
-        if (selection.anchorNode && selection.anchorNode.nodeType === 1) {
-             const rec = selection.anchorNode.getBoundingClientRect();
-             return { x: rec.left, y: rec.top, height: rec.height };
-        }
-        return null;
-    }
-
-    // Pega o primeiro rectângulo (onde o cursor está)
-    const rect = rects[0];
-    return { x: rect.left, y: rect.top, height: rect.height };
-}
 
 // Gera uma cor consistente baseada no ID do utilizador
 function stringToColor(str) {
@@ -15783,16 +15818,6 @@ window.restoreHiddenMiniNote = async function(miniNoteId) {
 document.addEventListener('click', (e) => {
     if (!e.target.closest('.context-menu')) hideContextMenu();
     if (!noteContentEditor.contains(e.target) && !tagSuggestionPopup.contains(e.target)) hideTagPopup();
- // >>> NOVA LINHA PARA FECHAR O POPUP DE SELEÇÃO <<<
-    // Se o popup está visível E o clique não foi dentro do popup
-    const selPopup = document.getElementById('selection-popup');
-    if (selPopup && selPopup.style.display !== 'none' && !selPopup.contains(e.target)) {
-        // Verifica se não estamos a selecionar texto neste exato momento
-        const sel = window.getSelection();
-        if (!sel || sel.isCollapsed) {
-            selPopup.style.display = 'none';
-        }
-    }
 });
 
 leftPanelToggleBtn.addEventListener('click', () => {
@@ -17859,122 +17884,6 @@ if (globalSearchBtn) {
 }
 
 
-// ============================================================
-// MOTOR DE ARRASTO DE LINHAS (ᯓ)
-// ============================================================
-let dragSrcEl = null;
-
-// 1. INICIAR ARRASTO
-noteContentEditor.addEventListener('dragstart', (e) => {
-    const target = e.target.closest('.draggable-line');
-    if (!target) return;
-
-    dragSrcEl = target;
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/html', target.outerHTML);
-    
-    target.classList.add('dragging');
-    
-    // Pequeno delay para o visual funcionar
-    setTimeout(() => target.style.opacity = '0.4', 0);
-});
-
-// 2. TERMINAR ARRASTO (Limpeza)
-noteContentEditor.addEventListener('dragend', (e) => {
-    const target = e.target.closest('.draggable-line');
-    if (target) {
-        target.classList.remove('dragging');
-        target.style.opacity = '1';
-    }
-    
-    // Limpa todas as classes visuais de "alvo"
-    document.querySelectorAll('.drop-target-top, .drop-target-bottom').forEach(el => {
-        el.classList.remove('drop-target-top', 'drop-target-bottom');
-    });
-    
-    dragSrcEl = null;
-});
-
- // 3. ARRASTAR POR CIMA (Calcular onde inserir + AUTO-SCROLL)
-noteContentEditor.addEventListener('dragover', (e) => {
-    if (!dragSrcEl) return;
-    e.preventDefault(); // Necessário para permitir o drop
-
-    const editor = document.getElementById('note-content-editor');
-    
-    // --- LÓGICA DE AUTO-SCROLL ---
-    const editorRect = editor.getBoundingClientRect();
-    const scrollThreshold = 60; // Distância da borda (px) para ativar o scroll
-    const scrollSpeed = 10;     // Velocidade do scroll
-
-    // Se estiver perto do FUNDO -> Scroll para baixo
-    if (e.clientY > editorRect.bottom - scrollThreshold) {
-        editor.scrollTop += scrollSpeed;
-    }
-    // Se estiver perto do TOPO -> Scroll para cima
-    else if (e.clientY < editorRect.top + scrollThreshold) {
-        editor.scrollTop -= scrollSpeed;
-    }
-    // -----------------------------
-
-    // Identifica o alvo possível (pode ser outra linha, uma caixa, um toggle, etc.)
-    const target = e.target.closest('.draggable-line, .mini-note-wrapper, details.toggle-section, p');
-    
-    if (target && target !== dragSrcEl && noteContentEditor.contains(target)) {
-        
-        // Calcular se estamos na metade de cima ou de baixo do elemento alvo
-        const rect = target.getBoundingClientRect();
-        const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
-        
-        // Limpa estilos anteriores
-        document.querySelectorAll('.drop-target-top, .drop-target-bottom').forEach(el => {
-            if(el !== target) el.classList.remove('drop-target-top', 'drop-target-bottom');
-        });
-
-        // Aplica estilo visual (Borda azul em cima ou em baixo)
-        if (next) {
-            target.classList.remove('drop-target-top');
-            target.classList.add('drop-target-bottom');
-        } else {
-            target.classList.remove('drop-target-bottom');
-            target.classList.add('drop-target-top');
-        }
-    }
-});
-
-// 4. LARGAR (O Movimento Real)
-noteContentEditor.addEventListener('drop', (e) => {
-    if (!dragSrcEl) return;
-    e.preventDefault();
-    e.stopPropagation();
-
-    const target = e.target.closest('.draggable-line, .mini-note-wrapper, details.toggle-section, p');
-    
-    if (target && target !== dragSrcEl) {
-        const rect = target.getBoundingClientRect();
-        const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
-        
-        // Insere DEPOIS ou ANTES do alvo
-        if (next) {
-            target.parentNode.insertBefore(dragSrcEl, target.nextSibling);
-        } else {
-            target.parentNode.insertBefore(dragSrcEl, target);
-        }
-    }
-    
-    // Reset visual
-    if (dragSrcEl) {
-        dragSrcEl.style.opacity = '1';
-        dragSrcEl.classList.remove('dragging');
-    }
-    document.querySelectorAll('.drop-target-top, .drop-target-bottom').forEach(el => {
-        el.classList.remove('drop-target-top', 'drop-target-bottom');
-    });
-
-    saveNote(); // Grava a nova ordem
-});
-
-
 // ====================================================================
 // LÓGICA DO ENTER EM LINHAS MOVÍVEIS (SAIR PARA LINHA NORMAL)
 // ====================================================================
@@ -18133,249 +18042,85 @@ function cleanupPresence() {
     document.querySelectorAll('.remote-cursor, .remote-label').forEach(el => el.remove());
 }
 
-// Função Principal de Setup (GLOBAL)
-async function setupPresenceSystem(noteId) {
-    if (!auth.currentUser) return;
-    
-    cleanupPresence(); // Limpa anteriores para evitar duplicados
+// --- NOVO FICHEIRO OU SECÇÃO: cursor-logic.js ---
 
-    const userId = auth.currentUser.uid;
-    const userName = currentUserData?.nome || "Anónimo";
-    const myColor = stringToColor(userId); 
-    
-    // Referência da minha presença
-    const userPresenceDoc = doc(db, 'pastas', noteId, 'active_users', userId);
-    myPresenceRef = userPresenceDoc;
+// 1. Obter a "morada" do cursor (Caminho relativo ao Editor)
+function getCursorLocation() {
+    const selection = window.getSelection();
+    if (selection.rangeCount === 0) return null;
 
-    // --- A. HEARTBEAT (BATIMENTO CARDÍACO) ---
-    const updateHeartbeat = async () => {
-        // Se a página estiver escondida (outra aba), não envia sinal e apaga presença
-        if (document.hidden) {
-            if (myPresenceRef) deleteDoc(myPresenceRef).catch(() => {});
-            return;
-        }
-
-        // Calcular posição relativa ao editor
-        const coords = getCaretCoordinates();
-        let cursorData = null;
-
-        if (coords) {
-            const editorDiv = document.getElementById('note-content-editor');
-            if (editorDiv) {
-                const editorRect = editorDiv.getBoundingClientRect();
-                cursorData = {
-                    x: coords.x - editorRect.left + editorDiv.scrollLeft,
-                    y: coords.y - editorRect.top + editorDiv.scrollTop
-                };
-            }
-        }
-
-        try {
-            // Regista que "Estou aqui agora"
-            await setDoc(userPresenceDoc, {
-                name: userName,
-                color: myColor,
-                cursor: cursorData,
-                lastSeen: serverTimestamp() // Importante: Hora do servidor
-            });
-        } catch (e) { }
-    };
-
-    // Inicia o batimento (a cada 2 segundos)
-    updateHeartbeat();
-    presenceInterval = setInterval(updateHeartbeat, 2000); 
-
-    // Envio rápido ao clicar/escrever
-    const editorDiv = document.getElementById('note-content-editor');
-    const sendCursorUpdate = () => setTimeout(updateHeartbeat, 50);
-    
-    if (editorDiv) {
-        editorDiv.addEventListener('click', sendCursorUpdate);
-        editorDiv.addEventListener('keyup', sendCursorUpdate);
-    }
-
-    // --- DETEÇÃO DE MUDANÇA DE ABA (VISIBILITY API) ---
-    document.addEventListener("visibilitychange", () => {
-        if (document.hidden) {
-            // Se mudou de aba: Apaga-me da sala imediatamente
-            if (myPresenceRef) deleteDoc(myPresenceRef);
-        } else {
-            // Se voltou: Volta a registar-me imediatamente
-            updateHeartbeat();
-        }
-    });
-
-    // --- B. OUVIR OS OUTROS (RECEBER CURSORES) ---
-    const qPresence = collection(db, 'pastas', noteId, 'active_users');
-    
-    presenceUnsubscribe = onSnapshot(qPresence, (snapshot) => {
-        const now = Date.now(); // Hora local
-        const editorDiv = document.getElementById('note-content-editor');
-        if (!editorDiv) return;
-
-        // Limpa cursores antigos antes de desenhar novos
-        document.querySelectorAll('.remote-cursor, .remote-label').forEach(el => el.remove());
-
-        let activeCount = 0;
-
-        snapshot.docs.forEach(doc => {
-            const data = doc.data();
-            
-            // 1. Ignora a mim mesmo
-            if (doc.id === userId) return; 
-
-            // 2. FILTRO DE FANTASMAS (MUITO MAIS RÍGIDO: 15 SEGUNDOS)
-            // Se o utilizador não der sinal de vida há 15s (fechou browser à força), ignoramos
-            if (data.lastSeen) {
-                const lastSeenDate = data.lastSeen.toDate();
-                const diff = now - lastSeenDate.getTime();
-                // Se a diferença for maior que 15000ms (15s), consideramos offline
-                if (diff > 15000) return; 
-            }
-
-            activeCount++;
-
-            // DESENHAR CURSOR DO OUTRO
-            if (data.cursor) {
-                const cursorEl = document.createElement('div');
-                cursorEl.className = 'remote-cursor';
-                cursorEl.style.backgroundColor = data.color || '#f1c40f';
-                cursorEl.style.left = data.cursor.x + 'px';
-                cursorEl.style.top = data.cursor.y + 'px';
-                
-                const labelEl = document.createElement('div');
-                labelEl.className = 'remote-label';
-                labelEl.style.backgroundColor = data.color || '#f1c40f';
-                labelEl.textContent = data.name;
-                labelEl.style.left = data.cursor.x + 'px';
-                labelEl.style.top = (data.cursor.y - 20) + 'px'; 
-
-                editorDiv.appendChild(cursorEl);
-                editorDiv.appendChild(labelEl);
-            }
-        });
-
-        // Atualiza a UI (Contador = Eu + Outros Ativos)
-        updateLiveUI(activeCount + 1);
-    });
-
-   // --- C. OUVIR O CONTEÚDO (COM PROTEÇÃO DE CURSOR E ESCRITA) ---
-  const noteDocRef = doc(db, 'pastas', noteId);
-
-contentUnsubscribe = onSnapshot(noteDocRef, (docSnap) => {
-    // Se o documento não existe ou é uma escrita local minha que ainda não foi ao servidor
-    if (!docSnap.exists() || docSnap.metadata.hasPendingWrites) return;
-
-    const newData = docSnap.data();
+    const range = selection.getRangeAt(0);
     const editor = document.getElementById('note-content-editor');
     
-    if (!editor) return;
+    // Garante que a seleção está dentro do editor
+    if (!editor.contains(range.startContainer)) return null;
 
-    // =================================================================
-    // O ESCUDO DE PROTEÇÃO (CORREÇÃO DE BUGS)
-    // =================================================================
-    const timeSinceLastEdit = Date.now() - lastContentEditTime;
+    let container = range.startContainer;
+    let offset = range.startOffset;
 
-    // REGRA 1: Se eu escrevi algo nos últimos 3 segundos, BLOQUEIO a entrada.
-    // Isto impede que o texto desapareça enquanto estou a pensar ou a escrever.
-    if (timeSinceLastEdit < 3000) {
-        console.log(`🛡️ Escudo Ativo: Ignorei atualização externa (escrevi há ${timeSinceLastEdit}ms)`);
-        return; 
+    // Se for nó de texto, sobe para o elemento pai
+    if (container.nodeType === Node.TEXT_NODE) {
+        container = container.parentNode;
     }
 
-    // REGRA 2: Se o texto for igual, não faz nada (evita piscar o cursor)
-    if (editor.innerHTML === newData.conteudo) {
-        return;
-    }
+    // Calcular o índice deste elemento dentro do editor (ex: é o 5º <p>)
+    // Nota: Isto é simplificado. Para produção, precisaria de um TreeWalker.
+    const allElements = Array.from(editor.querySelectorAll('*'));
+    const index = allElements.indexOf(container);
 
-    // Se passou as regras, atualiza o texto com segurança
-    console.log("🔄 A atualizar conteúdo remoto...");
-
-    // 1. Guardar posição do cursor
-    const currentCursorPos = (document.activeElement === editor) 
-        ? getCaretCharacterOffsetWithin(editor) 
-        : null;
-
-    // 2. Atualizar HTML
-   editor.innerHTML = (newData.conteudo !== undefined && newData.conteudo !== null) ? newData.conteudo : '';
-
-    
-    // 3. Restaurar Funcionalidades
-    if(typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
-
-    // 4. Restaurar Cursor
-    if (currentCursorPos !== null) {
-        setCaretPosition(editor, currentCursorPos);
-    }
-
-}, (error) => {
-    console.error("Erro sync:", error);
-});
-
-    // --- FUNÇÕES AUXILIARES PARA MANTER O CURSOR ---
-
-// 1. Descobrir a posição numérica do cursor (ex: caractere 150)
-function getCaretCharacterOffsetWithin(element) {
-    let caretOffset = 0;
-    const doc = element.ownerDocument || element.document;
-    const win = doc.defaultView || doc.parentWindow;
-    const sel = win.getSelection();
-    
-    if (sel.rangeCount > 0) {
-        const range = sel.getRangeAt(0);
-        const preCaretRange = range.cloneRange();
-        preCaretRange.selectNodeContents(element);
-        preCaretRange.setEnd(range.endContainer, range.endOffset);
-        caretOffset = preCaretRange.toString().length;
-    }
-    return caretOffset;
-}
-
-// 2. Colocar o cursor na posição numérica correta
-function setCaretPosition(element, offset) {
-    const createRange = (node, chars, range) => {
-        if (!range) {
-            range = document.createRange();
-            range.selectNode(node);
-            range.setStart(node, 0);
-        }
-
-        if (chars.count === 0) {
-            range.setEnd(node, chars.count);
-        }
-
-        if (node && chars.count > 0) {
-            if (node.nodeType === Node.TEXT_NODE) {
-                if (node.textContent.length < chars.count) {
-                    chars.count -= node.textContent.length;
-                } else {
-                    range.setEnd(node, chars.count);
-                    chars.count = 0;
-                }
-            } else {
-                for (let lp = 0; lp < node.childNodes.length; lp++) {
-                    range = createRange(node.childNodes[lp], chars, range);
-                    if (chars.count === 0) break;
-                }
-            }
-        }
-        return range;
+    return {
+        elementIndex: index, // Qual o elemento (ex: 12)
+        textOffset: offset   // Posição do cursor no texto (ex: 5)
     };
+}
 
-    if (offset >= 0) {
-        const selection = window.getSelection();
-        const range = createRange(element, { count: offset });
-        if (range) {
-            range.collapse(false);
-            selection.removeAllRanges();
-            selection.addRange(range);
+// 2. Desenhar o cursor do colega na posição correta
+function renderRemoteCursor(userId, color, name, cursorData) {
+    const editor = document.getElementById('note-content-editor');
+    const allElements = Array.from(editor.querySelectorAll('*'));
+    
+    // Tenta encontrar o elemento onde o colega está
+    const targetElement = allElements[cursorData.elementIndex];
+
+    if (targetElement) {
+        const rect = targetElement.getBoundingClientRect();
+        const editorRect = editor.getBoundingClientRect();
+
+        // Cria o visual do cursor
+        let cursorEl = document.getElementById(`cursor-${userId}`);
+        if (!cursorEl) {
+            cursorEl = document.createElement('div');
+            cursorEl.id = `cursor-${userId}`;
+            cursorEl.className = 'remote-cursor';
+            editor.appendChild(cursorEl);
+            
+            // Etiqueta com o nome
+            const labelEl = document.createElement('div');
+            labelEl.id = `label-${userId}`;
+            labelEl.className = 'remote-label';
+            labelEl.textContent = name;
+            editor.appendChild(labelEl);
         }
+
+        const labelEl = document.getElementById(`label-${userId}`);
+
+        // Posiciona visualmente
+        // (Offset simples: início do elemento + scroll)
+        // Melhoria futura: usar Range para calcular pixel exato do caractere
+        const topPos = (rect.top - editorRect.top + editor.scrollTop);
+        const leftPos = (rect.left - editorRect.left + editor.scrollLeft);
+
+        cursorEl.style.top = `${topPos}px`;
+        cursorEl.style.left = `${leftPos}px`;
+        cursorEl.style.height = `${rect.height}px`;
+        cursorEl.style.backgroundColor = color;
+
+        labelEl.style.top = `${topPos - 20}px`;
+        labelEl.style.left = `${leftPos}px`;
+        labelEl.style.backgroundColor = color;
     }
 }
 
-    // Listener de fechar janela (pagehide é mais fiável que beforeunload em mobile)
-    window.addEventListener('pagehide', cleanupPresence);
-}
 
 // ====================================================================
 // GESTÃO DE HIPERLIGAÇÕES DA CAIXA (⚡)
@@ -18566,6 +18311,251 @@ function openBoxLinkManager(wrapper) {
     });
 
 })(); // Executa imediatamente
+
+// ====================================================================
+// MOTOR DE ARRASTO UNIFICADO (LINHAS ᯓ + CARTÕES 🎴)
+// ====================================================================
+let dragSrcEl = null;   // Para Linhas
+let draggedCard = null; // Para Cartões
+
+// 1. INICIAR ARRASTO (DRAGSTART)
+noteContentEditor.addEventListener('dragstart', (e) => {
+    // --- CENÁRIO A: CARTÕES (🎴) ---
+    const card = e.target.closest('.url-card-widget');
+    if (card && !e.target.classList.contains('url-card-close')) {
+        draggedCard = card;
+        dragSrcEl = null; // Garante que não mistura
+        
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', card.id); // Necessário para Firefox
+        e.dataTransfer.setDragImage(card, 0, 0);
+
+        setTimeout(() => card.classList.add('sortable-dragging'), 0);
+        return; // Sai da função, já tratámos do cartão
+    }
+
+    // --- CENÁRIO B: LINHAS (ᯓ) ---
+    const line = e.target.closest('.draggable-line');
+    if (line) {
+        dragSrcEl = line;
+        draggedCard = null; // Garante que não mistura
+
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/html', line.outerHTML);
+        
+        line.classList.add('dragging');
+        setTimeout(() => line.style.opacity = '0.4', 0);
+    }
+});
+
+// 2. TERMINAR ARRASTO (DRAGEND - LIMPEZA)
+noteContentEditor.addEventListener('dragend', (e) => {
+    // Limpeza de Cartões
+    if (draggedCard) {
+        draggedCard.classList.remove('sortable-dragging');
+        document.querySelectorAll('.drop-target-left, .drop-target-right').forEach(el => {
+            el.classList.remove('drop-target-left', 'drop-target-right');
+        });
+        draggedCard = null;
+    }
+
+    // Limpeza de Linhas
+    if (dragSrcEl) {
+        dragSrcEl.classList.remove('dragging');
+        dragSrcEl.style.opacity = '1';
+        document.querySelectorAll('.drop-target-top, .drop-target-bottom').forEach(el => {
+            el.classList.remove('drop-target-top', 'drop-target-bottom');
+        });
+        dragSrcEl = null;
+    }
+});
+
+// 3. ARRASTAR POR CIMA (DRAGOVER - CÁLCULOS)
+noteContentEditor.addEventListener('dragover', (e) => {
+    e.preventDefault(); // Necessário para permitir o drop
+
+    // --- LÓGICA DE CARTÕES (Horizontal) ---
+    if (draggedCard) {
+        const targetCard = e.target.closest('.url-card-widget');
+        
+        if (targetCard && targetCard !== draggedCard) {
+            const rect = targetCard.getBoundingClientRect();
+            const midPoint = rect.left + (rect.width / 2);
+            
+            targetCard.classList.remove('drop-target-left', 'drop-target-right');
+
+            if (e.clientX < midPoint) targetCard.classList.add('drop-target-left');
+            else targetCard.classList.add('drop-target-right');
+        }
+        return;
+    }
+
+    // --- LÓGICA DE LINHAS (Vertical + AutoScroll) ---
+    if (dragSrcEl) {
+        const editor = document.getElementById('note-content-editor');
+        
+        // Auto-Scroll
+        const editorRect = editor.getBoundingClientRect();
+        const scrollThreshold = 60;
+        const scrollSpeed = 10;
+
+        if (e.clientY > editorRect.bottom - scrollThreshold) editor.scrollTop += scrollSpeed;
+        else if (e.clientY < editorRect.top + scrollThreshold) editor.scrollTop -= scrollSpeed;
+
+        // Identificar Alvo
+        const target = e.target.closest('.draggable-line, .mini-note-wrapper, details.toggle-section, p');
+        
+        if (target && target !== dragSrcEl && noteContentEditor.contains(target)) {
+            const rect = target.getBoundingClientRect();
+            const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
+            
+            document.querySelectorAll('.drop-target-top, .drop-target-bottom').forEach(el => {
+                if(el !== target) el.classList.remove('drop-target-top', 'drop-target-bottom');
+            });
+
+            if (next) {
+                target.classList.remove('drop-target-top');
+                target.classList.add('drop-target-bottom');
+            } else {
+                target.classList.remove('drop-target-bottom');
+                target.classList.add('drop-target-top');
+            }
+        }
+    }
+});
+
+// 4. LARGAR (DROP - AÇÃO FINAL)
+noteContentEditor.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // --- DROP DE CARTÕES ---
+    if (draggedCard) {
+        const targetCard = e.target.closest('.url-card-widget');
+        if (targetCard && targetCard !== draggedCard) {
+            const rect = targetCard.getBoundingClientRect();
+            const midPoint = rect.left + (rect.width / 2);
+            const parent = targetCard.parentNode;
+
+            targetCard.classList.remove('drop-target-left', 'drop-target-right');
+
+            if (e.clientX < midPoint) parent.insertBefore(draggedCard, targetCard);
+            else parent.insertBefore(draggedCard, targetCard.nextSibling);
+            
+            saveNote();
+        }
+        return;
+    }
+
+    // --- DROP DE LINHAS ---
+    if (dragSrcEl) {
+        const target = e.target.closest('.draggable-line, .mini-note-wrapper, details.toggle-section, p');
+        
+        if (target && target !== dragSrcEl) {
+            const rect = target.getBoundingClientRect();
+            const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
+            
+            // Limpa classes visuais
+            target.classList.remove('drop-target-top', 'drop-target-bottom');
+
+            if (next) target.parentNode.insertBefore(dragSrcEl, target.nextSibling);
+            else target.parentNode.insertBefore(dragSrcEl, target);
+            
+            saveNote();
+        }
+        
+        // Reset visual extra para garantir
+        if (dragSrcEl) {
+            dragSrcEl.style.opacity = '1';
+            dragSrcEl.classList.remove('dragging');
+        }
+    }
+});
+
+// ============================================================
+// FUNÇÃO EM FALTA: SISTEMA DE PRESENÇA (LIVE)
+// ============================================================
+async function setupPresenceSystem(roomId) {
+    if (!auth.currentUser) return;
+
+    // 1. Limpa qualquer presença anterior para não duplicar
+    cleanupPresence();
+
+    const userId = auth.currentUser.uid;
+    const userName = currentUserData?.nome || "Anónimo";
+    // Gera uma cor baseada no ID para os cursores
+    const userColor = stringToColor(userId);
+
+    // Define onde a presença será guardada na BD
+    // Estrutura: pastas -> {ID_DA_NOTA} -> live_presence -> {ID_USER}
+    myPresenceRef = doc(db, 'pastas', roomId, 'live_presence', userId);
+
+    // 2. FUNÇÃO DE HEARTBEAT (Sinal de vida)
+    // Envia um sinal a cada X segundos para dizer "estou aqui"
+    const sendHeartbeat = async () => {
+        try {
+            await setDoc(myPresenceRef, {
+                name: userName,
+                color: userColor,
+                lastSeen: serverTimestamp(), // Hora do servidor
+                status: 'online'
+            }, { merge: true });
+        } catch (e) {
+            console.warn("Aviso: Falha momentânea no heartbeat live (rede instável?)");
+        }
+    };
+
+    // Envia o primeiro sinal imediatamente
+    await sendHeartbeat();
+
+    // 3. INICIAR O PULSO (A cada 5 segundos)
+    presenceInterval = setInterval(sendHeartbeat, 5000);
+
+    // 4. OUVIR OS OUTROS (Quem mais está na sala?)
+    const presenceCollection = collection(db, 'pastas', roomId, 'live_presence');
+    
+    presenceUnsubscribe = onSnapshot(presenceCollection, (snapshot) => {
+        const activeUsers = [];
+        const now = Date.now();
+
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            
+            // Calcular há quanto tempo o utilizador deu sinal de vida
+            let secondsAgo = 999;
+            
+            // Compatibilidade com diferentes tipos de Timestamp do Firebase
+            if (data.lastSeen && typeof data.lastSeen.toMillis === 'function') {
+                secondsAgo = (now - data.lastSeen.toMillis()) / 1000;
+            } else if (data.lastSeen && data.lastSeen.seconds) {
+                secondsAgo = (now - (data.lastSeen.seconds * 1000)) / 1000;
+            } else {
+                // Se acabou de entrar, assume 0
+                secondsAgo = 0;
+            }
+
+            // Considera "Online" apenas quem deu sinal nos últimos 15 segundos
+            if (secondsAgo < 15) {
+                activeUsers.push({ id: doc.id, ...data });
+            }
+        });
+
+        // 5. ATUALIZAR INTERFACE
+        // Se houver 2 ou mais pessoas (eu + outro), liga a barra vermelha
+        updateLiveUI(activeUsers.length);
+        
+        // (Opcional) Desenhar cursores dos outros (se a função existir)
+        if (typeof renderRemoteCursors === 'function') {
+            const others = activeUsers.filter(u => u.id !== userId);
+            renderRemoteCursors(others);
+        }
+
+    }, (error) => {
+        console.error("Erro no listener de presença:", error);
+    });
+    
+    console.log("✅ Sistema Live iniciado para a sala:", roomId);
+}
 
     </script>
 </body>
