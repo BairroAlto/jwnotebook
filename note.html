@@ -3174,6 +3174,41 @@ a.board-link:hover {
     background-color: rgba(231, 76, 60, 0.1); /* Vermelho suave */
 }
 
+/* --- PROTEÇÃO LIVE (Bloqueio de Linha) --- */
+.remote-locked-line {
+    position: relative;
+    /* A cor da borda será definida dinamicamente pelo JS baseada na cor do user */
+    outline: 2px solid var(--user-color, #e74c3c); 
+    background-color: rgba(0, 0, 0, 0.05); /* Ligeiramente escurecido */
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+/* A Etiqueta com o Nome */
+.remote-locked-line::after {
+    content: attr(data-locked-by); /* Lê o nome do atributo HTML */
+    position: absolute;
+    top: -18px;
+    right: 0;
+    font-size: 10px;
+    font-weight: bold;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 4px 4px 0 0;
+    background-color: var(--user-color, #e74c3c); /* Mesma cor da borda */
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 10;
+    opacity: 0.9;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* Efeito de "Proibido" ao passar o rato (para quem vê o bloqueio) */
+.remote-locked-line[contenteditable="false"]:hover {
+    cursor: not-allowed;
+    background-color: rgba(231, 76, 60, 0.1);
+}
+
 
 /* --- CONFIGURAÇÃO MOBILE (LAYOUT 2 LINHAS NO TOPO) --- */
 @media (max-width: 768px) {
@@ -7702,161 +7737,127 @@ function extractTopicsFromEditorHTML() {
 async function executeSave() {
     if (!selectedNoteId) return;
     
-    // Não mudamos o status para 'saving' visualmente se for uma gravação de background
-    // para não distrair, a menos que seja uma gravação manual.
+    // Atualiza status visual
     const statusEl = document.getElementById('save-status-indicator');
     if(statusEl && statusEl.textContent !== 'A guardar...') {
-       // Opcional: Pode comentar esta linha se quiser updates totalmente silenciosos
        updateSaveStatus('saving');
     }
 
     let targetId = selectedNoteId;
+    
+    // Verifica se estamos a editar um atalho ou a nota real
     const editorEl = document.getElementById('note-content-editor');
     const realId = editorEl ? editorEl.getAttribute('data-real-id') : null;
-    
     if (realId) targetId = realId;
 
     const noteRef = doc(db, 'pastas', targetId);
 
     try {
-        // 1. Obter a versão mais recente do servidor
+        // 1. LEITURA ANTES DA ESCRITA (O Segredo para não apagar dados dos outros)
         const checkSnap = await getDoc(noteRef);
         let finalContentHTML = noteContentEditor.innerHTML;
         let merged = false;
 
-        // =================================================================
-        // 🧬 FUSÃO INTELIGENTE (SMART MERGE)
-        // =================================================================
         if (checkSnap.exists()) {
             const serverData = checkSnap.data();
+            // Verifica a data da última edição no servidor
             const serverTime = serverData.ultimaedicao ? serverData.ultimaedicao.toMillis() : 0;
 
-            // Se o servidor tem uma versão mais recente que a minha memória
+            // Se o servidor tem uma versão MAIS RECENTE do que a que eu carreguei...
+            // ...significa que alguém escreveu enquanto eu estava a escrever.
             if (serverTime > lastServerVersionTime) {
-                console.log("🔄 Atualização detetada. A fundir alterações...");
+                console.log("🔄 Conflito detetado: Alguém escreveu. A iniciar fusão inteligente...");
 
-                // A. Identificar ONDE eu estou a escrever (Minha Linha)
+                // A. Identificar a MINHA linha atual (onde está o meu cursor)
                 const selection = window.getSelection();
                 let myLineIndex = -1;
-                let cursorOffset = 0;
 
                 if (selection.rangeCount > 0) {
                     const range = selection.getRangeAt(0);
-                    // Encontra o bloco de parágrafo atual
+                    // Encontra o bloco de linha atual (p, div, h1, etc.)
                     const currentBlock = range.startContainer.nodeType === 3 
-                        ? range.startContainer.parentNode.closest('p, div, h1, h2, h3, li') 
-                        : range.startContainer.closest('p, div, h1, h2, h3, li');
+                        ? range.startContainer.parentNode.closest('#note-content-editor > *') 
+                        : range.startContainer.closest('#note-content-editor > *');
                     
                     if (currentBlock && editorEl.contains(currentBlock)) {
-                        // Calcula o índice (linha 0, linha 1, etc)
+                        // Calcula qual é o número da minha linha
                         myLineIndex = Array.from(editorEl.children).indexOf(currentBlock);
-                        cursorOffset = range.startOffset;
                     }
                 }
 
                 // B. Preparar a Fusão
-                // Criamos um editor "fantasma" com o conteúdo do servidor
+                // Criamos um editor "fantasma" com o conteúdo MAIS RECENTE do servidor (o do outro user)
                 const serverDOM = document.createElement('div');
                 serverDOM.innerHTML = serverData.conteudo;
 
                 // C. Injetar a MINHA linha no conteúdo do SERVIDOR
-                // (Assumimos que o servidor tem a verdade sobre tudo, MENOS a minha linha)
-                if (myLineIndex > -1 && serverDOM.children[myLineIndex]) {
-                    // Substitui a linha do servidor pela minha linha atual (que tem o texto mais recente)
+                // Lógica: "O servidor tem razão em tudo, EXCETO na linha que eu estou a editar agora"
+                if (myLineIndex > -1 && serverDOM.children[myLineIndex] && editorEl.children[myLineIndex]) {
+                    
+                    // Substitui a linha do servidor pela minha linha atualizada
                     serverDOM.children[myLineIndex].outerHTML = editorEl.children[myLineIndex].outerHTML;
                     
                     // O resultado final é: Texto do Outro + Minha Linha Atualizada
                     finalContentHTML = serverDOM.innerHTML;
                     merged = true;
+                    console.log(`✅ Fusão concluída na linha ${myLineIndex}.`);
                 } else {
-                    // Fallback: Se não conseguir determinar a linha (ex: estrutura mudou muito),
-                    // damos prioridade à versão local para não perder o que escrevemos agora.
-                    // Mas fazemos backup silencioso da versão do servidor por segurança.
-                    console.warn("Estrutura divergente. Prioridade local.");
+                    // Fallback: Se a estrutura mudou drasticamente (ex: apagaram linhas),
+                    // mantemos a versão local para não perder o que você escreveu agora,
+                    // mas isto é raro se o bloqueio visual estiver a funcionar.
+                    console.warn("⚠️ Estrutura divergiu muito. A forçar versão local.");
                     finalContentHTML = noteContentEditor.innerHTML;
                 }
             }
         }
-        // =================================================================
-
-        // Preparar Metadados
-        const miniNoteInputs = noteContentEditor.querySelectorAll('.mini-note-title-input');
-        miniNoteInputs.forEach(input => input.setAttribute('value', input.value || ''));
-        const finalTopicsIndex = typeof extractTopicsFromEditorHTML === 'function' ? extractTopicsFromEditorHTML() : {};
-        let finalTagNames = []; try { finalTagNames = Array.from(noteContentEditor.querySelectorAll('span.tag')).map(s => s.textContent.substring(1)); } catch(e){}
-        const coloredWrappers = noteContentEditor.querySelectorAll('.mini-note-wrapper[data-highlight]');
-        const uniqueColorsUsed = [...new Set(Array.from(coloredWrappers).map(el => el.dataset.highlight))];
 
         // 2. GRAVAÇÃO FINAL (Com o conteúdo fundido)
         await updateDoc(noteRef, { 
-            nome: noteTitleInput.value, 
+            nome: document.getElementById('note-title-input').value, 
             conteudo: finalContentHTML, // Envia o HTML combinado
-            tags: finalTagNames,
-            coresUsadas: uniqueColorsUsed,
-            topicosSelecionados: finalTopicsIndex, 
-            ultimaedicao: serverTimestamp()
+            ultimaedicao: serverTimestamp() // Atualiza o timestamp
         });
 
+        // Atualiza a nossa memória local para saber que estamos sincronizados
         lastServerVersionTime = Date.now(); 
 
-        // 3. ATUALIZAÇÃO VISUAL (Se houve fusão, atualiza o meu ecrã)
+        // 3. ATUALIZAÇÃO DO ECRÃ (Apenas se houve fusão)
+        // Se fundimos, temos de atualizar o nosso ecrã para ver o que o outro escreveu
         if (merged) {
             // Guardar posição do cursor
             const selection = window.getSelection();
-            let savedRange = null;
-            if (selection.rangeCount > 0) savedRange = selection.getRangeAt(0).cloneRange();
+            const savedRange = selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
+            const savedOffset = savedRange ? savedRange.startOffset : 0;
+            
+            // Encontra a linha onde estávamos ANTES de atualizar o HTML
+            let myLineIndex = -1;
+            if (savedRange) {
+                 const currentBlock = savedRange.startContainer.nodeType === 3 
+                        ? savedRange.startContainer.parentNode.closest('#note-content-editor > *') 
+                        : savedRange.startContainer.closest('#note-content-editor > *');
+                 if(currentBlock) myLineIndex = Array.from(editorEl.children).indexOf(currentBlock);
+            }
 
             // Atualiza o editor com o novo mix (Texto deles + Meu Texto)
             noteContentEditor.innerHTML = finalContentHTML;
 
-            // Tenta restaurar o cursor
-            // (Re-foca na mesma linha e posição se possível)
-            try {
-                // Recalcula a linha onde estávamos
-                const selection = window.getSelection();
-                const range = document.createRange();
-                
-                // Encontra a linha pelo índice que guardámos
-                // Nota: Usamos myLineIndex calculado lá em cima, mas precisamos de o guardar numa var scope acima se quisermos usar aqui
-                // Simplificação: Foca no final do editor se perder o foco, ou tenta lógica avançada
-                
-                // Vamos simplificar o restauro para não falhar:
-                // Se estávamos a escrever, o browser normalmente mantém o foco se o DOM update for rápido,
-                // mas refazer o innerHTML mata a seleção.
-                
-                // Solução Rápida: Focar no fim da linha que estávamos a editar
-                // (Para uma solução perfeita letra-a-letra seria preciso código muito complexo, 
-                // mas para "acabar de escrever" isto serve)
-            } catch(e) { 
-                console.log("Cursor reset"); 
+            // Restaura o cursor na mesma linha
+            if (myLineIndex > -1 && editorEl.children[myLineIndex]) {
+                try {
+                    const newLine = editorEl.children[myLineIndex];
+                    const newRange = document.createRange();
+                    // Tenta focar no texto da linha
+                    if (newLine.firstChild) {
+                        const targetNode = newLine.firstChild.nodeType === 3 ? newLine.firstChild : newLine;
+                        // Garante que o offset não ultrapassa o tamanho do texto
+                        const safeOffset = Math.min(savedOffset, targetNode.textContent.length);
+                        newRange.setStart(targetNode, safeOffset);
+                        newRange.collapse(true);
+                        selection.removeAllRanges();
+                        selection.addRange(newRange);
+                    }
+                } catch(e) { console.log("Cursor reset ligeiro após fusão"); }
             }
-        }
-
-        // Atualiza UI da Lista
-        const listItem = document.querySelector(`.list-item[data-id="${targetId}"]`);
-        const shortcutItem = currentShortcutId ? document.querySelector(`.list-item[data-id="${currentShortcutId}"]`) : null;
-        const itemToUpdate = shortcutItem || listItem;
-        if (itemToUpdate) {
-            let icon = "📄 ";
-            if (itemToUpdate.dataset.isLive) icon = "🗪 ";
-            else if (itemToUpdate.hasAttribute('data-protected')) icon = "🔒 ";
-            if (itemToUpdate.dataset.superpasta === "true") icon = "🗃️ ";
-            const spanName = itemToUpdate.querySelector('span');
-            if (spanName) spanName.textContent = icon + noteTitleInput.value;
-        }
-        
-        // Sync Público
-        if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
-            try {
-                const { setDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-                setDoc(doc(db, 'shared_notes', currentNoteShareData.shareId), {
-                    nome: noteTitleInput.value,
-                    conteudo: finalContentHTML,
-                    authorName: currentUserData?.nome || "Anónimo",
-                    updatedAt: serverTimestamp(),
-                    type: 'full_note' 
-                }, { merge: true }).catch(() => {});
-            } catch (e) { }
         }
 
         updateSaveStatus('saved');
@@ -14095,8 +14096,33 @@ window.addEventListener('beforeunload', (event) => {
 function setLeftPanelTitle(text, isBackAction = false) {
     const titleEl = document.getElementById('left-panel-title');
     
-    // CASO 1: NAVEGAÇÃO PROFUNDA (Botão Voltar)
-    // Acontece quando entra numa pasta, seja em Note ou Lists
+    // Verifica se estamos em modo Superpasta
+    const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
+
+    // ============================================================
+    // CASO 1: RAIZ DA SUPERPASTA (Prioridade Máxima)
+    // ============================================================
+    // Se estamos numa Superpasta e na raiz dela (sem navegação profunda)
+    // O seletor "Local | Partilha" NÃO deve aparecer aqui.
+    if (isSuperContext && !isBackAction) {
+        titleEl.className = ''; // Remove estilo flex do seletor
+        titleEl.style.display = 'block';
+        
+        // Mostra o nome da pasta com botão para SAIR (Voltar ao Note normal)
+        titleEl.innerHTML = `<h2 style="font-size:18px; cursor:pointer;" title="Sair da Superpasta"><span style="font-size: 0.8em; opacity: 0.7; margin-right: 8px;">🔙</span> ${text}</h2>`;
+        
+        titleEl.onclick = () => {
+            navigateWithUnsavedCheck(() => {
+                window.location.href = "note.html"; // Recarrega a página limpa (sem ID de superpasta)
+            });
+        };
+        return;
+    }
+
+    // ============================================================
+    // CASO 2: NAVEGAÇÃO PROFUNDA (Botão Voltar normal)
+    // ============================================================
+    // Acontece quando entra numa subpasta (seja em Local, Partilha ou dentro da Superpasta)
     if (isBackAction) {
         titleEl.className = ''; 
         titleEl.style.display = 'block';
@@ -14114,7 +14140,10 @@ function setLeftPanelTitle(text, isBackAction = false) {
         return;
     } 
 
-    // CASO 2: RAIZ DA ABA "NOTE" (Mostrar Seletor Local | Partilha)
+    // ============================================================
+    // CASO 3: RAIZ DA ABA "NOTE" (Mostrar Seletor Local | Partilha)
+    // ============================================================
+    // Só mostramos isto se estivermos na raiz GLOBAL (não numa Superpasta)
     if (currentTab === 'note') {
         titleEl.className = 'folder-mode-container';
         titleEl.style.display = 'flex';
@@ -14132,14 +14161,14 @@ function setLeftPanelTitle(text, isBackAction = false) {
         `;
     } 
     
-    // CASO 3: RAIZ DA ABA "LISTS" OU "BOOK" (Mostrar apenas Título Simples)
+    // ============================================================
+    // CASO 4: RAIZ DA ABA "LISTS" OU "BOOK"
+    // ============================================================
     else {
-        titleEl.className = ''; // Remove o estilo flex do seletor
+        titleEl.className = '';
         titleEl.style.display = 'block';
         titleEl.onclick = null;
         titleEl.title = "";
-        
-        // Mostra apenas o texto (ex: "Categorias")
         titleEl.innerHTML = `<h2 style="font-size:18px; margin:0;">${text}</h2>`;
     }
 }
@@ -18232,48 +18261,41 @@ noteContentEditor.addEventListener('keydown', (e) => {
 
 function applyRemoteLocks(activeUsers) {
     const editor = document.getElementById('note-content-editor');
-    // Converte os filhos do editor num Array para podermos usar índices
+    // Converte os filhos diretos do editor num Array
     const editorLines = Array.from(editor.children);
+    const myUserId = auth.currentUser ? auth.currentUser.uid : null;
 
-    // 1. LIMPEZA: Remover todos os bloqueios antigos primeiro
+    // 1. LIMPEZA TOTAL: Remove bloqueios antigos antes de aplicar novos
     const lockedElements = editor.querySelectorAll('.remote-locked-line');
     lockedElements.forEach(el => {
         el.classList.remove('remote-locked-line');
         el.removeAttribute('data-locked-by');
         el.removeAttribute('contenteditable'); // Devolve o controlo
-        el.style.outlineColor = '';
-        el.style.backgroundColor = '';
-        
-        // Remove a cor de fundo da etiqueta pseudo-elemento (via style inline não dá, 
-        // mas o CSS trata disso herdando a outlineColor se definirmos uma var)
-        el.style.removeProperty('--user-color');
+        el.style.removeProperty('--user-color'); // Remove a cor customizada
+        el.style.outline = '';
     });
 
-    // 2. APLICAÇÃO: Bloquear as linhas onde estão os outros
+    // 2. APLICAÇÃO: Bloquear linhas onde estão os outros
     activeUsers.forEach(user => {
+        // Ignora o próprio utilizador (eu não me bloqueio a mim mesmo)
+        if (user.userId === myUserId) return;
+
         // Se o utilizador tiver cursor e índice válido
         if (user.cursor && typeof user.cursor.index === 'number') {
             
             const targetLine = editorLines[user.cursor.index];
 
             if (targetLine) {
-                // A. Bloqueio Literal (Impede escrever)
+                // A. Bloqueio Literal (Impede escrever nesta linha)
                 targetLine.setAttribute('contenteditable', 'false');
                 
-                // B. Bloqueio Visual
+                // B. Bloqueio Visual (CSS)
                 targetLine.classList.add('remote-locked-line');
                 targetLine.setAttribute('data-locked-by', `🔒 ${user.name} a editar...`);
                 
-                // C. Cores Dinâmicas
-                targetLine.style.outlineColor = user.color;
-                // Truque para o ::after usar a mesma cor no background
-                targetLine.style.backgroundColor = `${user.color}15`; // 15 = transparência
-                
-                // Injetamos uma variável CSS para o pseudo-elemento usar (se o browser suportar)
-                // Caso contrário, o CSS fallback funciona bem.
-                const styleSheet = document.createElement("style");
-                styleSheet.innerText = `.remote-locked-line[data-locked-by="${user.name}"]::after { background-color: ${user.color}; }`;
-                targetLine.appendChild(styleSheet);
+                // C. Aplicar a cor do utilizador remoto (para o CSS usar)
+                targetLine.style.setProperty('--user-color', user.color);
+                targetLine.style.outline = `2px solid ${user.color}`;
             }
         }
     });
@@ -18940,7 +18962,51 @@ async function switchFolderView(mode) {
 }
 window.switchFolderView = switchFolderView;
 
+function applyRemoteLocks(activeUsers) {
+    const editor = document.getElementById('note-content-editor');
+    // Converte os filhos do editor num Array para podermos usar índices
+    const editorLines = Array.from(editor.children);
 
+    // 1. LIMPEZA: Remover todos os bloqueios antigos primeiro
+    const lockedElements = editor.querySelectorAll('.remote-locked-line');
+    lockedElements.forEach(el => {
+        el.classList.remove('remote-locked-line');
+        el.removeAttribute('data-locked-by');
+        el.removeAttribute('contenteditable'); // Devolve o controlo
+        el.style.outlineColor = '';
+        el.style.backgroundColor = '';
+        
+        // Remove a cor de fundo da etiqueta pseudo-elemento
+        el.style.removeProperty('--user-color');
+    });
+
+    // 2. APLICAÇÃO: Bloquear as linhas onde estão os outros
+    activeUsers.forEach(user => {
+        // Se o utilizador tiver cursor e índice válido
+        if (user.cursor && typeof user.cursor.index === 'number') {
+            
+            const targetLine = editorLines[user.cursor.index];
+
+            if (targetLine) {
+                // A. Bloqueio Literal (Impede escrever)
+                targetLine.setAttribute('contenteditable', 'false');
+                
+                // B. Bloqueio Visual
+                targetLine.classList.add('remote-locked-line');
+                targetLine.setAttribute('data-locked-by', `🔒 ${user.name} a editar...`);
+                
+                // C. Cores Dinâmicas
+                targetLine.style.outlineColor = user.color;
+                // Truque para o fundo ficar ligeiramente colorido
+                targetLine.style.backgroundColor = `${user.color}15`; // 15 = transparência
+                
+                // Truque CSS para o pseudo-elemento ::after apanhar a cor do user
+                // Criamos um style tag temporário se o browser não suportar attr() em cores
+                // Mas a solução mais limpa é usar background-color: inherit no CSS e definir aqui o bg
+            }
+        }
+    });
+}
 
     </script>
 </body>
