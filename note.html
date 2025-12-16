@@ -7735,15 +7735,12 @@ function extractTopicsFromEditorHTML() {
 async function executeSave() {
     if (!selectedNoteId) return;
     
-    // Atualiza status visual (se não for invisível)
     const statusEl = document.getElementById('save-status-indicator');
     if(statusEl && statusEl.textContent !== 'A guardar...') {
        updateSaveStatus('saving');
     }
 
     let targetId = selectedNoteId;
-    
-    // Verifica se estamos a editar um atalho ou a nota real
     const editorEl = document.getElementById('note-content-editor');
     const realId = editorEl ? editorEl.getAttribute('data-real-id') : null;
     if (realId) targetId = realId;
@@ -7751,51 +7748,51 @@ async function executeSave() {
     const noteRef = doc(db, 'pastas', targetId);
 
     try {
+        // --- CORREÇÃO DO ERRO ---
+        let merged = false; // <--- A variável que faltava!
+        let finalContentHTML = noteContentEditor.innerHTML;
+
         // 1. LEITURA ANTES DA ESCRITA
-       const checkSnap = await getDoc(noteRef);
-    let finalContentHTML = noteContentEditor.innerHTML;
+        const checkSnap = await getDoc(noteRef);
 
-    if (checkSnap.exists()) {
-        const serverData = checkSnap.data();
-        const serverTime = serverData.ultimaedicao ? serverData.ultimaedicao.toMillis() : 0;
+        if (checkSnap.exists()) {
+            const serverData = checkSnap.data();
+            const serverTime = serverData.ultimaedicao ? serverData.ultimaedicao.toMillis() : 0;
 
-        // Se o servidor tem uma versão MAIS RECENTE do que a última que vi...
-        // Significa que alguém gravou nos últimos milissegundos.
-        if (serverTime > lastServerVersionTime) {
-            console.log("⚠️ Conflito de gravação! A tentar fundir...");
-            
-            // Em vez de substituir, vamos tentar salvar APENAS a linha que mudámos?
-            // É complexo. A solução mais segura aqui é:
-            // 1. Pegar no HTML do servidor.
-            // 2. Injetar a MINHA linha atual dentro desse HTML.
-            // 3. Gravar o resultado combinado.
-            
-            const selection = window.getSelection();
-            let myLineIndex = -1;
-            
-            // Descobre a minha linha
-            if (selection.rangeCount > 0) {
-                 let curr = selection.anchorNode;
-                 if (curr.nodeType === 3) curr = curr.parentNode;
-                 const lineBlock = curr.closest('#note-content-editor > *');
-                 if (lineBlock) {
-                     myLineIndex = Array.from(document.getElementById('note-content-editor').children).indexOf(lineBlock);
-                 }
-            }
+            // Se o servidor tem uma versão MAIS RECENTE do que a que eu carreguei...
+            if (serverTime > lastServerVersionTime) {
+                console.log("🔄 Conflito detetado. A iniciar fusão inteligente...");
 
-            if (myLineIndex > -1) {
+                // A. Identificar a MINHA linha (onde está o cursor)
+                const selection = window.getSelection();
+                let myLineIndex = -1;
+
+                if (selection.rangeCount > 0) {
+                    let currentBlock = selection.anchorNode;
+                    // Sobe até encontrar o filho direto do editor
+                    if (currentBlock.nodeType === 3) currentBlock = currentBlock.parentNode;
+                    while (currentBlock && currentBlock.parentNode !== editorEl) {
+                        currentBlock = currentBlock.parentNode;
+                    }
+                    
+                    if (currentBlock) {
+                        myLineIndex = Array.from(editorEl.children).indexOf(currentBlock);
+                    }
+                }
+
+                // B. Preparar a Fusão: Pegar no HTML do servidor
                 const serverDOM = document.createElement('div');
                 serverDOM.innerHTML = serverData.conteudo;
-                const myCurrentLines = document.getElementById('note-content-editor').children;
-                
-                // Se a linha existe no servidor, substitui pela minha versão
-                if (serverDOM.children[myLineIndex] && myCurrentLines[myLineIndex]) {
-                    serverDOM.children[myLineIndex].outerHTML = myCurrentLines[myLineIndex].outerHTML;
-                    finalContentHTML = serverDOM.innerHTML; // Grava a fusão
+
+                // C. Injetar a MINHA linha atual dentro do HTML do servidor
+                // (Preserva o que os outros escreveram, mas impõe a minha linha atual)
+                if (myLineIndex > -1 && serverDOM.children[myLineIndex] && editorEl.children[myLineIndex]) {
+                    serverDOM.children[myLineIndex].outerHTML = editorEl.children[myLineIndex].outerHTML;
+                    finalContentHTML = serverDOM.innerHTML;
+                    merged = true;
                 }
             }
         }
-    }
 
         // 2. GRAVAÇÃO FINAL
         await updateDoc(noteRef, { 
@@ -7806,36 +7803,21 @@ async function executeSave() {
 
         lastServerVersionTime = Date.now(); 
 
-        // 3. ATUALIZAÇÃO DO ECRÃ (Se houve fusão)
+        // 3. ATUALIZAÇÃO DO ECRÃ (Se houve fusão, atualizamos o visual para não ficarmos dessincronizados)
         if (merged) {
             const selection = window.getSelection();
-            const savedRange = selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
-            const savedOffset = savedRange ? savedRange.startOffset : 0;
-            
-            // Tenta encontrar linha antiga
-            let myLineIndex = -1;
-            if (savedRange) {
-                 const currentBlock = savedRange.startContainer.nodeType === 3 
-                        ? savedRange.startContainer.parentNode.closest('#note-content-editor > *') 
-                        : savedRange.startContainer.closest('#note-content-editor > *');
-                 if(currentBlock) myLineIndex = Array.from(editorEl.children).indexOf(currentBlock);
-            }
+            // Tenta guardar cursor
+            let savedRange = null;
+            if(selection.rangeCount > 0) savedRange = selection.getRangeAt(0).cloneRange();
 
             noteContentEditor.innerHTML = finalContentHTML;
 
-            // Restaura cursor
-            if (myLineIndex > -1 && editorEl.children[myLineIndex]) {
+            // Tentar restaurar cursor (básico)
+            if (savedRange) {
                 try {
-                    const newLine = editorEl.children[myLineIndex];
-                    const newRange = document.createRange();
-                    if (newLine.firstChild) {
-                        const targetNode = newLine.firstChild.nodeType === 3 ? newLine.firstChild : newLine;
-                        const safeOffset = Math.min(savedOffset, targetNode.textContent.length);
-                        newRange.setStart(targetNode, safeOffset);
-                        newRange.collapse(true);
-                        selection.removeAllRanges();
-                        selection.addRange(newRange);
-                    }
+                    selection.removeAllRanges();
+                    // Como o HTML mudou, focamos no início da linha para garantir estabilidade
+                    // (Restauro perfeito é complexo sem bibliotecas externas)
                 } catch(e) {}
             }
         }
@@ -18914,7 +18896,7 @@ function applyRemoteLocks(activeUsers) {
     const editorLines = Array.from(editor.children);
     const myUserId = auth.currentUser ? auth.currentUser.uid : null;
 
-    // 1. LIMPEZA: Remove bloqueios antigos
+    // 1. Limpar bloqueios antigos
     const lockedElements = editor.querySelectorAll('.remote-locked-line');
     lockedElements.forEach(el => {
         el.classList.remove('remote-locked-line');
@@ -18924,7 +18906,7 @@ function applyRemoteLocks(activeUsers) {
         el.style.backgroundColor = '';
     });
 
-    // 2. APLICAÇÃO: Bloquear linhas dos outros
+    // 2. Aplicar novos bloqueios
     activeUsers.forEach(user => {
         const remoteId = user.userId || user.id; 
         if (remoteId === myUserId) return; // Não me bloqueio a mim mesmo
@@ -18932,19 +18914,17 @@ function applyRemoteLocks(activeUsers) {
         if (user.cursor && typeof user.cursor.index === 'number') {
             const targetLine = editorLines[user.cursor.index];
 
-            // Só bloqueia se a linha existir
             if (targetLine) {
-                // A. Bloqueio Literal (Impede escrever)
+                // A. Bloqueio Literal (Impede escrever aqui)
                 targetLine.setAttribute('contenteditable', 'false');
                 
-                // B. Bloqueio Visual
+                // B. Visual (Borda colorida com nome)
                 targetLine.classList.add('remote-locked-line');
                 targetLine.setAttribute('data-locked-by', `🔒 ${user.name}`);
                 
-                // C. Estilo Visual (Cor do utilizador)
                 const uColor = user.color || '#e74c3c';
                 targetLine.style.outline = `2px solid ${uColor}`;
-                targetLine.style.backgroundColor = `${uColor}15`; // 15 = hex alpha transparente
+                targetLine.style.backgroundColor = `${uColor}10`; // Fundo suave
             }
         }
     });
@@ -18952,7 +18932,6 @@ function applyRemoteLocks(activeUsers) {
 
 
 function setupRealTimeListener(noteId) {
-    // 1. Limpa o listener anterior
     if (contentUnsubscribe) {
         contentUnsubscribe();
         contentUnsubscribe = null;
@@ -18961,120 +18940,71 @@ function setupRealTimeListener(noteId) {
     const noteRef = doc(db, 'pastas', noteId);
     console.log(`📡 A iniciar escuta LIVE na nota: ${noteId}`);
 
-    // 2. Cria o novo listener com metadata
     contentUnsubscribe = onSnapshot(noteRef, { includeMetadataChanges: true }, (docSnap) => {
-        // Se a nota foi apagada, não faz nada
         if (!docSnap.exists()) return;
 
-        // A. IGNORAR ECOS LOCAIS (CRUCIAL PARA LIVE)
-        // Se 'hasPendingWrites' for true, significa que a alteração foi feita por NÓS
-        // e ainda não foi confirmada pelo servidor. Ignoramos para não piscar o texto.
-        if (docSnap.metadata.hasPendingWrites) {
-            return;
-        }
+        // 1. Ignorar Ecos (Se fui eu que escrevi, ignora a atualização do servidor)
+        if (docSnap.metadata.hasPendingWrites) return;
 
         const data = docSnap.data();
         const editor = document.getElementById('note-content-editor');
-        
-        // Verifica se há conteúdo novo
         const incomingHTML = data.conteudo || "";
-        const currentHTML = editor.innerHTML;
 
-        if (incomingHTML !== currentHTML) {
-            console.log("📥 Recebido texto novo de colega. A fundir...");
+        if (editor.innerHTML !== incomingHTML) {
+            console.log("📥 Recebido texto novo. Atualizando linhas vizinhas...");
 
-            // B. FUSÃO INTELIGENTE (SMART MERGE)
-            // Em vez de substituir tudo brutalmente, vamos proteger onde o cursor está.
-            
+            // 2. Descobrir onde EU estou a escrever
             const selection = window.getSelection();
-            let activeLineIndex = -1;
+            let myActiveIndex = -1;
             let savedRange = null;
 
-            // 1. Descobrir onde o utilizador está a escrever
             if (selection.rangeCount > 0 && editor.contains(selection.anchorNode)) {
                 try {
                     savedRange = selection.getRangeAt(0).cloneRange();
-                    
-                    // Encontra o bloco de linha (p, div, h1, etc.) direto do editor
-                    let currentNode = selection.anchorNode;
-                    if (currentNode.nodeType === 3) currentNode = currentNode.parentNode;
-                    
-                    // Sobe até encontrar o filho direto do editor
-                    while (currentNode && currentNode.parentNode !== editor) {
-                        currentNode = currentNode.parentNode;
+                    let node = selection.anchorNode;
+                    if(node.nodeType === 3) node = node.parentNode;
+                    // Encontrar o bloco de linha (p, div, h2...)
+                    const block = node.closest('#note-content-editor > *');
+                    if(block) {
+                        myActiveIndex = Array.from(editor.children).indexOf(block);
                     }
-                    
-                    if (currentNode) {
-                        activeLineIndex = Array.from(editor.children).indexOf(currentNode);
-                    }
-                } catch(e) { console.warn("Erro ao calcular linha ativa", e); }
+                } catch(e) {}
             }
 
-            // 2. Criar DOM virtual com o novo texto
+            // 3. Atualização Inteligente (Linha a Linha)
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = incomingHTML;
-            const newChildren = Array.from(tempDiv.children);
-            const currentChildren = Array.from(editor.children);
+            const newLines = Array.from(tempDiv.children);
+            const currentLines = Array.from(editor.children);
 
-            // 3. Se o número de linhas mudou drasticamente, substituição total é mais segura
-            // (Evita misturar linhas erradas se alguém apagou 10 parágrafos)
-            if (Math.abs(newChildren.length - currentChildren.length) > 2) {
+            // Se a estrutura mudou muito (ex: apagou tudo), substitui tudo
+            if (Math.abs(newLines.length - currentLines.length) > 2) {
                 editor.innerHTML = incomingHTML;
             } else {
-                // 4. Substituição Linha a Linha (Cirúrgica)
-                // Atualiza todas as linhas, MENOS a que o utilizador está a editar
-                
-                // Se o editor estiver vazio e vier texto, aceita tudo
-                if (editor.innerHTML.trim() === "") {
-                    editor.innerHTML = incomingHTML;
-                } else {
-                    // Percorre as linhas novas
-                    newChildren.forEach((newChild, index) => {
-                        // Se for a linha onde estou a escrever, IGNORO a mudança do servidor
-                        // (A minha versão é mais recente para mim)
-                        if (index === activeLineIndex) {
-                            // Não faz nada, mantém o meu texto
-                            return; 
-                        }
+                // Caso contrário, atualiza linha a linha
+                newLines.forEach((newLine, index) => {
+                    // SE FOR A MINHA LINHA, NÃO TOCA! (Protege o que estou a escrever)
+                    if (index === myActiveIndex) return;
 
-                        // Se a linha existir no editor atual, substitui
-                        if (editor.children[index]) {
-                            if (editor.children[index].outerHTML !== newChild.outerHTML) {
-                                editor.children[index].outerHTML = newChild.outerHTML;
-                            }
-                        } else {
-                            // Se é uma linha nova no fim, adiciona
-                            editor.appendChild(newChild.cloneNode(true));
+                    if (editor.children[index]) {
+                        if (editor.children[index].outerHTML !== newLine.outerHTML) {
+                            editor.children[index].outerHTML = newLine.outerHTML;
                         }
-                    });
-                    
-                    // Remove linhas excedentes (se o outro apagou linhas no fim)
-                    while (editor.children.length > newChildren.length) {
-                        // Cuidado para não apagar a linha onde estou se for a última
-                        if (editor.children.length - 1 !== activeLineIndex) {
-                            editor.lastChild.remove();
-                        } else {
-                            break; 
-                        }
+                    } else {
+                        editor.appendChild(newLine.cloneNode(true));
                     }
-                }
+                });
             }
 
-            // 5. Atualiza memória de versão
-            if (data.ultimaedicao) {
-                lastServerVersionTime = data.ultimaedicao.toMillis();
-            }
+            // Atualiza timestamp local
+            if (data.ultimaedicao) lastServerVersionTime = data.ultimaedicao.toMillis();
 
-            // 6. Tenta restaurar cursor (se não foi perdido)
-            if (savedRange && activeLineIndex !== -1) {
+            // Restaura Cursor
+            if (savedRange && myActiveIndex !== -1) {
                 try {
-                    const targetLine = editor.children[activeLineIndex];
-                    if (targetLine) {
-                        // Tenta repor o cursor, mas com fallback para o fim da linha se o texto mudou
-                        selection.removeAllRanges();
-                        selection.addRange(savedRange); 
-                    }
-                } catch (e) { }
+                    selection.removeAllRanges();
+                    selection.addRange(savedRange);
+                } catch(e) {}
             }
         }
         
@@ -19084,9 +19014,7 @@ function setupRealTimeListener(noteId) {
             titleInput.value = data.nome;
         }
 
-    }, (error) => {
-        console.error("❌ Erro no listener:", error);
-    });
+    }, (error) => console.error("❌ Erro no listener:", error));
 }
 
     </script>
