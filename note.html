@@ -17293,30 +17293,66 @@ if (toggleDelBtn) {
 // 5. LÓGICA DE APAGAR SUBNOTA/QUESTÃO (🗑️)
 // -----------------------------------------------------------
 const deleteBtn = e.target.closest('button[data-action="delete-mini-note"]');
-if (deleteBtn) {
-     if (noteContentEditor.contentEditable === "false") {
-        alert("Não tem permissão para editar esta nota partilhada.");
+    if (deleteBtn) {
+        // 1. Verificações de segurança
+        if (noteContentEditor.contentEditable === "false") {
+            alert("Não tem permissão para editar esta nota partilhada.");
+            return;
+        }
+        e.preventDefault(); 
+        e.stopPropagation();
+
+        // 2. Identificar a caixa
+        const wrapper = deleteBtn.closest('.mini-note-wrapper');
+        if (!wrapper) return; // Segurança extra
+
+        const wrapperId = wrapper.id; // Guardamos o ID antes de mexer no DOM
+        const isQuestion = wrapper.classList.contains('question-mode');
+        const label = isQuestion ? "Questão" : "SubNota";
+
+        // 3. Confirmação
+        const confirmed = await showConfirmation("Mover para a Lixeira?", `Deseja ocultar esta ${label}?`);
+        if (!confirmed) return;
+
+        // --- TRUQUE VISUAL IMEDIATO ---
+        // Escondemos logo a caixa para o utilizador sentir que apagou
+        // Se der erro depois, voltamos a mostrar.
+        wrapper.style.display = 'none';
+
+        try {
+            // 4. Arquivar na Base de Dados (Isto pode demorar 1-2 segundos)
+            // Passamos o elemento wrapper que ainda existe no DOM (apenas invisível)
+            const success = await archiveMiniNote(wrapper, true);
+            
+            if (success) {
+                // 5. Se gravou com sucesso, removemos permanentemente do HTML
+                const marker = document.createElement('span');
+                marker.id = `marker_${wrapperId}`;
+                marker.className = 'hidden-note-marker';
+                marker.style.display = 'none';
+                
+                // Substituição segura: Tenta encontrar o elemento pelo ID novamente
+                // (caso o DOM tenha mudado ligeiramente durante o await)
+                const elementToRemove = document.getElementById(wrapperId) || wrapper;
+                
+                if (elementToRemove && elementToRemove.parentNode) {
+                    elementToRemove.replaceWith(marker);
+                }
+                
+                // 6. Gravar o HTML atualizado da nota (sem a caixa)
+                // Usamos 'true' para forçar gravação imediata e evitar conflitos de versão
+                await saveNote(true);
+            } else {
+                // Se falhou o arquivo, mostra a caixa de volta
+                wrapper.style.display = 'block';
+                alert("Não foi possível arquivar. A caixa foi restaurada.");
+            }
+        } catch (err) {
+            console.error("Erro ao apagar:", err);
+            wrapper.style.display = 'block'; // Restaura em caso de erro
+        }
         return;
     }
-    e.preventDefault(); e.stopPropagation();
-    const wrapper = deleteBtn.closest('.mini-note-wrapper');
-    const isQuestion = wrapper.classList.contains('question-mode');
-    const label = isQuestion ? "Questão" : "SubNota";
-
-    const confirmed = await showConfirmation("Mover para a Lixeira?", `Deseja ocultar esta ${label}?`);
-    if (!confirmed) return;
-
-    const success = await archiveMiniNote(wrapper, true);
-    if (success) {
-        const marker = document.createElement('span');
-        marker.id = `marker_${wrapper.id}`;
-        marker.className = 'hidden-note-marker';
-        marker.style.display = 'none';
-        wrapper.replaceWith(marker);
-        saveNote();
-    }
-    return;
-}
 });
 
 // ====================================================================
