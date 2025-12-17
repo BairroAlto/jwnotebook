@@ -310,7 +310,7 @@
     // =========================================================
     // FUNÇÃO PRINCIPAL: INICIALIZAÇÃO
     // =========================================================
-    async function init() {
+   async function init() {
         if (!noteId) {
             showError("Link inválido.", "⚠️");
             return;
@@ -346,14 +346,56 @@
             document.getElementById('note-title').textContent = sharedNoteData.nome;
             document.getElementById('author-name').textContent = sharedNoteData.authorName || 'Anónimo';
             
-            // Processa o HTML
+            // Processa o HTML para leitura segura
             document.getElementById('note-content').innerHTML = processContentForReading(sharedNoteData.conteudo);
 
-            // Mostrar botão de importar se tiver login
+            // --- GESTÃO DO BOTÃO DE AÇÃO (IMPORTAR / COLABORAR) ---
             if (user) {
                 const importBtn = document.getElementById('btn-import');
-                importBtn.style.display = 'flex';
-                importBtn.innerHTML = "<span class='satellite-icon'>📥</span> Adicionar na Minha Pasta";
+                
+                // 1. Obter parâmetros do URL
+                const urlParams = new URLSearchParams(window.location.search);
+                const modeParam = urlParams.get('mode'); // 'collab'
+
+                // 2. Verificar permissões do documento
+                const isCollabAllowed = sharedNoteData.allowCollab === true;
+                const isArchive = sharedNoteData.type === 'arquivo';
+
+                // --- CENÁRIO A: MODO COLABORAÇÃO (ARQUIVO) ---
+                if (modeParam === 'collab' && isCollabAllowed && isArchive) {
+                    
+                    // Estilo Distinto (Vermelho) para indicar ação Live
+                    importBtn.style.display = 'flex';
+                    importBtn.style.borderColor = '#e74c3c';
+                    importBtn.style.color = '#e74c3c';
+                    importBtn.style.fontWeight = 'bold';
+                    importBtn.style.backgroundColor = 'rgba(231, 76, 60, 0.1)';
+                    importBtn.innerHTML = "<span class='satellite-icon'>🔴</span> Colaborar neste Arquivo";
+                    
+                    // Limpar listeners antigos e adicionar o de colaboração direta
+                    const newBtn = importBtn.cloneNode(true);
+                    importBtn.parentNode.replaceChild(newBtn, importBtn);
+                    
+                    newBtn.addEventListener('click', async () => {
+                        await joinCollaboration(user, sharedNoteData);
+                    });
+
+                } 
+                // --- CENÁRIO B: IMPORTAÇÃO PADRÃO (CÓPIA PESSOAL) ---
+                else {
+                    importBtn.style.display = 'flex';
+                    // Reset para Estilo Padrão (Verde/Azul)
+                    importBtn.style.borderColor = ''; 
+                    importBtn.style.color = '';
+                    importBtn.style.backgroundColor = '';
+                    importBtn.style.fontWeight = '';
+                    importBtn.innerHTML = "<span class='satellite-icon'>📥</span> Adicionar na Minha Pasta";
+                    
+                    const newBtn = importBtn.cloneNode(true);
+                    importBtn.parentNode.replaceChild(newBtn, importBtn);
+
+                    newBtn.addEventListener('click', openImportModal);
+                }
             }
 
             // Animação de Entrada
@@ -365,7 +407,8 @@
             }, 500);
 
             // --- LÓGICA AUTOMÁTICA PARA "PERMITIR CLONAGEM" (action=clone) ---
-            if (actionParam === 'clone') {
+            // Apenas executa se NÃO estivermos no modo colaboração
+            if (actionParam === 'clone' && !urlParams.get('mode')) {
                 if (user) {
                     console.log("🚀 Link de Clonagem detetado: Abrindo popup de guardar...");
                     setTimeout(() => {
@@ -818,6 +861,73 @@ async function openImportModal() {
 
    // ARRANQUE
    init();
+
+
+   // NOVA FUNÇÃO: Juntar-se à Colaboração
+async function joinCollaboration(user, data) {
+    if (!confirm(`Deseja adicionar "${data.nome}" à sua pasta 'Partilhadas' para colaborar?`)) return;
+
+    const btn = document.querySelector('.action-btn.import-btn');
+    btn.textContent = "A configurar acesso...";
+    btn.disabled = true;
+
+    try {
+        // 1. Encontrar/Criar pasta "Partilhadas" do Visitante
+        const q = query(
+            collection(db, 'pastas'),
+            where('nome', '==', 'Partilhadas'),
+            where('parentId', '==', null),
+            where('userId', '==', user.uid)
+        );
+        const snapshot = await getDocs(q);
+        let sharedFolderId = null;
+
+        if (!snapshot.empty) {
+            sharedFolderId = snapshot.docs[0].id;
+        } else {
+            const newFolder = await addDoc(collection(db, 'pastas'), {
+                nome: 'Partilhadas',
+                parentId: null,
+                tipo: 'pasta',
+                userId: user.uid,
+                estado: 'ativa',
+                ordem: 0,
+                createdAt: serverTimestamp(),
+                ultimaedicao: serverTimestamp()
+            });
+            sharedFolderId = newFolder.id;
+        }
+
+        // 2. Criar o ATALHO (Pointer) dentro da pasta Partilhadas
+        // Isto é o que permite ao visitante ver o arquivo na sua lista
+        const newDoc = await addDoc(collection(db, 'pastas'), {
+            nome: data.nome,
+            parentId: sharedFolderId, // Fica dentro de Partilhadas
+            tipo: 'arquivo', // É um arquivo
+            userId: user.uid, // Pertence ao visitante (o atalho)
+            estado: 'ativa',
+            ordem: 999,
+            createdAt: serverTimestamp(),
+            ultimaedicao: serverTimestamp(),
+            
+            // --- A MAGIA: APONTA PARA O ORIGINAL ---
+            pointerId: data.originalNoteId, // ID Real do Dono
+            isLive: true // Indica que é colaborativo
+        });
+
+        alert("Adicionado com sucesso! Vai ser redirecionado.");
+        
+        // 3. Redirecionar para o Note.html, abrindo a pasta Partilhadas
+        // (Assume que note.html sabe lidar com ?openFolder)
+        window.location.href = `note.html?openFolder=${sharedFolderId}`;
+
+    } catch (e) {
+        console.error("Erro ao juntar colaboração:", e);
+        alert("Erro ao configurar acesso.");
+        btn.textContent = "Erro. Tente novamente.";
+        btn.disabled = false;
+    }
+}
 </script>
 
 </body>
