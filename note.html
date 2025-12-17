@@ -15833,42 +15833,60 @@ async function updateSharingSettings() {
         let shareId = currentNoteShareData?.shareId || selectedNoteId;
 
         // 1. Atualizar Nota Privada
-      const newSettings = {
-    shared: isShared,
-    shareId: shareId,
-    updatedAt: serverTimestamp()
-};
+        const newSettings = {
+            ...currentNoteShareData, // Mantém definições existentes (como collab)
+            shared: isShared,
+            shareId: shareId,
+            updatedAt: serverTimestamp()
+        };
 
         await updateDoc(noteRef, { shareSettings: newSettings });
         currentNoteShareData = newSettings;
 
         // 2. Gerir Documento Público
         if (isShared) {
-            const noteSnap = await getDoc(noteRef);
-            const noteData = noteSnap.data();
             
-            await setDoc(doc(db, 'shared_notes', shareId), {
-                nome: noteData.nome,
-                conteudo: noteData.conteudo,
-                authorName: currentUserData.nome || "Anónimo",
+            // Obter dados atuais para garantir que não enviamos lixo
+            const currentTitle = document.getElementById('archive-title-input').value || 
+                               document.getElementById('note-title-input').value || 
+                               "Sem Título";
+
+            // Nome do Autor Robusto
+            let finalAuthorName = "Anónimo";
+            if (currentUserData && currentUserData.nome) finalAuthorName = currentUserData.nome;
+            else if (auth.currentUser.email) finalAuthorName = auth.currentUser.email.split('@')[0];
+
+            // Detetar se é Arquivo ou Nota
+            // (Verifica se estamos no modo arquivo ou nota normal)
+            const isArchive = document.getElementById('archive-area').style.display !== 'none';
+            const docType = isArchive ? 'arquivo' : 'full_note';
+            
+            // Dados a enviar
+            const publicData = {
+                nome: currentTitle,
+                authorName: finalAuthorName,
                 authorId: auth.currentUser.uid,
                 isPublic: true,
                 sharedAt: serverTimestamp(),
-                type: 'full_note',
+                type: docType,
                 originalNoteId: selectedNoteId
-            }, { merge: true });
+            };
+
+            // Se for arquivo, anexa os posts. Se for nota, anexa o conteudo.
+            if (isArchive) {
+                publicData.posts = currentArchiveData.posts || [];
+            } else {
+                publicData.conteudo = document.getElementById('note-content-editor').innerHTML;
+            }
             
-            // --- GERAR OS DOIS LINKS ---
-   const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
+            await setDoc(doc(db, 'shared_notes', shareId), publicData, { merge: true });
+            
+            // Gerar link visualmente
+            const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
+            document.getElementById('note-share-url').value = `${baseUrl}/sharenote.html?id=${shareId}`;
 
-    // 1. Link de Leitura (Padrão) -> Vai para sharenote.html
-    // O botão lá fará uma cópia fiel (novo ID)
-    document.getElementById('note-share-url').value = `${baseUrl}/sharenote.html?id=${shareId}`;
-
-    // 2. Link de Clonagem -> Vai para sharenote.html com ?action=clone
-    // Isto forçará o popup de "Guardar Nota" a abrir automaticamente
-
-} else {
+        } else {
+            // Se desligar a partilha, apaga o documento público
             await deleteDoc(doc(db, 'shared_notes', shareId));
         }
 
@@ -19317,7 +19335,7 @@ async function openShareModalForArchive() {
 
 // --- ADICIONE ESTE LISTENER NO FINAL DO SCRIPT (Para o novo Toggle de Colaboração) ---
 
-const collabShareToggle = document.getElementById('collab-share-toggle');
+ const collabShareToggle = document.getElementById('collab-share-toggle');
 if (collabShareToggle) {
     collabShareToggle.addEventListener('change', async () => {
         if (!selectedNoteId || !auth.currentUser) return;
@@ -19328,11 +19346,21 @@ if (collabShareToggle) {
         
         collabLinkContainer.style.display = isCollab ? 'block' : 'none';
 
+        // 1. Obter Nome do Autor (Correção para não ficar Anónimo)
+        let finalAuthorName = "Anónimo";
+        if (currentUserData && currentUserData.nome) {
+            finalAuthorName = currentUserData.nome;
+        } else if (auth.currentUser.displayName) {
+            finalAuthorName = auth.currentUser.displayName;
+        } else if (auth.currentUser.email) {
+            finalAuthorName = auth.currentUser.email.split('@')[0]; // Usa a parte antes do @
+        }
+
         try {
             const noteRef = doc(db, 'pastas', selectedNoteId);
             const shareId = currentNoteShareData?.shareId || selectedNoteId;
 
-            // Atualiza UI
+            // Atualiza UI com o link correto
             if (isCollab) {
                 document.getElementById('collab-share-url').value = `${baseUrl}/sharenote.html?id=${shareId}&mode=collab`;
             }
@@ -19342,22 +19370,25 @@ if (collabShareToggle) {
             currentNoteShareData.collab = isCollab;
             currentNoteShareData.shareId = shareId;
 
-            // 1. Atualiza documento privado (Permissão Mestra)
+            // 2. Atualiza documento privado (Permissão Mestra)
             await updateDoc(noteRef, { 
                 shareSettings: currentNoteShareData,
                 ultimaedicao: serverTimestamp()
             });
 
-            // 2. Atualiza documento público (Para o sharenote saber)
-            // Se a nota pública ainda não existir, cria-a
+            // 3. Atualiza documento público (CORREÇÃO CRÍTICA AQUI)
+            // Temos de enviar os 'posts' para que a pré-visualização não fique vazia
             await setDoc(doc(db, 'shared_notes', shareId), {
-                nome: document.getElementById('archive-title-input').value, // Nome atual
-                authorName: currentUserData?.nome || "Anónimo",
-                allowCollab: isCollab, // <--- A FLAG IMPORTANTE
-                type: 'arquivo', // Marca como arquivo
-                originalNoteId: selectedNoteId, // ID real para escrita
+                nome: document.getElementById('archive-title-input').value || "Arquivo Sem Nome",
+                authorName: finalAuthorName, // Nome corrigido
+                allowCollab: isCollab, 
+                type: 'arquivo', // Força o tipo arquivo
+                posts: currentArchiveData.posts || [], // <--- IMPORTANTE: Copia os posts atuais
+                originalNoteId: selectedNoteId,
                 updatedAt: serverTimestamp()
             }, { merge: true });
+
+            console.log("✅ Colaboração atualizada com sucesso. Posts copiados.");
 
         } catch (e) {
             console.error("Erro ao atualizar colaboração:", e);
