@@ -353,6 +353,21 @@
     .index-item.type-subnota span { color: var(--accent-color); }
     .index-item.type-free span { color: var(--container-color); }
     .index-item.type-toggle span { color: #9b59b6; }
+    
+    /* Efeito para o item do índice ativo durante o scroll */
+    .index-item.active-spy {
+        background-color: rgba(74, 144, 226, 0.15); /* Fundo azulado suave */
+        border-left-width: 6px !important; /* Engrossa a borda colorida */
+        padding-left: 20px; /* Avança um pouco para a direita */
+        font-weight: bold;
+        color: var(--accent-color);
+        transition: all 0.2s ease;
+    }
+
+    /* Ajuste específico para Toggles ativos */
+    .index-item.active-spy.type-toggle {
+        background-color: rgba(155, 89, 182, 0.15);
+    }
 
     /* URL Cards */
     .url-card-widget { display: inline-flex; flex-direction: column; width: 100%; max-width: 300px; height: 180px; border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; margin: 15px 5px; position: relative; vertical-align: top; background-color: var(--panel-color); box-shadow: 0 4px 10px rgba(0,0,0,0.1); transition: transform 0.2s, box-shadow 0.2s; cursor: pointer; user-select: none; text-decoration: none; }
@@ -1165,6 +1180,10 @@ import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc
    let appSettings = { searchTagsInProtected: false, searchAnchorsInProtected: false };
    let sessionUnlockedFolders = new Set();
    
+   // --- ADICIONE ESTA LINHA AQUI ---
+   let spyElements = []; 
+   // --------------------------------
+
    let globalTopicsCache = {};
    let globalSubtopicsCache = {};
    let globalHighlightsCache = {};
@@ -2025,6 +2044,9 @@ function generateLocalIndex() {
        const indexList = document.getElementById('book-index-list');
        const indexTabBtn = document.getElementById('tab-index-btn');
        indexList.innerHTML = '';
+       
+       // RESET DA LISTA DE RASTREIO
+       spyElements = []; 
 
        const items = document.getElementById('read-body').querySelectorAll(
            '.processed-mini-note, h2, h3, details.toggle-section'
@@ -2038,27 +2060,20 @@ function generateLocalIndex() {
 
        let visibleCount = 0;
 
-       items.forEach(el => {
-           // 1. FILTRO DE VISIBILIDADE (Ocultos não aparecem)
+       items.forEach((el) => {
+           // 1. FILTRO DE VISIBILIDADE
            if (el.offsetParent === null) return;
 
-           // ============================================================
-           // 2. NOVO FILTRO DE ANINHAMENTO (A CORREÇÃO QUE PEDIU)
-           // ============================================================
-           // Se for um H2 ou H3, verificamos se está dentro de algo que já tem índice
+           // 2. FILTRO DE ANINHAMENTO
            if (el.tagName === 'H2' || el.tagName === 'H3') {
-               
-               // Ignora se for o título do próprio Toggle (já tratado no CASO A)
                if (el.closest('summary')) return;
-
-               // Ignora se estiver DENTRO de uma Caixa (Mini-Nota, Questão, Contentor)
                if (el.closest('.processed-mini-note')) return;
-
-               // Ignora se estiver DENTRO do corpo de um Toggle
-               // (Pois o Toggle principal já aparece no índice)
                if (el.closest('.toggle-content')) return;
            }
-           // ============================================================
+
+           // --- GUARDAR PARA O SCROLL SPY ---
+           spyElements.push(el);
+           // ---------------------------------
 
            visibleCount++;
            const li = document.createElement('li');
@@ -2067,7 +2082,6 @@ function generateLocalIndex() {
            let title = "Sem Título";
            let typeLabel = "";
            
-           // CASO A: TOGGLES (ROXO)
            if (el.tagName === 'DETAILS' && el.classList.contains('toggle-section')) {
                const summaryH2 = el.querySelector('summary h2');
                title = summaryH2 ? summaryH2.textContent : "Secção Expansível";
@@ -2075,13 +2089,11 @@ function generateLocalIndex() {
                li.style.borderLeft = "4px solid #9b59b6"; 
                li.classList.add('type-toggle'); 
            }
-           // CASO B: TÍTULOS NORMAIS SOLTOS (CINZENTO)
            else if (el.tagName === 'H2' || el.tagName === 'H3') {
                title = el.textContent;
                typeLabel = el.tagName;
                li.style.borderLeft = "4px solid #7f8c8d"; 
            } 
-           // CASO C: CAIXAS (COLORIDAS)
            else {
                if (el.classList.contains('question-mode')) {
                    li.classList.add('type-question'); typeLabel = "Questão";
@@ -3980,410 +3992,70 @@ const shareUrl = `${baseUrl}/sharenote.html?id=${shareId}`;
        }
    });
 
-// --- FUNÇÃO PARA MOSTRAR REFERÊNCIAS DE TAGS ---
-   window.showTagReferencesPanel = async (tagName) => {
-       // Abre o painel lateral
-       mainContainer.classList.add('references-visible');
-       const refList = document.getElementById('ref-list');
-       const refTitle = document.getElementById('ref-title');
-       const refDesc = document.getElementById('ref-description');
-       
-       refTitle.textContent = `Tag: #${tagName}`;
-       refDesc.textContent = "A procurar notas...";
-       refList.innerHTML = '<li style="padding:10px;"><div class="spinner"></div></li>';
-       
-       // Força a aba lista
-       const listTab = document.querySelector('[data-ref-tab="references"]');
-       if(listTab) listTab.click();
-
-       try {
-           // Procura notas que contenham esta tag no array 'tags'
-           const q = query(
-               collection(db, 'pastas'), 
-               where('tipo', '==', 'nota'), 
-               where('estado', '==', 'ativa'), 
-               where('userId', '==', auth.currentUser.uid), 
-               where('tags', 'array-contains', tagName)
-           );
-           
-           const snapshot = await getDocs(q);
-           
-           refList.innerHTML = '';
-           if(snapshot.empty) {
-               refList.innerHTML = '<li>Nenhuma nota com esta tag.</li>';
-               refDesc.textContent = "0 notas.";
-               return;
-           }
-           
-           refDesc.textContent = `${snapshot.size} nota(s) encontrada(s).`;
-           
-           snapshot.forEach(docSnap => {
-               const data = docSnap.data();
-               
-               // Segurança
-               if(data.passe && data.passe.trim() !== "" && !sessionUnlockedFolders.has(docSnap.id) && !appSettings.searchTagsInProtected) return;
-
-               const card = document.createElement('div');
-               card.className = 'ref-list-card';
-               card.style.borderLeftColor = "#4a90e2"; // Azul padrão
-               
-               card.innerHTML = `
-                   <div class="ref-card-header">
-                       <span class="ref-card-title">📄 ${data.nome}</span>
-                       <span class="ref-card-arrow">➔</span>
-                   </div>
-                   <div class="ref-card-body">
-                       <span style="font-style:italic; opacity:0.8;">Contém a tag #${tagName}</span>
-                   </div>
-               `;
-               
-               card.onclick = () => {
-                   if (window.innerWidth <= 768) document.getElementById('main-container').classList.remove('references-visible');
-                   window.displayNote({id: docSnap.id, ...data});
-               };
-               refList.appendChild(card);
-           });
-
-       } catch(e) { console.error(e); refList.innerHTML = '<li>Erro na pesquisa.</li>'; }
-   };
-
-   // --- FUNÇÃO PARA MOSTRAR REFERÊNCIAS DE MARCADORES ---
-   window.showMarkerRefs = async (markerId, markerName) => {
-       mainContainer.classList.add('references-visible');
-       const refList = document.getElementById('ref-list');
-       document.getElementById('ref-title').textContent = `🔖 ${markerName}`;
-       refList.innerHTML = '<li style="padding:10px;"><div class="spinner"></div> A carregar textos...</li>';
-       
-       // Força a aba lista
-       const listTab = document.querySelector('[data-ref-tab="references"]');
-       if(listTab) listTab.click();
-
-       try {
-           // Pesquisar em 'textosbiblicos' quais têm este marcador no mapa 'marcadoresAssociados'
-           // Infelizmente, pesquisar chaves de mapas no Firestore é difícil sem índices complexos.
-           // Vamos buscar todos os textos e filtrar no cliente (já que textos bíblicos anotados não costumam ser milhares)
-           const q = query(collection(db, 'textosbiblicos'), where('userId', '==', auth.currentUser.uid));
-           const snap = await getDocs(q);
-           
-           const results = [];
-           snap.forEach(doc => {
-               const data = doc.data();
-               if (data.marcadoresAssociados && data.marcadoresAssociados[markerId]) {
-                   results.push({ id: doc.id, nome: data.nome });
-               }
-           });
-           
-           refList.innerHTML = '';
-           if(results.length === 0) {
-               refList.innerHTML = '<li>Nenhum texto bíblico com este marcador.</li>';
-               return;
-           }
-           
-           // Ordena (ex: Génesis antes de Êxodo)
-           results.sort((a,b) => a.nome.localeCompare(b.nome, undefined, {numeric:true}));
-           
-           results.forEach(item => {
-               const card = document.createElement('div');
-               card.className = 'ref-list-card';
-               card.style.borderLeftColor = "#e67e22"; // Laranja
-               
-               card.innerHTML = `
-                   <div class="ref-card-header">
-                       <span class="ref-card-title">📖 ${item.nome}</span>
-                       <span class="ref-card-arrow">➔</span>
-                   </div>
-               `;
-               // Abre o painel de referências desse texto
-               card.onclick = () => window.showReferencesPanel(item.id, item.nome, 'textobiblico');
-               refList.appendChild(card);
-           });
-
-       } catch(e) { console.error(e); }
-   };
-
-   // --- ATUALIZAÇÃO DA FUNÇÃO findAndShowEntity (Para garantir que usa o showReferencesPanel) ---
-  window.findAndShowEntity = async (name, type) => {
-       console.log(`🔎 A procurar entidade: "${name}" (${type})`);
-
-       // 1. Tenta encontrar a coleção correta
-       const collectionName = ENTITY_CONFIG[type]?.collection;
-       
-       // Se não houver configuração (ex: tópicos), tenta mapear manualmente ou sai
-       if (!collectionName) {
-           console.warn("Tipo de entidade não configurado para pesquisa direta.");
-           return;
-       }
-
-       // 2. Procura o ID na base de dados (Query Silenciosa)
-       // Isto não afeta a interface visual
-       let entityId = null;
-       try {
-           const q = query(
-               collection(db, collectionName), 
-               where('userId', '==', auth.currentUser.uid), 
-               where('nome', '==', name)
-           );
-           const snap = await getDocs(q);
-           
-           if (!snap.empty) {
-               entityId = snap.docs[0].id;
-           }
-       } catch (e) {
-           console.error("Erro na pesquisa silenciosa:", e);
-       }
-
-       // 3. AÇÃO:
-       if (entityId) {
-           // CENÁRIO A: Existe na BD -> Abre a Coluna 3 com os dados reais
-           window.showReferencesPanel(entityId, name, type);
-       } else {
-           // CENÁRIO B: Não existe na BD -> Abre a Coluna 3 vazia (apenas informativa)
-           // Não perguntamos se quer criar. Apenas mostramos que não há notas.
-           
-           // Abre o painel visualmente
-           const mainContainer = document.getElementById('main-container');
-           mainContainer.classList.add('references-visible');
-           
-           // Preenche o painel manualmente para dizer que está vazio
-           document.getElementById('ref-title').textContent = name;
-           document.getElementById('ref-description').textContent = "Registo não encontrado na base de dados.";
-           document.getElementById('ref-list').innerHTML = '<li style="padding:20px; text-align:center; color:#888;">Nenhuma nota cita este item ainda.</li>';
-           
-           // Limpa o Quadro se estiver aberto
-           const puzzleContainer = document.getElementById('puzzle-board-container');
-           if(puzzleContainer) puzzleContainer.innerHTML = '';
-           const puzzleMsg = document.getElementById('puzzle-empty-msg');
-           if(puzzleMsg) { 
-               puzzleMsg.textContent = "Sem dados."; 
-               puzzleMsg.style.display = 'block'; 
-           }
-       }
-   };
-
    // ============================================================
-   // LÓGICA DE CLIQUE NO BOTÃO DE LINKS DA CAIXA (⚡) - COM EFEITO
-   // ============================================================
-     document.getElementById('read-body').addEventListener('click', (e) => {
-       const btn = e.target.closest('.box-links-btn');
-       if (!btn) return;
-
-       e.preventDefault();
-       e.stopPropagation();
-
-       // 1. Encontra a caixa (contentor pai)
-       const wrapper = btn.closest('.processed-mini-note');
-       
-       // 2. Aplica o efeito visual (Choque)
-       if (wrapper) {
-           wrapper.classList.add('electric-active');
-       }
-
-       // 3. Aguarda o efeito acontecer (800ms) antes de abrir
-       setTimeout(() => {
-           // Remove o efeito
-           if (wrapper) wrapper.classList.remove('electric-active');
-
-           // Abre o popup
-           try {
-               const rawData = btn.dataset.links;
-               const data = JSON.parse(rawData);
-               const urls = data.urls ? Object.values(data.urls) : [];
-               const title = data.title || "Hiperligações";
-
-               openLinksPopup(title, urls);
-
-           } catch (err) {
-               console.error("Erro ao abrir links:", err);
-           }
-       }, 400); // 0.8 segundos de efeito
-   });
-
-   // Função genérica para abrir o popup de links (Substitui openBoardLinksPopup)
-   function openLinksPopup(title, urlsArray) {
-       const modal = document.getElementById('board-link-modal');
-       const titleEl = document.getElementById('board-link-title');
-       const listEl = document.getElementById('board-link-list');
-       
-       titleEl.textContent = title;
-       listEl.innerHTML = ''; 
-
-       if (urlsArray && urlsArray.length > 0) {
-           urlsArray.forEach((url, index) => {
-               const li = document.createElement('li');
-               li.style.padding = "12px";
-               li.style.borderBottom = "1px solid var(--border-color)";
-               li.style.display = "flex";
-               li.style.gap = "10px";
-               li.style.alignItems = "center";
-               li.style.cursor = "pointer";
-               li.style.transition = "background 0.2s";
-
-               li.innerHTML = `
-                   <span style="font-weight:bold; color:var(--text-muted);">${index + 1}.</span>
-                   <span style="color:var(--accent-color); word-break:break-all; flex-grow:1;">${url}</span>
-                   <span style="font-size:1.2em;">↗</span>
-               `;
-               
-               li.onmouseover = () => li.style.backgroundColor = "var(--hover-color)";
-               li.onmouseout = () => li.style.backgroundColor = "transparent";
-
-               // Clique abre nova aba
-               li.onclick = () => window.open(url, '_blank');
-
-               listEl.appendChild(li);
-           });
-       } else {
-           listEl.innerHTML = '<li style="padding:15px; text-align:center; color:var(--text-muted);">Nenhum link disponível.</li>';
-       }
-       
-       modal.style.display = 'flex';
-   }
-
+// LÓGICA DE SCROLL SPY (ÍNDICE AUTOMÁTICO)
 // ============================================================
-   // LÓGICA DO MODO ORADOR (AUTO-SCROLL)
-   // ============================================================
-  let oradorFrame;
-   let scrollAccumulator = 0;
-   let currentOradorSpeed = 0;
-   let isOradorPaused = false;
+const scrollContainer = document.getElementById('book-content-scroll');
+let isScrolling = false;
 
-   // Velocidades para o ciclo do botão rápido
-   const SPEED_CYCLE = [0.2, 0.6, 1.0, 1.4, 1.8];
+scrollContainer.addEventListener('scroll', () => {
+   if (isScrolling) return;
+   
+   isScrolling = true;
+   
+   // Executa a lógica usando requestAnimationFrame para performance (não encravar o scroll)
+   window.requestAnimationFrame(() => {
+       updateActiveIndex();
+       isScrolling = false;
+   });
+});
 
-   const pauseBtn = document.getElementById('orador-pause-btn');
-   const speedBtn = document.getElementById('orador-speed-btn');
-   const oradorSelect = document.getElementById('reader-orador');
-   const scrollContainer = document.getElementById('book-content-scroll');
+function updateActiveIndex() {
+   // Se a aba Índice não estiver visível ou não houver elementos, ignora
+   const indexTabContent = document.getElementById('book-index');
+   if (indexTabContent.style.display === 'none' || spyElements.length === 0) return;
 
-   // 1. Função principal de Animação
-   function autoScrollLoop() {
-       if (isOradorPaused || currentOradorSpeed <= 0) {
-           cancelAnimationFrame(oradorFrame);
-           return;
-       }
+   let activeIndex = -1;
+   const offset = 150; // Margem do topo (ajuste se necessário)
 
-       // Verifica fim da página
-       if (scrollContainer.scrollTop + scrollContainer.clientHeight >= scrollContainer.scrollHeight - 1) {
-           stopOrador();
-           return;
-       }
+   // Percorre os elementos para ver qual está visível
+   for (let i = 0; i < spyElements.length; i++) {
+       const el = spyElements[i];
+       // Verifica se o elemento ainda existe no DOM
+       if (!document.body.contains(el)) return;
 
-       scrollAccumulator += currentOradorSpeed;
-
-       if (scrollAccumulator >= 1) {
-           const pixels = Math.floor(scrollAccumulator);
-           scrollContainer.scrollTop += pixels;
-           scrollAccumulator -= pixels;
-       }
-
-       oradorFrame = requestAnimationFrame(autoScrollLoop);
-   }
-
-   // 2. Função para parar tudo (Reset Total)
-   function stopOrador() {
-       if (oradorFrame) cancelAnimationFrame(oradorFrame);
-       currentOradorSpeed = 0;
-       isOradorPaused = false;
-       scrollAccumulator = 0;
+       const rect = el.getBoundingClientRect();
        
-       // Reset UI Principal
-       oradorSelect.value = "0";
-       
-       // Esconder botões flutuantes
-       pauseBtn.style.display = 'none';
-       pauseBtn.classList.remove('is-paused');
-       pauseBtn.textContent = "⏸";
-       
-       speedBtn.classList.remove('is-visible');
-       setTimeout(() => { if(!speedBtn.classList.contains('is-visible')) speedBtn.style.display = 'none'; }, 300);
-   }
-
-   // 3. Listener do Dropdown Principal (Topo)
-   oradorSelect.addEventListener('change', function(e) {
-       const newSpeed = parseFloat(e.target.value);
-
-       if (newSpeed > 0) {
-           updateSpeedState(newSpeed);
-           
-           // Se mudou pelo menu, removemos a pausa e escondemos o botão extra
-           isOradorPaused = false;
-           pauseBtn.classList.remove('is-paused');
-           pauseBtn.textContent = "⏸";
-           speedBtn.classList.remove('is-visible');
-           
-           pauseBtn.style.display = 'flex'; // Garante que o botão principal aparece
-           
-           cancelAnimationFrame(oradorFrame);
-           autoScrollLoop();
+       // Se o topo do elemento estiver acima da linha de leitura (offset), ele é o candidato atual
+       if (rect.top <= offset) {
+           activeIndex = i;
        } else {
-           stopOrador();
+           // Assim que encontramos um elemento abaixo da linha, paramos. 
+           // O anterior (activeIndex) é o correto.
+           break;
        }
-   });
-
-   // 4. Listener do Botão de Pausa
-   pauseBtn.addEventListener('click', function() {
-       if (isOradorPaused) {
-           // --- AÇÃO: RETOMAR (PLAY) ---
-           isOradorPaused = false;
-           this.classList.remove('is-paused');
-           this.textContent = "⏸"; 
-           
-           // Esconde o botão de velocidade
-           speedBtn.classList.remove('is-visible');
-           setTimeout(() => { speedBtn.style.display = 'none'; }, 300); // Espera animação
-           
-           autoScrollLoop();
-       } else {
-           // --- AÇÃO: PAUSAR ---
-           isOradorPaused = true;
-           cancelAnimationFrame(oradorFrame);
-           this.classList.add('is-paused');
-           this.textContent = "▶";
-           
-           // Mostra o botão de velocidade
-           speedBtn.style.display = 'flex';
-           // Pequeno delay para permitir que o display:flex renderize antes da opacidade (animação)
-           requestAnimationFrame(() => {
-               speedBtn.classList.add('is-visible');
-               speedBtn.textContent = currentOradorSpeed + "x";
-           });
-       }
-   });
-
-   // 5. Listener do Botão de Velocidade (Ciclo)
-   speedBtn.addEventListener('click', function() {
-       // Encontra a próxima velocidade no array
-       let nextIndex = SPEED_CYCLE.findIndex(s => s > currentOradorSpeed);
-       
-       // Se não encontrar maior (está no fim) ou não existir, volta ao início (0)
-       if (nextIndex === -1) nextIndex = 0;
-       
-       const newSpeed = SPEED_CYCLE[nextIndex];
-       
-       updateSpeedState(newSpeed);
-   });
-
-   // Função auxiliar para atualizar estado interno e UI
-   function updateSpeedState(speed) {
-       currentOradorSpeed = speed;
-       
-       // Atualiza Dropdown
-       oradorSelect.value = speed.toString();
-       // Se o valor exato não existir no dropdown, forçamos visualmente (opcional)
-       // mas como usamos valores fixos, deve coincidir.
-       
-       // Atualiza Texto do Botão Flutuante
-       speedBtn.textContent = speed + "x";
    }
 
-   // 6. Integração na troca de notas
-   // (Certifique-se que isto está no início da função window.displayNote)
-   /*
-      window.displayNote = function(...) {
-          stopOrador(); 
-          // ... resto do código
-      }
-   */
+   // Se estivermos no fundo da página, ativa o último item
+   const scrollPos = scrollContainer.scrollTop + scrollContainer.clientHeight;
+   const isBottom = scrollPos >= scrollContainer.scrollHeight - 50;
+   if (isBottom) {
+       activeIndex = spyElements.length - 1;
+   }
+
+   // Atualiza o CSS da lista lateral
+   const listItems = document.querySelectorAll('#book-index-list .index-item');
+   listItems.forEach(li => li.classList.remove('active-spy'));
+
+   if (activeIndex >= 0 && listItems[activeIndex]) {
+       const activeItem = listItems[activeIndex];
+       activeItem.classList.add('active-spy');
+       
+       // Faz o scroll da própria barra lateral para manter o item visível
+       // block: 'center' faz com que o item tente ficar no meio da lista
+       activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+   }
+}
 
 </script>
 </body>
