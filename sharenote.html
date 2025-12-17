@@ -146,7 +146,39 @@
         .import-list { list-style: none; padding: 0; margin: 0; }
         .import-item { padding: 10px; border-bottom: 1px solid var(--border-color); cursor: pointer; display: flex; align-items: center; justify-content: space-between; }
         .import-item:hover { background-color: var(--hover-color); }
-        
+        /* ESTILOS PARA O ARQUIVO (FEED) NO SHARENOTE */
+.archive-post {
+    background-color: var(--panel-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 15px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.post-title {
+    font-size: 1.2em;
+    font-weight: bold;
+    color: var(--accent-color);
+    margin-bottom: 10px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.post-content {
+    color: var(--text-color);
+    line-height: 1.5;
+}
+
+.post-footer {
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    font-size: 0.75em;
+    color: #666;
+    text-align: right;
+}
+
         @media (max-width: 768px) { h1 { font-size: 1.8em; } body { padding: 15px; } }
         @media print { .action-toolbar, header, footer { display: none; } body { background: white; color: black; } #container { max-width: 100%; } }
     </style>
@@ -238,14 +270,20 @@
     // =========================================================
     // FUNÇÃO PRINCIPAL: INICIALIZAÇÃO
     // =========================================================
-    async function init() {
+  async function init() {
+        // 1. Obter parâmetros da URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const noteId = urlParams.get('id');
+        const actionParam = urlParams.get('action'); // 'clone'
+        const modeParam = urlParams.get('mode'); // 'collab'
+
         if (!noteId) {
             showError("Link inválido.", "⚠️");
             return;
         }
 
         try {
-            // A. Autenticação
+            // A. Esperar Autenticação
             const authPromise = new Promise((resolve) => {
                 const unsubscribe = onAuthStateChanged(auth, (user) => {
                     currentUser = user;
@@ -254,30 +292,64 @@
                 });
             });
 
-            // B. Dados da Nota Partilhada
+            // B. Esperar Dados da Nota Partilhada
             const dataPromise = getDoc(doc(db, 'shared_notes', noteId));
 
-            loadingText.textContent = "A carregar...";
+            loadingText.textContent = "A carregar conteúdo...";
             
+            // Executar em paralelo
             const [user, docSnap] = await Promise.all([authPromise, dataPromise]);
 
+            // C. Validação
             if (!docSnap.exists()) {
-                showError("Nota não encontrada.", "🚫", "O link pode estar incorreto ou a partilha foi removida.");
+                showError("Conteúdo não encontrado.", "🚫", "O link pode estar incorreto, expirado ou a partilha foi removida pelo autor.");
                 return;
             }
 
             sharedNoteData = docSnap.data();
 
-            // --- RENDERIZAÇÃO VISUAL ---
+            // --- RENDERIZAÇÃO DO CABEÇALHO ---
             document.getElementById('note-title').textContent = sharedNoteData.nome;
             document.getElementById('author-name').textContent = sharedNoteData.authorName || 'Anónimo';
-            document.getElementById('note-content').innerHTML = processContentForReading(sharedNoteData.conteudo);
+            
+            const contentDiv = document.getElementById('note-content');
 
-            // --- GESTÃO DO BOTÃO PRINCIPAL (IMPORTAR vs COLABORAR) ---
+            // --- RENDERIZAÇÃO DO CONTEÚDO (CORREÇÃO ARQUIVO VS NOTA) ---
+            if (sharedNoteData.type === 'arquivo') {
+                // >>> MODO ARQUIVO: Renderiza a lista de posts <<<
+                // Verifica se existem posts, senão mostra array vazio
+                const posts = sharedNoteData.posts || [];
+                let feedHTML = '';
+                
+                if (posts.length === 0) {
+                    feedHTML = '<p style="text-align:center; color:#888; font-style:italic; margin-top:30px;">Este arquivo ainda não tem publicações.</p>';
+                } else {
+                    posts.forEach(post => {
+                        // Processa o conteúdo de cada post para ficar bonito/seguro
+                        const safeContent = processContentForReading(post.content);
+                        const dateStr = post.updatedAt ? new Date(post.updatedAt).toLocaleDateString() : '';
+
+                        feedHTML += `
+                            <div class="archive-post">
+                                ${post.title ? `<div class="post-title">${post.title}</div>` : ''}
+                                <div class="post-content">${safeContent}</div>
+                                <div class="post-footer">Atualizado em: ${dateStr}</div>
+                            </div>
+                        `;
+                    });
+                }
+                contentDiv.innerHTML = feedHTML;
+
+            } else {
+                // >>> MODO NOTA NORMAL <<<
+                contentDiv.innerHTML = processContentForReading(sharedNoteData.conteudo);
+            }
+
+            // --- GESTÃO DO BOTÃO DE AÇÃO (IMPORTAR / COLABORAR) ---
             if (user) {
                 const importBtn = document.getElementById('btn-import');
                 
-                const modeParam = urlParams.get('mode'); // 'collab'
+                // Verificar permissões
                 const isCollabAllowed = sharedNoteData.allowCollab === true;
                 const isArchive = sharedNoteData.type === 'arquivo';
 
@@ -286,7 +358,7 @@
                 // ==================================================
                 if (modeParam === 'collab' && isCollabAllowed && isArchive) {
                     
-                    // 1. Mostrar Banner
+                    // 1. Mostrar Banner de Convite
                     document.getElementById('collab-invite-banner').style.display = 'flex';
 
                     // 2. Estilo do Botão (Vermelho)
@@ -297,7 +369,7 @@
                     importBtn.style.backgroundColor = 'rgba(231, 76, 60, 0.1)';
                     importBtn.innerHTML = "<span class='satellite-icon'>🔴</span> Colaborar neste Arquivo";
                     
-                    // 3. Ação: Entrar na Colaboração (Direto para 'Partilhadas')
+                    // 3. Ação: Entrar na Colaboração
                     const newBtn = importBtn.cloneNode(true);
                     importBtn.parentNode.replaceChild(newBtn, importBtn);
                     
@@ -307,11 +379,15 @@
 
                 } 
                 // ==================================================
-                // CENÁRIO B: IMPORTAÇÃO PADRÃO (CÓPIA ESTÁTICA)
+                // CENÁRIO B: IMPORTAÇÃO PADRÃO (CÓPIA PESSOAL)
                 // ==================================================
                 else {
                     importBtn.style.display = 'flex';
-                    // Estilo Padrão
+                    // Reset para Estilo Padrão
+                    importBtn.style.borderColor = ''; 
+                    importBtn.style.color = '';
+                    importBtn.style.backgroundColor = '';
+                    importBtn.style.fontWeight = '';
                     importBtn.innerHTML = "<span class='satellite-icon'>📥</span> Guardar Cópia Pessoal";
                     
                     const newBtn = importBtn.cloneNode(true);
@@ -319,6 +395,7 @@
 
                     newBtn.addEventListener('click', () => {
                         document.getElementById('import-modal').style.display = 'flex';
+                        // Reset da navegação do modal
                         navigationStack = [];
                         loadUserFolders(null);
                     });
@@ -332,6 +409,22 @@
                 contentContainer.style.display = 'block';
                 requestAnimationFrame(() => contentContainer.style.opacity = '1');
             }, 500);
+
+            // --- LÓGICA AUTOMÁTICA PARA "PERMITIR CLONAGEM" (action=clone) ---
+            // Apenas executa se NÃO estivermos no modo colaboração
+            if (actionParam === 'clone' && !modeParam) {
+                if (user) {
+                    console.log("🚀 Link de Clonagem detetado: Abrindo popup de guardar...");
+                    setTimeout(() => {
+                        // Abre o modal de importação automaticamente
+                        const importBtn = document.getElementById('btn-import');
+                        if (importBtn) importBtn.click();
+                    }, 600);
+                } else {
+                    sessionStorage.setItem('redirectAfterLogin', window.location.href);
+                    window.location.href = "index.html";
+                }
+            }
 
         } catch (error) {
             console.error("Erro fatal:", error);
