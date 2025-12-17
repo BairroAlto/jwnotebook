@@ -444,30 +444,24 @@
         btn.disabled = true;
 
         try {
-            // 1. Encontrar ou Criar a pasta "Partilhadas" do Visitante
-            const q = query(
+            // 1. Encontrar ou Criar a pasta "Partilhadas"
+            const qFolder = query(
                 collection(db, 'pastas'),
                 where('nome', '==', 'Partilhadas'),
                 where('parentId', '==', null),
                 where('userId', '==', user.uid),
                 where('tipo', '==', 'pasta')
             );
-            const snapshot = await getDocs(q);
+            const snapshotFolder = await getDocs(qFolder);
             let sharedFolderId = null;
 
-            if (!snapshot.empty) {
-                // Se existe, usa essa
-                sharedFolderId = snapshot.docs[0].id;
-                
-                // Se estiver na reciclagem (desativa), reativa-a para garantir que é visível
-                if(snapshot.docs[0].data().estado === 'desativa') {
-                    await updateDoc(doc(db, 'pastas', sharedFolderId), {
-                        estado: 'ativa',
-                        ultimaedicao: serverTimestamp()
-                    });
+            if (!snapshotFolder.empty) {
+                sharedFolderId = snapshotFolder.docs[0].id;
+                // Reativa se estiver na reciclagem
+                if(snapshotFolder.docs[0].data().estado === 'desativa') {
+                    await updateDoc(doc(db, 'pastas', sharedFolderId), { estado: 'ativa' });
                 }
             } else {
-                // Se não existe, cria a pasta
                 const newFolder = await addDoc(collection(db, 'pastas'), {
                     nome: 'Partilhadas',
                     parentId: null,
@@ -481,28 +475,53 @@
                 sharedFolderId = newFolder.id;
             }
 
-            // 2. Criar o ATALHO (Pointer) dentro da pasta Partilhadas
-            // Guardamos o resultado em 'newDoc' para ter o ID
-            const newDoc = await addDoc(collection(db, 'pastas'), {
-                nome: data.nome,
-                parentId: sharedFolderId, // Vai para a pasta certa
-                tipo: 'arquivo',
-                userId: user.uid,
-                estado: 'ativa',
-                ordem: 999,
-                createdAt: serverTimestamp(),
-                ultimaedicao: serverTimestamp(),
-                
-                // --- A MAGIA: APONTA PARA O ORIGINAL ---
-                pointerId: data.originalNoteId, // ID Real do Dono
-                isLive: true // Indica que é colaborativo (escrita permitida no original)
-            });
-
-            alert("Sucesso! Vai ser redirecionado para a colaboração.");
+            // --- NOVO: VERIFICAR SE O ATALHO JÁ EXISTE ---
+            const qCheck = query(
+                collection(db, 'pastas'),
+                where('parentId', '==', sharedFolderId),
+                where('pointerId', '==', data.originalNoteId), // Procura pelo ID original
+                where('userId', '==', user.uid)
+            );
             
-            // 3. REDIRECIONAMENTO CORRIGIDO
-            // Abre a pasta E abre imediatamente o arquivo criado (&noteId=...)
-            window.location.href = `note.html?openFolder=${sharedFolderId}&noteId=${newDoc.id}`;
+            const snapCheck = await getDocs(qCheck);
+            let targetDocId = null;
+
+            if (!snapCheck.empty) {
+                // JÁ EXISTE! Usamos este em vez de criar novo
+                const existingDoc = snapCheck.docs[0];
+                targetDocId = existingDoc.id;
+                
+                // Se o utilizador o tinha apagado (reciclagem), trazemos de volta
+                if (existingDoc.data().estado === 'desativa') {
+                    await updateDoc(doc(db, 'pastas', targetDocId), { 
+                        estado: 'ativa',
+                        ultimaedicao: serverTimestamp() 
+                    });
+                }
+                
+                console.log("Atalho já existente encontrado. A reutilizar ID:", targetDocId);
+                
+            } else {
+                // NÃO EXISTE: Cria um novo (o código antigo)
+                const newDoc = await addDoc(collection(db, 'pastas'), {
+                    nome: data.nome,
+                    parentId: sharedFolderId,
+                    tipo: 'arquivo',
+                    userId: user.uid,
+                    estado: 'ativa',
+                    ordem: 999,
+                    createdAt: serverTimestamp(),
+                    ultimaedicao: serverTimestamp(),
+                    pointerId: data.originalNoteId,
+                    isLive: true
+                });
+                targetDocId = newDoc.id;
+            }
+
+            alert("Acesso configurado! A abrir...");
+            
+            // 3. Redirecionar para o ID correto (Novo ou Existente)
+            window.location.href = `note.html?openFolder=${sharedFolderId}&noteId=${targetDocId}`;
 
         } catch (e) {
             console.error("Erro ao juntar colaboração:", e);
