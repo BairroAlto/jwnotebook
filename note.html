@@ -14211,56 +14211,108 @@ window.addEventListener('beforeunload', (event) => {
 
 
 middlePanelList.addEventListener('click', async (e) => {
-    console.group("🖱️ [DEBUG CLICK] Análise do Clique");
-    
+    // 1. Validação Básica
     const item = e.target.closest('.list-item');
-    if (!item) {
-        console.log("❌ Clique fora de um item.");
-        console.groupEnd();
-        return;
+    if (!item) return;
+    
+    // Ignora cliques no menu de 3 pontos
+    if (e.target.closest('.item-menu-btn')) { 
+        showContextMenu(e); 
+        return; 
     }
 
     const { id, name, type } = item.dataset;
-    console.log(`✅ Item Clicado: "${name}"`);
-    console.log(`🆔 ID: ${id}`);
-    console.log(`🏷️ TIPO DETETADO NO HTML: ${type}`);
 
-    // VERIFICAÇÃO CRÍTICA
-    if (type === 'nota') {
-        console.log("🔵 Caminho: Deve abrir como NOTA NORMAL.");
+    // ============================================================
+    // CASO 1: PASTA ou AGREGAÇÃO (Navegar para dentro)
+    // ============================================================
+    if (type === 'pasta' || type === 'agregacao') {
         
-        // Verifica se o Arquivo está visível ANTES de abrir a nota
-        const archiveArea = document.getElementById('archive-area');
-        console.log("👀 Estado do Arquivo (Antes):", window.getComputedStyle(archiveArea).display);
+        // A. Verificação de Senha
+        if (item.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
+            const access = await requestPassword('access', id);
+            if (access) sessionUnlockedFolders.add(id); else return;
+        }
 
-        // Executa a abertura
+        // B. Verificação de Superpasta
+        if (item.dataset.superpasta === "true") {
+            navigateWithUnsavedCheck(() => { window.location.href = `note.html?rootId=${id}`; });
+            return;
+        }
+
+        // C. AÇÃO DE NAVEGAÇÃO (CORREÇÃO AQUI)
         const action = () => {
+            // No telemóvel, MANTÉM a classe 'mobile-view-middle' porque continuamos na lista
+            // e REMOVE a 'mobile-view-editor' para garantir que não vamos para o ecrã de escrita
+            if (window.innerWidth <= 768) {
+                document.body.classList.add('mobile-view-middle');
+                document.body.classList.remove('mobile-view-editor');
+            }
+
+            // CORREÇÃO CRÍTICA: Sempre fazemos PUSH (entrar na pasta)
+            // O código antigo estava a substituir (navigationStack[...] = ...), o que impedia descer de nível
+            navigationStack.push({ id, name }); 
+            
+            updateNavigationView(true);
+        };
+        
+        navigateWithUnsavedCheck(action);
+    }
+
+    // ============================================================
+    // CASO 2: NOTA (Abrir Editor)
+    // ============================================================
+    else if (type === 'nota') {
+        if (id === selectedNoteId) {
+             // Se já está aberta, no mobile garante que mostra o editor
              if (window.innerWidth <= 768) {
-                console.log("📱 Modo Mobile detetado -> Adicionando classe 'mobile-view-editor'");
                 document.body.classList.remove('mobile-view-middle');
                 document.body.classList.add('mobile-view-editor');
             }
-            console.log("🚀 Chamando displayNote()...");
+            return;
+        }
+
+        if (item.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
+            const access = await requestPassword('access', id);
+            if (access) sessionUnlockedFolders.add(id); else return;
+        }
+
+        const action = () => {
+             // No telemóvel, MUDA para o ecrã do editor
+             if (window.innerWidth <= 768) {
+                document.body.classList.remove('mobile-view-middle');
+                document.body.classList.add('mobile-view-editor');
+            }
             displayNote(id, item);
         };
         navigateWithUnsavedCheck(action);
-    } 
+    }
+
+    // ============================================================
+    // CASO 3: ARQUIVO (Abrir Feed)
+    // ============================================================
     else if (type === 'arquivo') {
-        console.log("🔴 Caminho: Deve abrir como ARQUIVO.");
-        // ... resto da lógica do arquivo
         const action = async () => {
+            // No telemóvel, MUDA para o ecrã de arquivo (que partilha o espaço do editor)
             if (window.innerWidth <= 768) {
                 document.body.classList.remove('mobile-view-middle');
                 document.body.classList.add('mobile-view-editor');
             }
-            displayArchive(id, {}); // Simplificado para teste
+
+            try {
+                const docSnap = await getDoc(doc(db, 'pastas', id));
+                if (docSnap.exists()) {
+                    displayArchive(id, docSnap.data());
+                } else {
+                    alert("Arquivo não encontrado.");
+                }
+            } catch (err) {
+                console.error(err);
+            }
         };
         navigateWithUnsavedCheck(action);
     }
-    
-    console.groupEnd();
 });
-
 
 
 
