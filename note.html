@@ -13726,152 +13726,166 @@ async function loadBackupsForNote() {
     
 
     // --- LISTENER DO PAINEL ESQUERDO COM LOGS DE DEPURAÇÃO ---
-leftPanelList.addEventListener('click', async (e) => {
-    // 1. Ignorar menu e validar clique
-    const itemMenuBtn = e.target.closest('.item-menu-btn');
-    if (itemMenuBtn) { showContextMenu(e); return; }
-    
-    const listItem = e.target.closest('.list-item');
-    if (!listItem) return;
+  leftPanelList.addEventListener('click', async (e) => {
+        
+        // 1. GESTÃO DE CLIQUES ESPECIAIS (Menu e Contexto)
+        const itemMenuBtn = e.target.closest('.item-menu-btn');
+        if (itemMenuBtn) { showContextMenu(e); return; }
+        
+        const listItem = e.target.closest('.list-item');
+        if (!listItem) return;
 
-    const { id, name, type } = listItem.dataset;
+        const { id, name, type } = listItem.dataset;
 
-    console.log(`🖱️ [LEFT PANEL DEBUG] Clique: ID=${id}, Tipo=${type}, Nome=${name}`);
+        console.log(`🖱️ [LEFT PANEL DEBUG] Clique: ID=${id}, Tipo=${type}, Nome=${name}`);
 
-    // --- MODO LISTS ---
-    if (currentTab === 'lists') {
-        if (type === 'list-category' || type === 'list-bible-root') {
-             if (currentSaveStatus === 'unsaved') saveNote(true);
-             navigationStack = [{ type: type, id: id, name: name }];
-             updateNavigationView(true);
+        // --- MODO LISTS (Categorias Especiais) ---
+        if (currentTab === 'lists') {
+            if (type === 'list-category' || type === 'list-bible-root') {
+                 if (currentSaveStatus === 'unsaved') saveNote(true);
+                 navigationStack = [{ type: type, id: id, name: name }];
+                 updateNavigationView(true);
+            }
+            return;
         }
-        return;
-    }
 
-    // --- MODO NOTE ---
+        // --- MODO NOTE (Pastas e Ficheiros) ---
 
-    // CASO 1: PASTA ou AGREGAÇÃO
-    if (type === 'pasta' || type === 'agregacao') {
-        if (listItem.classList.contains('selected')) return;
+        // CASO 1: PASTA ou AGREGAÇÃO
+        if (type === 'pasta' || type === 'agregacao') {
+            if (listItem.classList.contains('selected')) return;
 
-        // A. LÓGICA DE SUPERPASTA (REFRESH E ISOLAMENTO)
-        if (listItem.dataset.superpasta === "true") {
+            // A. Superpasta (Isolamento)
+            if (listItem.dataset.superpasta === "true") {
+                if (listItem.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
+                    const access = await requestPassword('access', id);
+                    if (access) sessionUnlockedFolders.add(id); else return;
+                }
+
+                navigateWithUnsavedCheck(() => {
+                    window.location.href = `note.html?rootId=${id}`;
+                });
+                return;
+            }
+
+            // B. Pasta Normal (Proteção)
             if (listItem.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
                 const access = await requestPassword('access', id);
                 if (access) sessionUnlockedFolders.add(id); else return;
             }
 
-            navigateWithUnsavedCheck(() => {
-                window.location.href = `note.html?rootId=${id}`;
-            });
-            return;
+            // Navegação
+            const action = () => {
+                if (navigationStack.length === 0) navigationStack.push({ id, name });
+                else navigationStack[navigationStack.length - 1] = { id, name };
+                updateNavigationView(true);
+            };
+            navigateWithUnsavedCheck(action);
         }
 
-        // B. Pasta Normal
-        if (listItem.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
-            const access = await requestPassword('access', id);
-            if (access) sessionUnlockedFolders.add(id); else return;
-        }
-
-        const action = () => {
-            if (navigationStack.length === 0) navigationStack.push({ id, name });
-            else navigationStack[navigationStack.length - 1] = { id, name };
-            updateNavigationView(true);
-        };
-        navigateWithUnsavedCheck(action);
-    }
-
-    // CASO 2: NOTA
-    else if (type === 'nota') {
-        if (id === selectedNoteId) {
-             if (window.innerWidth <= 768) {
-                document.body.classList.remove('mobile-view-middle');
-                document.body.classList.add('mobile-view-editor');
+        // CASO 2: NOTA (Texto Normal)
+        else if (type === 'nota') {
+            if (id === selectedNoteId) {
+                 // Se já estiver aberta, no mobile garante que mostra o editor
+                 if (window.innerWidth <= 768) {
+                    document.body.classList.remove('mobile-view-middle');
+                    document.body.classList.add('mobile-view-editor');
+                }
+                return;
             }
-            return;
-        }
 
-        if (listItem.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
-            const access = await requestPassword('access', id);
-            if (access) sessionUnlockedFolders.add(id); else return;
-        }
-
-        const action = () => {
-             if (window.innerWidth <= 768) {
-                document.body.classList.remove('mobile-view-middle');
-                document.body.classList.add('mobile-view-editor');
+            if (listItem.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
+                const access = await requestPassword('access', id);
+                if (access) sessionUnlockedFolders.add(id); else return;
             }
-            displayNote(id, listItem);
-        };
-        navigateWithUnsavedCheck(action);
-    }
 
-    // >>> CASO 3: ARQUIVO (🗄️) - ESTE BLOCO ESTAVA EM FALTA <<<
-  else if (type === 'arquivo') {
-    console.log("🗄️ [DEBUG] A abrir Arquivo:", name);
-    
-    const action = async () => {
-        if (window.innerWidth <= 768) {
-            document.body.classList.remove('mobile-view-middle');
-            document.body.classList.add('mobile-view-editor');
+            const action = () => {
+                 if (window.innerWidth <= 768) {
+                    document.body.classList.remove('mobile-view-middle');
+                    document.body.classList.add('mobile-view-editor');
+                }
+                displayNote(id, listItem);
+            };
+            navigateWithUnsavedCheck(action);
         }
 
-        try {
-            // 1. Busca o documento local (pode ser um atalho)
-            const docRef = doc(db, 'pastas', id);
-            const docSnap = await getDoc(docRef);
+        // CASO 3: ARQUIVO (🗄️) - LÓGICA DE COLABORAÇÃO
+        else if (type === 'arquivo') {
+            console.log("🗄️ [DEBUG] A abrir Arquivo:", name);
             
-            if (docSnap.exists()) {
-                const data = docSnap.data();
-                
-                // --- VERIFICAÇÃO DE SEGURANÇA E REDIRECIONAMENTO ---
-                if (data.pointerId && data.isLive) {
-                    console.log("🔗 [COLLAB] Detetado atalho de colaboração. A verificar permissões...");
-                    
-                    // Vai buscar o documento ORIGINAL (do dono)
-                    const originalRef = doc(db, 'pastas', data.pointerId);
-                    const originalSnap = await getDoc(originalRef);
-
-                    if (originalSnap.exists()) {
-                        const originalData = originalSnap.data();
-                        
-                        // VERIFICAÇÃO FINAL: O dono ainda permite colaboração?
-                        if (originalData.shareSettings && originalData.shareSettings.collab === true) {
-                            
-                            console.log("✅ [COLLAB] Acesso permitido. A abrir original...");
-                            
-                            // Abre o displayArchive usando o ID ORIGINAL e DADOS ORIGINAIS
-                            // Isto permite ler e escrever posts diretamente no documento do dono!
-                            displayArchive(data.pointerId, originalData);
-                            
-                            // Ajuste visual: Mostra que é partilhado
-                            const statusEl = document.getElementById('archive-save-status');
-                            if(statusEl) statusEl.textContent = "🔴 Modo Colaboração";
-                            
-                        } else {
-                            alert("⛔ O acesso a este arquivo foi revogado pelo proprietário.");
-                            // Opcional: Atualizar o ícone na lista para indicar quebrado
-                        }
-                    } else {
-                        alert("❌ O arquivo original foi eliminado.");
-                    }
-                } 
-                else {
-                    // Arquivo Normal (Local)
-                    displayArchive(id, data);
+            const action = async () => {
+                if (window.innerWidth <= 768) {
+                    document.body.classList.remove('mobile-view-middle');
+                    document.body.classList.add('mobile-view-editor');
                 }
 
-            } else {
-                alert("Arquivo não encontrado.");
-            }
-        } catch (err) {
-            console.error("🔥 [DEBUG] Erro ao abrir arquivo:", err);
+                try {
+                    // 1. Busca o documento local (para saber se é um atalho)
+                    const docRef = doc(db, 'pastas', id);
+                    const docSnap = await getDoc(docRef);
+                    
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        
+                        // --- VERIFICAÇÃO DE ATALHO DE COLABORAÇÃO ---
+                        if (data.pointerId && data.isLive) {
+                            console.log("🔗 [COLLAB] Detetado atalho de colaboração. A verificar original...");
+                            
+                            // Vai buscar o documento ORIGINAL (do dono)
+                            const originalRef = doc(db, 'pastas', data.pointerId);
+                            const originalSnap = await getDoc(originalRef);
+
+                            if (originalSnap.exists()) {
+                                const originalData = originalSnap.data();
+                                
+                                // VERIFICAÇÃO DE PERMISSÃO (Collab ainda ativo?)
+                                // Verifica 'collab' (novo) ou 'allowCoEditing' (legado)
+                                const isAllowed = (originalData.shareSettings && 
+                                                  (originalData.shareSettings.collab === true || originalData.shareSettings.allowCoEditing === true));
+
+                                if (isAllowed) {
+                                    console.log("✅ [COLLAB] Acesso permitido. A abrir original...");
+                                    
+                                    // Abre usando os DADOS DO ORIGINAL, mas mantendo a referência
+                                    // A função displayArchive tratará de configurar o ID de escrita correto
+                                    // Passamos o objeto data local (com pointerId) para o displayArchive saber que é um atalho
+                                    displayArchive(id, data);
+                                    
+                                    // Feedback visual extra
+                                    const statusEl = document.getElementById('archive-save-status');
+                                    if(statusEl) {
+                                        statusEl.textContent = "🔴 Modo Colaboração";
+                                        statusEl.style.color = "#e74c3c";
+                                    }
+                                    
+                                } else {
+                                    alert("⛔ O acesso a este arquivo foi revogado pelo proprietário.");
+                                }
+                            } else {
+                                alert("❌ O arquivo original foi eliminado pelo proprietário.");
+                            }
+                        } 
+                        else {
+                            // Arquivo Normal (Local)
+                            displayArchive(id, data);
+                        }
+
+                    } else {
+                        alert("Arquivo não encontrado.");
+                    }
+                } catch (err) {
+                    console.error("🔥 [DEBUG] Erro ao abrir arquivo:", err);
+                    alert("Erro ao abrir o arquivo. Verifique a ligação.");
+                }
+            };
+            
+            navigateWithUnsavedCheck(action);
         }
-    };
-    
-    navigateWithUnsavedCheck(action);
-}
-});
+        
+        else {
+            console.warn(`⚠️ Tipo desconhecido: "${type}"`);
+        }
+    });
 
 
 // ====================================================================
@@ -19056,11 +19070,26 @@ window.createArchiveEntity = (subType) => {
 
 // Lógica de Criação de Post Novo
 async function createNewPost(type, subType = null) {
+    console.log(`🚀 [createNewPost] A iniciar criação: Tipo=${type}, Sub=${subType}`);
+
+    // 1. Garantir que os dados do arquivo existem
+    if (!currentArchiveData) {
+        console.error("❌ [createNewPost] Erro: currentArchiveData é nulo.");
+        alert("Erro interno: Dados do arquivo não carregados.");
+        return;
+    }
+
+    // 2. CORREÇÃO CRÍTICA: Garantir que o array 'posts' existe
+    if (!currentArchiveData.posts || !Array.isArray(currentArchiveData.posts)) {
+        console.warn("⚠️ [createNewPost] Array 'posts' não existia. A inicializar...");
+        currentArchiveData.posts = [];
+    }
+
     const newId = 'post_' + Date.now();
     let initialContent = '';
     let initialTitle = '';
 
-    // HTML da Barra de Ferramentas (Comum a Subnotas, Questões e Contentores)
+    // HTML da Barra de Ferramentas (Comum)
     const commonToolbarHTML = `
         <div class="mini-note-toolbar" contenteditable="false">
             <button type="button" data-action="sharing-settings" title="Definições de Partilha">🔐</button>
@@ -19076,15 +19105,12 @@ async function createNewPost(type, subType = null) {
         </div>
     `;
 
-    // --- 1. TIPO TEXTO SIMPLES ---
+    // --- Configuração do Conteúdo ---
     if (type === 'text') {
-        initialTitle = ''; // Post de texto não precisa de título forçado
+        initialTitle = ''; 
         initialContent = '<p><br></p>';
     } 
-    // --- 2. TIPO ENTIDADE (Caixas Especiais) ---
     else if (type === 'entity') {
-        
-        // A. QUESTÃO (Verde)
         if (subType === 'question') {
             initialContent = `
                 <div class="mini-note-wrapper question-mode" data-topics="{}" data-shared="false" data-box-links="{}" contenteditable="false">
@@ -19093,49 +19119,34 @@ async function createNewPost(type, subType = null) {
                     <div class="mini-note-content" contenteditable="true"><p><br></p></div>
                 </div>`;
             initialTitle = 'Nova Questão';
-        } 
-        // B. TÍTULO TOGGLE (Roxo/Expansível)
-        else if (subType === 'toggle') {
+        } else if (subType === 'toggle') {
             initialContent = `
                 <details class="toggle-section" open>
                     <summary>
                         <h2>Título Expansível</h2>
-                        
-                        <button class="toggle-move-btn" data-action="move-up" contenteditable="false" title="Mover para Cima">🔺</button>
-                        <button class="toggle-move-btn" data-action="move-down" contenteditable="false" title="Mover para Baixo">🔻</button>
-                        
-                        <button class="toggle-color-btn" contenteditable="false" title="Cor">🖌️</button>
-                        <button class="toggle-delete-btn" contenteditable="false" title="Apagar">🗑️</button>
+                        <button class="toggle-delete-btn" contenteditable="false">🗑️</button>
                     </summary>
                     <div class="toggle-content" contenteditable="true"><p><br></p></div>
                 </details>`;
             initialTitle = 'Novo Título Toggle';
-        } 
-        // C. IDEIA (Simples com destaque vermelho)
-        else if (subType === 'idea') {
+        } else if (subType === 'idea') {
              initialContent = `<div style="padding:10px;"><span class="idea-span" spellcheck="false">Nova Ideia</span></div>`;
              initialTitle = 'Ideia';
-        } 
-        // D. SUBNOTA (Azul) ou CONTENTOR LIVRE (Laranja)
-        else {
+        } else {
             const isFree = subType === 'free';
             const cls = isFree ? 'mini-note-wrapper free-mode' : 'mini-note-wrapper';
-            
-            // Contentores livres não têm input de título
             const titleInputHTML = isFree ? '' : `<input type="text" class="mini-note-title-input" placeholder="Título..." value="">`;
-            
             initialContent = `
                 <div class="${cls}" data-topics="{}" data-shared="false" data-box-links="{}" contenteditable="false">
                     ${titleInputHTML}
                     ${commonToolbarHTML}
                     <div class="mini-note-content" contenteditable="true"><p><br></p></div>
                 </div>`;
-            
             initialTitle = isFree ? 'Novo Contentor' : 'Nova Subnota';
         }
     }
 
-    // 3. Criar Objeto do Post
+    // 3. Criar Objeto
     const newPost = {
         id: newId,
         type: type,
@@ -19146,24 +19157,28 @@ async function createNewPost(type, subType = null) {
         updatedAt: Date.now()
     };
 
-    // 4. Inserir no Array Local (No topo)
-    if (!currentArchiveData.posts) currentArchiveData.posts = [];
+    // 4. Inserir no início da lista
     currentArchiveData.posts.unshift(newPost);
 
-    // 5. Definir como Editável Imediatamente
+    // 5. Ativar modo edição para este post
     activeEditingPostId = newId;
     
-    // 6. Atualizar UI
+    // 6. Atualizar o Ecrã
+    console.log("🎨 [createNewPost] A renderizar feed...");
     renderArchiveFeed();
     
-    // 7. Gravar na Base de Dados
-    // (Nota: Ao gravar, os outros colaboradores verão o post novo aparecer)
-    await saveFullArchive();
-    
-    // Tenta adquirir lock automaticamente para evitar conflitos imediatos
-    // (Embora seja novo, é boa prática em sistemas colaborativos)
-    if (typeof lockPost === 'function') {
-        lockPost(newId); 
+    // 7. Feedback e Gravação
+    // No mobile, fazemos scroll para o topo para garantir que o utilizador vê o novo post
+    const feedContainer = document.getElementById('archive-feed');
+    if (feedContainer) feedContainer.scrollTop = 0;
+
+    try {
+        await saveFullArchive();
+        // Tenta bloquear (opcional, ignora erro se falhar)
+        if (typeof lockPost === 'function') lockPost(newId); 
+    } catch (e) {
+        console.error("❌ Erro ao gravar novo post:", e);
+        // Não mostramos alert para não interromper o fluxo, o indicador de status mostrará erro
     }
 }
 
