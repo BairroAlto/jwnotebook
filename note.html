@@ -7665,24 +7665,49 @@ function updateMiddlePanelForFolderSelection(folderId, folderName, selectedEleme
 
 
 async function displayNote(noteId, noteElement, searchTerm = null, keepReferencesOpen = false) {
+    console.group("📄 [DEBUG displayNote] A tentar abrir nota...");
+    console.log("🆔 Note ID:", noteId);
+
     isClosingNote = false;
     currentShortcutId = null;
 
-    // 1. Lógica visual de seleção na lista
+    // 1. Limpeza Visual
     document.querySelectorAll('#middle-panel .list-item.selected').forEach(el => el.classList.remove('selected'));
-    
     if (!noteElement) {
-        noteElement = document.querySelector(`#middle-panel-list .list-item[data-id="${noteId}"]`) || 
-                      document.querySelector(`#file-list .list-item[data-id="${noteId}"]`);
+        noteElement = document.querySelector(`.list-item[data-id="${noteId}"]`);
     }
     if (noteElement) noteElement.classList.add('selected');
     
     selectedNoteId = noteId;
     
-    // 2. ALTERNAR VISUALIZAÇÃO (CORREÇÃO AQUI)
-    editorPlaceholder.style.display = 'none';
-    document.getElementById('archive-area').style.display = 'none'; // <--- GARANTE QUE O ARQUIVO FECHA
-    editorArea.style.display = 'flex';
+    // ---------------------------------------------------------
+    // AQUI ESTÁ A CORREÇÃO "BRUTA" E OS LOGS
+    // ---------------------------------------------------------
+    const editorArea = document.getElementById('editor-area');
+    const archiveArea = document.getElementById('archive-area');
+    const placeholder = document.getElementById('editor-placeholder');
+
+    console.log("1️⃣ A forçar ocultação do Arquivo...");
+    
+    // Força bruta: usa setProperty com 'important' para vencer o CSS
+    archiveArea.style.setProperty('display', 'none', 'important');
+    placeholder.style.setProperty('display', 'none', 'important');
+    
+    console.log("2️⃣ A forçar exibição do Editor...");
+    editorArea.style.setProperty('display', 'flex', 'important');
+    
+    // Verificação Pós-Ação
+    setTimeout(() => {
+        const archiveStyle = window.getComputedStyle(archiveArea).display;
+        const editorStyle = window.getComputedStyle(editorArea).display;
+        console.log(`🔍 [CHECK FINAL] Editor: ${editorStyle} | Arquivo: ${archiveStyle}`);
+        
+        if (archiveStyle !== 'none') {
+            console.error("🚨 ALERTA: O Arquivo continua visível! Há CSS com !important a bloquear o JS.");
+            alert("ERRO CSS: O Arquivo não desapareceu. Verifique o console.");
+        }
+        console.groupEnd();
+    }, 100);
     
     // 3. CARREGAMENTO DA NOTA
     try {
@@ -14145,113 +14170,54 @@ window.addEventListener('beforeunload', (event) => {
 
 
 middlePanelList.addEventListener('click', async (e) => {
-    console.log("🖱️ [DEBUG] 1. Clique detetado na lista do meio.");
-    console.log("   Alvo do clique:", e.target);
-
+    console.group("🖱️ [DEBUG CLICK] Análise do Clique");
+    
     const item = e.target.closest('.list-item');
     if (!item) {
-        console.warn("⚠️ [DEBUG] O clique não foi num item da lista (foi no vazio ou padding).");
+        console.log("❌ Clique fora de um item.");
+        console.groupEnd();
         return;
-    }
-    
-    // Se clicar nos 3 pontinhos (Menu), abre o menu e não navega
-    if (e.target.closest('.item-menu-btn')) { 
-        console.log("🔘 [DEBUG] Clique no menu de 3 pontos. A parar navegação.");
-        showContextMenu(e); 
-        return; 
     }
 
     const { id, name, type } = item.dataset;
-    console.log(`✅ [DEBUG] 2. Item identificado: ID="${id}", Nome="${name}", Tipo="${type}"`);
+    console.log(`✅ Item Clicado: "${name}"`);
+    console.log(`🆔 ID: ${id}`);
+    console.log(`🏷️ TIPO DETETADO NO HTML: ${type}`);
 
-    // --- CASO 1: PASTA ou AGREGAÇÃO ---
-    if (type === 'pasta' || type === 'agregacao') {
-        console.log("📂 [DEBUG] Tipo detetado: Pasta/Agregação");
+    // VERIFICAÇÃO CRÍTICA
+    if (type === 'nota') {
+        console.log("🔵 Caminho: Deve abrir como NOTA NORMAL.");
         
-        if (item.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
-            const access = await requestPassword('access', id);
-            if (access) sessionUnlockedFolders.add(id); else return;
-        }
+        // Verifica se o Arquivo está visível ANTES de abrir a nota
+        const archiveArea = document.getElementById('archive-area');
+        console.log("👀 Estado do Arquivo (Antes):", window.getComputedStyle(archiveArea).display);
 
-        if (item.dataset.superpasta === "true") {
-            navigateWithUnsavedCheck(() => { window.location.href = `note.html?rootId=${id}`; });
-            return;
-        }
-
+        // Executa a abertura
         const action = () => {
-           console.log("🚀 [DEBUG] A executar navegação de pasta...");
-           navigationStack.push({ id, name }); 
-           updateNavigationView();
-        };
-        navigateWithUnsavedCheck(action);
-    }
-
-    // --- CASO 2: NOTA ---
-    else if (type === 'nota') {
-        console.log("📄 [DEBUG] Tipo detetado: Nota");
-
-        if (id === selectedNoteId) {
-             console.log("ℹ️ [DEBUG] Nota já está aberta.");
              if (window.innerWidth <= 768) {
+                console.log("📱 Modo Mobile detetado -> Adicionando classe 'mobile-view-editor'");
                 document.body.classList.remove('mobile-view-middle');
                 document.body.classList.add('mobile-view-editor');
             }
-            return;
-        }
-
-        if (item.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
-            const access = await requestPassword('access', id);
-            if (access) sessionUnlockedFolders.add(id); else return;
-        }
-
-        const action = () => {
-             console.log("🚀 [DEBUG] A abrir nota...");
-             if (window.innerWidth <= 768) {
-                document.body.classList.remove('mobile-view-middle');
-                document.body.classList.add('mobile-view-editor');
-            }
+            console.log("🚀 Chamando displayNote()...");
             displayNote(id, item);
         };
         navigateWithUnsavedCheck(action);
-    }
-
-    // --- CASO 3: ARQUIVO (🗄️) ---
+    } 
     else if (type === 'arquivo') {
-        console.log("🗄️ [DEBUG] 3. Tipo detetado: ARQUIVO. A preparar abertura...");
-        
+        console.log("🔴 Caminho: Deve abrir como ARQUIVO.");
+        // ... resto da lógica do arquivo
         const action = async () => {
-            console.log("🚀 [DEBUG] 4. Callback de ação iniciado (Verificação de gravação passou).");
-
             if (window.innerWidth <= 768) {
                 document.body.classList.remove('mobile-view-middle');
                 document.body.classList.add('mobile-view-editor');
             }
-
-            console.log("📡 [DEBUG] 5. A contactar Firebase para ID:", id);
-            try {
-                const docSnap = await getDoc(doc(db, 'pastas', id));
-                console.log("📥 [DEBUG] 6. Resposta Firebase recebida. Existe?", docSnap.exists());
-
-                if (docSnap.exists()) {
-                    console.log("🎬 [DEBUG] 7. A chamar displayArchive...");
-                    displayArchive(id, docSnap.data());
-                } else {
-                    console.error("❌ [DEBUG] Documento não encontrado na BD.");
-                    alert("Arquivo não encontrado.");
-                }
-            } catch (err) {
-                console.error("🔥 [DEBUG] Erro crítico ao abrir arquivo:", err);
-            }
+            displayArchive(id, {}); // Simplificado para teste
         };
-        
-        console.log("🛡️ [DEBUG] A chamar navigateWithUnsavedCheck...");
         navigateWithUnsavedCheck(action);
     }
     
-    // --- CASO DESCONHECIDO ---
-    else {
-        console.error(`❌ [DEBUG] Tipo desconhecido: "${type}". Verifique o HTML generation.`);
-    }
+    console.groupEnd();
 });
 
 
