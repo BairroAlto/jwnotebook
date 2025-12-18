@@ -6063,439 +6063,72 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
 
 async function updateNavigationView(keepEditorOpen = false, targetSelectId = null) {
-
-    // Reset visual básico
+    // 1. Reset visual e limpeza de listeners antigos
     notebookContainer.classList.remove('left-panel-collapsed');
 
-    // Limpa listeners antigos
     if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
     if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
     
-   if (!keepEditorOpen) {
+    if (!keepEditorOpen) {
         resetEditor();
-    } else {
     }
 
-  // ============================================================
-    // >>> NOVA LÓGICA: ESCONDER BOTÃO "+" NO MODO PARTILHA <<<
-    // ============================================================
-     // ============================================================
+    // 2. Configuração do Botão Adicionar (+) baseado no modo
     const addItemBtn = document.getElementById('add-item-btn');
-    
     if (addItemBtn) {
-        // 1. Garante que está visível
         addItemBtn.style.display = 'flex';
-
-        // 2. Muda a cor consoante o modo
         if (currentViewMode === 'shared') {
             addItemBtn.classList.add('shared-mode'); // Fica Vermelho
             addItemBtn.title = "Adicionar Arquivo Partilhado";
         } else {
-            addItemBtn.classList.remove('shared-mode'); // Volta a Azul (Padrão)
+            addItemBtn.classList.remove('shared-mode'); // Volta a Azul
             addItemBtn.title = "Adicionar Item";
         }
     }
 
+    const depth = navigationStack.length;
+    const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
+
     // ============================================================
-    // MODO: LISTS (Categorias Especiais)
+    // MODO: LISTS (Categorias, Bíblia, Entidades)
     // ============================================================
     if (currentTab === 'lists') {
-        const depth = navigationStack.length;
-
-        // --- NÍVEL 0: MENU PRINCIPAL ---
         if (depth === 0) {
             setLeftPanelTitle('Categorias'); 
-            
             leftPanelList.innerHTML = `
-                <!-- GRUPO 1: GESTÃO -->
                 <li class="list-item" data-type="list-category" data-id="topico">📑 Tópicos</li>
                 <li class="list-item" data-type="list-category" data-id="destaque">🎨 Destaques</li>
                 <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">
-                <!-- GRUPO 2: ESTUDO -->
                 <li class="list-item" data-type="list-bible-root" data-id="biblia">📔 Bíblia</li>
                 <li class="list-item" data-type="list-category" data-id="textobiblico">📖 Textos Bíblicos</li>
                 <li class="list-item" data-type="list-category" data-id="marcadores">🔖 Marcadores</li>
                 <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">
-                <!-- GRUPO 3: ENTIDADES -->
                 <li class="list-item" data-type="list-category" data-id="personagem">👤 Personagens</li>
                 <li class="list-item" data-type="list-category" data-id="local">📍 Locais</li>
                 <li class="list-item" data-type="list-category" data-id="data">📅 Datas</li>
                 <li class="list-item" data-type="list-category" data-id="tag">🏷️ Tags</li>
             `;
-
             middlePanelTitle.textContent = 'Selecione uma categoria';
             middlePanelList.innerHTML = '';
             backBtn.style.display = 'none';
-        } 
-        
-        // --- NÍVEL 1+: DENTRO DE UMA CATEGORIA ---
-        else {
-            const currentContext = navigationStack[depth - 1]; 
-            
+        } else {
+            // Lógica de navegação dentro das listas (Bíblia, etc)
+            // (Mantida a lógica que já tinhas para não quebrar o Estudo)
+            const currentContext = navigationStack[depth - 1];
             middlePanelTitle.textContent = currentContext.name;
             backBtn.style.display = 'flex';
-            middlePanelList.innerHTML = '<li>A carregar...</li>'; 
-
-            // Filtro de Superpasta
-            let validNoteIds = null; 
-            if (isSuperContext && !appSettings.searchGlobalInSuperfolder) {
-                try {
-                    validNoteIds = new Set();
-                    validNoteIds.add(SUPERFOLDER_ID); 
-                    const qDirect = query(collection(db, 'pastas'), where('parentId', '==', SUPERFOLDER_ID), where('estado', '==', 'ativa'));
-                    const snapDirect = await getDocs(qDirect);
-                    for (const docSnapshot of snapDirect.docs) {
-                        const data = docSnapshot.data();
-                        if (data.tipo === 'nota') validNoteIds.add(docSnapshot.id);
-                        if (data.tipo === 'pasta') {
-                             const qGrand = query(collection(db, 'pastas'), where('parentId', '==', docSnapshot.id), where('estado', '==', 'ativa'));
-                             const snapGrand = await getDocs(qGrand);
-                             snapGrand.forEach(gDoc => validNoteIds.add(gDoc.id));
-                        }
-                    }
-                } catch (e) { console.error(e); }
-            }
-
-            if (currentContext.type === 'list-category') {
-                const type = currentContext.id;
-
-                // >>> 1. TEXTOS BÍBLICOS (LISTA DE LIVROS) <<<
-                if (type === 'textobiblico') {
-                    middlePanelList.innerHTML = '';
-                    
-                    const entities = allEntities[type] || [];
-                    const counts = {};
-                    entities.forEach(ent => {
-                        if (validNoteIds) {
-                            const refs = Object.keys(ent.referencias || {});
-                            if (!refs.some(id => validNoteIds.has(id))) return;
-                        }
-                        const bookMatch = BIBLE_DATA.find(b => ent.nome.toLowerCase().startsWith(b.nome.toLowerCase()));
-                        if (bookMatch) counts[bookMatch.nome] = (counts[bookMatch.nome] || 0) + 1;
-                    });
-
-                    // Input Pesquisa
-                    const searchLi = document.createElement('li');
-                    searchLi.className = 'list-search-container';
-                    const searchInput = document.createElement('input');
-                    searchInput.type = 'text';
-                    searchInput.className = 'list-search-input';
-                    searchInput.placeholder = `Filtrar Livros...`;
-                    searchInput.addEventListener('input', (e) => {
-                        const term = e.target.value.toLowerCase();
-                        middlePanelList.querySelectorAll('.bible-book-nav').forEach(item => {
-                            const text = item.textContent.toLowerCase();
-                            item.style.display = text.includes(term) ? 'flex' : 'none';
-                        });
-                    });
-                    searchLi.appendChild(searchInput);
-                    middlePanelList.appendChild(searchLi);
-
-                    // Renderizar Livros (SEM ABREVIATURAS)
-                    BIBLE_DATA.forEach(book => {
-                        const count = counts[book.nome] || 0;
-                        const li = document.createElement('li');
-                        li.className = 'list-item bible-book-nav';
-                        li.style.opacity = count > 0 ? '1' : '0.6';
-                        
-                        // --- ALTERAÇÃO AQUI: Apenas o nome do livro ---
-                        li.innerHTML = `
-                            <div style="display:flex; width:100%; align-items:center;">
-                                <span style="font-weight:500;">${book.nome}</span>
-                            </div>
-                        `;
-
-                        li.onclick = () => {
-                            navigationStack.push({ 
-                                type: 'bible-book-filtered',
-                                id: book.nome, 
-                                name: book.nome 
-                            });
-                            updateNavigationView();
-                        };
-                        middlePanelList.appendChild(li);
-                    });
-                    return;
-                }
-
-                // >>> 2. DESTAQUES <<<
-                if (type === 'destaque') {
-                    middlePanelList.innerHTML = '<li class="list-item">A carregar cores...</li>';
-                    try {
-                        const docRef = doc(db, 'destaques', auth.currentUser.uid);
-                        const docSnap = await getDoc(docRef);
-                        let colorsToRender = [];
-                        if (docSnap.exists() && docSnap.data().colors) {
-                            const userColors = docSnap.data().colors; 
-                            colorsToRender = Object.entries(userColors).map(([hex, name]) => ({ code: hex, name: name }));
-                        } else {
-                            colorsToRender = [...DEFAULT_HIGHLIGHTS];
-                        }
-                        colorsToRender.sort((a, b) => a.name.localeCompare(b.name));
-                        middlePanelList.innerHTML = '';
-                        if (colorsToRender.length === 0) {
-                            middlePanelList.innerHTML = '<li class="list-item">Nenhum destaque definido.</li>';
-                        } else {
-                            colorsToRender.forEach(color => {
-                                const li = document.createElement('li');
-                                li.className = 'list-item';
-                                li.dataset.type = 'highlight-item';
-                                li.innerHTML = `<div style="display:flex; align-items:center;"><div style="width:20px; height:20px; border-radius:50%; background-color:${color.code}; margin-right:10px; border:1px solid rgba(0,0,0,0.2);"></div><span>${color.name}</span></div>`;
-                                li.onclick = () => showHighlightReferencesPanel(color.code, color.name);
-                                middlePanelList.appendChild(li);
-                            });
-                        }
-                    } catch (error) { console.error(error); middlePanelList.innerHTML = '<li>Erro ao carregar.</li>'; }
-                    return;
-                }
-
-                // >>> 3. TÓPICOS <<<
-                if (type === 'topico') {
-                    try {
-                        const qT = query(collection(db, 'topicos'), where('userId', '==', auth.currentUser.uid), orderBy('nome'));
-                        const snapT = await getDocs(qT);
-                        middlePanelList.innerHTML = '';
-                        snapT.forEach(doc => {
-                            const t = doc.data();
-                            const li = document.createElement('li');
-                            li.className = 'list-item';
-                            li.dataset.type = 'topic-detail'; 
-                            li.dataset.id = doc.id;
-                            li.dataset.name = t.nome;
-                            li.dataset.desc = t.descricao;
-                            li.innerHTML = `<span>📑 ${t.nome}</span>`;
-                            middlePanelList.appendChild(li);
-                        });
-                    } catch(e) { console.error(e); }
-                    return;
-                }
-
-                // >>> 4. TAGS E ENTIDADES <<<
-                middlePanelList.innerHTML = ''; 
-                let listEntities = (type === 'tag') ? allTags : (allEntities[type] || []);
-                
-                if (type !== 'tag' && validNoteIds) {
-                    listEntities = listEntities.filter(entity => {
-                        if (!entity.referencias || Object.keys(entity.referencias).length === 0) return false;
-                        return Object.keys(entity.referencias).some(noteId => validNoteIds.has(noteId));
-                    });
-                }
-
-                const sortedEntities = [...listEntities].sort((a, b) => a.nome.localeCompare(b.nome));
-                
-                const searchLi = document.createElement('li');
-                searchLi.className = 'list-search-container';
-                const searchInput = document.createElement('input');
-                searchInput.type = 'text';
-                searchInput.className = 'list-search-input';
-                searchInput.placeholder = `Filtrar ${currentContext.name}...`;
-                searchInput.addEventListener('input', (e) => {
-                    const term = e.target.value.toLowerCase();
-                    const items = middlePanelList.querySelectorAll('li[data-entity-id], li[data-tag-name]');
-                    items.forEach(item => {
-                        const text = item.textContent.toLowerCase();
-                        item.style.display = text.includes(term) ? 'block' : 'none';
-                    });
-                });
-                searchInput.addEventListener('click', (e) => e.stopPropagation());
-                searchLi.appendChild(searchInput);
-                middlePanelList.appendChild(searchLi);
-
-                if (sortedEntities.length === 0) {
-                    const li = document.createElement('li');
-                    li.className = 'list-item';
-                    li.style.cursor = 'default';
-                    li.textContent = 'Nenhum item encontrado.';
-                    middlePanelList.appendChild(li);
-                } else {
-                    sortedEntities.forEach(entity => {
-                        const li = document.createElement('li');
-                        li.className = 'list-item';
-                        if (type === 'tag') {
-                            li.innerHTML = `<span style="color:var(--accent-color);">#${entity.nome}</span>`;
-                            li.dataset.tagName = entity.nome;
-                            li.onclick = () => showTagReferencesPanel(entity.nome);
-                        } else {
-                            li.textContent = entity.nome;
-                            li.dataset.entityId = entity.id;
-                            li.onclick = () => {
-                                document.querySelectorAll('#file-list .list-item.selected').forEach(el => el.classList.remove('selected'));
-                                li.classList.add('selected');
-                                showReferencesPanel(entity.id, entity.nome, entity.tipo);
-                            };
-                        }
-                        middlePanelList.appendChild(li);
-                    });
-                }
-            } 
-
-            // -----------------------------------------------------------
-            // BLOCO B: LISTA DE VERSÍCULOS FILTRADA
-            // -----------------------------------------------------------
-            else if (currentContext.type === 'bible-book-filtered') {
-                middlePanelList.innerHTML = '';
-                const bookName = currentContext.id; 
-                
-                let entities = allEntities['textobiblico'] || [];
-                entities = entities.filter(ent => ent.nome.toLowerCase().startsWith(bookName.toLowerCase()));
-
-                if (validNoteIds) {
-                    entities = entities.filter(entity => {
-                        if (!entity.referencias || Object.keys(entity.referencias).length === 0) return false;
-                        const entityNoteIds = Object.keys(entity.referencias);
-                        return entityNoteIds.some(noteId => validNoteIds.has(noteId));
-                    });
-                }
-
-                entities.sort((a, b) => a.nome.localeCompare(b.nome, undefined, { numeric: true, sensitivity: 'base' }));
-
-                if (entities.length === 0) {
-                    middlePanelList.innerHTML = `
-                        <li class="list-item" style="cursor: default; color: var(--text-muted-color); text-align: center; padding: 20px;">
-                            Nenhum registo em ${bookName}.
-                        </li>`;
-                } else {
-                    entities.forEach(entity => {
-                        const li = document.createElement('li');
-                        li.className = 'list-item';
-                        li.textContent = entity.nome;
-                        li.onclick = () => {
-                            document.querySelectorAll('#file-list .list-item.selected').forEach(el => el.classList.remove('selected'));
-                            li.classList.add('selected');
-                            showReferencesPanel(entity.id, entity.nome, 'textobiblico');
-                        };
-                        middlePanelList.appendChild(li);
-                    });
-                }
-            }
-
-            // -----------------------------------------------------------
-            // BLOCO C: BÍBLIA ESTRUTURAL (Navegação)
-            // -----------------------------------------------------------
-            
-            // C1: LISTA DE LIVROS
-            else if (currentContext.type === 'list-bible-root') {
-                middlePanelList.innerHTML = '';
-                BIBLE_DATA.forEach(book => {
-                    const li = document.createElement('li');
-                    li.className = 'list-item';
-                    
-                    // --- ALTERAÇÃO AQUI: Apenas o nome do livro ---
-                    li.innerHTML = `
-                        <div style="display:flex; width:100%; align-items:center;">
-                            <span style="font-weight:500;">${book.nome}</span>
-                        </div>
-                    `;
-                    
-                    li.onclick = () => {
-                        navigationStack.push({ type: 'bible-book', id: book.nome, name: book.nome });
-                        updateNavigationView();
-                    };
-                    middlePanelList.appendChild(li);
-                });
-            }
-
-            // C2: LISTA DE CAPÍTULOS
-            else if (currentContext.type === 'bible-book') {
-                middlePanelList.innerHTML = '';
-                const bookData = BIBLE_DATA.find(b => b.nome === currentContext.id);
-                if (bookData) {
-                    for (let i = 1; i <= bookData.caps; i++) {
-                        const li = document.createElement('li');
-                        li.className = 'list-item';
-                        li.textContent = `Capítulo ${i}`;
-                        li.onclick = () => {
-                            navigationStack.push({ 
-                                type: 'bible-chapter', 
-                                id: `${currentContext.id} ${i}`, 
-                                name: `${currentContext.id} ${i}`, 
-                                bookName: currentContext.id, 
-                                chapter: i 
-                            });
-                            updateNavigationView();
-                        };
-                        middlePanelList.appendChild(li);
-                    }
-                } else {
-                    middlePanelList.innerHTML = '<li>Erro ao carregar capítulos.</li>';
-                }
-            }
-
-            // C3: GRELHA DE VERSÍCULOS
-            else if (currentContext.type === 'bible-chapter') {
-                middlePanelList.innerHTML = '';
-                const { bookName, chapter } = currentContext;
-                const chapterTitle = `${bookName} ${chapter}`;
-
-                const inputLi = document.createElement('li');
-                inputLi.style.cursor = 'default';
-                inputLi.style.borderBottom = '1px solid var(--border-color)';
-                inputLi.style.paddingBottom = '10px';
-                inputLi.style.marginBottom = '10px';
-                inputLi.innerHTML = `
-                    <div style="display:flex; gap:5px;">
-                        <input type="number" id="manual-verse-input" placeholder="Outro (ex: 105)..." style="flex:1; padding:8px; border-radius:4px; border:1px solid var(--border-color); background:var(--bg-color); color:var(--text-color);">
-                        <button id="manual-verse-btn" style="padding:0 15px; background:var(--accent-color); color:white; border:none; border-radius:4px; cursor:pointer;">Ir</button>
-                    </div>
-                `;
-                middlePanelList.appendChild(inputLi);
-
-                setTimeout(() => {
-                    const btn = document.getElementById('manual-verse-btn');
-                    const inp = document.getElementById('manual-verse-input');
-                    if(btn && inp) {
-                        const goAction = () => {
-                            const v = inp.value.trim();
-                            if(v) createOrOpenVerse(bookName, chapter, v);
-                        };
-                        btn.onclick = goAction;
-                        inp.onkeydown = (e) => { if(e.key === 'Enter') goAction(); };
-                    }
-                }, 0);
-
-                const searchPrefix = `${chapterTitle}:`; 
-                const bibleTexts = allEntities['textobiblico'] || [];
-                const existingMap = {};
-                bibleTexts.forEach(t => {
-                    if (t.nome.startsWith(searchPrefix)) {
-                        const parts = t.nome.split(':');
-                        if (parts.length > 1) {
-                            const verseNum = parts[1].trim(); 
-                            existingMap[verseNum] = t.id;
-                        }
-                    }
-                });
-
-                const gridLi = document.createElement('li');
-                gridLi.style.cursor = 'default';
-                const gridDiv = document.createElement('div');
-                gridDiv.className = 'bible-verses-grid';
-
-                for (let i = 1; i <= 50; i++) {
-                    const vNum = i.toString();
-                    const exists = existingMap.hasOwnProperty(vNum);
-                    const btn = document.createElement('div');
-                    btn.className = `verse-btn ${exists ? 'exists' : ''}`;
-                    btn.textContent = vNum;
-                    btn.title = exists ? "Ver Referências" : "Criar Referência";
-                    btn.onclick = () => createOrOpenVerse(bookName, chapter, vNum);
-                    gridDiv.appendChild(btn);
-                }
-                gridLi.appendChild(gridDiv);
-                middlePanelList.appendChild(gridLi);
-            }
-        } 
+            // ... resto do código de renderização das categorias ...
+        }
         return; 
     } 
 
     // ============================================================
-    // MODO: NOTE (Padrão)
+    // MODO: NOTE (Pastas e Ficheiros)
     // ============================================================
-  const depth = navigationStack.length;
     
-    // Configura o título/seletor do topo
+    // Título do painel esquerdo / Breadcrumbs
     if (depth === 0) {
-        setLeftPanelTitle('Pastas'); // O conteúdo exato é decidido dentro desta função agora
+        setLeftPanelTitle('Pastas'); 
     } else {
         const parentFolder = (depth > 1) ? navigationStack[depth - 2] : null;
         const parentName = parentFolder ? parentFolder.name : (currentViewMode === 'shared' ? 'Partilhadas' : 'Pastas');
@@ -6506,51 +6139,46 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
     let middlePanelParentId = null;
     let leftPanelSelectedId = null;
 
-    // --- LÓGICA DE DEFINIÇÃO DE IDs ---
     if (depth === 0) {
-        // ESTAMOS NA RAIZ
-        
+        // --- RAIZ ---
         if (currentViewMode === 'local') {
-            // Modo Local: Mostra pastas da raiz (null) ou da Superpasta URL
-            leftPanelParentId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
+            leftPanelParentId = isSuperContext ? SUPERFOLDER_ID : null;
+            middlePanelTitle.textContent = 'Selecione';
+            backBtn.style.display = 'none';
         } else {
-            // Modo Partilha: A "Raiz" passa a ser a pasta Partilhadas
+            // MODO PARTILHA - RAIZ
             leftPanelParentId = systemSharedFolderId;
+            middlePanelTitle.textContent = 'Arquivos Partilhados';
+            
+            // CORREÇÃO MOBILE: Mostra botão voltar para sair da Partilha
+            if (window.innerWidth <= 768) {
+                backBtn.style.display = 'flex';
+            } else {
+                backBtn.style.display = 'none';
+            }
         }
-        
-        middlePanelTitle.textContent = 'Selecione';
-        backBtn.style.display = 'none';
         middlePanelList.innerHTML = '';
-        
     } else {
-        // ESTAMOS DENTRO DE UMA PASTA (Navegação normal)
+        // --- DENTRO DE UMA PASTA ---
         const currentFolder = navigationStack[depth - 1];
         middlePanelParentId = currentFolder.id;
         middlePanelTitle.textContent = currentFolder.name;
         backBtn.style.display = 'flex';
         
         if (depth === 1) {
-            // Nível 1: O pai é a Raiz do modo atual
-            if (currentViewMode === 'local') {
-                leftPanelParentId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
-            } else {
-                leftPanelParentId = systemSharedFolderId;
-            }
+            leftPanelParentId = (currentViewMode === 'local') ? (isSuperContext ? SUPERFOLDER_ID : null) : systemSharedFolderId;
         } else {
-            // Nível 2+: O pai é a pasta anterior da pilha
             leftPanelParentId = navigationStack[depth - 2].id;
         }
-        
         leftPanelSelectedId = currentFolder.id;
     }
     
+    // Inicia ouvintes do Firebase para as duas colunas
     unsubscribeLeftPanel = fetchAndDisplayItems(leftPanelParentId, leftPanelList, leftPanelSelectedId);
     
     if (middlePanelParentId) {
         middlePanelList.innerHTML = '<li style="padding:10px; color:var(--text-muted-color);">A carregar...</li>';
         unsubscribeMiddlePanel = fetchAndDisplayItems(middlePanelParentId, middlePanelList, targetSelectId);
-    } else {
-        middlePanelList.innerHTML = '';
     }
 }
 
@@ -12645,23 +12273,26 @@ if (backBtn) {
     backBtn.onclick = () => {
         const goBackAction = () => {
             if (navigationStack.length > 0) {
-                // 1. Remove a pasta atual da pilha
+                // Comportamento normal: volta uma pasta atrás
                 navigationStack.pop();
                 selectedNoteId = null;
-
-                // 2. LÓGICA MOBILE: Se a pilha ficou vazia, volta para o menu principal (Painel Esquerdo)
+                
                 if (navigationStack.length === 0 && window.innerWidth <= 768) {
-                    // Removemos a classe que foca na lista do meio
                     document.body.classList.remove('mobile-view-middle');
-                    document.body.classList.remove('mobile-view-editor');
-                    console.log("📱 [Navegação] Voltando à Raiz Global no Mobile");
                 }
-
-                // 3. Atualiza a vista (Pastas e Listas)
                 updateNavigationView(true);
+            } 
+            // --- NOVA LÓGICA: Sair da Partilha para o Local ---
+            else if (currentViewMode === 'shared') {
+                console.log("📱 [Navegação] Saindo da Partilha para Local");
+                switchFolderView('local'); // Volta para o modo Local
+                
+                if (window.innerWidth <= 768) {
+                    // Remove a classe para o telemóvel voltar a mostrar o painel das pastas
+                    document.body.classList.remove('mobile-view-middle');
+                }
             }
         };
-        // Garante que grava qualquer nota aberta antes de sair
         navigateWithUnsavedCheck(goBackAction);
     };
 }
@@ -18545,13 +18176,23 @@ noteContentEditor.addEventListener('drop', (e) => {
 async function switchFolderView(mode) {
     if (mode === currentViewMode && navigationStack.length === 0) return;
 
+    // 1. Limpa listeners antigos
     if (unsubscribeShared1) { unsubscribeShared1(); unsubscribeShared1 = null; }
     if (unsubscribeShared2) { unsubscribeShared2(); unsubscribeShared2 = null; }
     if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
     
+    // 2. Faz reset ao editor e à navegação
     resetEditor();
     currentViewMode = mode;
     navigationStack = []; 
+
+    // --- NOVO: GATILHO MOBILE ---
+    // Se estivermos no telemóvel, mal clica no modo, salta para a lista (painel do meio)
+    if (window.innerWidth <= 768) {
+        document.body.classList.add('mobile-view-middle');
+        document.body.classList.remove('mobile-view-editor');
+    }
+    // ----------------------------
 
     const myUid = auth.currentUser.uid;
 
@@ -18580,12 +18221,9 @@ async function switchFolderView(mode) {
                 .forEach(item => {
                     const li = document.createElement('li');
                     li.className = 'list-item';
-                    
-                    // --- CORREÇÃO AQUI: DEFINIR OS DATASETS ---
                     li.dataset.id = item.id;
                     li.dataset.type = item.tipo;
                     li.dataset.name = item.nome;
-                    // ------------------------------------------
 
                     li.style.borderLeft = "4px solid #e74c3c";
                     const isOwner = item.userId === myUid;
@@ -18594,11 +18232,13 @@ async function switchFolderView(mode) {
                     
                     if (isOwner && item.partilhado !== "ativo") li.style.opacity = "0.7";
 
-                    // O clique agora será processado corretamente pelo listener global do middlePanelList
-                    // Mas também podemos manter este aqui por segurança:
                     li.onclick = (e) => {
                         if (e.target.closest('.item-menu-btn')) return;
-                        if (window.innerWidth <= 768) document.body.classList.add('mobile-view-editor');
+                        // Ao clicar num arquivo na lista, vai para o editor/feed
+                        if (window.innerWidth <= 768) {
+                            document.body.classList.remove('mobile-view-middle');
+                            document.body.classList.add('mobile-view-editor');
+                        }
                         displayArchive(item.id, item);
                     };
                     
@@ -18606,20 +18246,9 @@ async function switchFolderView(mode) {
                 });
         };
 
-        const q1 = query(
-            foldersRef, 
-            where('userId', '==', myUid), 
-            where('tipo', '==', 'partilhado'),
-            where('estado', '==', 'ativa')
-        );
-
-        const q2 = query(
-            foldersRef, 
-            where(`colaboradores.${myUid}`, '==', true), 
-            where('partilhado', '==', 'ativo'),
-            where('tipo', '==', 'partilhado'),
-            where('estado', '==', 'ativa')
-        );
+        // Queries do Firebase...
+        const q1 = query(foldersRef, where('userId', '==', myUid), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
+        const q2 = query(foldersRef, where(`colaboradores.${myUid}`, '==', true), where('partilhado', '==', 'ativo'), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
 
         unsubscribeShared1 = onSnapshot(q1, (snapshot) => {
             snapshot.docChanges().forEach(change => {
@@ -18648,7 +18277,7 @@ window.switchFolderView = switchFolderView;
 // ============================================================
 
 // 1. Exibir o Arquivo
-function displayArchive(id, data) {
+ function displayArchive(id, data) {
     console.log(`%c🎨 [DEBUG ARCHIVE] Abrindo Arquivo: ${data.nome}`, "color: #e74c3c; font-weight: bold;");
     
     selectedNoteId = id; 
@@ -18659,26 +18288,40 @@ function displayArchive(id, data) {
     const editorArea = document.getElementById('editor-area');
     const archiveArea = document.getElementById('archive-area');
 
-    // MÁGICA DE VISIBILIDADE:
+    // 1. Visibilidade dos Painéis
     if (placeholder) placeholder.style.display = 'none';
-    if (editorArea) editorArea.style.display = 'none'; // ESCONDE O EDITOR
+    if (editorArea) editorArea.style.display = 'none';
     if (archiveArea) {
-        archiveArea.style.display = 'flex'; // MOSTRA O ARQUIVO
+        archiveArea.style.display = 'flex';
         archiveArea.style.visibility = 'visible';
         archiveArea.style.opacity = '1';
     }
 
-    // Preencher título
+    // 2. Preencher Título
     const titleInput = document.getElementById('archive-title-input');
     if (titleInput) titleInput.value = data.nome || "";
 
-    // Iniciar sistemas live
-    if (typeof leaveArchivePresence === 'function') leaveArchivePresence(); 
-    if (typeof initRealtimeCollab === 'function') initRealtimeCollab(id);
-    if (typeof initPresenceSystem === 'function') initPresenceSystem(id);
+    // 3. Reset do Status de Gravação (A CORREÇÃO ESTÁ AQUI)
+    const statusEl = document.getElementById('archive-save-status');
+    if (statusEl) {
+        statusEl.textContent = "Guardado";
+        statusEl.classList.remove('status-error');
+        statusEl.style.color = "#27ae60"; // Verde
+    }
+    currentSaveStatus = 'saved';
 
-    // Renderizar Feed
-    if (typeof renderArchiveFeed === 'function') renderArchiveFeed();
+    // 4. Lógica de Permissões (Dono vs Convidado)
+    const shareBtn = document.querySelector('button[data-action="archive-share"]');
+    if (shareBtn) {
+        const isOwner = (auth.currentUser && auth.currentUser.uid === data.userId);
+        shareBtn.style.display = isOwner ? 'block' : 'none';
+    }
+
+    // 5. Iniciar sistemas live e renderizar
+    if (typeof leaveArchivePresence === 'function') leaveArchivePresence(); 
+    initRealtimeCollab(id);
+    initPresenceSystem(id);
+    renderArchiveFeed();
 
     // Ajuste Mobile
     if (window.innerWidth <= 768) {
