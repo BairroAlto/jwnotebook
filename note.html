@@ -2288,9 +2288,8 @@ a.board-link:hover {
 }
 
 #context-menu {
-    position: fixed; /* Mudamos de absolute para fixed para ser relativo à janela */
-    z-index: 99999 !important; /* Acima de tudo */
-    /* Mantenha o resto dos estilos que já tem... */
+    position: fixed; /* IMPORTANTE: Fixed em vez de Absolute */
+    z-index: 99999 !important; /* Garante que fica por cima de tudo */
     background-color: var(--sidebar-color); 
     border: 1px solid var(--border-color);
     border-radius: 6px; 
@@ -6166,6 +6165,9 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             li.setAttribute('data-name', item.nome);
             li.setAttribute('data-userid', item.userId);
 
+              // ADICIONE ESTA LINHA ABAIXO (MUITO IMPORTANTE):
+    li.setAttribute('data-parentid', item.parentId === undefined ? null : item.parentId);
+    
             // Normalização visual: Ambos os tipos de arquivo usam o ícone da gaveta 🗄️
             if (item.tipo === 'arquivo' || item.tipo === 'partilhado') {
                 li.setAttribute('data-type', 'arquivo'); 
@@ -8659,29 +8661,46 @@ async function updateTagLink(tagName, noteId, shouldExist) {
 // --- LÓGICA DE MODAIS E PAINÉIS ADICIONAIS ---
 
 async function openMoveModal(itemContext) {
-    if (!itemContext) {
-        console.error("Erro: Contexto do item não fornecido para openMoveModal");
-        return;
-    }
+    if (!itemContext) return;
 
     const modal = document.getElementById('move-item-modal');
     const list = document.getElementById('move-list');
-    list.innerHTML = 'Carregando...';
+    
+    // 1. Mostrar o modal e resetar a lista
+    list.innerHTML = '<li style="padding:10px;">Carregando...</li>';
     modal.style.display = 'flex';
     
-    // Agora usamos itemContext.parentId em vez de activeItemContext.parentId
-    const q = query(
-        collection(db, 'pastas'), 
-        where('parentId', '==', itemContext.parentId), // <--- AQUI ESTAVA O ERRO
-        where('estado', '==', 'ativa'), 
-        where('userId', '==', auth.currentUser.uid), 
-        orderBy('ordem')
-    );
-    
-    const snapshot = await getDocs(q);
-    let items = [];
-    snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
-    renderMoveList(items);
+    try {
+        // 2. Ajustar o parentId (tratar "null" como string ou objeto)
+        let pId = itemContext.parentId;
+        if (pId === "null") pId = null;
+
+        const q = query(
+            collection(db, 'pastas'), 
+            where('parentId', '==', pId), 
+            where('estado', '==', 'ativa'), 
+            where('userId', '==', auth.currentUser.uid), 
+            orderBy('ordem')
+        );
+        
+        const snapshot = await getDocs(q);
+        let items = [];
+        
+        snapshot.forEach(doc => {
+            items.push({ id: doc.id, ...doc.data() });
+        });
+
+        // 3. Verificar se encontrou itens
+        if (items.length === 0) {
+            list.innerHTML = '<li style="padding:10px; color:#888;">Nenhum item encontrado nesta pasta.</li>';
+        } else {
+            renderMoveList(items);
+        }
+
+    } catch (error) {
+        console.error("Erro ao carregar itens para mover:", error);
+        list.innerHTML = '<li style="padding:10px; color:#e74c3c;">Erro ao carregar dados.</li>';
+    }
 }
 
 // --- NOVA FUNÇÃO PARA GERIR O MODAL "MOVER DE PASTA" ---
@@ -13771,19 +13790,25 @@ window.addEventListener('beforeunload', (event) => {
 
 middlePanelList.addEventListener('click', async (e) => {
     const item = e.target.closest('.list-item');
-    if (!item || e.target.closest('.item-menu-btn')) return;
+    if (!item) return;
 
-    // 1. Extração de dados do elemento clicado
+    // 1. CAPTURAR CLIQUE NOS TRÊS PONTOS (CORREÇÃO AQUI)
+    const menuBtn = e.target.closest('.item-menu-btn');
+    if (menuBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        showContextMenu(e); // Chama a função que mostra o painel
+        return; // Para aqui para não tentar abrir a nota ao mesmo tempo
+    }
+
+    // 2. Extração de dados do elemento clicado (Nota/Pasta/Arquivo)
     const id = item.getAttribute('data-id');
     const name = item.getAttribute('data-name');
     const type = item.getAttribute('data-type');
-    const ownerId = item.getAttribute('data-userid'); // CAPTURA O DONO PARA O CADEADO APARECER
+    const ownerId = item.getAttribute('data-userid');
 
-    console.log(`%c[DEBUG CLIQUE] Clicou em: ${name} | Tipo: ${type} | ID: ${id}`, "color: yellow; background: black; font-weight: bold;");
-
-    // 2. CASO: PASTAS OU AGREGAÇÕES (Navegação interna)
+    // 3. CASO: PASTAS OU AGREGAÇÕES
     if (type === 'pasta' || type === 'agregacao') {
-        console.log("[DEBUG] É uma pasta. Navegando internamente...");
         const action = () => {
             selectedNoteId = null;
             resetEditor();
@@ -13793,28 +13818,22 @@ middlePanelList.addEventListener('click', async (e) => {
         navigateWithUnsavedCheck(action);
     }
     
-    // 3. CASO: NOTAS OU ARQUIVOS (Abertura no Editor/Feed)
-  else if (type === 'nota' || type === 'arquivo' || type === 'partilhado') {
-    const action = () => {
-        if (window.innerWidth <= 768) {
-            document.body.classList.remove('mobile-view-middle');
-            document.body.classList.add('mobile-view-editor');
-        }
+    // 4. CASO: NOTAS OU ARQUIVOS
+    else if (type === 'nota' || type === 'arquivo' || type === 'partilhado') {
+        const action = () => {
+            if (window.innerWidth <= 768) {
+                document.body.classList.remove('mobile-view-middle');
+                document.body.classList.add('mobile-view-editor');
+            }
 
-        if (type === 'nota') {
-            displayNote(id, item);
-        } else {
-            // AJUSTE AQUI: passamos o 'item' (o elemento <li>) como terceiro argumento
-            displayArchive(id, { 
-                id: id, 
-                nome: name, 
-                tipo: type, 
-                userId: ownerId 
-            }, item); 
-        }
-    };
-    navigateWithUnsavedCheck(action);
-}
+            if (type === 'nota') {
+                displayNote(id, item);
+            } else {
+                displayArchive(id, { id: id, nome: name, tipo: type, userId: ownerId }, item); 
+            }
+        };
+        navigateWithUnsavedCheck(action);
+    }
 });
 
 
