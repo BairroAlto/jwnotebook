@@ -3887,7 +3887,8 @@ a.board-link:hover {
         padding: 0 !important;
         border: none !important;
         border-top: 1px solid var(--border-color) !important;
-        border-radius: 20px 20px 0 0 !important;
+        border-radius: 15px 15px 0 0 !important;
+        max-height: calc(100dvh - env(safe-area-inset-top, 20px)) !important;
         background-color: var(--sidebar-color) !important;
         box-shadow: 0 -10px 50px rgba(0,0,0,0.9) !important;
         transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), height 0.3s ease !important;
@@ -14385,6 +14386,16 @@ noteContentEditor.addEventListener('keydown', (e) => {
     }
 });
 
+// ADICIONA ESTA LINHA AQUI:
+noteContentEditor.addEventListener('keydown', handleBoundaryProtection);
+
+// E ADICIONA TAMBÉM ESTA PARA O ARQUIVO:
+document.getElementById('archive-feed').addEventListener('keydown', (e) => {
+    if (e.target.classList.contains('post-editor-content')) {
+        handleBoundaryProtection(e);
+    }
+});
+
 // ====================================================================
 // LÓGICA DE CORES DO TOGGLE
 // ====================================================================
@@ -20778,14 +20789,16 @@ document.getElementById('right-panel').addEventListener('click', (e) => {
 // LÓGICA DE ARRASTO DO PAINEL DE REFERÊNCIAS (MOBILE)
 // ============================================================
 const refPanel = document.getElementById('references-panel');
-const snapPoints = [100, 80, 60, 50, 30, 20, 10]; // Percentagens de snap
+
+// Pontos de encaixe em % (O 95 garante que o botão X nunca sai do ecrã)
+const snapPoints = [95, 80, 60, 50, 30, 20, 10]; 
 let startY = 0;
 let startHeight = 0;
 let isDraggingPanel = false;
 
 // Início do Toque
 refPanel.addEventListener('touchstart', (e) => {
-    // Só inicia o arrasto se tocar no header ou no fundo do painel
+    // Só inicia o arrasto se tocar no header (título/botão fechar) ou no fundo do painel
     if (e.target.closest('.panel-header') || e.target.id === 'references-panel') {
         isDraggingPanel = true;
         startY = e.touches[0].clientY;
@@ -20799,19 +20812,19 @@ window.addEventListener('touchmove', (e) => {
     if (!isDraggingPanel) return;
 
     const currentY = e.touches[0].clientY;
-    const deltaY = startY - currentY; // Arrastar para cima aumenta altura
+    const deltaY = startY - currentY; // Arrastar para cima aumenta a altura
     let newHeight = startHeight + deltaY;
 
     const screenHeight = window.innerHeight;
     const newHeightPct = (newHeight / screenHeight) * 100;
 
-    // Limites de segurança (entre 5% e 100% da tela)
-    if (newHeightPct >= 5 && newHeightPct <= 100) {
+    // LIMITES DE ARRASTO: Mínimo 5% e Máximo 95% para não tapar o topo total
+    if (newHeightPct >= 5 && newHeightPct <= 95) {
         refPanel.style.height = `${newHeight}px`;
     }
 }, { passive: false });
 
-// Final do Toque
+// Final do Toque (Snap)
 window.addEventListener('touchend', () => {
     if (!isDraggingPanel) return;
     
@@ -20821,23 +20834,21 @@ window.addEventListener('touchend', () => {
     const screenHeight = window.innerHeight;
     const currentHeightPct = (refPanel.offsetHeight / screenHeight) * 100;
     
-    // Encontra o ponto de snap mais próximo (100, 80, 60, 50, 30, 20 ou 10)
+    // Encontra o ponto de snap mais próximo
     const closestSnap = snapPoints.reduce((prev, curr) => {
         return (Math.abs(curr - currentHeightPct) < Math.abs(prev - currentHeightPct) ? curr : prev);
     });
 
-    // Trava no snap point
+    // Fixa na altura de encaixe (vh)
     refPanel.style.height = `${closestSnap}vh`;
 });
 
 // RESET PARA 60% AO FECHAR E REABRIR
-// Intercetamos a função de fechar para garantir que o painel reseta a altura
 const originalHidePanel = window.hideReferencesPanel;
 window.hideReferencesPanel = async function() {
-    // Chama a função original se existir
     if (typeof originalHidePanel === 'function') await originalHidePanel();
     
-    // Pequeno delay para a animação de descida terminar antes de resetar a altura
+    // Pequeno delay para a animação de descida terminar antes de resetar a altura para 60%
     setTimeout(() => {
         refPanel.style.height = "60vh"; 
     }, 400);
@@ -20980,6 +20991,60 @@ function extractUsedColorsFromEditor() {
 
     return Array.from(colorsSet);
 }
+
+// ============================================================
+// PROTEÇÃO DE LIMITES: ESCAPA DE ENTIDADES (PERSONAGENS, TAGS, LINKS)
+// ============================================================
+function handleBoundaryProtection(event) {
+    const selection = window.getSelection();
+    if (!selection.rangeCount || !selection.isCollapsed) return;
+
+    const range = selection.getRangeAt(0);
+    const currentNode = range.startContainer;
+    const offset = range.startOffset;
+
+    // 1. Identificar se o cursor toca numa entidade protegida
+    let styledEl = currentNode.nodeType === 3 ? currentNode.parentElement : currentNode;
+    styledEl = styledEl.closest('.entity-link, .tag, a[data-anexo-id], .idea-span');
+
+    if (!styledEl) return;
+
+    // 2. Teclas de escrita (letras, números, espaço, enter)
+    const isPrintable = event.key.length === 1 || event.key === 'Enter';
+    if (!isPrintable) return;
+
+    // --- LÓGICA DE POSIÇÃO ---
+    const isAtStart = (offset === 0);
+    const isAtEnd = (currentNode.nodeType === 3 && offset === currentNode.textContent.length);
+
+    if (isAtStart || isAtEnd) {
+        // TRUQUE: Em vez de inserirmos o caractere nós mesmos, inserimos um 
+        // caractere invisível (Zero-Width Space) FORA do span e movemos o cursor para lá.
+        // O navegador então processará o seu "Enter" ou "Espaço" nesse local limpo.
+        
+        const invisibleBridge = document.createTextNode('\u200B'); // Caractere invisível
+        const parent = styledEl.parentNode;
+
+        if (isAtStart) {
+            parent.insertBefore(invisibleBridge, styledEl);
+        } else {
+            if (styledEl.nextSibling) {
+                parent.insertBefore(invisibleBridge, styledEl.nextSibling);
+            } else {
+                parent.appendChild(invisibleBridge);
+            }
+        }
+
+        // Move o cursor para depois da ponte invisível
+        const newRange = document.createRange();
+        newRange.setStartAfter(invisibleBridge);
+        newRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+
+    }
+}
+
 
 
 
