@@ -517,6 +517,7 @@ a[data-anexo-id] { color: inherit; text-decoration: none; border-bottom: 1px dot
 .mini-note-toolbar {
     display: flex; justify-content: flex-end; background: transparent;
     padding: 0; margin-bottom: 5px; border: none; height: 30px;
+    font-size: 0 !important;
 }
 .mini-note-toolbar button[data-action="delete-mini-note"] {
     background: none; border: 1px solid var(--border-color); color: var(--text-muted-color);
@@ -550,6 +551,7 @@ a[data-anexo-id] { color: inherit; text-decoration: none; border-bottom: 1px dot
     justify-content: center; 
     transition: all 0.2s;
     margin-left: 5px; /* Espaço entre botões */
+    font-size: 14px !important;
 }
 
 /* Hover específico para o botão de Tópicos */
@@ -1332,7 +1334,7 @@ details.toggle-section {
 details.toggle-section summary {
     padding: 10px;
     cursor: pointer;
-    list-style: none; /* Remove a seta padrão feia */
+    list-style: none !important;
     display: flex;
     align-items: center;
     transition: background-color 0.2s;
@@ -1341,11 +1343,15 @@ details.toggle-section summary {
 
 /* Remove a seta padrão no Chrome/Safari */
 details.toggle-section summary::-webkit-details-marker {
-    display: none;
+   display: none !important;
 }
 
 details.toggle-section summary:hover {
     background-color: var(--hover-color);
+}
+
+details.toggle-section summary::marker {
+    display: none !important; /* Reforço para navegadores modernos */
 }
 
 /* A nossa seta personalizada */
@@ -7145,154 +7151,101 @@ function updateMiniNoteButtonState(wrapperElement) {
 
 // --- FUNÇÃO PARA CORRIGIR SUBNOTAS ANTIGAS ---
  function fixLegacyMiniNotes() {
-    const wrappers = noteContentEditor.querySelectorAll('.mini-note-wrapper');
+    const editor = document.getElementById('note-content-editor');
+    if (!editor) return;
+
+    // --- 1. LIMPEZA DE SEGURANÇA (SETAS FANTASMA) ---
+    // Remove especificamente o span que está a causar o triângulo indesejado
+    const ghostArrows = editor.querySelectorAll('.title-expand-arrow');
+    if (ghostArrows.length > 0) {
+        ghostArrows.forEach(arrow => {
+            console.log("🧹 [SISTEMA] Seta fantasma removida do conteúdo.");
+            arrow.remove();
+        });
+    }
+
+    const wrappers = editor.querySelectorAll('.mini-note-wrapper');
     
     wrappers.forEach(wrapper => {
-        // 1. Garante atributos essenciais no HTML
+        // 2. GARANTIA DE ATRIBUTOS ESSENCIAIS
         if (!wrapper.hasAttribute('data-topics')) wrapper.setAttribute('data-topics', '{}');
         if (!wrapper.hasAttribute('data-shared')) wrapper.setAttribute('data-shared', 'false');
-        
-        // >>> NOVO: Garante o atributo de links da caixa <<<
         if (!wrapper.hasAttribute('data-box-links')) wrapper.setAttribute('data-box-links', '{}');
 
-        const toolbar = wrapper.querySelector('.mini-note-toolbar');
-        if (toolbar) {
-            
-            // A. Verificar botão de Partilha (🔐)
-            if (!toolbar.querySelector('button[data-action="sharing-settings"]')) {
-                const btnShare = document.createElement('button');
-                btnShare.type = 'button';
-                btnShare.dataset.action = 'sharing-settings';
-                btnShare.title = 'Definições de Partilha';
-                btnShare.textContent = '🔐';
+        let toolbar = wrapper.querySelector('.mini-note-toolbar');
+        
+        // Se a nota for muito antiga e não tiver toolbar, criamos a estrutura base
+        if (!toolbar) {
+            toolbar = document.createElement('div');
+            toolbar.className = 'mini-note-toolbar';
+            toolbar.setAttribute('contenteditable', 'false');
+            wrapper.insertBefore(toolbar, wrapper.querySelector('.mini-note-content'));
+        }
+
+        // 3. RECONSTRUÇÃO DA TOOLBAR (Garante que todos os botões existem)
+        const buttonsConfig = [
+            { action: 'sharing-settings', icon: '🔐', title: 'Definições de Partilha' },
+            { action: 'move-up', icon: '🔺', title: 'Mover para cima', isGroup: true },
+            { action: 'move-down', icon: '🔻', title: 'Mover para baixo', isGroup: true },
+            { action: 'manage-box-links', icon: '⚡', title: 'Hiperligações da Caixa' },
+            { action: 'append-mini-note', icon: '🧬', title: 'Enviar para outra nota' },
+            { action: 'highlight-color', icon: '🎨', title: 'Destacar' },
+            { action: 'manage-mini-note-topics', icon: '📋', title: 'Gerir Tópicos' },
+            { action: 'delete-mini-note', icon: '🗑️', title: 'Apagar Caixa' }
+        ];
+
+        // Garante que o grupo de setas existe
+        let arrowGroup = toolbar.querySelector('.toolbar-btn-group');
+        if (!arrowGroup) {
+            arrowGroup = document.createElement('div');
+            arrowGroup.className = 'toolbar-btn-group';
+            // Insere após o botão de partilha se ele existir
+            const shareBtn = toolbar.querySelector('[data-action="sharing-settings"]');
+            if (shareBtn) shareBtn.after(arrowGroup);
+            else toolbar.appendChild(arrowGroup);
+        }
+
+        buttonsConfig.forEach(config => {
+            let btn = toolbar.querySelector(`button[data-action="${config.action}"]`);
+            if (!btn) {
+                btn = document.createElement('button');
+                btn.type = 'button';
+                btn.dataset.action = config.action;
+                btn.title = config.title;
+                btn.textContent = config.icon;
                 
-                // Insere no INÍCIO ABSOLUTO da toolbar
-                if (toolbar.firstChild) {
-                    toolbar.insertBefore(btnShare, toolbar.firstChild);
+                if (config.isGroup) {
+                    arrowGroup.appendChild(btn);
                 } else {
-                    toolbar.appendChild(btnShare);
+                    toolbar.appendChild(btn);
                 }
             }
+        });
 
-            // B. Verificar Agrupamento de Setas (🔺 🔻)
-            const existingUp = toolbar.querySelector('button[data-action="move-up"]');
-            const existingDown = toolbar.querySelector('button[data-action="move-down"]');
-            const existingGroup = toolbar.querySelector('.toolbar-btn-group');
-
-            // Caso 1: Botões soltos -> Agrupar
-            if (existingUp && existingDown && !existingGroup) {
-                const groupDiv = document.createElement('div');
-                groupDiv.className = 'toolbar-btn-group';
-                toolbar.insertBefore(groupDiv, existingUp);
-                groupDiv.appendChild(existingUp);
-                groupDiv.appendChild(existingDown);
-            }
-            // Caso 2: Não existem -> Criar Grupo
-            else if (!existingUp && !existingGroup) {
-                const groupDiv = document.createElement('div');
-                groupDiv.className = 'toolbar-btn-group';
-
-                const btnUp = document.createElement('button');
-                btnUp.type = 'button';
-                btnUp.dataset.action = 'move-up';
-                btnUp.title = 'Mover para cima';
-                btnUp.textContent = '🔺';
-
-                const btnDown = document.createElement('button');
-                btnDown.type = 'button';
-                btnDown.dataset.action = 'move-down';
-                btnDown.title = 'Mover para baixo';
-                btnDown.textContent = '🔻';
-                
-                groupDiv.appendChild(btnUp);
-                groupDiv.appendChild(btnDown);
-
-                // Insere após o botão de partilha
-                const shareBtn = toolbar.querySelector('button[data-action="sharing-settings"]');
-                if (shareBtn && shareBtn.nextSibling) {
-                    toolbar.insertBefore(groupDiv, shareBtn.nextSibling);
-                } else {
-                    toolbar.appendChild(groupDiv);
-                }
-            }
-
-            // C. >>> INJEÇÃO DO NOVO BOTÃO DE LINKS (⚡) <<<
-            if (!toolbar.querySelector('button[data-action="manage-box-links"]')) {
-                const btnLink = document.createElement('button');
-                btnLink.type = 'button';
-                btnLink.dataset.action = 'manage-box-links';
-                btnLink.title = 'Hiperligações da Caixa';
-                btnLink.textContent = '⚡';
-                
-                // Lógica de Posicionamento: Antes do botão 🧬 (Append)
-                const appendBtn = toolbar.querySelector('button[data-action="append-mini-note"]');
-                
-                if (appendBtn) {
-                    toolbar.insertBefore(btnLink, appendBtn);
-                } else {
-                    // Fallback: Tenta inserir antes da cor, ou no fim
-                    const colorBtn = toolbar.querySelector('button[data-action="highlight-color"]');
-                    if (colorBtn) toolbar.insertBefore(btnLink, colorBtn);
-                    else toolbar.appendChild(btnLink);
-                }
-            }
-
-            // D. Verificar botão Enviar (🧬)
-            if (!toolbar.querySelector('button[data-action="append-mini-note"]')) {
-                const btnAppend = document.createElement('button');
-                btnAppend.type = 'button';
-                btnAppend.dataset.action = 'append-mini-note';
-                btnAppend.title = 'Enviar para outra nota';
-                btnAppend.textContent = '🧬';
-                
-                // Insere depois do ⚡ (se existir) ou antes da cor
-                const linkBtn = toolbar.querySelector('button[data-action="manage-box-links"]');
-                const colorBtn = toolbar.querySelector('button[data-action="highlight-color"]');
-                
-                if (linkBtn && linkBtn.nextSibling) toolbar.insertBefore(btnAppend, linkBtn.nextSibling);
-                else if (colorBtn) toolbar.insertBefore(btnAppend, colorBtn);
-                else toolbar.appendChild(btnAppend);
-            }
-
-            // E. Verificar botão Destaque (🎨)
-            if (!toolbar.querySelector('button[data-action="highlight-color"]')) {
-                const btnColor = document.createElement('button');
-                btnColor.type = 'button';
-                btnColor.dataset.action = 'highlight-color';
-                btnColor.title = 'Destacar';
-                btnColor.textContent = '🎨';
-                
-                // Insere antes do botão de tópicos
-                const topicsBtn = toolbar.querySelector('button[data-action="manage-mini-note-topics"]');
-                if (topicsBtn) toolbar.insertBefore(btnColor, topicsBtn);
-                else toolbar.appendChild(btnColor);
-            }
-
-            // F. Verificar botão Tópicos (📋)
-            if (!toolbar.querySelector('button[data-action="manage-mini-note-topics"]')) {
-                const btnTopics = document.createElement('button');
-                btnTopics.type = 'button';
-                btnTopics.dataset.action = 'manage-mini-note-topics';
-                btnTopics.title = 'Gerir Tópicos';
-                btnTopics.textContent = '📋';
-                
-                // Insere antes do lixo
-                const trashBtn = toolbar.querySelector('button[data-action="delete-mini-note"]');
-                if (trashBtn) toolbar.insertBefore(btnTopics, trashBtn);
-                else toolbar.appendChild(btnTopics);
+        // 4. GARANTIA DE EDIÇÃO CORRETA
+        toolbar.setAttribute('contenteditable', 'false');
+        
+        const titleArea = wrapper.querySelector('.mini-note-title-input');
+        if (titleArea) {
+            titleArea.removeAttribute('readonly'); // Garante que é editável
+            // Se a configuração global de "Título Completo" estiver ativa:
+            if (typeof appSettings !== 'undefined' && appSettings.showFullTitles) {
+                titleArea.classList.add('wrap-enabled');
+                if (typeof autoResizeTitle === 'function') autoResizeTitle(titleArea);
             }
         }
 
-        // --- ATUALIZAÇÃO VISUAL DOS BOTÕES (ESTADOS) ---
-        // Verifica se as funções existem antes de chamar para evitar erros
+        const contentDiv = wrapper.querySelector('.mini-note-content');
+        if (contentDiv) contentDiv.setAttribute('contenteditable', 'true');
+
+        // 5. ATUALIZAÇÃO VISUAL DOS BOTÕES (Cores e Estados)
         if (typeof updateMiniNoteButtonState === 'function') updateMiniNoteButtonState(wrapper); 
         if (typeof updateHighlightButtonState === 'function') updateHighlightButtonState(wrapper); 
         if (typeof updateSharingButtonState === 'function') updateSharingButtonState(wrapper); 
-        
-        // >>> NOVO: Atualiza o estado visual do botão ⚡ (amarelo se tiver links) <<<
         if (typeof updateBoxLinkButtonState === 'function') updateBoxLinkButtonState(wrapper);
-
     });
+
+    console.log("✅ [SISTEMA] Estrutura das entidades verificada e corrigida.");
 }
 
 
@@ -18668,20 +18621,40 @@ async function switchFolderView(mode) {
     // 1. Se já estivermos no modo e na raiz, não faz nada
     if (mode === currentViewMode && navigationStack.length === 0) return;
 
-    // 2. Limpeza total de ouvintes (listeners) ativos para evitar conflitos de dados
+    // 2. 🚀 GRAVAÇÃO AUTOMÁTICA ANTES DE MUDAR
+    // Verifica se há algo por guardar (Nota normal ou Post de Arquivo)
+    if (currentSaveStatus === 'unsaved' || activeEditingPostId) {
+        console.log("💾 [SISTEMA] Alterações detetadas. A gravar antes de mudar de vista...");
+        
+        try {
+            if (activeEditingPostId) {
+                // Se estiver num Arquivo e a editar um Post
+                await saveArchivePost(activeEditingPostId);
+            } else if (selectedNoteId) {
+                // Se estiver numa Nota normal
+                await saveNote(true); // O 'true' força a gravação imediata sem esperar pelo timer
+            }
+        } catch (e) {
+            console.error("Erro ao gravar automaticamente:", e);
+            // Opcional: Avisar o utilizador se a gravação falhar (ex: sem net)
+            if (!confirm("Não foi possível gravar as alterações. Deseja mudar de vista na mesma?")) return;
+        }
+    }
+
+    // 3. Limpeza total de ouvintes (listeners) ativos
     if (unsubscribeShared1) { unsubscribeShared1(); unsubscribeShared1 = null; }
     if (unsubscribeShared2) { unsubscribeShared2(); unsubscribeShared2 = null; }
     if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
     
-    // 3. Reset de estado
-    resetEditor();             // Fecha qualquer nota aberta
-    currentViewMode = mode;    // Define o novo modo ('local' ou 'shared')
-    navigationStack = [];      // Volta para a "Raiz" daquele modo
+    // 4. Reset de estado e troca de modo
+    resetEditor();             
+    currentViewMode = mode;    
+    navigationStack = [];      
 
-    // 4. Sincroniza a interface (Esconde as pastas locais da 1ª coluna se for modo Partilha)
+    // 5. Sincroniza a interface
     updateNavigationView(true);
 
-    // 5. Suporte Mobile: se mudar de aba, garante que volta para a lista (meio)
+    // Suporte Mobile
     if (window.innerWidth <= 768) {
         document.body.classList.add('mobile-view-middle');
         document.body.classList.remove('mobile-view-editor');
@@ -18690,25 +18663,20 @@ async function switchFolderView(mode) {
     const myUid = auth.currentUser.uid;
     const foldersRef = collection(db, 'pastas');
 
-    // --- MODO LOCAL ---
+    // --- LÓGICA DE CARREGAMENTO DA LISTA (LOCAL OU PARTILHA) ---
     if (mode === 'local') {
         const addItemBtn = document.getElementById('add-item-btn');
-        if (addItemBtn) addItemBtn.classList.remove('shared-mode'); // Botão volta a ser Azul
-        // A função updateNavigationView(true) chamada acima já tratou de recarregar a lista local
+        if (addItemBtn) addItemBtn.classList.remove('shared-mode');
     } 
-    
-    // --- MODO PARTILHA ---
     else if (mode === 'shared') {
         middlePanelTitle.textContent = "Arquivos Partilhados";
         middlePanelList.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A procurar arquivos...</span></div>';
 
         const addItemBtn = document.getElementById('add-item-btn');
-        if (addItemBtn) addItemBtn.classList.add('shared-mode'); // Botão fica Vermelho
+        if (addItemBtn) addItemBtn.classList.add('shared-mode');
 
-        // Usamos um Map para gerir os resultados de duas consultas diferentes sem duplicar itens
         let resultsMap = new Map();
 
-        // Função interna para desenhar a lista sempre que houver mudanças no Firebase
         const renderUnifiedList = () => {
             middlePanelList.innerHTML = '';
             if (resultsMap.size === 0) {
@@ -18716,9 +18684,8 @@ async function switchFolderView(mode) {
                 return;
             }
 
-            // Converte o Map para Array e ordena alfabeticamente
             Array.from(resultsMap.values())
-                .sort((a, b) => a.nome.localeCompare(b.nome))
+                .sort((a, b) => (a.nome || "").localeCompare(b.nome || ""))
                 .forEach(item => {
                     const li = document.createElement('li');
                     li.className = 'list-item';
@@ -18727,37 +18694,17 @@ async function switchFolderView(mode) {
                     li.setAttribute('data-name', item.nome);
                     li.setAttribute('data-userid', item.userId);
 
-                    li.style.borderLeft = "4px solid #e74c3c"; // Borda vermelha de partilha
+                    li.style.borderLeft = "4px solid #e74c3c";
                     const isOwner = item.userId === myUid;
-                    
-                    // Ícone diferente se fores o dono (Rei) ou convidado (Aperto de mão)
                     li.innerHTML = `<span>${isOwner ? '👑' : '🤝'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
-                    
-                    // Se fores o dono mas o arquivo estiver "inativo", ele aparece mais claro
                     if (isOwner && item.partilhado !== "ativo") li.style.opacity = "0.7";
-
                     middlePanelList.appendChild(li);
                 });
         };
 
-        // CONSULTA 1: Arquivos que EU criei como partilhados
-        const q1 = query(
-            foldersRef, 
-            where('userId', '==', myUid), 
-            where('tipo', '==', 'partilhado'), 
-            where('estado', '==', 'ativa')
-        );
+        const q1 = query(foldersRef, where('userId', '==', myUid), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
+        const q2 = query(foldersRef, where(`colaboradores.${myUid}`, '==', true), where('partilhado', '==', 'ativo'), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
 
-        // CONSULTA 2: Arquivos de OUTRAS pessoas onde eu sou colaborador (e estão ativos)
-        const q2 = query(
-            foldersRef, 
-            where(`colaboradores.${myUid}`, '==', true), 
-            where('partilhado', '==', 'ativo'), 
-            where('tipo', '==', 'partilhado'), 
-            where('estado', '==', 'ativa')
-        );
-
-        // Inicia o ouvinte para a Consulta 1
         unsubscribeShared1 = onSnapshot(q1, (snapshot) => {
             snapshot.docChanges().forEach(change => {
                 if (change.type === "removed") resultsMap.delete(change.doc.id);
@@ -18766,7 +18713,6 @@ async function switchFolderView(mode) {
             renderUnifiedList();
         });
 
-        // Inicia o ouvinte para a Consulta 2
         unsubscribeShared2 = onSnapshot(q2, (snapshot) => {
             snapshot.docChanges().forEach(change => {
                 if (change.type === "removed") resultsMap.delete(change.doc.id);
@@ -20616,14 +20562,14 @@ document.getElementById('robot-insert-btn').addEventListener('click', () => {
             fullHTML += `<p id="${uniqueId}"><br></p><p><strong>${item.text}</strong></p>`;
         } else {
             // Caixa de Questão
-            fullHTML += `
-                <div class="mini-note-wrapper question-mode" id="${uniqueId}" data-topics='{}' data-shared="false" data-box-links='{}' contenteditable="false" style="margin: 20px 0;">
-                    <textarea class="mini-note-title-input" readonly rows="1">${item.text}</textarea>
-                    ${toolbarHTML}
-                    <div class="mini-note-content" contenteditable="true">
-                        <p><br></p>
-                    </div>
-                </div><p><br></p>`;
+          fullHTML += `
+    <div class="mini-note-wrapper question-mode" id="${uniqueId}" ...>
+        <textarea class="mini-note-title-input" readonly rows="1">${item.text}</textarea>
+        ${toolbarHTML}
+        <div class="mini-note-content" contenteditable="true">
+            <p><br></p>
+        </div>
+    </div><p><br></p>`;
         }
     });
 
