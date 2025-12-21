@@ -464,10 +464,50 @@ a[data-anexo-id] { color: inherit; text-decoration: none; border-bottom: 1px dot
 
 /* Componentes Internos */
 .mini-note-title-input {
-    background: none; border: none; color: var(--accent-color);
-    font-size: 1.4em; font-weight: bold; padding: 5px 0; margin-bottom: 15px;
-    border-bottom: 1px solid var(--border-color); outline: none; width: 100%; font-family: inherit;
+    display: block;
+    width: 100%;
+    background: transparent !important;
+    border: none !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    color: var(--accent-color) !important;
+    
+    /* FORÇA A FONTE ORIGINAL DO TEU SITE */
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    font-size: 1.4em !important;
+    font-weight: bold !important;
+    
+    padding: 0 !important;
+    margin: 0 0 15px 0 !important;
+    outline: none !important;
+    resize: none !important;
+    
+    /* REMOVE BARRA DE SCROLL E SETA */
+    overflow: hidden !important; 
+    line-height: 1.2 !important;
 }
+
+/* QUANDO A OPÇÃO ESTÁ DESLIGADA (Imita o input antigo) */
+.mini-note-title-input:not(.wrap-enabled) {
+    white-space: nowrap !important; /* Impede quebra de linha */
+    height: 1.5em !important;       /* Altura exata de uma linha */
+}
+
+/* QUANDO A OPÇÃO ESTÁ LIGADA */
+.mini-note-title-input.wrap-enabled {
+    white-space: pre-wrap !important; /* Permite quebra de linha */
+    height: auto;
+}
+
+/* Garante que se for Questão, mantém o Verde */
+.mini-note-wrapper.question-mode .mini-note-title-input {
+    color: var(--question-color) !important;
+}
+
+/* Quando a configuração estiver ativa, o campo expande */
+.mini-note-title-input.wrap-enabled {
+    word-break: break-word;
+}
+
 .mini-note-wrapper.question-mode .mini-note-title-input { color: var(--question-color); }
 
 .mini-note-content {
@@ -4187,7 +4227,7 @@ a.board-link:hover {
         </div>
     </div>
     
-  <!-- MODAL DE CONFIGURAÇÕES -->
+ <!-- MODAL DE CONFIGURAÇÕES -->
   <div id="settings-modal" class="modal-overlay">
     <div class="modal-content">
         <h3>Configurações</h3>
@@ -4235,13 +4275,28 @@ a.board-link:hover {
             <span class="setting-label">Pesquisar <strong>Globalmente</strong> dentro de Superpastas</span>
         </div>
 
+        <!-- NOVO: Secção de Títulos Entidades -->
+        <hr style="border: 0; border-top: 1px solid var(--border-color); margin-bottom: 15px;">
+        <h4 style="margin-bottom: 10px; color: var(--accent-color);">Títulos Entidades</h4>
+        <p style="font-size: 0.85em; color: var(--text-muted-color); margin-bottom: 15px;">
+            Permite que os títulos de Questões e Subnotas ocupem várias linhas se o texto for grande.
+        </p>
+
+        <div class="setting-toggle-container">
+            <label class="setting-switch">
+                <input type="checkbox" id="setting-full-titles">
+                <span class="slider round"></span>
+            </label>
+            <span class="setting-label">Mostrar Título Completo de Entidade</span>
+        </div>
+
         <div class="modal-actions" style="margin-top: 25px;">
             <button class="modal-btn secondary" data-action="cancel">Fechar</button>
         </div>
     </div>
 </div>
 
-    <!-- MODAL MINHA CONTA -->
+<!-- MODAL MINHA CONTA -->
 <div id="account-modal" class="modal-overlay">
     <div class="modal-content">
         <h3>Minha Conta</h3>
@@ -5146,7 +5201,8 @@ let appSettings = {
     searchTagsInProtected: false,
     searchTopicsInProtected: false,
     searchAnchorsInProtected: false,
-    searchGlobalInSuperfolder: false 
+    searchGlobalInSuperfolder: false,
+    showFullTitles: false // Nova definição
 };
 let currentBookmarkSort = 'texto'; // Opções: 'texto', 'categoria', 'descricao'
 let savedRange = null;
@@ -5345,6 +5401,11 @@ onAuthStateChanged(auth, async (user) => {
             const savedSettings = configSnap.data();
             appSettings = { ...appSettings, ...savedSettings };
             
+             // SINCRONIZA O CHECKBOX COM A BASE DE DADOS
+    if(document.getElementById('setting-full-titles')) {
+        document.getElementById('setting-full-titles').checked = appSettings.showFullTitles || false;
+    }
+
             // Atualiza os checkboxes no modal de definições
             if(document.getElementById('setting-search-tags')) document.getElementById('setting-search-tags').checked = appSettings.searchTagsInProtected;
             if(document.getElementById('setting-search-topics')) document.getElementById('setting-search-topics').checked = appSettings.searchTopicsInProtected;
@@ -5398,6 +5459,13 @@ async function saveUserSettings() {
     appSettings.searchTagsInProtected = document.getElementById('setting-search-tags').checked;
     appSettings.searchTopicsInProtected = document.getElementById('setting-search-topics').checked;
     appSettings.searchAnchorsInProtected = document.getElementById('setting-search-anchors').checked;
+    appSettings.showFullTitles = document.getElementById('setting-full-titles').checked; 
+
+    if(document.getElementById('setting-full-titles')) 
+    document.getElementById('setting-full-titles').checked = appSettings.showFullTitles;
+
+    // Após gravar no Firebase, aplique o efeito imediatamente na nota aberta
+applyTitleWrappingEffect();
 
     const globalSearchToggle = document.getElementById('setting-global-search-superfolder');
     if (globalSearchToggle) {
@@ -5441,6 +5509,7 @@ async function saveUserSettings() {
 document.getElementById('setting-search-tags').addEventListener('change', saveUserSettings);
 document.getElementById('setting-search-topics').addEventListener('change', saveUserSettings);
 document.getElementById('setting-search-anchors').addEventListener('change', saveUserSettings);
+document.getElementById('setting-full-titles').addEventListener('change', saveUserSettings);
 
 const globalSearchToggle = document.getElementById('setting-global-search-superfolder');
 if (globalSearchToggle) {
@@ -7591,16 +7660,15 @@ function updateMiddlePanelForFolderSelection(folderId, folderName, selectedEleme
 async function displayNote(noteId, noteElement, searchTerm = null) {
     console.log(`%c🚀 [displayNote] Abrindo Nota: ${noteId}`, "color: #4a90e2; font-weight: bold;");
     
-    // 1. Limpeza Imediata e Reset de Scroll (Para evitar o "flash" da nota anterior)
+    // 1. Limpeza Imediata e Reset de Scroll
     const noteTitleInput = document.getElementById('note-title-input');
     const noteContentEditor = document.getElementById('note-content-editor');
     const editorArea = document.getElementById('editor-area');
     const rightPanel = document.getElementById('right-panel');
 
-    if (noteTitleInput) noteTitleInput.value = ""; // Limpa título antigo
-    if (noteContentEditor) noteContentEditor.innerHTML = ""; // Limpa conteúdo antigo
+    if (noteTitleInput) noteTitleInput.value = ""; 
+    if (noteContentEditor) noteContentEditor.innerHTML = ""; 
     
-    // Reset de scroll imediato
     if (editorArea) editorArea.scrollTop = 0;
     if (noteContentEditor) noteContentEditor.scrollTop = 0;
     if (rightPanel) rightPanel.scrollTop = 0;
@@ -7611,7 +7679,7 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
     const placeholder = document.getElementById('editor-placeholder');
     const archiveArea = document.getElementById('archive-area');
 
-    // --- MÁGICA DE VISIBILIDADE ---
+    // Visibilidade dos painéis
     if (placeholder) placeholder.style.display = 'none';
     if (archiveArea) archiveArea.style.setProperty('display', 'none', 'important');
     
@@ -7621,7 +7689,7 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
         editorArea.style.opacity = '1';
     }
 
-    // Limpeza visual da lista
+    // Limpeza visual da lista lateral
     document.querySelectorAll('.list-item.selected, .list-item.selected-red').forEach(el => {
         el.classList.remove('selected', 'selected-red');
     });
@@ -7632,7 +7700,7 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
     }
 
     try {
-        // 2. Pedido ao Banco de Dados (O código "para" aqui um pouco)
+        // 2. Pedido ao Banco de Dados
         const noteRef = doc(db, 'pastas', noteId);
         const noteSnap = await getDoc(noteRef);
 
@@ -7644,15 +7712,39 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
                 return;
             }
 
-            // 3. Só agora injetamos os novos dados
+            // Injetar dados no editor
             noteTitleInput.value = data.nome || '';
             noteContentEditor.innerHTML = data.conteudo || '';
             
-            // Reforço de scroll após o conteúdo ser renderizado
-            if (editorArea) editorArea.scrollTop = 0;
-
+            // 3. Pós-processamento: Corrigir Widgets e Notas Antigas
             if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
             if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
+
+            // --- NOVO: AJUSTE AUTOMÁTICO DE TÍTULOS (WRAP) ---
+            setTimeout(() => {
+                const titles = noteContentEditor.querySelectorAll('.mini-note-title-input');
+                titles.forEach(t => {
+                    // Se a configuração estiver ativa, aplicamos o ajuste de altura
+                    if (appSettings.showFullTitles) {
+                        t.classList.add('wrap-enabled');
+                        
+                        // Garante que o campo cresce para caber o texto
+                        if (typeof autoResizeTitle === 'function') {
+                            autoResizeTitle(t);
+                        }
+
+                        // Garante que continua a ajustar enquanto o utilizador escreve
+                        t.addEventListener('input', () => {
+                            if (typeof autoResizeTitle === 'function') autoResizeTitle(t);
+                        });
+                    }
+                });
+
+                // Executa scroll para termo de pesquisa se vier de uma busca
+                if (searchTerm) {
+                    scrollToAndHighlightText(searchTerm);
+                }
+            }, 150); // Delay curto para garantir que o DOM renderizou o HTML
 
             updateSaveStatus('saved');
 
@@ -7664,6 +7756,7 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
         console.error("Erro no displayNote:", error);
     }
     
+    // Ajuste para Mobile
     if (window.innerWidth <= 768) {
         document.body.classList.remove('mobile-view-middle');
         document.body.classList.add('mobile-view-editor');
@@ -7878,20 +7971,17 @@ async function executeSave() {
 function insertMiniNoteAtCursor(type = 'default') {
     const editor = document.getElementById('note-content-editor');
     
-    // 1. Tenta obter a seleção atual
+    // 1. Obter a seleção atual
     let selection = window.getSelection();
     let range;
 
-    // 2. Verifica se a seleção é válida e está DENTRO do editor
     if (selection.rangeCount > 0) {
         const anchorNode = selection.anchorNode;
         const safeNode = anchorNode.nodeType === 3 ? anchorNode.parentElement : anchorNode;
         
-        // Se o cursor estiver fora do editor (ex: no botão), forçamos o foco no final
         if (!editor.contains(safeNode)) {
-            selection = null; // Invalida para forçar fallback
+            selection = null; 
         } else {
-            // Verifica se não estamos a tentar inserir DENTRO de outra caixa (proibido)
             if (safeNode.closest('.mini-note-wrapper')) {
                 alert("Não pode inserir uma caixa dentro de outra. Clique fora primeiro.");
                 return;
@@ -7900,54 +7990,51 @@ function insertMiniNoteAtCursor(type = 'default') {
         }
     }
 
-    // 3. FALLBACK: Se não houver seleção válida, cria no final do editor
+    // Fallback: criar no final se não houver seleção
     if (!selection || !range) {
-        // Foca no editor
         editor.focus();
-        
-        // Cria um novo range no final
         range = document.createRange();
         range.selectNodeContents(editor);
-        range.collapse(false); // false = ir para o fim
-        
-        // Atualiza a seleção do navegador
+        range.collapse(false);
         selection = window.getSelection();
         selection.removeAllRanges();
         selection.addRange(range);
     }
 
-    // 4. Preparar HTML
     const miniNoteId = `mn_${Date.now()}`;
     let wrapperClass = 'mini-note-wrapper';
     let titleHTML = ''; 
     
+    // Configuração do Título como TEXTAREA ( rows="1" para começar pequeno )
     if (type === 'question') {
         wrapperClass += ' question-mode';
-        titleHTML = `<input type="text" class="mini-note-title-input" placeholder="Título da Questão..." value="">`;
+        titleHTML = `<textarea class="mini-note-title-input" placeholder="Título da Questão..." rows="1"></textarea>`;
     } else if (type === 'free') {
         wrapperClass += ' free-mode';
         titleHTML = ''; 
     } else {
-        titleHTML = `<input type="text" class="mini-note-title-input" placeholder="Título da Sub-Nota..." value="">`;
+        titleHTML = `<textarea class="mini-note-title-input" placeholder="Título da Sub-Nota..." rows="1"></textarea>`;
     }
 
-    // HTML Seguro (com parágrafos de espaçamento antes e depois)
+    const commonToolbarHTML = `
+        <div class="mini-note-toolbar" contenteditable="false">
+            <button type="button" data-action="sharing-settings" title="Definições de Partilha">🔐</button>
+            <div class="toolbar-btn-group">
+                <button type="button" data-action="move-up" title="Mover para cima">🔺</button>
+                <button type="button" data-action="move-down" title="Mover para baixo">🔻</button>
+            </div>
+            <button type="button" data-action="manage-box-links" title="Hiperligações da Caixa">⚡</button>
+            <button type="button" data-action="append-mini-note" title="Enviar para outra nota">🧬</button>
+            <button type="button" data-action="highlight-color" title="Destacar">🎨</button>
+            <button type="button" data-action="manage-mini-note-topics" title="Gerir Tópicos">📋</button>
+            <button type="button" data-action="delete-mini-note" title="Remover">🗑️</button>
+        </div>`;
+
     const miniNoteHTML = `
         <p><br></p>
         <div class="${wrapperClass}" contenteditable="false" id="${miniNoteId}" data-topics='{}' data-shared="false" data-box-links='{}'>
             ${titleHTML}
-            <div class="mini-note-toolbar">
-                <button type="button" data-action="sharing-settings" title="Definições de Partilha">🔐</button>
-                <div class="toolbar-btn-group">
-                    <button type="button" data-action="move-up" title="Mover para cima">🔺</button>
-                    <button type="button" data-action="move-down" title="Mover para baixo">🔻</button>
-                </div>
-                <button type="button" data-action="manage-box-links" title="Hiperligações da Caixa">⚡</button>
-                <button type="button" data-action="append-mini-note" title="Enviar para outra nota">🧬</button>
-                <button type="button" data-action="highlight-color" title="Destacar">🎨</button>
-                <button type="button" data-action="manage-mini-note-topics" title="Gerir Tópicos">📋</button>
-                <button type="button" data-action="delete-mini-note" title="Remover">🗑️</button>
-            </div>
+            ${commonToolbarHTML}
             <div class="mini-note-content" contenteditable="true">
                 <p><br></p>
             </div>
@@ -7955,21 +8042,25 @@ function insertMiniNoteAtCursor(type = 'default') {
         <p><br></p>
     `;
 
-    // 5. Inserir
     document.execCommand('insertHTML', false, miniNoteHTML);
     
-    // 6. Focar no título ou conteúdo da nova caixa
+    // Focar e aplicar lógica de redimensionamento imediato
     setTimeout(() => {
         const insertedWrapper = document.getElementById(miniNoteId);
         if (insertedWrapper) {
-            if (type === 'free') {
+            const titleArea = insertedWrapper.querySelector('.mini-note-title-input');
+            if (titleArea) {
+                titleArea.focus();
+                // Se a configuração estiver ativa, aplicamos o comportamento de wrap
+                if (appSettings.showFullTitles) {
+                    titleArea.classList.add('wrap-enabled');
+                    titleArea.addEventListener('input', () => autoResizeTitle(titleArea));
+                    autoResizeTitle(titleArea);
+                }
+            } else {
                 const contentDiv = insertedWrapper.querySelector('.mini-note-content');
                 if (contentDiv) contentDiv.focus();
-            } else {
-                const titleInput = insertedWrapper.querySelector('.mini-note-title-input');
-                if (titleInput) titleInput.focus();
             }
-            // Faz scroll para a nova caixa
             insertedWrapper.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     }, 50);
@@ -14125,6 +14216,8 @@ function setLeftPanelTitle(text, isBackAction = false) {
         titleEl.innerHTML = `<h2 style="font-size:18px; margin:0;">${text}</h2>`;
     }
 }
+
+
 // ====================================================================
 // FUNÇÃO: MOSTRAR REFERÊNCIAS DE DESTAQUE (4ª COLUNA)
 // ====================================================================
@@ -16764,9 +16857,26 @@ document.addEventListener('click', (e) => {
 // Quando escrevemos no título, forçamos o atributo HTML 'value' a atualizar.
 // Isto permite que o document.execCommand('undo') saiba que o texto mudou.
 noteContentEditor.addEventListener('input', (e) => {
+    // Se o utilizador estiver a escrever no título da Entidade (Questão/Subnota)
     if (e.target.classList.contains('mini-note-title-input')) {
-        // "Cozinha" o valor atual dentro do HTML
-        e.target.setAttribute('value', e.target.value);
+        
+        // SINCRONIZAÇÃO CRÍTICA:
+        // Atualiza o conteúdo interno (para o innerHTML apanhar o texto novo)
+        if (e.target.tagName === 'TEXTAREA') {
+            e.target.textContent = e.target.value;
+        } else {
+            // Mantém suporte para inputs antigos
+            e.target.setAttribute('value', e.target.value);
+        }
+
+        // Se a opção de título completo estiver ligada, ajusta a altura enquanto escreves
+        if (appSettings.showFullTitles) {
+            autoResizeTitle(e.target);
+        }
+
+        // Dispara a gravação automática
+        updateSaveStatus('unsaved');
+        saveNote();
     }
 });
 
@@ -18676,19 +18786,15 @@ window.switchFolderView = switchFolderView;
 function displayArchive(id, data, element = null) {
     console.log(`%c🎨 [SISTEMA] Abrindo Arquivo: ${data.nome}`, "color: #e74c3c; font-weight: bold;");
     
-    // 1. SINCRONIZAÇÃO DE IDS E DADOS
-    // Definir o selectedNoteId é o que garante que as barras laterais "pintam" este item
     selectedNoteId = id; 
     currentArchiveId = id; 
     currentArchiveData = data;
 
-    // 2. DESTAQUE VISUAL IMEDIATO
-    // Remove seleções de qualquer outro item para evitar duplicados
+    // Reset visual de seleções na lista
     document.querySelectorAll('.list-item.selected, .list-item.selected-red').forEach(el => {
         el.classList.remove('selected', 'selected-red');
     });
 
-    // Se a função recebeu o elemento (li) que foi clicado, destaca-o logo
     if (element) {
         const isSharedTab = (currentViewMode === 'shared');
         element.classList.add(isSharedTab ? 'selected-red' : 'selected');
@@ -18698,7 +18804,6 @@ function displayArchive(id, data, element = null) {
     const editorArea = document.getElementById('editor-area');
     const archiveArea = document.getElementById('archive-area');
 
-    // 3. GESTÃO DE VISIBILIDADE (Esconde o editor de notas e mostra o de Arquivo)
     if (placeholder) placeholder.style.setProperty('display', 'none', 'important');
     if (editorArea) editorArea.style.setProperty('display', 'none', 'important');
     
@@ -18706,61 +18811,40 @@ function displayArchive(id, data, element = null) {
         archiveArea.style.display = 'flex';
         archiveArea.style.visibility = 'visible';
         archiveArea.style.opacity = '1';
-        archiveArea.scrollTop = 0; // Garante que o scroll volta ao topo
+        archiveArea.scrollTop = 0;
     }
 
-    // 4. PREENCHER TÍTULO E PERMISSÕES
     const titleInput = document.getElementById('archive-title-input');
     if (titleInput) titleInput.value = data.nome || "";
 
-    // Apenas o dono original do arquivo pode ver o botão de definições de partilha (🔓)
     const shareBtn = document.querySelector('button[data-action="archive-share"]');
     const isOwner = (auth.currentUser && auth.currentUser.uid === data.userId);
-    if (shareBtn) {
-        shareBtn.style.display = isOwner ? 'block' : 'none';
-    }
+    if (shareBtn) shareBtn.style.display = isOwner ? 'block' : 'none';
 
-    // 5. RESET DE ESTADO DAS ABAS (Sempre abre na Prateleira por padrão)
-    currentArchiveTab = 'prateleira';
-    document.querySelectorAll('.archive-tab-btn').forEach(btn => {
-        btn.classList.remove('active');
-        if (btn.dataset.archiveTab === 'prateleira') {
-            btn.classList.add('active');
-        }
-    });
-
-    // 6. STATUS VISUAL
-    const statusEl = document.getElementById('archive-save-status');
-    if (statusEl) {
-        statusEl.textContent = "Guardado";
-        statusEl.style.color = "#27ae60";
-        statusEl.classList.remove('status-error');
-    }
-    currentSaveStatus = 'saved';
-
-    // 7. SISTEMAS EM TEMPO REAL (Colaboração e Presença)
+    // Inicia sistemas Realtime
     if (typeof leaveArchivePresence === 'function') leaveArchivePresence(); 
     initRealtimeCollab(id);
     initPresenceSystem(id);
 
-    // 8. RENDERIZAR O FEED (Posts e Gavetas)
+    // Renderiza os posts
     renderArchiveFeed();
 
-    // 9. NAVEGAÇÃO MOBILE
+    // --- SINCRONIZAÇÃO DE TÍTULOS ---
+    // Garante que a configuração de "Título Completo" é respeitada ao abrir
+    setTimeout(() => {
+        applyTitleWrappingEffect();
+    }, 150);
+
     if (window.innerWidth <= 768) {
         document.body.classList.remove('mobile-view-middle');
         document.body.classList.add('mobile-view-editor');
     }
 }
-// Adicione isto no final da sua função displayArchive atual:
-document.getElementById('create-post-btn').style.display = 'block';
-document.getElementById('create-drawer-trigger-btn').style.display = 'none';
 
 
 // 2. Renderizar o Feed
 async function renderArchiveFeed() {
     const feed = document.getElementById('archive-feed');
-    // Busca os posts diretamente dos dados atuais do arquivo
     const posts = currentArchiveData?.posts || [];
 
     if (currentArchiveTab === 'prateleira') {
@@ -18768,9 +18852,9 @@ async function renderArchiveFeed() {
         posts.forEach(post => feed.appendChild(createPostElement(post)));
     } 
     else {
+        // Modo Gavetas
         feed.innerHTML = '<div style="text-align:center; padding:20px;">A carregar gavetas...</div>';
         try {
-            // Verifica se temos o ID do arquivo
             if (!currentArchiveId) return;
 
             const q = query(
@@ -18784,56 +18868,57 @@ async function renderArchiveFeed() {
 
             if (drawerSnap.empty) {
                 feed.innerHTML = '<div style="text-align:center; color:#888; padding:20px;">Nenhuma gaveta criada para este arquivo.</div>';
-                return;
-            }
+            } else {
+                drawerSnap.forEach(docSnap => {
+                    const drawer = { id: docSnap.id, ...docSnap.data() };
+                    const postsInDrawer = posts.filter(p => (drawer.posts || []).includes(p.id));
 
-            drawerSnap.forEach(docSnap => {
-                const drawer = { id: docSnap.id, ...docSnap.data() };
-                // Filtra quais os posts que pertencem a esta gaveta específica
-                const postsInDrawer = posts.filter(p => (drawer.posts || []).includes(p.id));
+                    const details = document.createElement('details');
+                    details.className = 'drawer-toggle';
+                    details.innerHTML = `
+                        <summary style="display: flex; justify-content: space-between; align-items: center; width: 100%; cursor: pointer; padding: 10px;">
+                             <div style="display: flex; align-items: center; gap: 10px;">
+                                <span>📂 <strong>${drawer.nome}</strong></span>
+                                <small style="opacity:0.6;">${postsInDrawer.length} posts</small>
+                            </div>
+                            <div class="drawer-controls" style="display: flex; gap: 5px;">
+                                <button onclick="event.preventDefault(); event.stopPropagation(); moveDrawer('${drawer.id}', -1)" class="mini-btn">↑</button>
+                                <button onclick="event.preventDefault(); event.stopPropagation(); moveDrawer('${drawer.id}', 1)" class="mini-btn">↓</button>
+                                <button onclick="toggleDrawerMode('${drawer.id}', '${drawer.viewMode}', event)" class="mini-btn">
+                                    ${drawer.viewMode === 'full' ? '👁️‍🗨️ Títulos' : '📖 Tudo'}
+                                </button>
+                                <button onclick="event.preventDefault(); event.stopPropagation(); openEditDrawerModal('${drawer.id}', '${drawer.nome}', '${drawer.descricao || ''}')" class="mini-btn">✏️</button>
+                                <button onclick="event.preventDefault(); event.stopPropagation(); deleteDrawer('${drawer.id}')" class="mini-btn" style="color:#e74c3c">🗑️</button>
+                            </div>
+                        </summary>
+                        <div class="drawer-content" style="padding: 15px; display: flex; flex-direction: column; gap: 15px;"></div>
+                    `;
 
-                const details = document.createElement('details');
-                details.className = 'drawer-toggle';
-                
-                // Manter o HTML que já criámos antes com o stopPropagation...
-                details.innerHTML = `
-                    <summary style="display: flex; justify-content: space-between; align-items: center; width: 100%; cursor: pointer; padding: 10px;">
-                         <div style="display: flex; align-items: center; gap: 10px;">
-                            <span>📂 <strong>${drawer.nome}</strong></span>
-                            <small style="opacity:0.6;">${postsInDrawer.length} posts</small>
-                        </div>
-                        <div class="drawer-controls" style="display: flex; gap: 5px;">
-                            <button onclick="event.preventDefault(); event.stopPropagation(); moveDrawer('${drawer.id}', -1)" class="mini-btn">↑</button>
-                            <button onclick="event.preventDefault(); event.stopPropagation(); moveDrawer('${drawer.id}', 1)" class="mini-btn">↓</button>
-                            <button onclick="toggleDrawerMode('${drawer.id}', '${drawer.viewMode}', event)" class="mini-btn">
-                                ${drawer.viewMode === 'full' ? '👁️‍🗨️ Títulos' : '📖 Tudo'}
-                            </button>
-                            <button onclick="event.preventDefault(); event.stopPropagation(); openEditDrawerModal('${drawer.id}', '${drawer.nome}', '${drawer.descricao || ''}')" class="mini-btn">✏️</button>
-                            <button onclick="event.preventDefault(); event.stopPropagation(); deleteDrawer('${drawer.id}')" class="mini-btn" style="color:#e74c3c">🗑️</button>
-                        </div>
-                    </summary>
-                    <div class="drawer-content" style="padding: 15px; display: flex; flex-direction: column; gap: 15px;"></div>
-                `;
-
-                const contentDiv = details.querySelector('.drawer-content');
-                postsInDrawer.forEach(p => {
-                    if (drawer.viewMode === 'titles') {
-                        const tb = document.createElement('div');
-                        tb.style.cssText = "padding:10px; background:var(--sidebar-color); border-radius:4px; border-left:3px solid var(--accent-color); margin-bottom:5px;";
-                        tb.innerHTML = `<strong>📄 ${p.title || 'Sem Título'}</strong>`;
-                        contentDiv.appendChild(tb);
-                    } else {
-                        contentDiv.appendChild(createPostElement(p));
-                    }
+                    const contentDiv = details.querySelector('.drawer-content');
+                    postsInDrawer.forEach(p => {
+                        if (drawer.viewMode === 'titles') {
+                            const tb = document.createElement('div');
+                            tb.style.cssText = "padding:10px; background:var(--sidebar-color); border-radius:4px; border-left:3px solid var(--accent-color); margin-bottom:5px;";
+                            tb.innerHTML = `<strong>📄 ${p.title || 'Sem Título'}</strong>`;
+                            contentDiv.appendChild(tb);
+                        } else {
+                            contentDiv.appendChild(createPostElement(p));
+                        }
+                    });
+                    feed.appendChild(details);
                 });
-                
-                feed.appendChild(details);
-            });
+            }
         } catch (e) { 
-            console.error("Erro ao puxar gavetas:", e);
-            feed.innerHTML = '<div style="color:red; text-align:center;">Erro ao carregar. Verifique o Índice do Firebase.</div>';
+            console.error("Erro gavetas:", e);
+            feed.innerHTML = '<div style="color:red; text-align:center;">Erro ao carregar gavetas.</div>';
         }
     }
+
+    // --- SINCRONIZAÇÃO VISUAL DOS TÍTULOS ---
+    // Pequeno delay para garantir que o navegador acabou de renderizar os elementos
+    setTimeout(() => {
+        applyTitleWrappingEffect();
+    }, 60);
 }
 
 // 3. Criar Elemento HTML do Post
@@ -19026,26 +19111,14 @@ window.createArchiveEntity = (subType) => {
 
 // Lógica de Criação de Post Novo
 async function createNewPost(type, subType = null) {
-    console.log(`🚀 [createNewPost] A iniciar criação: Tipo=${type}, Sub=${subType}`);
-
-    // 1. Garantir que os dados do arquivo existem
-    if (!currentArchiveData) {
-        console.error("❌ [createNewPost] Erro: currentArchiveData é nulo.");
-        alert("Erro interno: Dados do arquivo não carregados.");
-        return;
-    }
-
-    // 2. CORREÇÃO CRÍTICA: Garantir que o array 'posts' existe
-    if (!currentArchiveData.posts || !Array.isArray(currentArchiveData.posts)) {
-        console.warn("⚠️ [createNewPost] Array 'posts' não existia. A inicializar...");
-        currentArchiveData.posts = [];
-    }
+    if (!currentArchiveData) return;
+    if (!currentArchiveData.posts) currentArchiveData.posts = [];
 
     const newId = 'post_' + Date.now();
     let initialContent = '';
     let initialTitle = '';
+    const authorName = currentUserData?.nome || auth.currentUser.email.split('@')[0];
 
-    // HTML da Barra de Ferramentas (Comum)
     const commonToolbarHTML = `
         <div class="mini-note-toolbar" contenteditable="false">
             <button type="button" data-action="sharing-settings" title="Definições de Partilha">🔐</button>
@@ -19061,21 +19134,22 @@ async function createNewPost(type, subType = null) {
         </div>
     `;
 
-    // --- Configuração do Conteúdo ---
     if (type === 'text') {
         initialTitle = ''; 
         initialContent = '<p><br></p>';
     } 
     else if (type === 'entity') {
         if (subType === 'question') {
+            // Usando TEXTAREA para o título da questão
             initialContent = `
                 <div class="mini-note-wrapper question-mode" data-topics="{}" data-shared="false" data-box-links="{}" contenteditable="false">
-                    <input type="text" class="mini-note-title-input" placeholder="Pergunta?" value="">
+                    <textarea class="mini-note-title-input" placeholder="Pergunta?" rows="1"></textarea>
                     ${commonToolbarHTML}
                     <div class="mini-note-content" contenteditable="true"><p><br></p></div>
                 </div>`;
             initialTitle = 'Nova Questão';
         } else if (subType === 'toggle') {
+            // Toggles já usam H2, que quebra linha naturalmente
             initialContent = `
                 <details class="toggle-section" open>
                     <summary>
@@ -19091,10 +19165,11 @@ async function createNewPost(type, subType = null) {
         } else {
             const isFree = subType === 'free';
             const cls = isFree ? 'mini-note-wrapper free-mode' : 'mini-note-wrapper';
-            const titleInputHTML = isFree ? '' : `<input type="text" class="mini-note-title-input" placeholder="Título..." value="">`;
+            // Usando TEXTAREA para Subnota normal
+            const titleHTML = isFree ? '' : `<textarea class="mini-note-title-input" placeholder="Título..." rows="1"></textarea>`;
             initialContent = `
                 <div class="${cls}" data-topics="{}" data-shared="false" data-box-links="{}" contenteditable="false">
-                    ${titleInputHTML}
+                    ${titleHTML}
                     ${commonToolbarHTML}
                     <div class="mini-note-content" contenteditable="true"><p><br></p></div>
                 </div>`;
@@ -19102,44 +19177,26 @@ async function createNewPost(type, subType = null) {
         }
     }
 
-     // CAPTURAR O NOME DO AUTOR
-    const authorName = currentUserData?.nome || auth.currentUser.email.split('@')[0];
-
-    // 3. Criar Objeto
     const newPost = {
         id: newId,
         type: type,
         subType: subType, 
         title: initialTitle,
         content: initialContent,
-         createdBy: authorName,
+        createdBy: authorName,
         createdAt: Date.now(),
         updatedAt: Date.now()
     };
 
-    // 4. Inserir no início da lista
     currentArchiveData.posts.unshift(newPost);
-
-    // 5. Ativar modo edição para este post
     activeEditingPostId = newId;
     
-    // 6. Atualizar o Ecrã
-    console.log("🎨 [createNewPost] A renderizar feed...");
     renderArchiveFeed();
     
-    // 7. Feedback e Gravação
-    // No mobile, fazemos scroll para o topo para garantir que o utilizador vê o novo post
     const feedContainer = document.getElementById('archive-feed');
     if (feedContainer) feedContainer.scrollTop = 0;
 
-    try {
-        await saveFullArchive();
-        // Tenta bloquear (opcional, ignora erro se falhar)
-        if (typeof lockPost === 'function') lockPost(newId); 
-    } catch (e) {
-        console.error("❌ Erro ao gravar novo post:", e);
-        // Não mostramos alert para não interromper o fluxo, o indicador de status mostrará erro
-    }
+    await saveFullArchive();
 }
 
 // E. Editar Post
@@ -19183,21 +19240,22 @@ window.saveArchivePost = async (postId) => {
     const titleInputGeneric = postDiv.querySelector('.post-title-input');
     const contentEditor = postDiv.querySelector('.post-editor-content');
 
-    if (contentEditor && titleInputGeneric) {
+   if (contentEditor && titleInputGeneric) {
         const postIndex = currentArchiveData.posts.findIndex(p => p.id === postId);
         if (postIndex > -1) {
-            let finalTitle = titleInputGeneric.value.trim();
-            if (!finalTitle) finalTitle = "Sem Título";
-
-            // Sincronização: Força o valor dos inputs internos (títulos de subnotas) 
-            // a ficarem gravados no atributo HTML 'value' para o snapshot ser fiel.
-            const internalInputs = contentEditor.querySelectorAll('input');
-            internalInputs.forEach(input => {
-                input.setAttribute('value', input.value);
+            
+            // SINCRONIZAÇÃO DOS TÍTULOS INTERNOS (Questões/Subnotas dentro do post)
+            const internalTitles = contentEditor.querySelectorAll('.mini-note-title-input');
+            internalTitles.forEach(t => {
+                if (t.tagName === 'TEXTAREA') {
+                    t.textContent = t.value; // Grava o texto dentro das tags <textarea>
+                } else {
+                    t.setAttribute('value', t.value); // Grava no atributo value se for input
+                }
             });
 
             // Atualiza os dados na memória local
-            currentArchiveData.posts[postIndex].title = finalTitle;
+            currentArchiveData.posts[postIndex].title = titleInputGeneric.value.trim() || "Sem Título";
             currentArchiveData.posts[postIndex].content = contentEditor.innerHTML;
             currentArchiveData.posts[postIndex].updatedAt = Date.now();
         }
@@ -20560,7 +20618,7 @@ document.getElementById('robot-insert-btn').addEventListener('click', () => {
             // Caixa de Questão
             fullHTML += `
                 <div class="mini-note-wrapper question-mode" id="${uniqueId}" data-topics='{}' data-shared="false" data-box-links='{}' contenteditable="false" style="margin: 20px 0;">
-                    <input type="text" class="mini-note-title-input" value="${item.text.replace(/"/g, '&quot;')}" readonly>
+                    <textarea class="mini-note-title-input" readonly rows="1">${item.text}</textarea>
                     ${toolbarHTML}
                     <div class="mini-note-content" contenteditable="true">
                         <p><br></p>
@@ -20614,6 +20672,87 @@ document.getElementById('append-back-btn').onclick = () => {
         loadAppendList(null);
     }
 };
+
+function applyTitleWrappingEffect() {
+    // Procura todos os títulos (no Editor Principal e no Feed do Arquivo)
+    const allTitles = document.querySelectorAll('.mini-note-title-input');
+    
+    allTitles.forEach(t => {
+        // 1. CONVERSÃO: Se ainda for um INPUT, transforma em TEXTAREA para suportar Wrap
+        if (t.tagName === 'INPUT') {
+            const textarea = document.createElement('textarea');
+            textarea.className = t.className;
+            // Tenta obter o valor de várias formas para não perder dados
+            textarea.value = t.value || t.getAttribute('value') || "";
+            textarea.placeholder = t.placeholder || "";
+            if (t.readOnly) textarea.readOnly = true;
+            
+            // Copia datasets (importante para lógica de botões)
+            if (t.dataset.action) textarea.dataset.action = t.dataset.action;
+            
+            t.parentNode.replaceChild(textarea, t);
+            t = textarea; 
+        }
+
+        // 2. APLICAÇÃO DA REGRA (Baseada nas Configurações)
+        if (appSettings.showFullTitles) {
+            t.classList.add('wrap-enabled');
+            t.style.whiteSpace = "pre-wrap";
+            t.style.overflow = "hidden"; // Esconde scrollbar feia
+            
+            // Ajusta a altura inicial
+            autoResizeTitle(t);
+            
+            // Garante que, se for editável, ajusta enquanto o utilizador escreve
+            if (!t.readOnly) {
+                t.removeEventListener('input', () => autoResizeTitle(t)); // Evita duplicados
+                t.addEventListener('input', () => autoResizeTitle(t));
+            }
+        } else {
+            // MODO DESLIGADO: Volta ao comportamento de uma única linha
+            t.classList.remove('wrap-enabled');
+            t.style.whiteSpace = "nowrap";
+            t.style.height = ""; // Deixa o CSS (1.5em) assumir
+            t.style.overflow = "hidden";
+        }
+    });
+}
+
+// Função auxiliar para garantir que o campo cresce com o texto
+function autoResizeTitle(el) {
+    if (!el) return;
+    
+    // Se a configuração estiver desligada, não forçamos o ajuste de altura
+    if (!appSettings.showFullTitles) {
+        el.style.height = ""; 
+        return;
+    }
+
+    // Reset temporário para calcular o scrollHeight real
+    el.style.height = 'auto';
+    
+    // Define a altura baseada no conteúdo (scrollHeight)
+    // Adicionamos 2px de margem de segurança para evitar barras de scroll
+    el.style.height = (el.scrollHeight) + 'px';
+}
+
+// Função para converter Inputs antigos em Textareas dinâmicos
+function convertToTextarea(inputEl) {
+    const textarea = document.createElement('textarea');
+    textarea.className = inputEl.className;
+    textarea.value = inputEl.value;
+    textarea.placeholder = inputEl.placeholder;
+    textarea.rows = 1;
+    // Copia os datasets
+    Object.assign(textarea.dataset, inputEl.dataset);
+    
+    inputEl.parentNode.replaceChild(textarea, inputEl);
+    
+    textarea.addEventListener('input', () => {
+        autoResizeTitle(textarea);
+        saveNote();
+    });
+}
 
     </script>
 </body>
