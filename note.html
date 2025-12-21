@@ -8003,55 +8003,69 @@ function extractTopicsFromEditorHTML() {
 
 // Função que faz a gravação real no Firebase
 async function executeSave() {
-     if (!selectedNoteId) return;
-    // 1. VERIFICAÇÃO DE SEGURANÇA: MODO ARQUIVO (FEED)
+    // 1. Verificação de segurança: se não há ID ou se a nota está a ser fechada, cancela.
+    if (!selectedNoteId || isClosingNote) return;
+
+    // 2. MODO ARQUIVO (FEED): Se o painel de arquivo estiver aberto, a lógica de save é diferente.
     const archiveArea = document.getElementById('archive-area');
-    
-    // Se o painel de Arquivo estiver visível
     if (archiveArea && archiveArea.style.display !== 'none') {
-        // Se estiver a editar um Post específico, grava o post e fecha
         if (activeEditingPostId) {
-            console.log("💾 [SAVE] Detetado Arquivo em Edição. A fechar e gravar...");
+            console.log("💾 [SAVE] Gravando Post do Arquivo...");
             await saveArchivePost(activeEditingPostId);
             updateSaveStatus('saved');
             return true;
         }
-        // Se for apenas o título principal do Arquivo, o retorno é true porque 
-        // o título tem o seu próprio timer de gravação.
         return true; 
     }
 
-    // 2. CENÁRIO NOTA PADRÃO
-    if (!selectedNoteId) return;
-    
-    // Atualiza visual para o utilizador saber que começou a gravar
+    // 3. SINCRONIZAÇÃO CRÍTICA (O Coração da Correção)
+    // Antes de extrair o .innerHTML, forçamos os valores dos inputs/textareas para dentro do DOM.
+    // Sem isto, o innerHTML ignora o que foi digitado nas caixas e salva-as vazias.
+    const editor = document.getElementById('note-content-editor');
+    if (editor) {
+        const allTitles = editor.querySelectorAll('.mini-note-title-input');
+        allTitles.forEach(t => {
+            if (t.tagName === 'TEXTAREA') {
+                // Sincroniza o valor digitado com o conteúdo interno da tag para o innerHTML ler
+                t.textContent = t.value; 
+            } else {
+                // Suporte para versões antigas que usam <input>
+                t.setAttribute('value', t.value);
+            }
+        });
+    }
+
+    // 4. Início do processo de gravação no Firebase
     updateSaveStatus('saving');
 
-    // Determina o ID de destino (lida com ponteiros/atalhos)
+    // Determina o ID de destino (lida com ponteiros/atalhos se existirem)
     let targetId = selectedNoteId;
-    const editorEl = document.getElementById('note-content-editor');
-    const realId = editorEl ? editorEl.getAttribute('data-real-id') : null;
+    const realId = editor ? editor.getAttribute('data-real-id') : null;
     if (realId) targetId = realId;
 
     const noteRef = doc(db, 'pastas', targetId);
 
     try {
-        // Gravação Principal na coleção 'pastas'
+        // Captura os dados ATUALIZADOS após a sincronização acima
+        const finalTitle = document.getElementById('note-title-input').value;
+        const finalContent = editor.innerHTML;
+
+        // 5. Gravação Principal na coleção 'pastas'
         await updateDoc(noteRef, { 
-            nome: document.getElementById('note-title-input').value, 
-            conteudo: document.getElementById('note-content-editor').innerHTML,
+            nome: finalTitle, 
+            conteudo: finalContent,
             ultimaedicao: serverTimestamp()
         });
 
-        // 3. SINCRONIZAÇÃO COM LINK PÚBLICO (Se a nota estiver partilhada)
+        // 6. SINCRONIZAÇÃO COM LINK PÚBLICO (Se a nota estiver partilhada)
         if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
             try {
                 const shareId = currentNoteShareData.shareId;
                 const publicNoteRef = doc(db, 'shared_notes', shareId);
                 
                 await setDoc(publicNoteRef, {
-                    nome: noteTitleInput.value,
-                    conteudo: noteContentEditor.innerHTML,
+                    nome: finalTitle,
+                    conteudo: finalContent,
                     authorName: currentUserData?.nome || "Anónimo",
                     updatedAt: serverTimestamp(),
                     type: 'full_note' 
@@ -20545,9 +20559,9 @@ document.getElementById('robot-insert-btn').addEventListener('click', () => {
             fullHTML += `<p id="${uniqueId}"><br></p><p><strong>${item.text}</strong></p>`;
         } else {
             // Caixa de Questão
-          fullHTML += `
-    <div class="mini-note-wrapper question-mode" id="${uniqueId}" ...>
-        <textarea class="mini-note-title-input" readonly rows="1">${item.text}</textarea>
+    fullHTML += `
+    <div class="mini-note-wrapper question-mode" id="${uniqueId}">
+        <textarea class="mini-note-title-input" rows="1">${item.text}</textarea>
         ${toolbarHTML}
         <div class="mini-note-content" contenteditable="true">
             <p><br></p>
@@ -20603,47 +20617,44 @@ document.getElementById('append-back-btn').onclick = () => {
 };
 
 function applyTitleWrappingEffect() {
-    const allTitles = document.querySelectorAll('.mini-note-title-input');
+    const editor = document.getElementById('note-content-editor');
+    if (!editor) return;
+
+    const allTitles = editor.querySelectorAll('.mini-note-title-input');
     
     allTitles.forEach(t => {
-        // 1. GARANTIR QUE É TEXTAREA (essencial para quebra de linha)
-        // Se for um input antigo, convertemos para textarea
+        // Se ainda for um INPUT, converte para TEXTAREA (necessário para quebra de linha)
         if (t.tagName === 'INPUT') {
             const textarea = document.createElement('textarea');
             textarea.className = t.className;
-            textarea.value = t.value || t.getAttribute('value') || "";
+            // Pega o valor do atributo value ou do valor atual
+            textarea.value = t.getAttribute('value') || t.value || ""; 
             textarea.placeholder = t.placeholder || "";
-            textarea.setAttribute('autocomplete', 'off');
             textarea.setAttribute('spellcheck', 'false');
             if (t.readOnly) textarea.readOnly = true;
-            if (t.dataset.action) textarea.dataset.action = t.dataset.action;
             t.parentNode.replaceChild(textarea, t);
             t = textarea; 
         }
 
-        // 2. APLICAÇÃO DA REGRA BASEADA NA CONFIGURAÇÃO ATUAL
         if (appSettings && appSettings.showFullTitles === true) {
-            // --- MODO LIGADO (Expandir) ---
             t.classList.add('wrap-enabled');
             t.style.whiteSpace = "pre-wrap";
             t.style.overflow = "hidden";
-            
-            // Ajusta a altura baseado no texto
             t.style.height = 'auto';
             t.style.height = t.scrollHeight + 'px';
             
-            // Ativa ajuste enquanto escreve
             t.oninput = function() {
                 this.style.height = 'auto';
                 this.style.height = this.scrollHeight + 'px';
+                // Sincroniza o textContent para o save não falhar
+                this.textContent = this.value; 
             };
         } else {
-            // --- MODO DESLIGADO (Linha Única) ---
             t.classList.remove('wrap-enabled');
             t.style.whiteSpace = "nowrap";
-            t.style.height = ""; // Deixa o CSS original assumir (1.5em)
+            t.style.height = ""; 
             t.style.overflow = "hidden";
-            t.oninput = null; // Remove o evento de ajuste
+            t.oninput = null;
         }
     });
 }
