@@ -5600,53 +5600,21 @@ onAuthStateChanged(auth, async (user) => {
 async function saveUserSettings() {
     if (!auth.currentUser) return;
     
-    // 1. Atualiza o objeto local com o estado atual dos checkboxes
+    // 1. Atualiza a variável global de imediato
+    appSettings.showFullTitles = document.getElementById('setting-full-titles').checked;
     appSettings.searchTagsInProtected = document.getElementById('setting-search-tags').checked;
     appSettings.searchTopicsInProtected = document.getElementById('setting-search-topics').checked;
     appSettings.searchAnchorsInProtected = document.getElementById('setting-search-anchors').checked;
-    appSettings.showFullTitles = document.getElementById('setting-full-titles').checked; 
 
-    if(document.getElementById('setting-full-titles')) 
-    document.getElementById('setting-full-titles').checked = appSettings.showFullTitles;
+    // 2. Tenta aplicar o efeito agora (se houver nota aberta)
+    applyTitleWrappingEffect();
 
-    // Após gravar no Firebase, aplique o efeito imediatamente na nota aberta
-applyTitleWrappingEffect();
-
-    const globalSearchToggle = document.getElementById('setting-global-search-superfolder');
-    if (globalSearchToggle) {
-        appSettings.searchGlobalInSuperfolder = globalSearchToggle.checked;
-    }
-
-    // 2. Grava na coleção 'configuracoes' usando o ID do usuário
+    // 3. Salva no Firebase para persistência
     try {
         const configRef = doc(db, 'configuracoes', auth.currentUser.uid);
-        
-        // Usamos setDoc com merge para criar ou atualizar
         await setDoc(configRef, appSettings, { merge: true });
-        
-   
-        
-        // Opcional: Feedback visual rápido
-        const originalTitle = document.querySelector('#settings-modal h3').textContent;
-        document.querySelector('#settings-modal h3').textContent = "Configurações (Guardado!)";
-        setTimeout(() => {
-            document.querySelector('#settings-modal h3').textContent = originalTitle;
-        }, 2000);
-
-        // Força uma atualização da vista atual para aplicar as mudanças imediatamente
-        // (Se estiver com um painel de referências aberto, por exemplo)
-        if (activeReferenceEntity.id) {
-             // Se tiver um painel aberto, atualiza-o
-             if (activeReferenceEntity.type === 'topico' || activeReferenceEntity.type === 'subtopico') {
-                 showTopicReferencesPanel(activeReferenceEntity.id, activeReferenceEntity.name, null, activeReferenceEntity.type);
-             } else {
-                 showReferencesPanel(activeReferenceEntity.id, activeReferenceEntity.name, activeReferenceEntity.type);
-             }
-        }
-
     } catch (e) {
-        console.error("Erro ao guardar configurações:", e);
-        alert("Erro ao guardar as definições. Verifique a consola.");
+        console.error("Erro ao salvar:", e);
     }
 }
 
@@ -7778,8 +7746,8 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
     const placeholder = document.getElementById('editor-placeholder');
     const archiveArea = document.getElementById('archive-area');
 
-    // Visibilidade dos painéis
-    if (placeholder) placeholder.style.display = 'none';
+    // Gerir visibilidade dos painéis (esconde placeholder e arquivo, mostra editor)
+    if (placeholder) placeholder.style.setProperty('display', 'none', 'important');
     if (archiveArea) archiveArea.style.setProperty('display', 'none', 'important');
     
     if (editorArea) {
@@ -7788,7 +7756,7 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
         editorArea.style.opacity = '1';
     }
 
-    // Limpeza visual da lista lateral
+    // Limpeza visual da seleção na lista lateral
     document.querySelectorAll('.list-item.selected, .list-item.selected-red').forEach(el => {
         el.classList.remove('selected', 'selected-red');
     });
@@ -7799,13 +7767,14 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
     }
 
     try {
-        // 2. Pedido ao Banco de Dados
+        // 2. Pedido dos dados ao Firestore
         const noteRef = doc(db, 'pastas', noteId);
         const noteSnap = await getDoc(noteRef);
 
         if (noteSnap.exists()) {
             let data = noteSnap.data();
             
+            // Se o tipo for arquivo/feed, redireciona para a função de arquivo
             if (data.tipo === 'partilhado' || data.tipo === 'arquivo') {
                 displayArchive(noteId, data);
                 return;
@@ -7815,35 +7784,25 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
             noteTitleInput.value = data.nome || '';
             noteContentEditor.innerHTML = data.conteudo || '';
             
-            // 3. Pós-processamento: Corrigir Widgets e Notas Antigas
+            // 3. Pós-processamento: Widgets, Calendários e Notas Antigas
             if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
             if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
 
-            // --- NOVO: AJUSTE AUTOMÁTICO DE TÍTULOS (WRAP) ---
+            // ============================================================
+            // 🚀 SINCRONIZAÇÃO DE TÍTULOS (ESTADO DA CONFIGURAÇÃO)
+            // ============================================================
+            // Usamos um setTimeout de 200ms para dar tempo ao browser de 
+            // processar o HTML injetado antes de aplicarmos os estilos dinâmicos.
             setTimeout(() => {
-                const titles = noteContentEditor.querySelectorAll('.mini-note-title-input');
-                titles.forEach(t => {
-                    // Se a configuração estiver ativa, aplicamos o ajuste de altura
-                    if (appSettings.showFullTitles) {
-                        t.classList.add('wrap-enabled');
-                        
-                        // Garante que o campo cresce para caber o texto
-                        if (typeof autoResizeTitle === 'function') {
-                            autoResizeTitle(t);
-                        }
+                if (typeof applyTitleWrappingEffect === 'function') {
+                    applyTitleWrappingEffect();
+                }
 
-                        // Garante que continua a ajustar enquanto o utilizador escreve
-                        t.addEventListener('input', () => {
-                            if (typeof autoResizeTitle === 'function') autoResizeTitle(t);
-                        });
-                    }
-                });
-
-                // Executa scroll para termo de pesquisa se vier de uma busca
+                // Se a nota foi aberta via Pesquisa Global, faz scroll até ao termo
                 if (searchTerm) {
                     scrollToAndHighlightText(searchTerm);
                 }
-            }, 150); // Delay curto para garantir que o DOM renderizou o HTML
+            }, 200); 
 
             updateSaveStatus('saved');
 
@@ -7855,7 +7814,7 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
         console.error("Erro no displayNote:", error);
     }
     
-    // Ajuste para Mobile
+    // Ajuste de Navegação para Mobile (Sistema de Pilha)
     if (window.innerWidth <= 768) {
         document.body.classList.remove('mobile-view-middle');
         document.body.classList.add('mobile-view-editor');
@@ -20507,47 +20466,47 @@ document.getElementById('append-back-btn').onclick = () => {
 };
 
 function applyTitleWrappingEffect() {
-    // Procura todos os títulos (no Editor Principal e no Feed do Arquivo)
     const allTitles = document.querySelectorAll('.mini-note-title-input');
     
     allTitles.forEach(t => {
-        // 1. CONVERSÃO: Se ainda for um INPUT, transforma em TEXTAREA para suportar Wrap
+        // 1. GARANTIR QUE É TEXTAREA (essencial para quebra de linha)
+        // Se for um input antigo, convertemos para textarea
         if (t.tagName === 'INPUT') {
             const textarea = document.createElement('textarea');
             textarea.className = t.className;
-            // Tenta obter o valor de várias formas para não perder dados
             textarea.value = t.value || t.getAttribute('value') || "";
             textarea.placeholder = t.placeholder || "";
             textarea.setAttribute('autocomplete', 'off');
+            textarea.setAttribute('spellcheck', 'false');
             if (t.readOnly) textarea.readOnly = true;
-            
-            // Copia datasets (importante para lógica de botões)
             if (t.dataset.action) textarea.dataset.action = t.dataset.action;
-            
             t.parentNode.replaceChild(textarea, t);
             t = textarea; 
         }
 
-        // 2. APLICAÇÃO DA REGRA (Baseada nas Configurações)
-        if (appSettings.showFullTitles) {
+        // 2. APLICAÇÃO DA REGRA BASEADA NA CONFIGURAÇÃO ATUAL
+        if (appSettings && appSettings.showFullTitles === true) {
+            // --- MODO LIGADO (Expandir) ---
             t.classList.add('wrap-enabled');
             t.style.whiteSpace = "pre-wrap";
-            t.style.overflow = "hidden"; // Esconde scrollbar feia
+            t.style.overflow = "hidden";
             
-            // Ajusta a altura inicial
-            autoResizeTitle(t);
+            // Ajusta a altura baseado no texto
+            t.style.height = 'auto';
+            t.style.height = t.scrollHeight + 'px';
             
-            // Garante que, se for editável, ajusta enquanto o utilizador escreve
-            if (!t.readOnly) {
-                t.removeEventListener('input', () => autoResizeTitle(t)); // Evita duplicados
-                t.addEventListener('input', () => autoResizeTitle(t));
-            }
+            // Ativa ajuste enquanto escreve
+            t.oninput = function() {
+                this.style.height = 'auto';
+                this.style.height = this.scrollHeight + 'px';
+            };
         } else {
-            // MODO DESLIGADO: Volta ao comportamento de uma única linha
+            // --- MODO DESLIGADO (Linha Única) ---
             t.classList.remove('wrap-enabled');
             t.style.whiteSpace = "nowrap";
-            t.style.height = ""; // Deixa o CSS (1.5em) assumir
+            t.style.height = ""; // Deixa o CSS original assumir (1.5em)
             t.style.overflow = "hidden";
+            t.oninput = null; // Remove o evento de ajuste
         }
     });
 }
@@ -20556,17 +20515,17 @@ function applyTitleWrappingEffect() {
 function autoResizeTitle(el) {
     if (!el) return;
     
-    // Se a configuração estiver desligada, não forçamos o ajuste de altura
+    // Se a configuração estiver desligada, não forçamos o ajuste
     if (!appSettings.showFullTitles) {
         el.style.height = ""; 
         return;
     }
 
-    // Reset temporário para calcular o scrollHeight real
+    // Reset para calcular o scrollHeight real
     el.style.height = 'auto';
     
-    // Define a altura baseada no conteúdo (scrollHeight)
-    // Adicionamos 2px de margem de segurança para evitar barras de scroll
+    // Define a altura baseada no conteúdo. 
+    // Usamos o scrollHeight (altura total do texto lá dentro)
     el.style.height = (el.scrollHeight) + 'px';
 }
 
