@@ -15496,64 +15496,82 @@ async function loadAppendList(parentId) {
     const list = document.getElementById('append-list');
     const backBtn = document.getElementById('append-back-btn');
     const pathLabel = document.getElementById('append-current-path');
+    const myUid = auth.currentUser.uid;
     
     list.innerHTML = '<li style="padding:10px;">A carregar...</li>';
 
-    // Gestão de Caminho (Breadcrumbs)
-    if (appendStack.length > 0) {
-        const currentStep = appendStack[appendStack.length - 1];
-        pathLabel.textContent = currentStep.name;
+    // Gestão de Títulos e Botão Voltar
+    if (parentId === "VIRTUAL_SHARED_ROOT") {
+        pathLabel.textContent = "🤝 Partilha";
         backBtn.style.display = 'block';
+        backBtn.textContent = "⬅ Raiz Global";
+    } else if (appendStack.length > 0) {
+        pathLabel.textContent = appendStack[appendStack.length - 1].name;
+        backBtn.style.display = 'block';
+        backBtn.textContent = "⬅ Voltar";
     } else {
-        pathLabel.textContent = parentId === "VIRTUAL_SHARED_ROOT" ? "🤝 Partilha" : (parentId ? "📂 Pasta Atual" : "🌍 Raiz Global");
-        backBtn.style.display = parentId ? 'block' : 'none';
-        if (parentId === "VIRTUAL_SHARED_ROOT") backBtn.textContent = "⬅ Raiz Global";
+        pathLabel.textContent = "🌍 Raiz Global";
+        backBtn.style.display = 'none';
     }
 
     try {
-        let q;
         const foldersRef = collection(db, 'pastas');
+        let unifiedDocs = new Map();
 
-        // LÓGICA DE QUERY
         if (parentId === "VIRTUAL_SHARED_ROOT") {
-            // Carregar Arquivos Partilhados (Dono ou Colaborador)
-            q = query(foldersRef, 
-                where('tipo', '==', 'partilhado'),
+            // REGRA: Buscar onde sou DONO ou onde sou COLABORADOR (true)
+            const qOwner = query(foldersRef, 
+                where('tipo', '==', 'partilhado'), 
                 where('estado', '==', 'ativa'),
-                where('userId', '==', auth.currentUser.uid)
+                where('userId', '==', myUid)
             );
-            // Nota: Se quiseres incluir pastas onde és colaborador, a lógica seria mais complexa (várias queries)
+
+            const qCollab = query(foldersRef, 
+                where('tipo', '==', 'partilhado'), 
+                where('estado', '==', 'ativa'),
+                where(`colaboradores.${myUid}`, '==', true) // A tua regra nova aqui
+            );
+
+            const [snapOwner, snapCollab] = await Promise.all([getDocs(qOwner), getDocs(qCollab)]);
+            
+            snapOwner.forEach(doc => unifiedDocs.set(doc.id, {id: doc.id, ...doc.data()}));
+            snapCollab.forEach(doc => unifiedDocs.set(doc.id, {id: doc.id, ...doc.data()}));
+
         } else {
-            // Navegação Normal
-            q = query(foldersRef,
+            // Navegação normal de pastas locais
+            const qNormal = query(foldersRef,
                 where('parentId', '==', parentId),
                 where('estado', '==', 'ativa'),
-                where('userId', '==', auth.currentUser.uid),
+                where('userId', '==', myUid),
                 orderBy('tipo'),
                 orderBy('nome')
             );
+            const snapNormal = await getDocs(qNormal);
+            snapNormal.forEach(doc => unifiedDocs.set(doc.id, {id: doc.id, ...doc.data()}));
         }
 
-        const snapshot = await getDocs(q);
         list.innerHTML = '';
 
-        // SE ESTIVER NA RAIZ GLOBAL: Injetar botão "Partilha" antes de tudo
+        // Injetar a "Porta" para a Partilha se estivermos na Raiz Global
         if (parentId === null) {
-            const sharedRootLi = document.createElement('li');
-            sharedRootLi.style.cssText = "display:flex; justify-content:space-between; padding:12px; border-bottom:2px solid var(--border-color); background: rgba(231, 76, 60, 0.1); cursor:pointer; color: #e74c3c; font-weight: bold;";
-            sharedRootLi.innerHTML = `<span>🤝 Partilha (Arquivos)</span> <span>➔</span>`;
-            sharedRootLi.onclick = () => loadAppendList("VIRTUAL_SHARED_ROOT");
-            list.appendChild(sharedRootLi);
+            const sharedLink = document.createElement('li');
+            sharedLink.style.cssText = "display:flex; justify-content:space-between; padding:12px; border-bottom:2px solid var(--border-color); background: rgba(231, 76, 60, 0.05); cursor:pointer; color: #e74c3c; font-weight: bold;";
+            sharedLink.innerHTML = `<span>🤝 Partilha (Arquivos)</span> <span>➔</span>`;
+            sharedLink.onclick = () => loadAppendList("VIRTUAL_SHARED_ROOT");
+            list.appendChild(sharedLink);
         }
 
-        if (snapshot.empty && parentId !== null) {
-            list.innerHTML += '<li style="padding:10px; color:#888;">Nada encontrado aqui.</li>';
+        if (unifiedDocs.size === 0 && parentId !== null) {
+            list.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Vazio.</li>';
             return;
         }
 
-        snapshot.forEach(doc => {
-            const item = { id: doc.id, ...doc.data() };
+        // Renderizar itens
+        Array.from(unifiedDocs.values())
+        .sort((a, b) => (a.nome || "").localeCompare(b.nome || ""))
+        .forEach(item => {
             const li = document.createElement('li');
+            li.className = "list-item";
             li.style.cssText = "display:flex; justify-content:space-between; padding:12px; border-bottom:1px solid var(--border-color); cursor:pointer;";
             
             if (item.tipo === 'pasta') {
@@ -15562,21 +15580,23 @@ async function loadAppendList(parentId) {
                     appendStack.push({ id: item.id, name: item.nome });
                     loadAppendList(item.id);
                 };
-            } else if (item.tipo === 'nota' || item.tipo === 'partilhado' || item.tipo === 'arquivo') {
-                const icon = (item.tipo === 'nota') ? '📄' : '🗄️';
-                const isCurrent = (item.id === selectedNoteId);
-                li.innerHTML = `<span style="${isCurrent ? 'color:var(--accent-color);' : ''}">${icon} ${item.nome}</span> <span>📥</span>`;
+            } else {
+                const isOwner = item.userId === myUid;
+                const icon = (item.tipo === 'partilhado' || item.tipo === 'arquivo') ? '🗄️' : '📄';
+                const collabIcon = isOwner ? '👑' : '🤝';
+                
+                li.innerHTML = `
+                    <span>${icon} ${parentId === "VIRTUAL_SHARED_ROOT" ? collabIcon : ''} ${item.nome}</span> 
+                    <span title="Enviar para o Topo">📥</span>
+                `;
                 li.onclick = () => confirmAppendToNote(item.id, item.nome, item.tipo);
             }
-
-            li.onmouseover = () => li.style.backgroundColor = 'var(--hover-color)';
-            li.onmouseout = () => li.style.backgroundColor = 'transparent';
             list.appendChild(li);
         });
 
     } catch (e) {
-        console.error(e);
-        list.innerHTML = '<li>Erro ao carregar lista.</li>';
+        console.error("Erro no modal:", e);
+        list.innerHTML = '<li>Erro de ligação.</li>';
     }
 }
 
@@ -20403,7 +20423,6 @@ document.getElementById('robot-generate-btn').addEventListener('click', () => {
 document.getElementById('robot-insert-btn').addEventListener('click', () => {
     const editor = document.getElementById('note-content-editor');
     
-    // 1. DEFINIÇÃO DA TOOLBAR COMPLETA (Igual à imagem que enviaste)
     const toolbarHTML = `
         <div class="mini-note-toolbar" contenteditable="false">
             <button type="button" data-action="sharing-settings" title="Definições de Partilha">🔐</button>
@@ -20419,23 +20438,24 @@ document.getElementById('robot-insert-btn').addEventListener('click', () => {
         </div>`;
 
     let fullHTML = "";
+    let firstItemId = null; // Guardará o ID do primeiro item para o scroll
 
-    // 2. GERAÇÃO DO HTML DE CADA QUESTÃO
-    detectedQuestions.forEach(item => {
+    detectedQuestions.forEach((item, index) => {
+        // Criamos um ID único para este item
+        const uniqueId = `sentinela_${Date.now()}_${index}`;
+        
+        // Se for o primeiro item da lista (header ou questão), guardamos o ID
+        if (index === 0) firstItemId = uniqueId;
+
         if (item.type === 'header') {
-            // Título de seção (ex: RECAPITULAÇÃO) como texto forte
-            fullHTML += `<p><br></p><p><strong>${item.text}</strong></p>`;
+            // Título de seção
+            fullHTML += `<p id="${uniqueId}"><br></p><p><strong>${item.text}</strong></p>`;
         } else {
-            const id = `q_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+            // Caixa de Questão
             fullHTML += `
-                <div class="mini-note-wrapper question-mode" id="${id}" data-topics='{}' data-shared="false" data-box-links='{}' contenteditable="false" style="margin: 20px 0;">
-                    <!-- Título da Pergunta -->
+                <div class="mini-note-wrapper question-mode" id="${uniqueId}" data-topics='{}' data-shared="false" data-box-links='{}' contenteditable="false" style="margin: 20px 0;">
                     <input type="text" class="mini-note-title-input" value="${item.text.replace(/"/g, '&quot;')}" readonly>
-                    
-                    <!-- Barra de Ferramentas Funcional -->
                     ${toolbarHTML}
-                    
-                    <!-- Área da Resposta (Vazia e pronta a escrever) -->
                     <div class="mini-note-content" contenteditable="true">
                         <p><br></p>
                     </div>
@@ -20443,7 +20463,7 @@ document.getElementById('robot-insert-btn').addEventListener('click', () => {
         }
     });
 
-    // 3. INSERÇÃO NO EDITOR
+    // 1. Inserção no Editor
     if (typeof currentSelectionRange !== 'undefined' && currentSelectionRange) {
         const sel = window.getSelection();
         sel.removeAllRanges();
@@ -20454,14 +20474,25 @@ document.getElementById('robot-insert-btn').addEventListener('click', () => {
 
     document.execCommand('insertHTML', false, fullHTML);
     
-    // 4. FECHAR E GUARDAR
+    // 2. Lógica de Scroll para o Topo (com um pequeno delay para o browser renderizar o HTML)
+    setTimeout(() => {
+        if (firstItemId) {
+            const firstEl = document.getElementById(firstItemId);
+            if (firstEl) {
+                // Scroll suave para o primeiro item inserido
+                firstEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+    }, 150);
+
+    // 3. Finalização
     document.getElementById('robot-modal').style.display = 'none';
-    
     if (typeof saveNote === 'function') saveNote();
-    
-    // Crucial: Chama a função que liga os botões e estados visuais (cores/tópicos)
     if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes();
 });
+
+
+
 
 document.getElementById('append-back-btn').onclick = () => {
     const pathLabel = document.getElementById('append-current-path').textContent;
