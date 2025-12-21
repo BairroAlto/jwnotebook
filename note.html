@@ -3959,6 +3959,75 @@ a.board-link:hover {
     #references-panel-title { font-size: 1.1em; max-width: 80%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 
+/* ============================================================
+   DESIGN MODERNO DA GRELHA BÍBLICA
+   ============================================================ */
+.bible-grid {
+    display: grid;
+    /* FR divide o espaço disponível em partes iguais. 4 colunas = 25% cada. */
+    grid-template-columns: repeat(4, 1fr); 
+    gap: 8px; /* Espaço fixo entre botões */
+    padding: 10px;
+    width: 100%;
+    box-sizing: border-box; /* Garante que o padding não aumenta a largura */
+}
+
+.bible-grid-btn {
+    /* Mantém o botão quadrado independentemente da largura */
+    aspect-ratio: 1 / 1; 
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    
+    background-color: var(--panel-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    
+    color: var(--text-color);
+    /* Fonte ajustada para botões de ~50px */
+    font-size: 1.1rem; 
+    font-weight: 700;
+    
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* Estilo de SELEÇÃO (Hover / Rato por cima) */
+.bible-grid-btn:hover {
+    background-color: var(--accent-color) !important;
+    border-color: var(--accent-color) !important;
+    color: white !important;
+    transform: translateY(-2px); /* Salta para cima */
+    box-shadow: 0 4px 8px rgba(74, 144, 226, 0.4);
+    z-index: 2;
+}
+
+/* Feedback ao carregar (Telemóvel) */
+.bible-grid-btn:active {
+    transform: scale(0.9);
+}
+
+/* Estilo para Versículo que JÁ EXISTE (VERDE) */
+.bible-grid-btn.exists {
+    background-color: rgba(46, 204, 113, 0.1);
+    border: 1px solid #2ecc71;
+    color: #2ecc71;
+}
+
+.bible-grid-btn.exists:hover {
+    background-color: #2ecc71 !important;
+    color: white !important;
+}
+
+/* Ajuste de scrollbar para a lista do meio não bater nos botões */
+#file-list {
+    padding-right: 5px;
+    overflow-x: hidden;
+}
+
+
 </style>
 
 
@@ -6576,6 +6645,7 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
             <li class="list-item" data-type="list-category" data-id="topico">📑 Tópicos</li>
             <li class="list-item" data-type="list-category" data-id="destaque">🎨 Destaques</li>
             <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">
+            <li class="list-item" data-type="list-category" data-id="biblia-root">📖 Bíblia</li>
             <li class="list-item" data-type="list-category" data-id="textobiblico">📖 Textos Bíblicos</li>
             <li class="list-item" data-type="list-category" data-id="marcadores">🔖 Marcadores</li>
             <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">
@@ -9858,6 +9928,7 @@ refCards.forEach((card, index) => {
 // ============================================================
 async function showTopicReferencesPanel(id, name, description, type) {
     if (document.getElementById('insertion-popup')) document.getElementById('insertion-popup').style.display = 'none';
+    
     // 1. Gravar antes de mudar de vista
     await forceSaveAndClosePuzzleMode();
 
@@ -9866,9 +9937,17 @@ async function showTopicReferencesPanel(id, name, description, type) {
     document.getElementById('references-toolbar').style.display = 'flex';
     document.querySelectorAll('.references-separator').forEach(el => el.style.display = 'block');
     
-    // Forçar aba "Referências"
-    const refTabBtn = document.querySelector('[data-ref-tab="references"]');
-    if (refTabBtn) refTabBtn.click(); 
+    // --- SOLUÇÃO DEFINITIVA PARA ABRIR O PUZZLE ---
+    // Remove a classe 'active' de todos os botões das abas
+    document.querySelectorAll('#ref-tabs button').forEach(b => b.classList.remove('active'));
+    // Adiciona 'active' apenas ao botão do Puzzle
+    const pBtn = document.querySelector('[data-ref-tab="puzzle"]');
+    if (pBtn) pBtn.classList.add('active');
+
+    // Mostra o conteúdo do Puzzle e esconde o de Referências
+    document.getElementById('ref-content-puzzle').style.display = 'flex';
+    document.getElementById('ref-content-references').style.display = 'none';
+    // ----------------------------------------------
 
     activeReferenceEntity = { id: id, type: type, name: name }; 
     loadPuzzleData(id, type); // Carrega Puzzle em background
@@ -9926,73 +10005,52 @@ async function showTopicReferencesPanel(id, name, description, type) {
                 if (isProtected && !appSettings.searchTopicsInProtected) return;
 
                 // --- VERIFICAÇÃO 2: ONDE ESTÁ O TÓPICO? (Contexto) ---
-                // Vamos ler o HTML para saber se está numa Questão, Subnota ou na Nota Geral
-                
-                let displayTitle = data.nome; // Padrão: Nome da Nota
+                let displayTitle = data.nome; 
                 let displayIcon = isProtected ? "🔒" : "📄";
                 let contextType = "Nota";
                 let snippet = "Tópico atribuído à nota geral.";
-                let highlightColor = ""; // Cor da borda
+                let highlightColor = ""; 
 
-                // Parse do HTML da nota
                 const docHTML = parser.parseFromString(data.conteudo, 'text/html');
                 const wrappers = docHTML.querySelectorAll('.mini-note-wrapper');
                 
-                let foundInBox = false;
-
-                // Procura em cada caixa da nota
                 for (const wrapper of wrappers) {
                     const jsonStr = wrapper.getAttribute('data-topics');
                     if (!jsonStr) continue;
 
-                    // Verifica se o ID (Tópico ou Subtópico) está dentro do JSON desta caixa
-                    // Usamos includes string simples porque é mais rápido e funciona para keys e values
                     if (jsonStr.includes(`"${id}"`)) {
-                        
-                        foundInBox = true;
-                        
-                        // Detetar Tipo de Caixa
-                        const input = wrapper.querySelector('input'); // Título
-                        const contentDiv = wrapper.querySelector('.mini-note-content'); // Texto
+                        const input = wrapper.querySelector('.mini-note-title-input'); 
+                        const contentDiv = wrapper.querySelector('.mini-note-content'); 
                         
                         if (wrapper.classList.contains('question-mode')) {
-                            // É UMA QUESTÃO
                             displayIcon = "📗";
                             contextType = "Questão";
                             displayTitle = input ? input.value : "Questão Sem Título";
                             snippet = "Encontrado nesta questão.";
-                            highlightColor = "#2ecc71"; // Verde
+                            highlightColor = "#2ecc71"; 
                         } 
                         else if (wrapper.classList.contains('free-mode')) {
-                            // É UM CONTENTOR LIVRE
                             displayIcon = "📙";
                             contextType = "Contentor";
-                            // Tenta pegar a primeira frase do texto
                             const text = contentDiv ? contentDiv.textContent.trim() : "";
                             displayTitle = text.length > 40 ? text.substring(0, 40) + "..." : (text || "Contentor Vazio");
                             snippet = "Encontrado neste contentor de texto.";
-                            highlightColor = "#e67e22"; // Laranja
+                            highlightColor = "#e67e22"; 
                         } 
                         else {
-                            // É UMA SUBNOTA
                             displayIcon = "📘";
                             contextType = "SubNota";
                             displayTitle = input ? input.value : "SubNota Sem Título";
                             snippet = "Encontrado nesta subnota.";
-                            highlightColor = "#3498db"; // Azul
+                            highlightColor = "#3498db"; 
                         }
-
-                        // Se não tiver título na caixa, usa o nome da nota como fallback
-                        if (!displayTitle.trim()) displayTitle = `(Em) ${data.nome}`;
-                        
-                        // Pára na primeira caixa que encontrar (para não duplicar na lista)
                         break; 
                     }
                 }
 
                 results.push({ 
                     id: docId, 
-                    originalName: data.nome, // Nome da nota (para o breadcrumb ou detalhe)
+                    originalName: data.nome, 
                     displayTitle: displayTitle,
                     displayIcon: displayIcon,
                     contextType: contextType,
@@ -11963,6 +12021,15 @@ async function showTagReferencesPanel(tagName) {
 
  async function showReferencesPanel(entityId, entityName, entityType, anexoId = null) {
     notebookContainer.classList.add('references-panel-visible');
+    
+    // ADICIONE ESTAS LINHAS AQUI TAMBÉM:
+    document.querySelectorAll('#ref-tabs button').forEach(b => b.classList.remove('active'));
+    const pBtn = document.querySelector('[data-ref-tab="puzzle"]');
+    if (pBtn) pBtn.classList.add('active');
+    document.getElementById('ref-content-puzzle').style.display = 'flex';
+    document.getElementById('ref-content-references').style.display = 'none';
+    // -----------------------------------
+
     const listElement = document.getElementById('references-list');
     const descriptionElement = document.getElementById('references-panel-description');
     
@@ -12491,29 +12558,52 @@ leftPanelList.addEventListener('click', (e) => {
 
 if (backBtn) {
     backBtn.onclick = () => {
+        // Ação encapsulada para verificar alterações não guardadas antes de retroceder
         const goBackAction = () => {
+            
+            // CASO 1: Navegação Profunda (Pastas ou Bíblia)
             if (navigationStack.length > 0) {
-                // Comportamento normal: volta uma pasta atrás
+                // Remove o último nível da pilha (ex: sai do Capítulo para o Livro)
                 navigationStack.pop();
+                
+                // Limpa a nota selecionada para resetar o estado visual do editor
                 selectedNoteId = null;
                 
+                // No Mobile: Se a pilha ficar vazia, voltamos ao Painel Esquerdo (Pastas/Categorias)
                 if (navigationStack.length === 0 && window.innerWidth <= 768) {
                     document.body.classList.remove('mobile-view-middle');
+                    document.body.classList.remove('mobile-view-editor');
                 }
+                
+                // Atualiza a vista dos painéis com base no novo estado da stack
+                // O parâmetro 'true' mantém o editor aberto se houver conteúdo
                 updateNavigationView(true);
             } 
-            // --- NOVA LÓGICA: Sair da Partilha para o Local ---
+            
+            // CASO 2: Sair do modo "Partilha" para o modo "Local"
+            // Se estivermos na raiz da partilha, o botão voltar regressa às pastas locais
             else if (currentViewMode === 'shared') {
                 console.log("📱 [Navegação] Saindo da Partilha para Local");
-                switchFolderView('local'); // Volta para o modo Local
                 
+                // Função global que já limpa ouvintes e reseta a stack
+                if (typeof window.switchFolderView === 'function') {
+                    window.switchFolderView('local');
+                }
+                
+                // No Mobile: Garante que volta para a visão da barra lateral esquerda
                 if (window.innerWidth <= 768) {
-                    // Remove a classe para o telemóvel voltar a mostrar o painel das pastas
                     document.body.classList.remove('mobile-view-middle');
                 }
             }
         };
-        navigateWithUnsavedCheck(goBackAction);
+
+        // Executa o Gatekeeper de gravação antes de realizar a navegação
+        if (typeof navigateWithUnsavedCheck === 'function') {
+            navigateWithUnsavedCheck(goBackAction);
+        } else {
+            // Fallback caso a função de proteção não esteja disponível
+            goBackAction();
+        }
     };
 }
 
@@ -13555,14 +13645,22 @@ async function loadBackupsForNote() {
     const { id, name, type } = listItem.dataset;
 
     // --- MODO LISTS (Categorias Especiais) ---
-    if (currentTab === 'lists') {
-        if (type === 'list-category' || type === 'list-bible-root') {
-             if (currentSaveStatus === 'unsaved') saveNote(true);
-             navigationStack = [{ type: type, id: id, name: name }];
-             updateNavigationView(true);
+   if (currentTab === 'lists') {
+    if (type === 'list-category' || type === 'bible-book') { // <--- Adicionado bible-book
+        if (currentSaveStatus === 'unsaved') saveNote(true);
+        
+        // Se for uma categoria base (como Biblia ou Topicos), reseta a stack
+        if (type === 'list-category') {
+            navigationStack = [{ id: id, name: name, type: type }];
+        } else {
+            // Se já estamos dentro (ex: escolhendo capítulo), adiciona à stack
+            navigationStack.push({ id: id, name: name, type: type });
         }
-        return;
+        
+        updateNavigationView(true);
     }
+    return;
+}
 
     // --- MODO NOTE (Pastas e Ficheiros) ---
 
@@ -20551,35 +20649,111 @@ function convertToTextarea(inputEl) {
 async function renderListCategoryItems(categoryId) {
     middlePanelList.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar...</span></div>';
     const myUid = auth.currentUser.uid;
+    const depth = navigationStack.length;
 
     try {
-        let items = [];
+        // --- NAVEGAÇÃO BÍBLICA ---
 
-        // 1. Lógica para Tópicos
+        // ESTADO 1: Escolher LIVRO (Raiz da Bíblia)
+        if (categoryId === 'biblia-root') {
+            middlePanelTitle.textContent = "Bíblia";
+            middlePanelList.innerHTML = '';
+            BIBLE_DATA.forEach(book => {
+                const li = document.createElement('li');
+                li.className = 'list-item';
+                li.innerHTML = `<span>📖 ${book.nome}</span>`;
+                li.onclick = () => {
+                    navigationStack.push({ id: book.nome, name: book.nome, type: 'bible-book', caps: book.caps });
+                    updateNavigationView(true);
+                };
+                middlePanelList.appendChild(li);
+            });
+            return;
+        }
+
+        // ESTADO 2: Escolher CAPÍTULO
+      const lastNav = navigationStack[navigationStack.length - 1];
+if (lastNav && lastNav.type === 'bible-book') {
+    middlePanelTitle.textContent = lastNav.name;
+    middlePanelList.innerHTML = '<div class="bible-grid"></div>';
+    const grid = middlePanelList.querySelector('.bible-grid');
+
+    // Usa a variável 'caps' que passámos na stack ao clicar no livro
+    for (let i = 1; i <= lastNav.caps; i++) {
+        const btn = document.createElement('div');
+        btn.className = 'bible-grid-btn';
+        btn.textContent = i;
+        btn.onclick = () => {
+            navigationStack.push({ 
+                id: `${lastNav.name} ${i}`, 
+                name: `Cap. ${i}`, 
+                type: 'bible-chapter', 
+                book: lastNav.name, 
+                chapter: i 
+            });
+            updateNavigationView(true);
+        };
+        grid.appendChild(btn);
+    }
+    return;
+}
+
+        // ESTADO 3: Escolher VERSÍCULO
+if (lastNav && lastNav.type === 'bible-chapter') {
+    middlePanelTitle.textContent = `${lastNav.book} ${lastNav.chapter}`;
+    middlePanelList.innerHTML = '<div class="bible-grid"></div>';
+    const grid = middlePanelList.querySelector('.bible-grid');
+
+    // 1. Procurar os dados do livro selecionado no BIBLE_DATA
+    const bookData = BIBLE_DATA.find(b => b.nome === lastNav.book);
+    
+    // 2. Obter o número real de versículos deste capítulo
+    // (lastNav.chapter - 1) porque o array de versículos começa no índice 0
+    let totalVersicles = 50; // Fallback se algo falhar
+    if (bookData && bookData.versiculos) {
+        totalVersicles = bookData.versiculos[lastNav.chapter - 1];
+    }
+
+    const existingVerses = allEntities['textobiblico'] || [];
+    const prefix = `${lastNav.book} ${lastNav.chapter}:`;
+
+    // 3. Criar exatamente a quantidade real de botões
+    for (let v = 1; v <= totalVersicles; v++) {
+        const fullVerseName = `${prefix}${v}`;
+        const alreadyExists = existingVerses.some(e => e.nome === fullVerseName);
+
+        const btn = document.createElement('div');
+        btn.className = `bible-grid-btn ${alreadyExists ? 'exists' : ''}`;
+        btn.textContent = v;
+        
+        btn.onclick = () => {
+            // Abre o painel de referências (a 4ª coluna)
+            showReferencesPanel(null, fullVerseName, 'textobiblico');
+        };
+        
+        grid.appendChild(btn);
+    }
+    return;
+}
+
+        // --- RESTANTES CATEGORIAS (Tópicos, Tags, etc) ---
+        let items = [];
         if (categoryId === 'topico') {
             const q = query(collection(db, 'topicos'), where('userId', '==', myUid), orderBy('nome'));
             const snap = await getDocs(q);
             snap.forEach(doc => items.push({ id: doc.id, nome: doc.data().nome, type: 'topico', desc: doc.data().descricao }));
-        }
-        // 2. Lógica para Tags (Extrai das notas existentes)
-        else if (categoryId === 'tag') {
+        } else if (categoryId === 'tag') {
             const q = query(collection(db, 'pastas'), where('tipo', '==', 'nota'), where('userId', '==', myUid));
             const snap = await getDocs(q);
             const tagSet = new Set();
-            snap.forEach(doc => {
-                if (doc.data().tags) doc.data().tags.forEach(t => tagSet.add(t));
-            });
+            snap.forEach(doc => { if (doc.data().tags) doc.data().tags.forEach(t => tagSet.add(t)); });
             items = Array.from(tagSet).sort().map(t => ({ id: t, nome: t, type: 'tag' }));
-        }
-        // 3. Lógica para Destaques (Cores)
-        else if (categoryId === 'destaque') {
+        } else if (categoryId === 'destaque') {
             DEFAULT_HIGHLIGHTS.forEach(color => {
                 const customName = userCustomHighlights[color.code] || color.name;
                 items.push({ id: color.code, nome: customName, type: 'destaque', color: color.code });
             });
-        }
-        // 4. Lógica para Entidades (Personagens, Locais, Datas, Bíblia)
-        else {
+        } else {
             const coll = getCollectionFromType(categoryId);
             if (coll) {
                 const q = query(collection(db, coll), where('userId', '==', myUid), orderBy('nome'));
@@ -20588,46 +20762,40 @@ async function renderListCategoryItems(categoryId) {
             }
         }
 
-        // Renderizar na coluna do meio
-        middlePanelList.innerHTML = '';
-        if (items.length === 0) {
-            middlePanelList.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum item encontrado.</li>';
-            return;
-        }
-
-        items.forEach(item => {
-            const li = document.createElement('li');
-            li.className = 'list-item';
-            li.dataset.id = item.id;
-            li.dataset.name = item.nome;
-            li.dataset.type = item.type;
-
-            let icon = '🔹';
-            if (item.type === 'topico') icon = '📑';
-            if (item.type === 'tag') icon = '🏷️';
-            if (item.type === 'personagem') icon = '👤';
-            if (item.type === 'local') icon = '📍';
-            if (item.type === 'data') icon = '📅';
-            if (item.type === 'destaque') icon = `<span style="background:${item.color}; width:12px; height:12px; display:inline-block; border-radius:50%; margin-right:8px; border:1px solid #555;"></span>`;
-
-            li.innerHTML = `<span>${icon} ${item.nome}</span>`;
-            
-            // Ao clicar, abre o painel de referências (4ª coluna)
-            li.onclick = () => {
-                if (item.type === 'topico') showTopicReferencesPanel(item.id, item.nome, item.desc, 'topico');
-                else if (item.type === 'tag') showTagReferencesPanel(item.nome);
-                else if (item.type === 'destaque') showHighlightReferencesPanel(item.id, item.nome);
-                else showReferencesPanel(item.id, item.nome, item.type);
-            };
-
-            middlePanelList.appendChild(li);
-        });
+        renderStandardList(items);
 
     } catch (e) {
-        console.error("Erro ao carregar lista:", e);
+        console.error("Erro na navegação bíblica:", e);
         middlePanelList.innerHTML = '<li>Erro ao carregar dados.</li>';
     }
 }
+
+// Função auxiliar para não repetir código de renderização
+function renderStandardList(items) {
+    middlePanelList.innerHTML = '';
+    if (items.length === 0) {
+        middlePanelList.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nada encontrado.</li>';
+        return;
+    }
+    items.forEach(item => {
+        const li = document.createElement('li');
+        li.className = 'list-item';
+        let icon = '🔹';
+        if (item.type === 'topico') icon = '📑';
+        if (item.type === 'tag') icon = '🏷️';
+        if (item.type === 'textobiblico') icon = '📜';
+        
+        li.innerHTML = `<span>${icon} ${item.nome}</span>`;
+        li.onclick = () => {
+            if (item.type === 'topico') showTopicReferencesPanel(item.id, item.nome, item.desc, 'topico');
+            else if (item.type === 'tag') showTagReferencesPanel(item.nome);
+            else if (item.type === 'destaque') showHighlightReferencesPanel(item.id, item.nome);
+            else showReferencesPanel(item.id, item.nome, item.type);
+        };
+        middlePanelList.appendChild(li);
+    });
+}
+
 
 // Fechar painel de referências ao clicar fora dele no Mobile
 document.getElementById('right-panel').addEventListener('click', (e) => {
