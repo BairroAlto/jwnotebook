@@ -2886,13 +2886,20 @@ function generateReferenceContext(noteContent, entityName) {
 // ============================================================
 window.showTopicRef = async (id, name, type) => {
     const container = document.getElementById('main-container');
+    const title = document.getElementById('ref-title');
+    const desc = document.getElementById('ref-description');
     const refTabBtn = document.querySelector('[data-ref-tab="references"]');
 
     container.classList.add('references-visible');
-    document.getElementById('ref-title').textContent = name;
+    title.textContent = name;
+    desc.textContent = "A carregar...";
     document.getElementById('ref-list').innerHTML = '<div class="sidebar-loading"><div class="spinner"></div></div>';
 
     try {
+        const coll = type === 'topico' ? 'topicos' : 'subtopicos';
+        const topicSnap = await getDoc(doc(db, coll, id));
+        if (topicSnap.exists()) desc.textContent = topicSnap.data().descricao || "Itens categorizados.";
+
         const q = query(collection(db, 'pastas'), where('userId', '==', auth.currentUser.uid), where('estado', '==', 'ativa'));
         const snap = await getDocs(q);
         currentRefResults = [];
@@ -2900,34 +2907,24 @@ window.showTopicRef = async (id, name, type) => {
 
         snap.forEach(docSnap => {
             const data = docSnap.data();
-            // --- ORDENAÇÃO POR ULTIMA EDIÇÃO ---
-            const sortTime = (data.ultimaedicao) ? data.ultimaedicao.toMillis() : (data.createdAt ? data.createdAt.toMillis() : 0);
+            const sortTime = data.ultimaedicao ? data.ultimaedicao.toMillis() : (data.createdAt ? data.createdAt.toMillis() : 0);
 
             if (data.topicosSelecionados) {
                 let match = type === 'topico' ? data.topicosSelecionados.hasOwnProperty(id) : Object.values(data.topicosSelecionados).flat().map(String).includes(String(id));
                 if (match) {
-                    currentRefResults.push({ 
-                        id: docSnap.id, ...data, type: data.tipo === 'pasta' ? 'folder' : 'note', 
-                        icon: data.tipo === 'pasta' ? '📁' : '📄',
-                        displayTitle: data.nome, sortTime: sortTime 
-                    });
+                    currentRefResults.push({ id: docSnap.id, ...data, type: data.tipo === 'pasta' ? 'folder' : 'note', icon: data.tipo === 'pasta' ? '📁' : '📄', displayTitle: data.nome, sortTime, matchCategory: 'note' });
                 }
             }
 
             if (data.tipo === 'nota' && data.conteudo) {
                 const boxes = parser.parseFromString(data.conteudo, 'text/html').querySelectorAll('.mini-note-wrapper');
                 boxes.forEach(box => {
-                    const topics = JSON.parse(box.getAttribute('data-topics') || '{}');
-                    let match = type === 'topico' ? topics.hasOwnProperty(id) : Object.values(topics).flat().map(String).includes(String(id));
+                    const t = JSON.parse(box.getAttribute('data-topics') || '{}');
+                    let match = type === 'topico' ? t.hasOwnProperty(id) : Object.values(t).flat().map(String).includes(String(id));
                     if (match) {
                         const inp = box.querySelector('.mini-note-title-input');
-                        currentRefResults.push({ 
-                            id: docSnap.id, ...data, type: 'box', 
-                            matchCategory: box.classList.contains('question-mode') ? 'question' : 'subnote',
-                            icon: box.classList.contains('question-mode') ? '📗' : '📘',
-                            displayTitle: inp ? (inp.getAttribute('value') || inp.value) : "Bloco",
-                            contextSnippet: `<small>Em: ${data.nome}</small>`, sortTime: sortTime 
-                        });
+                        const isQ = box.classList.contains('question-mode');
+                        currentRefResults.push({ id: docSnap.id, ...data, type: 'box', matchCategory: isQ ? 'question' : 'subnote', icon: isQ ? '📗' : '📘', displayTitle: inp ? (inp.getAttribute('value') || inp.value) : "Bloco", contextSnippet: `<small>Em: ${data.nome}</small>`, sortTime });
                     }
                 });
             }
@@ -3842,13 +3839,31 @@ window.findAndShowEntity = async (name, type) => {
 window.showReferencesPanel = async (entityId, name, type) => {
     const container = document.getElementById('main-container');
     const title = document.getElementById('ref-title');
+    const desc = document.getElementById('ref-description');
     const refTabBtn = document.querySelector('[data-ref-tab="references"]');
 
     container.classList.add('references-visible');
     title.textContent = name;
+    desc.textContent = "A carregar detalhes...";
     document.getElementById('ref-list').innerHTML = '<div class="sidebar-loading"><div class="spinner"></div></div>';
     
+    // Reset abas
+    document.querySelector('[data-ref-tab="puzzle"]')?.click();
+    if (typeof loadPuzzleForReading === 'function') loadPuzzleForReading(entityId, type, name);
+    if (typeof renderPanelLinksForReading === 'function') renderPanelLinksForReading(entityId, type);
+
     try {
+        // Buscar Descrição
+        if (entityId && type !== 'tag') {
+            const coll = getCollectionFromType(type);
+            if (coll) {
+                const entitySnap = await getDoc(doc(db, coll, entityId));
+                if (entitySnap.exists()) desc.textContent = entitySnap.data().descricao || "Sem descrição disponível.";
+            }
+        } else {
+            desc.textContent = type === 'tag' ? `Notas com #${name}` : "Referências por texto.";
+        }
+
         const q = query(collection(db, 'pastas'), where('userId', '==', auth.currentUser.uid), where('estado', '==', 'ativa'));
         const snap = await getDocs(q);
         currentRefResults = [];
@@ -3857,55 +3872,36 @@ window.showReferencesPanel = async (entityId, name, type) => {
         snap.forEach(docSnap => {
             const data = docSnap.data();
             const term = name.toLowerCase();
-            
-            // --- ORDENAÇÃO POR ULTIMA EDIÇÃO ---
-            // Tenta pegar ultimaedicao, se não existir usa createdAt, se não 0
-            const sortTime = (data.ultimaedicao) ? data.ultimaedicao.toMillis() : (data.createdAt ? data.createdAt.toMillis() : 0);
+            const sortTime = data.ultimaedicao ? data.ultimaedicao.toMillis() : (data.createdAt ? data.createdAt.toMillis() : 0);
 
             if (data.nome.toLowerCase().includes(term)) {
-                currentRefResults.push({
-                    id: docSnap.id, ...data, displayTitle: data.nome,
-                    contextSnippet: "Encontrado no título.",
-                    matchCategory: 'note', icon: '📄', sortTime: sortTime
-                });
+                currentRefResults.push({ id: docSnap.id, ...data, displayTitle: data.nome, contextSnippet: "No título.", matchCategory: 'note', icon: '📄', sortTime });
             }
 
             if (data.conteudo) {
                 const docHTML = parser.parseFromString(data.conteudo, 'text/html');
                 const elements = docHTML.querySelectorAll('p, span, h1, h2, h3, li, div, td, th, input');
-                
                 elements.forEach(el => {
                     const text = el.tagName === 'INPUT' ? el.value : el.textContent;
                     if (text && text.toLowerCase().includes(term)) {
-                        let category = 'note'; let icon = '📄';
-                        if (el.closest('.idea-span')) { category = 'idea'; icon = '💡'; }
-                        else if (el.closest('.question-mode')) { category = 'question'; icon = '📗'; }
-                        else if (el.closest('.free-mode')) { category = 'free'; icon = '📙'; }
-                        else if (el.closest('.mini-note-wrapper')) { category = 'subnote'; icon = '📘'; }
-                        else if (el.closest('.post-it-note')) { category = 'postit'; icon = '📒'; }
-                        else if (el.closest('table')) { icon = '🧮'; }
-                        else if (el.closest('.jwn-timeline-wrapper')) { icon = '🌳'; }
-                        else if (el.closest('summary')) { icon = '☂'; }
+                        let cat = 'note'; let icon = '📄';
+                        if (el.closest('.idea-span')) { cat = 'idea'; icon = '💡'; }
+                        else if (el.closest('.question-mode')) { cat = 'question'; icon = '📗'; }
+                        else if (el.closest('.free-mode')) { cat = 'free'; icon = '📙'; }
+                        else if (el.closest('.mini-note-wrapper')) { cat = 'subnote'; icon = '📘'; }
+                        else if (el.closest('.post-it-note')) { cat = 'postit'; icon = '📒'; }
+                        else if (el.closest('table')) icon = '🧮';
+                        else if (el.closest('.jwn-timeline-wrapper')) icon = '🌳';
+                        else if (el.closest('summary')) icon = '☂';
 
-                        currentRefResults.push({
-                            id: docSnap.id, ...data, displayTitle: data.nome,
-                            contextSnippet: generateReferenceContext(data.conteudo, name),
-                            matchCategory: category, icon: icon, searchTerm: name,
-                            sortTime: sortTime
-                        });
+                        currentRefResults.push({ id: docSnap.id, ...data, displayTitle: data.nome, contextSnippet: generateReferenceContext(data.conteudo, name), matchCategory: cat, icon, searchTerm: name, sortTime });
                     }
                 });
             }
         });
 
-        // ORDENAR: Maior timestamp (mais recente) primeiro
         currentRefResults.sort((a, b) => b.sortTime - a.sortTime);
-
-        // Limpar duplicados (mesma nota no mesmo contexto)
-        currentRefResults = currentRefResults.filter((v, i, a) => 
-            a.findIndex(t => t.id === v.id && t.matchCategory === v.matchCategory && t.icon === v.icon) === i
-        );
-
+        currentRefResults = currentRefResults.filter((v, i, a) => a.findIndex(t => t.id === v.id && t.matchCategory === v.matchCategory && t.icon === v.icon) === i);
         if (refTabBtn) refTabBtn.innerHTML = `📚 Ref. <span style="background:var(--accent-color); color:white; padding:1px 6px; border-radius:10px; font-size:0.8em; margin-left:5px;">${currentRefResults.length}</span>`;
         window.renderReferencesPage(true);
     } catch (e) { console.error(e); }
@@ -4221,6 +4217,12 @@ window.showMarkerReferencesPanel = async (markerId, markerName) => {
     document.getElementById('ref-list').innerHTML = '<div class="sidebar-loading"><div class="spinner"></div></div>';
 
     try {
+         // BUSCAR DESCRIÇÃO DO MARCADOR
+        const docSnap = await getDoc(doc(db, 'marcadores', markerId));
+        if (docSnap.exists()) {
+            desc.textContent = docSnap.data().descricao || "Versículos bíblicos marcados com este tema.";
+        }
+
         const q = query(collection(db, 'textosbiblicos'), where(`marcadoresAssociados.${markerId}`, '==', true), where('userId', '==', auth.currentUser.uid));
         const snap = await getDocs(q);
         currentRefResults = [];
@@ -4298,6 +4300,8 @@ function renderStandardList(items) {
 
 window.renderReferencesPage = (reset = false) => {
     const list = document.getElementById('ref-list');
+    const panel = document.getElementById('references-panel');
+
     if (reset) { list.innerHTML = ''; currentRefPage = 0; }
     if (currentRefResults.length === 0) {
         list.innerHTML = '<p style="text-align:center; padding:30px; opacity:0.6;">Sem resultados.</p>';
@@ -4315,32 +4319,41 @@ window.renderReferencesPage = (reset = false) => {
         const card = document.createElement('div');
         card.className = 'ref-list-card';
         
-        // --- LÓGICA DE CORES DOS CARDS ---
-        let borderColor = '#95a5a6'; // Cinzento (Nota Padrão / Tabela / Timeline / Toggle)
-
+        // --- LÓGICA DE CORES ---
+        let borderColor = '#95a5a6'; // Cinza (Nota / Tabela / Timeline / Toggle)
         switch(res.matchCategory) {
             case 'subnote': borderColor = '#4a90e2'; break; // Azul
             case 'question': borderColor = '#2ecc71'; break; // Verde
             case 'free': borderColor = '#e67e22'; break;     // Laranja
             case 'idea': borderColor = '#e74c3c'; break;     // Vermelho
             case 'postit': borderColor = '#f1c40f'; break;   // Amarelo
-            case 'marker': borderColor = '#9b59b2'; break;   // Roxo (Versos)
+            case 'marker': borderColor = '#9b59b2'; break;   // Roxo
         }
-        
         card.style.borderLeft = `4px solid ${borderColor}`;
 
         card.innerHTML = `
             <div class="ref-card-header">
-                <strong>${res.icon} ${res.displayTitle}</strong>
+                <strong>${res.icon || '📄'} ${res.displayTitle}</strong>
                 <span class="ref-card-arrow">➔</span>
             </div>
             <div class="ref-card-body">${res.contextSnippet || ''}</div>
         `;
         
         card.onclick = () => {
+            // Lógica Mobile: Se painel > 60%, encolhe para 10%
+            if (window.innerWidth <= 768) {
+                const percentage = (panel.offsetHeight / window.innerHeight) * 100;
+                if (percentage > 60) {
+                    panel.style.transition = 'height 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+                    panel.style.height = '10vh';
+                }
+            }
+
             if (res.type === 'folder') {
                 document.querySelector('[data-tab="notes"]').click();
                 window.renderTocLevel(res.id);
+            } else if (res.type === 'marker') {
+                window.showReferencesPanel(res.id, res.nome, 'textobiblico');
             } else {
                 window.displayNote(res, res.searchTerm);
             }
