@@ -9485,17 +9485,17 @@ async function openMoveModal(itemContext) {
     modal.style.display = 'flex';
     
     try {
-        // 2. Ajustar o parentId (tratar "null" como string ou objeto)
+        // 2. Ajustar o parentId (tratar "null" como nulo real para a query)
         let pId = itemContext.parentId;
-        if (pId === "null") pId = null;
+        if (pId === "null" || pId === undefined) pId = null;
 
+        // Query: Busca todos os itens do MESMO nível (mesmo pai)
         const q = query(
             collection(db, 'pastas'), 
             where('parentId', '==', pId), 
             where('estado', '==', 'ativa'), 
             where('userId', '==', auth.currentUser.uid), 
-             where('coresUsadas', 'array-contains', hexCode.toUpperCase()),
-            orderBy('ordem')
+            orderBy('ordem') // Importante para carregar na ordem atual
         );
         
         const snapshot = await getDocs(q);
@@ -9819,11 +9819,16 @@ function handleMoveSelection(liElement, folderId) {
 function renderMoveList(items) {
     const list = document.getElementById('move-list');
     list.innerHTML = '';
+
     items.forEach((item, index) => {
         const li = document.createElement('li');
         li.dataset.id = item.id;
+        
+        // Determina o ícone
+        const icon = item.tipo === 'pasta' ? '📁' : '📄';
+
         li.innerHTML = `
-            <span>${item.nome}</span>
+            <span>${icon} ${item.nome}</span>
             <div class="order-controls">
                 <button data-action="up" ${index === 0 ? 'disabled' : ''}>↑</button>
                 <button data-action="down" ${index === items.length - 1 ? 'disabled' : ''}>↓</button>
@@ -9831,30 +9836,56 @@ function renderMoveList(items) {
         `;
         list.appendChild(li);
     });
+
+    // Delegar cliques nas setas
     list.onclick = (e) => {
         const btn = e.target.closest('button');
         if (!btn) return;
+
         const currentLi = btn.closest('li');
         const currentIndex = Array.from(list.children).indexOf(currentLi);
         const action = btn.dataset.action;
+
         if (action === 'up' && currentIndex > 0) {
+            // Troca no array
             [items[currentIndex], items[currentIndex - 1]] = [items[currentIndex - 1], items[currentIndex]];
         } else if (action === 'down' && currentIndex < items.length - 1) {
+            // Troca no array
             [items[currentIndex], items[currentIndex + 1]] = [items[currentIndex + 1], items[currentIndex]];
         }
+        
+        // Re-renderiza a lista localmente
         renderMoveList(items);
     };
-    document.querySelector('#move-item-modal [data-action="save-order"]').onclick = async () => {
+
+    // Configurar o botão "Salvar Ordem"
+    const saveBtn = document.querySelector('#move-item-modal [data-action="save-order"]');
+    saveBtn.onclick = async () => {
+        saveBtn.disabled = true;
+        saveBtn.textContent = "A guardar...";
+
         const batch = writeBatch(db);
+        
         items.forEach((item, index) => {
             const docRef = doc(db, 'pastas', item.id);
+            // Atualiza o campo 'ordem' baseado no novo índice do array
             batch.update(docRef, { 
                 ordem: index,
                 ultimaedicao: serverTimestamp()
             });
         });
-        await batch.commit();
-        document.getElementById('move-item-modal').style.display = 'none';
+
+        try {
+            await batch.commit();
+            document.getElementById('move-item-modal').style.display = 'none';
+            // O onSnapshot automático da lista principal tratará de atualizar a vista
+        } catch (err) {
+            console.error("Erro ao salvar ordem:", err);
+            alert("Erro ao salvar nova ordem.");
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.textContent = "Salvar Ordem";
+        }
     };
 }
 
