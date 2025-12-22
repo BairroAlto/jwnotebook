@@ -6189,50 +6189,52 @@ async function renderTopicsSelectionList() {
     const list = document.getElementById('topics-list-select');
     list.innerHTML = '<li>A carregar...</li>';
 
-    
     const q = query(
-    collection(db, 'topicos'), 
-    where('userId', '==', auth.currentUser.uid), // <--- ADICIONAR
-    orderBy('nome')
-);
+        collection(db, 'topicos'), 
+        where('userId', '==', auth.currentUser.uid),
+        orderBy('nome')
+    );
     const snapshot = await getDocs(q);
     
     list.innerHTML = '';
     
     if (snapshot.empty) {
-        list.innerHTML = '<li>Nenhum tópico criado.</li>';
+        list.innerHTML = '<li style="padding:10px; color:#888;">Nenhum tópico criado.</li>';
         return;
     }
 
-  snapshot.forEach(doc => {
-            const item = { id: doc.id, ...doc.data() };
-            const li = document.createElement('li');
-            li.style.display = 'flex';
-            li.style.justifyContent = 'space-between';
-            li.style.alignItems = 'center';
-            li.style.padding = '10px';
-            li.style.borderBottom = '1px solid var(--border-color)';
+    snapshot.forEach(doc => {
+        const topic = { id: doc.id, ...doc.data() };
+        const li = document.createElement('li');
+        
+        // Verifica se este tópico (ou algum subtópico dele) já está selecionado
+        const isSelected = !!currentNoteTopics[topic.id];
+        if (topic.id === activeTopicIdForSelection) li.classList.add('active-topic');
 
-            const icon = item.tipo === 'pasta' ? '📁' : '📄';
+        li.innerHTML = `
+            <input type="checkbox" class="topic-checkbox" ${isSelected ? 'checked' : ''}>
+            <span>${topic.nome}</span>
+        `;
 
-            // --- LÓGICA DE PROTEÇÃO DE SISTEMA (NOVO) ---
-            // Verifica se é a pasta especial "Partilhadas" na raiz
-            const isSystemFolder = (item.nome === 'Partilhadas' && !item.parentId && item.tipo === 'pasta');
+        // Clique na linha: Abre os subtópicos à direita
+        li.onclick = () => {
+            activeTopicIdForSelection = topic.id;
+            // Atualiza visual da seleção na esquerda
+            document.querySelectorAll('#topics-list-select li').forEach(el => el.classList.remove('active-topic'));
+            li.classList.add('active-topic');
             
-            // Define o estilo do botão Eliminar (Esconde se for sistema)
-            const deleteBtnStyle = isSystemFolder 
-                ? 'display:none;' 
-                : 'background-color:#c0392b; color:white; font-size:0.8em; padding:5px 10px; border:none; border-radius:5px; cursor:pointer;';
+            renderSubtopicsSelectionList(topic.id, topic.nome);
+        };
 
-            li.innerHTML = `
-                <span class="item-name" style="font-weight:500;">${icon} ${item.nome}</span> 
-                <div style="display:flex; gap:10px;">
-                    <button class="modal-btn primary" data-action="restore" data-id="${item.id}" style="font-size:0.8em; padding:5px 10px;">Restaurar</button>
-                    <button class="modal-btn" data-action="delete" data-id="${item.id}" style="${deleteBtnStyle}">Eliminar</button>
-                </div>
-            `;
-            list.appendChild(li);
-        });
+        // Clique no checkbox: Seleciona o tópico sem abrir subtópicos obrigatoriamente
+        const cb = li.querySelector('.topic-checkbox');
+        cb.onclick = (e) => {
+            e.stopPropagation();
+            toggleTopicSelection(topic.id, cb.checked);
+        };
+
+        list.appendChild(li);
+    });
 }
 
 async function renderSubtopicsSelectionList(topicId, topicName) {
@@ -6551,32 +6553,17 @@ async function toggleBookmark(marcadorId, shouldAdd, liElement) {
 // --- 3. GRAVAÇÃO NA NOTA ---
 
 document.getElementById('save-topics-btn').addEventListener('click', async () => {
-    
-    // CASO 1: Estamos a gravar tópicos de uma CAIXA (SubNota/Questão)
+    // CASO 1: Gravando tópicos de uma CAIXA (Questão/SubNota)
     if (activeMiniNoteElement) {
-        // A. Prepara os dados
-        const jsonTopics = JSON.stringify(currentNoteTopics);
-        
-
-        // B. Escreve no atributo invisível do HTML
-        activeMiniNoteElement.setAttribute('data-topics', jsonTopics);
-        
-        // C. Atualiza visualmente o botão da caixa (para ficar azul)
+        activeMiniNoteElement.setAttribute('data-topics', JSON.stringify(currentNoteTopics));
         updateMiniNoteButtonState(activeMiniNoteElement);
-
-        // D. Fecha o modal
         document.getElementById('topics-modal').style.display = 'none';
-        
-        // E. Limpa a variável global
         activeMiniNoteElement = null;
-
-        // F. FORÇA A GRAVAÇÃO NA BASE DE DADOS IMEDIATAMENTE
-        // Isto é crucial! Chama o executeSave para enviar para o Firebase
-        await saveNote(true); 
+        saveNote(true); // Força gravação da nota
         return;
     }
 
-    // CASO 2: Estamos a gravar tópicos da NOTA PRINCIPAL
+    // CASO 2: Gravando tópicos da NOTA PRINCIPAL
     if (topicTargetId) {
         try {
             const itemRef = doc(db, 'pastas', topicTargetId);
@@ -6585,10 +6572,9 @@ document.getElementById('save-topics-btn').addEventListener('click', async () =>
                 ultimaedicao: serverTimestamp()
             });
             document.getElementById('topics-modal').style.display = 'none';
-            if (topicTargetId === selectedNoteId) updateSaveStatus('saved');
+            updateSaveStatus('saved');
         } catch (error) {
             console.error("Erro ao gravar tópicos:", error);
-            alert("Erro ao gravar.");
         }
     }
 });
