@@ -64,7 +64,7 @@ export const BIBLE_DATA = [
     { id: 61, nome: "2 Pedro", caps: 3, abrev: "2 Ped", versiculos: [21, 22, 18] },
     { id: 62, nome: "1 João", caps: 5, abrev: "1 João", versiculos: [10, 29, 24, 21, 21] },
     { id: 63, nome: "2 João", caps: 1, abrev: "2 João", versiculos: [13] },
-    { id: 64, nome: "3 João", caps: 1, abrev: "3 João", versiculos: [15] },
+    { id: 64, nome: "3 João", caps: 1, abrev: "3 João", versiculos: [14] },
     { id: 65, nome: "Judas", caps: 1, abrev: "Jud", versiculos: [25] },
     { id: 66, nome: "Apocalipse", caps: 22, abrev: "Apo", versiculos: [20, 29, 22, 11, 14, 17, 17, 13, 21, 11, 19, 17, 18, 20, 8, 21, 18, 24, 21, 15, 27, 21] }
 ];
