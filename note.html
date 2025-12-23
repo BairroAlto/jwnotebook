@@ -12322,12 +12322,11 @@ async function forceSaveAndClosePuzzleMode() {
 // ============================================================
 
 async function savePuzzleData() {
-    if (!activeReferenceEntity || !activeReferenceEntity.id) return;
+    if (!activeReferenceEntity || !activeReferenceEntity.name) return;
 
     const { id, type, name } = activeReferenceEntity;
     const collectionName = getCollectionFromType(type);
-    if (!collectionName) return;
-
+    
     const saveBtn = document.getElementById('toggle-puzzle-edit-btn');
     if(saveBtn) saveBtn.textContent = "A gravar...";
 
@@ -12350,20 +12349,52 @@ async function savePuzzleData() {
             }
         });
 
-        // --- CORREÇÃO AQUI: setDoc com merge: true ---
-        // Isto evita o erro "No document to update" se for um versículo bíblico novo
-        const docRef = doc(db, collectionName, id);
+        // --- CORREÇÃO DE SEGURANÇA ---
+        let docRef;
+        
+        // Se o ID atual parece um nome de versículo (tem espaços ou :), ou se é null
+        // vamos procurar se o user já tem um doc real para isto
+        if (!id || id.includes(' ') || id.includes(':')) {
+            const q = query(
+                collection(db, collectionName), 
+                where("nome", "==", name),
+                where("userId", "==", auth.currentUser.uid)
+            );
+            const snap = await getDocs(q);
+            
+            if (!snap.empty) {
+                // Já existe um documento real, usamos o ID dele
+                docRef = doc(db, collectionName, snap.docs[0].id);
+                activeReferenceEntity.id = snap.docs[0].id; 
+            } else {
+                // Não existe? Criamos um NOVO documento com ID aleatório (addDoc)
+                const newDoc = await addDoc(collection(db, collectionName), {
+                    nome: name,
+                    userId: auth.currentUser.uid,
+                    puzzleBoard: itemsToSave,
+                    updatedAt: serverTimestamp(),
+                    createdAt: serverTimestamp()
+                });
+                activeReferenceEntity.id = newDoc.id; // Atualiza para o ID novo
+                console.log("✅ Novo registro privado criado para o versículo.");
+                return; // Já gravou, podemos sair
+            }
+        } else {
+            // Se já temos um ID hexadecimal (aleatório), gravamos direto
+            docRef = doc(db, collectionName, id);
+        }
+
+        // Gravação final (Update ou Set)
         await setDoc(docRef, {
-            nome: name, // Garante que o nome existe se o doc for criado agora
+            nome: name,
             userId: auth.currentUser.uid,
             puzzleBoard: itemsToSave,
             updatedAt: serverTimestamp()
         }, { merge: true });
 
-        console.log("✅ [SAVE] Quadro guardado com sucesso.");
-
     } catch (e) {
-        console.error("❌ [SAVE] Erro crítico:", e);
+        console.error("❌ Erro ao gravar:", e);
+        alert("Erro de permissão: Este versículo pode estar mal configurado no banco de dados.");
     } finally {
         if(saveBtn) saveBtn.textContent = "Editar";
     }
