@@ -4322,9 +4322,13 @@ a.board-link:hover {
 
 /* Garante que o fundo escuro do confirm também fique à frente */
 #confirm-modal.modal-overlay {
-    z-index: 9999 !important;
+    z-index: 30000 !important;
 }
 
+/* Garante que o conteúdo do modal também acompanhe a camada */
+#confirm-modal .modal-content {
+    z-index: 30001 !important;
+}
 
 /* Estilo específico para as abas da 4ª Coluna */
 #ref-tabs {
@@ -5830,6 +5834,8 @@ let currentArchiveTab = 'prateleira';
 let postToAssignDrawer = null; // Guarda o ID do post que vai para a gaveta
 let colorHexBeingRenamed = null;
 let isPanelEditMode = false;
+let allFoundReferenceBoxes = [];
+let currentReferencePageIndex = 0;
 
 
 // Função: Gravação Silenciosa (Mantém o editor aberto)
@@ -11822,12 +11828,13 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
     const card = document.createElement('div');
     card.className = `board-card type-${type}`;
 
-    // Verifica se estamos em modo de edição
     const puzzleContainer = document.getElementById('ref-content-puzzle');
     const isEditMode = puzzleContainer && puzzleContainer.classList.contains('edit-mode-active');
     let innerHTML = '';
+    let headerHtml = "";
+    let displayHtml = "";
 
-    // --- TIPO 1: TEXTO (Criado no Quadro) ---
+    // --- TIPO 1: TEXTO (Criado manualmente) ---
     if (type === 'text') {
         const contentHtml = data.content || '';
         const initialStyle = isEditMode
@@ -11835,51 +11842,70 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
             : "width:100%; min-height:40px; outline:none; white-space: pre-wrap; word-break: break-word; color:var(--text-color); border:none; padding:0; background:transparent;";
 
         innerHTML = `<div class="board-text-content" style="${initialStyle}" ${isEditMode ? 'contenteditable="true"' : 'contenteditable="false"'}>${contentHtml}</div>`;
+        card.style.borderLeft = "3px solid var(--accent-color)"; // Azul padrão para novos textos
     }
 
-    // --- TIPO 2: REFERÊNCIA (Importado) ---
-  else if (type === 'ref') {
-    card.dataset.noteId = data.noteId;
-    card.dataset.parentId = data.parentId || '';
-    card.dataset.noteName = data.noteName || "Nota";
+    // --- TIPO 2: REFERÊNCIA (Importado via +Ref) ---
+    else if (type === 'ref') {
+        card.dataset.noteId = data.noteId;
+        card.dataset.noteName = data.noteName || "Nota";
 
-    let rawSnippet = data.snippet || '';
-    try {
-        if (rawSnippet.includes('%3C')) rawSnippet = decodeURIComponent(rawSnippet);
-    } catch (e) { }
-    card.dataset.snippet = encodeURIComponent(rawSnippet);
+        let rawSnippet = data.snippet || '';
+        try {
+            if (rawSnippet.includes('%3C')) rawSnippet = decodeURIComponent(rawSnippet);
+        } catch (e) { }
+        card.dataset.snippet = encodeURIComponent(rawSnippet);
 
-    let displayHtml = "";
-    let headerHtml = "";
-    let isComplexHTML = rawSnippet.includes('mini-note-wrapper') || rawSnippet.includes('toggle-section');
-
-    let searchHighlightTerm = data.displayTitle || ""; 
-    if (!searchHighlightTerm && typeof activeReferenceEntity !== 'undefined' && activeReferenceEntity) {
-         searchHighlightTerm = activeReferenceEntity.name;
-    }
-
-    if (data.isClone || isComplexHTML) {
-        // MODO CLONE (Questões, Subnotas, etc) - Mantemos o design de ícone
-        let icon = "📦"; let label = "Clone"; let color = "#555";
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = rawSnippet;
-        const contentDiv = tempDiv.querySelector('.mini-note-content') || tempDiv.querySelector('.toggle-content');
-        let bodyText = contentDiv ? contentDiv.innerText.replace(/\s+/g, ' ').trim() : "";
+
+        // 1. EXTRAÇÃO DE TÍTULO
+        const titleEl = tempDiv.querySelector('.mini-note-title-input');
+        const h2El = tempDiv.querySelector('h2');
+        const ideaEl = tempDiv.querySelector('.idea-span');
+        
+        let titleText = "";
+        if (titleEl) {
+            titleText = titleEl.textContent || titleEl.value || titleEl.getAttribute('value') || "";
+        } else if (h2El) {
+            titleText = h2El.textContent;
+        } else if (ideaEl) {
+            titleText = ideaEl.textContent;
+        }
+
+        // 2. DEFINIÇÃO DE CORES E ÍCONES (CONFORME PEDIDO)
+        let icon = "📦"; let label = "Ref"; 
+        let color = "#95a5a6"; // Cinzento (Nota normal) por padrão
+        
+        if (rawSnippet.includes('question-mode')) { 
+            icon = "📗"; label = "Questão"; color = "#2ecc71"; // Verde
+        } else if (rawSnippet.includes('free-mode')) { 
+            icon = "📙"; label = "Contentor"; color = "#e67e22"; // Laranja
+            if (!titleText) titleText = tempDiv.textContent.substring(0, 40) + "...";
+        } else if (rawSnippet.includes('toggle-section')) { 
+            icon = "☂"; label = "Secção"; color = "#9b59b6"; // Roxo
+        } else if (rawSnippet.includes('idea-span')) {
+            icon = "💡"; label = "Ideia"; color = "#e74c3c"; // Vermelho
+        } else if (rawSnippet.includes('blockquote')) {
+            icon = "📄"; label = "Corpo"; color = "#95a5a6"; // Cinzento
+            titleText = "Texto da Nota";
+        } else if (rawSnippet.includes('mini-note-wrapper')) { 
+            icon = "📘"; label = "SubNota"; color = "#3498db"; // Azul
+        }
+
+        if (!titleText || titleText.trim() === "") titleText = "Sem Título";
+
+        // APLICAÇÃO DA COR NA BORDA ESQUERDA DO CARD
+        card.style.borderLeft = `4px solid ${color}`;
+
+        // 3. EXTRAÇÃO DE CONTEÚDO (PREVIEW)
+        const contentDiv = tempDiv.querySelector('.mini-note-content') || tempDiv.querySelector('.toggle-content') || tempDiv;
+        let bodyText = contentDiv.innerText.replace(/\s+/g, ' ').trim();
         if (bodyText.length > 150) bodyText = bodyText.substring(0, 150) + "...";
 
-        const inp = tempDiv.querySelector('input');
-        const h2 = tempDiv.querySelector('h2');
-        let titleText = "";
-        if (rawSnippet.includes('question-mode')) { icon = "📗"; label = "Questão"; color = "#2ecc71"; titleText = inp ? inp.value : ""; }
-        else if (rawSnippet.includes('free-mode')) { icon = "📙"; label = "Contentor"; color = "#e67e22"; titleText = bodyText.substring(0, 40) + "..."; }
-        else if (rawSnippet.includes('toggle-section')) { icon = "☂"; label = "Secção"; color = "#9b59b6"; titleText = h2 ? h2.textContent : ""; }
-        else { icon = "📘"; label = "SubNota"; color = "#3498db"; titleText = inp ? inp.value : ""; }
-
-        if (!titleText) titleText = "Sem Título";
-
         headerHtml = `
-            <div style="border-left: 3px solid ${color}; padding-left: 10px; margin-bottom: 5px;">
-                <div style="font-size:0.7em; font-weight:bold; color:${color}; text-transform:uppercase; margin-bottom:2px;">
+            <div style="padding-left: 5px; margin-bottom: 5px;">
+                <div style="font-size:0.75em; font-weight:bold; color:${color}; text-transform:uppercase; margin-bottom:2px;">
                     ${icon} ${label}
                 </div>
                 <div style="font-weight:bold; font-size:0.95em; cursor:pointer; color:var(--text-color);" 
@@ -11889,28 +11915,10 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
                     ${titleText}
                 </div>
             </div>`;
-        displayHtml = `<div style="font-size:0.9em; color:var(--text-muted-color); padding-left: 13px;">${bodyText}</div>`;
+        displayHtml = `<div style="font-size:0.9em; color:var(--text-muted-color); padding-left: 8px; line-height:1.4;">${bodyText}</div>`;
 
-    } else {
-        // MODO TEXTO NORMAL (A referência que vem do "+")
-        headerHtml = `
-            <div class="ref-card-title" 
-                 onclick="openNoteFromBoard('${data.noteId}', '${encodeURIComponent(searchHighlightTerm)}')" 
-                 style="cursor: pointer; font-size:0.85em; font-weight:bold; opacity:0.9; display:flex; align-items:center; gap:5px; margin-bottom: 6px; color: var(--accent-color);">
-                 📄 ${data.noteName}
-            </div>`;
-
-        displayHtml = `<div class="ref-card-snippet" style="border-left: 2px solid var(--accent-color); padding-left:10px; margin: 0; font-style:italic; font-size:0.9em; color:var(--text-muted-color); line-height:1.4;">${rawSnippet}</div>`;
+        innerHTML = `<div class="ref-card-content">${headerHtml}${displayHtml}</div>`;
     }
-
-    // Montamos o cartão SEM o footerHtml (o botão foi removido daqui)
-    innerHTML = `
-        <div class="ref-card-content">
-            ${headerHtml}
-            ${displayHtml}
-        </div>
-    `;
-}
 
     // Adiciona controlos (Lixo, Setas)
     innerHTML += `
@@ -11924,13 +11932,11 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
 
     card.innerHTML = innerHTML;
 
-    // --- EVENTOS DOS CONTROLOS ---
-     card.querySelector('.delete').onclick = async () => {
-        const confirmed = await showConfirmation(
-            "Remover Item", 
-            "Tem a certeza que deseja remover este item do quadro?"
-        );
-
+    // Listener para o Lixo
+    card.querySelector('.delete').onclick = async () => {
+        const confirmModal = document.getElementById('confirm-modal');
+        if (confirmModal) confirmModal.style.zIndex = "30000";
+        const confirmed = await showConfirmation("Remover Item", "Deseja remover este item do quadro?");
         if (confirmed) { 
             card.remove(); 
             if(container.querySelectorAll('.board-card').length === 0 && emptyMsg) emptyMsg.style.display = 'block';
@@ -11938,6 +11944,7 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
         }
     };
 
+    // Listeners de Movimento
     card.querySelector('.move-up').onclick = () => {
         const p = card.previousElementSibling; if (p && p.classList.contains('board-card')) container.insertBefore(card, p);
     };
@@ -11945,41 +11952,10 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
         const n = card.nextElementSibling; if (n && n.classList.contains('board-card')) container.insertBefore(n, card);
     };
 
-    if (type === 'text') {
-        const linkBtn = card.querySelector('.add-board-link');
-        if (linkBtn) linkBtn.onclick = (e) => { e.stopPropagation(); openBoardLinkManager(card.querySelector('.board-text-content')); };
-
-        const contentDiv = card.querySelector('.board-text-content');
-        contentDiv.addEventListener('click', (e) => {
-            if (!puzzleContainer.classList.contains('edit-mode-active')) {
-                const link = e.target.closest('a.board-link');
-                if (link) { e.preventDefault(); viewBoardLink(link); }
-            }
-        });
-
-        let typingTimer;
-        contentDiv.addEventListener('input', () => {
-            clearTimeout(typingTimer);
-            typingTimer = setTimeout(() => {
-                if (puzzleContainer.classList.contains('edit-mode-active')) savePuzzleData();
-            }, 2000);
-        });
-    }
-
     container.appendChild(card);
 
-    // --- CÓDIGO NOVO PARA SCROLL AUTOMÁTICO ---
-    // Só executa se dissermos explicitamente que é para fazer scroll
     if (shouldScroll) {
-        setTimeout(() => {
-            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            
-            // Se for texto novo, foca para escrever logo
-            if (type === 'text') {
-                const textArea = card.querySelector('.board-text-content');
-                if (textArea) textArea.focus();
-            }
-        }, 100);
+        setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
     }
 }
 
@@ -12010,172 +11986,192 @@ window.openNoteFromBoard = function(noteId, encodedSearchTerm = null) {
 
 // --- LÓGICA DO POPUP DE SELEÇÃO DE REFERÊNCIAS ---
 async function openReferenceSelectionPopup() {
-    console.log("%c🔍 [REF POPUP] Iniciando abertura do popup...", "color: #4a90e2; font-weight: bold;");
-    
     const modal = document.getElementById('puzzle-ref-selection-modal');
     const list = document.getElementById('puzzle-ref-selection-list');
     
     if (!activeReferenceEntity || !activeReferenceEntity.id) {
-        console.error("❌ [REF POPUP] Nenhuma entidade de referência ativa (activeReferenceEntity) encontrada.");
         alert("Selecione um tópico, tag ou entidade primeiro.");
         return;
     }
 
-    console.log("📍 [REF POPUP] Entidade Ativa:", activeReferenceEntity);
-
     modal.style.display = 'flex';
-    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar conteúdos...</span></div>';
+    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar notas e ideias...</span></div>';
+
+    allFoundReferenceBoxes = [];
+    currentReferencePageIndex = 0;
 
     const { id, type, name } = activeReferenceEntity;
     const isHighlightSearch = (type === 'destaque');
     const searchTerm = name.toLowerCase();
     const hexToFind = isHighlightSearch ? id.toUpperCase() : null;
 
-    console.log(`🔎 [REF POPUP] Modo de Busca: ${isHighlightSearch ? 'DESTAQUE (COR)' : 'TEXTO'}`);
-    if (isHighlightSearch) console.log(`🎨 [REF POPUP] Hex a procurar no índice: ${hexToFind}`);
-
     try {
         let q;
         if (isHighlightSearch) {
-            // Tenta buscar usando o campo coresUsadas
-            q = query(
-                collection(db, 'pastas'), 
-                where('coresUsadas', 'array-contains', hexToFind),
-                where('estado', '==', 'ativa'), 
-                where('userId', '==', auth.currentUser.uid),
-                where('tipo', '==', 'nota')
-            );
-            console.log("📡 [REF POPUP] Query de COR enviada ao Firestore...");
+            q = query(collection(db, 'pastas'), where('coresUsadas', 'array-contains', hexToFind), where('estado', '==', 'ativa'), where('userId', '==', auth.currentUser.uid), where('tipo', '==', 'nota'));
         } else {
-            q = query(
-                collection(db, 'pastas'), 
-                where('estado', '==', 'ativa'), 
-                where('userId', '==', auth.currentUser.uid),
-                where('tipo', '==', 'nota')
-            );
-            console.log("📡 [REF POPUP] Query de TEXTO enviada ao Firestore...");
+            q = query(collection(db, 'pastas'), where('estado', '==', 'ativa'), where('userId', '==', auth.currentUser.uid), where('tipo', '==', 'nota'));
         }
         
         const snapshot = await getDocs(q);
-        console.log(`📥 [REF POPUP] Firestore retornou ${snapshot.size} notas possíveis.`);
-
-        const results = [];
         const parser = new DOMParser();
 
         snapshot.forEach(docSnap => {
             const data = docSnap.data();
             const content = data.conteudo || "";
             const noteTitle = data.nome || "Sem Título";
+            const updatedTime = data.ultimaedicao?.toMillis() || data.createdAt?.toMillis() || 0;
 
-            console.log(`📄 [REF POPUP] Analisando nota: "${noteTitle}"`);
-
-            // Verificação de segurança (Privacidade)
-            let isProtected = (data.passe && data.passe.trim() !== "");
-            if (isProtected && !appSettings.searchAnchorsInProtected) {
-                console.log(`   🔒 Nota protegida ignorada: "${noteTitle}"`);
-                return;
-            }
+            if (data.passe && data.passe.trim() !== "" && !appSettings.searchAnchorsInProtected) return;
 
             const docHTML = parser.parseFromString(content, 'text/html');
-            const allWrappers = docHTML.querySelectorAll('.mini-note-wrapper, details.toggle-section');
-            
-            console.log(`   - Encontradas ${allWrappers.length} caixas totais nesta nota.`);
 
-            allWrappers.forEach((w, index) => {
+            // --- 1. PROCURAR EM CAIXAS E ESTRUTURAS ---
+            const allWrappers = docHTML.querySelectorAll('.mini-note-wrapper, details.toggle-section');
+            allWrappers.forEach((w) => {
                 let match = false;
-                
                 if (isHighlightSearch) {
                     const elColor = w.getAttribute('data-highlight');
-                    if (elColor && elColor.toUpperCase() === hexToFind) {
-                        match = true;
-                        console.log(`   ✅ CORRESPONDÊNCIA! Caixa #${index} tem a cor ${hexToFind}`);
-                    }
+                    if (elColor && elColor.toUpperCase() === hexToFind) match = true;
                 } else {
-                    if (w.textContent.toLowerCase().includes(searchTerm)) {
-                        match = true;
-                    }
+                    if (w.textContent.toLowerCase().includes(searchTerm)) match = true;
                 }
 
                 if (match) {
-                    let boxType = "📦 Bloco";
-                    let boxIcon = "📦";
-                    let boxTitle = "";
-
+                    let boxType = "Bloco"; let boxIcon = "📦"; let boxTitle = "";
                     if (w.tagName === 'DETAILS') {
                         boxType = "Secção"; boxIcon = "☂️";
                         boxTitle = w.querySelector('h2')?.textContent || "Título da Secção";
                     } else if (w.classList.contains('question-mode')) {
                         boxType = "Questão"; boxIcon = "📗";
-                        const inp = w.querySelector('.mini-note-title-input');
-                        boxTitle = inp ? (inp.value || inp.getAttribute('value')) : "Pergunta";
+                        const t = w.querySelector('.mini-note-title-input');
+                        boxTitle = t ? (t.textContent || t.value || t.getAttribute('value')) : "Questão";
                     } else if (w.classList.contains('free-mode')) {
                         boxType = "Contentor"; boxIcon = "📙";
                         boxTitle = w.querySelector('.mini-note-content')?.textContent.substring(0, 50) + "...";
                     } else {
                         boxType = "SubNota"; boxIcon = "📘";
-                        const inp = w.querySelector('.mini-note-title-input');
-                        boxTitle = inp ? (inp.value || inp.getAttribute('value')) : "SubNota";
+                        const t = w.querySelector('.mini-note-title-input');
+                        boxTitle = t ? (t.textContent || t.value || t.getAttribute('value')) : "SubNota";
                     }
 
-                    results.push({
-                        id: docSnap.id,
-                        name: noteTitle,
-                        snippet: w.outerHTML,
+                    allFoundReferenceBoxes.push({
+                        id: docSnap.id, name: noteTitle, snippet: w.outerHTML,
                         displaySnippet: boxTitle || "Conteúdo da caixa",
-                        typeName: boxType,
-                        typeIcon: boxIcon,
-                        isClone: true
+                        typeName: boxType, typeIcon: boxIcon, updatedTime: updatedTime
                     });
                 }
             });
-        });
 
-        console.log(`✨ [REF POPUP] Processamento concluído. Itens na lista: ${results.length}`);
+            // --- 2. PROCURAR EM IDEIAS (💡) ---
+            if (!isHighlightSearch) {
+                const allIdeas = docHTML.querySelectorAll('.idea-span');
+                allIdeas.forEach(idea => {
+                    if (idea.textContent.toLowerCase().includes(searchTerm)) {
+                        allFoundReferenceBoxes.push({
+                            id: docSnap.id, name: noteTitle, 
+                            snippet: `<div style="padding:10px; border:1px solid #e74c3c; border-radius:6px; background:rgba(231,76,60,0.05); color:var(--text-color);"><span class="idea-span">${idea.innerHTML}</span></div>`,
+                            displaySnippet: idea.textContent,
+                            typeName: "Ideia", typeIcon: "💡", color: "#e74c3c", 
+                            updatedTime: updatedTime
+                        });
+                    }
+                });
+            }
 
-        list.innerHTML = '';
-        if (results.length === 0) {
-            console.warn("⚠️ [REF POPUP] Nenhum resultado final para exibir.");
-            list.innerHTML = `<li style="padding:20px; color:#888; text-align:center;">Nenhuma caixa encontrada com ${isHighlightSearch ? 'esta cor' : 'este termo'}.</li>`;
-            return;
-        }
+            // --- 3. PROCURAR NO TEXTO SOLTO DA NOTA ---
+            if (!isHighlightSearch && content.toLowerCase().includes(searchTerm)) {
+                const bodyClone = docHTML.body.cloneNode(true);
+                // Remove caixas e ideias da pesquisa de corpo para não duplicar
+                bodyClone.querySelectorAll('.mini-note-wrapper, details, .idea-span').forEach(el => el.remove());
+                
+                if (bodyClone.textContent.toLowerCase().includes(searchTerm)) {
+                    const fullTxt = bodyClone.textContent;
+                    const idx = fullTxt.toLowerCase().indexOf(searchTerm);
+                    const start = Math.max(0, idx - 40);
+                    const end = Math.min(fullTxt.length, idx + searchTerm.length + 40);
+                    const snippetPreview = "..." + fullTxt.substring(start, end).trim() + "...";
 
-        results.forEach(item => {
-            const li = document.createElement('li');
-            li.className = 'puzzle-ref-item';
-            
-            const safeName = encodeURIComponent(item.name);
-            const safeSnippet = encodeURIComponent(item.snippet);
-
-            li.innerHTML = `
-                <div class="puzzle-ref-header">
-                    <span class="puzzle-ref-type" style="color: var(--accent-color)">
-                        ${item.typeIcon} ${item.typeName}
-                    </span>
-                    <span class="puzzle-ref-note">em ${item.name}</span>
-                </div>
-                <div class="puzzle-ref-snippet">
-                    ${item.displaySnippet}
-                </div>
-            `;
-
-            li.onclick = () => {
-                createBoardItem('ref', {
-                    noteId: item.id,
-                    noteName: item.name,
-                    snippet: item.snippet,
-                    isClone: item.isClone
-                }, true);
-                modal.style.display = 'none';
-                if (document.getElementById('ref-content-puzzle').classList.contains('edit-mode-active')) {
-                    savePuzzleData();
+                    allFoundReferenceBoxes.push({
+                        id: docSnap.id, name: noteTitle,
+                        snippet: `<blockquote style="border-left: 3px solid var(--accent-color); padding-left: 10px; font-style: italic;">${snippetPreview}</blockquote>`,
+                        displaySnippet: snippetPreview,
+                        typeName: "Corpo da Nota", typeIcon: "📄", updatedTime: updatedTime
+                    });
                 }
-            };
-            list.appendChild(li);
+            }
         });
+
+        allFoundReferenceBoxes.sort((a, b) => b.updatedTime - a.updatedTime);
+        list.innerHTML = '';
+        renderReferenceBoxesPage();
 
     } catch (e) {
-        console.error("🔥 [REF POPUP] Erro crítico na função:", e);
-        list.innerHTML = '<li style="color:red; padding:10px;">Erro ao carregar lista de referências.</li>';
+        console.error(e);
+        list.innerHTML = '<li style="color:red; padding:10px;">Erro ao carregar lista.</li>';
+    }
+}
+
+function renderReferenceBoxesPage() {
+    const list = document.getElementById('puzzle-ref-selection-list');
+    const ITEMS_PER_PAGE = 15;
+    
+    // Remove o botão "Carregar mais" antigo se existir
+    const oldBtn = document.getElementById('load-more-refs-btn');
+    if (oldBtn) oldBtn.remove();
+
+    if (allFoundReferenceBoxes.length === 0) {
+        list.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhuma referência encontrada.</li>';
+        return;
+    }
+
+    const start = currentReferencePageIndex * ITEMS_PER_PAGE;
+    const end = start + ITEMS_PER_PAGE;
+    const pageItems = allFoundReferenceBoxes.slice(start, end);
+
+    pageItems.forEach(item => {
+        const li = document.createElement('li');
+        li.className = 'puzzle-ref-item';
+        
+        li.innerHTML = `
+            <div class="puzzle-ref-header">
+                <span class="puzzle-ref-type" style="color: var(--accent-color)">
+                    ${item.typeIcon} ${item.typeName}
+                </span>
+                <span class="puzzle-ref-note">em ${item.name}</span>
+            </div>
+            <div class="puzzle-ref-snippet">
+                ${item.displaySnippet}
+            </div>
+        `;
+
+        li.onclick = () => {
+            createBoardItem('ref', {
+                noteId: item.id,
+                noteName: item.name,
+                snippet: item.snippet,
+                isClone: true
+            }, true);
+            document.getElementById('puzzle-ref-selection-modal').style.display = 'none';
+            if (document.getElementById('ref-content-puzzle').classList.contains('edit-mode-active')) {
+                savePuzzleData();
+            }
+        };
+        list.appendChild(li);
+    });
+
+    // Se ainda houver mais itens, adiciona o botão
+    if (end < allFoundReferenceBoxes.length) {
+        currentReferencePageIndex++;
+        const loadMoreBtn = document.createElement('button');
+        loadMoreBtn.id = 'load-more-refs-btn';
+        loadMoreBtn.className = 'modal-btn secondary';
+        loadMoreBtn.style.width = "100%";
+        loadMoreBtn.style.marginTop = "10px";
+        loadMoreBtn.style.marginBottom = "20px";
+        loadMoreBtn.textContent = `+ ${allFoundReferenceBoxes.length - end} resultados`;
+        loadMoreBtn.onclick = () => renderReferenceBoxesPage();
+        list.appendChild(loadMoreBtn);
     }
 }
 
