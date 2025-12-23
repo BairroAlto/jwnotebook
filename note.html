@@ -12596,69 +12596,99 @@ async function showTagReferencesPanel(tagName) {
     }
 }
 
+// ============================================================
+// MOTOR DA 4ª COLUNA - BÍBLIA PÚBLICA + PUZZLE PRIVADO (FIXED)
+// ============================================================
 
- async function showReferencesPanel(entityId, entityName, entityType, anexoId = null) {
-    
+async function showReferencesPanel(entityId, entityName, entityType, anexoId = null) {
+    // 1. Grava o puzzle anterior se estiver em modo edição
     await forceSaveAndClosePuzzleMode();
 
-    // DEFINIR ENTIDADE ATIVA
-    // Se entityId for null, usamos o nome como ID temporário para o +Ref não bloquear
-    activeReferenceEntity = { 
-        id: entityId || entityName, 
-        type: entityType, 
-        name: entityName 
-    };
-
+    // 2. Definir contexto da entidade
+    activeReferenceEntity = { id: entityId || entityName, type: entityType, name: entityName };
     notebookContainer.classList.add('references-panel-visible');
-    
-    // Abrir aba Puzzle por padrão
+
+    const descElement = document.getElementById('references-panel-description');
+    const editBtn = document.getElementById('references-edit-btn');
+    const wolBtn = document.getElementById('references-wol-btn');
+    const bookmarkBtn = document.getElementById('references-bookmark-btn');
+
+    // Sincronização de abas (Default: Puzzle)
     document.querySelectorAll('#ref-tabs button').forEach(b => b.classList.remove('active'));
-    const pBtn = document.querySelector('[data-ref-tab="puzzle"]');
-    if (pBtn) pBtn.classList.add('active');
+    document.querySelector('[data-ref-tab="puzzle"]').classList.add('active');
     document.getElementById('ref-content-puzzle').style.display = 'flex';
     document.getElementById('ref-content-references').style.display = 'none';
 
-    document.getElementById('references-panel-description').style.display = 'block';
-    document.getElementById('references-toolbar').style.display = 'flex';
-    document.querySelectorAll('.references-separator').forEach(el => el.style.display = 'block');
     referencesPanelTitle.textContent = `Referências para "${entityName}"`;
 
-    // 1. Carrega o quadro (Agora seguro contra null)
+    // --- LÓGICA 1: CARREGAR DESCRIÇÃO (BÍBLIA PÚBLICA VS OUTROS) ---
+    if (entityType === 'textobiblico') {
+        if (editBtn) editBtn.style.display = 'none'; 
+        if (wolBtn) wolBtn.style.display = 'block';
+        if (bookmarkBtn) bookmarkBtn.style.display = 'block';
+        descElement.style.borderLeft = '3px solid #f1c40f';
+        
+        descElement.innerHTML = `<em>A consultar biblioteca comum...</em>`;
+
+        try {
+            const texto = await fetchBibleText(entityName);
+            if (texto) {
+                descElement.innerHTML = `<div style="color: var(--text-color); font-size: 1.15em; line-height: 1.5; padding: 5px 0;">"${texto}"</div>`;
+            } else {
+                descElement.innerHTML = `
+                    <div style="background: rgba(255,255,255,0.03); padding: 15px; border-radius: 8px; text-align: center;">
+                        <p style="color: #888; font-size: 0.85em; margin-bottom: 12px;">Este versículo ainda não foi registado na biblioteca comum.</p>
+                        <button onclick="window.manualInsertBibleText('${entityName}')" 
+                                style="background: #f1c40f; border: none; color: #000; width: 100%; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.9em;">
+                                📥 Colar para Todos Verem
+                        </button>
+                    </div>`;
+            }
+        } catch (e) {
+            descElement.innerHTML = `<span>Texto disponível na WOL 📖</span>`;
+        }
+    } else {
+        if (editBtn) editBtn.style.display = 'block';
+        if (wolBtn) wolBtn.style.display = 'none';
+        if (bookmarkBtn) bookmarkBtn.style.display = 'none';
+        descElement.style.borderLeft = '3px solid var(--accent-color)';
+        
+        const collectionName = getCollectionFromType(entityType);
+        if (entityId && collectionName) {
+            const entitySnap = await getDoc(doc(db, collectionName, entityId));
+            descElement.textContent = entitySnap.exists() ? (entitySnap.data().descricao || 'Sem descrição.') : 'Registo virtual.';
+        }
+    }
+
+    // 3. CARREGAR O QUADRO (PUZZLE) PRIVADO
     loadPuzzleData(entityId, entityType);
 
+    // --- LÓGICA 2: PESQUISA DE NOTAS (ABA REFERÊNCIAS) ---
+    // Esta parte substitui a função que estava em falta e resolve o erro
     const listElement = document.getElementById('references-list');
-    listElement.innerHTML = `<div class="spinner-container"><div class="spinner"></div><span>A analisar contextos...</span></div>`;
+    listElement.innerHTML = `<div class="spinner-container"><div class="spinner"></div><span>A procurar menções...</span></div>`;
 
     try {
-        // 2. Tenta carregar descrição se o documento existir
-        if (entityId) {
-            const collectionName = getCollectionFromType(entityType);
-            if (collectionName) {
-                const entitySnap = await getDoc(doc(db, collectionName, entityId));
-                if (entitySnap.exists()) {
-                    document.getElementById('references-panel-description').textContent = entitySnap.data().descricao || 'Sem descrição.';
-                }
-            }
-        } else {
-            document.getElementById('references-panel-description').textContent = "Registo virtual (Bíblia). Notas encontradas por texto.";
-        }
-
-        // 3. Pesquisa Global por Texto (Notas que citam este nome)
-        const qNotes = query(collection(db, 'pastas'), where('estado', '==', 'ativa'), where('userId', '==', auth.currentUser.uid));
+        const qNotes = query(
+            collection(db, 'pastas'), 
+            where('estado', '==', 'ativa'), 
+            where('userId', '==', auth.currentUser.uid)
+        );
         const snapshot = await getDocs(qNotes);
         const results = [];
 
-        snapshot.forEach(docSnapshot => {
-            const data = docSnapshot.data();
+        snapshot.forEach(docSnap => {
+            const data = docSnap.data();
             const content = data.conteudo || "";
             const noteName = data.nome || "";
             
+            // Pesquisa se o nome da entidade aparece no título ou no texto da nota
             if (content.toLowerCase().includes(entityName.toLowerCase()) || noteName.toLowerCase().includes(entityName.toLowerCase())) {
                 let isProtected = (data.passe && data.passe.trim() !== "");
                 if (isProtected && !appSettings.searchAnchorsInProtected) return;
 
                 results.push({ 
-                    id: docSnapshot.id, 
+                    id: docSnap.id, 
                     name: noteName, 
                     snippet: generateReferenceContext(content, entityName),
                     isProtected: isProtected
@@ -12668,7 +12698,7 @@ async function showTagReferencesPanel(tagName) {
 
         listElement.innerHTML = '';
         if (results.length === 0) {
-            listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhuma menção encontrada.</li>';
+            listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhuma nota cita este item.</li>';
         } else {
             results.forEach(item => {
                 const details = document.createElement('details');
@@ -12679,12 +12709,9 @@ async function showTagReferencesPanel(tagName) {
                 details.innerHTML = `
                     <summary>
                         <div class="ref-item-header">
-                            <button class="add-to-puzzle-btn" title="Adicionar ao Quadro" 
-                                    onclick="event.preventDefault(); event.stopPropagation(); window.addItemToPuzzle('${item.id}', decodeURIComponent('${safeName}'), decodeURIComponent('${safeSnippet}'))">
-                                +
-                            </button>
+                            <button class="add-to-puzzle-btn" onclick="event.preventDefault(); event.stopPropagation(); window.addItemToPuzzle('${item.id}', decodeURIComponent('${safeName}'), decodeURIComponent('${safeSnippet}'))">+</button>
                             <span class="ref-item-title">${item.isProtected ? '🔒' : '📄'} ${item.name}</span>
-                            <button class="go-to-note-btn" onclick="event.preventDefault(); event.stopPropagation(); window.openNoteFromBoard('${item.id}', '${encodeURIComponent(entityName)}')" title="Ir para a nota">➔</button>
+                            <button class="go-to-note-btn" onclick="event.preventDefault(); event.stopPropagation(); window.navigateToNoteSmart('${item.id}')">➔</button>
                         </div>
                     </summary>
                     <div class="reference-context">${item.snippet}</div>
@@ -12694,9 +12721,85 @@ async function showTagReferencesPanel(tagName) {
         }
     } catch (error) {
         console.error("Erro ao carregar referências:", error);
+        listElement.innerHTML = '<li>Erro ao carregar lista.</li>';
     }
 }
 
+// 2. BUSCAR TEXTO NA BIBLIOTECA PÚBLICA (COMUM)
+async function fetchBibleText(fullReference) {
+    try {
+        const q = query(collection(db, 'bible_verses_public'), where('nome', '==', fullReference));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+            return snap.docs[0].data().texto;
+        }
+    } catch (e) { console.error("Erro na bibl. pública:", e); }
+    return null;
+}
+
+// 3. GRAVAÇÃO PÚBLICA + PRIVADA
+async function saveTextToFirestore(name, text) {
+    try {
+        // Grava no Público (Texto para todos)
+        const publicRef = collection(db, 'bible_verses_public');
+        const qPub = query(publicRef, where('nome', '==', name));
+        const snapPub = await getDocs(qPub);
+        if (snapPub.empty) {
+            await addDoc(publicRef, { nome: name, texto: text, contribuidoPor: auth.currentUser.uid, createdAt: serverTimestamp() });
+        }
+
+        // Grava no Privado (Cria entrada para o utilizador ter o seu próprio Puzzle)
+        const userColl = collection(db, 'textosbiblicos');
+        const qUser = query(userColl, where('nome', '==', name), where('userId', '==', auth.currentUser.uid));
+        const snapUser = await getDocs(qUser);
+        if (snapUser.empty) {
+            await addDoc(userColl, { nome: name, descricao: text, userId: auth.currentUser.uid, createdAt: serverTimestamp(), referencias: {} });
+        }
+        
+        if (typeof fetchAllEntities === 'function') fetchAllEntities();
+    } catch (e) { console.error("Erro ao salvar:", e); }
+}
+
+// Prompt manual
+window.manualInsertBibleText = async function(name) {
+    const text = prompt(`Copie o texto e cole aqui para ficar disponível na biblioteca comum (${name}):`);
+    if (text && text.trim().length > 0) {
+        await saveTextToFirestore(name, text.trim());
+        showReferencesPanel(null, name, 'textobiblico');
+    }
+};
+
+
+
+window.manualInsertBibleText = async function(name) {
+    const text = prompt(`Digite ou cole o texto de ${name}:`);
+    if (text && text.trim().length > 0) {
+        await saveTextToFirestore(name, text.trim());
+        // Recarrega o painel
+        showReferencesPanel(null, name, 'textobiblico');
+    }
+};
+
+// ============================================================
+// 3. INSERÇÃO MANUAL E GRAVAÇÃO DEFINITIVA
+// ============================================================
+window.manualInsertBibleText = async function(name) {
+    const text = prompt(`Digite ou cole o texto de ${name}:`);
+    if (text && text.trim().length > 0) {
+        await saveTextToFirestore(name, text.trim());
+        // Recarrega o painel para exibir o texto gravado
+        showReferencesPanel(null, name, 'textobiblico');
+    }
+};
+
+
+window.manualInsertBibleText = async function(name) {
+    const text = prompt(`Copie o texto da Bíblia Online e cole aqui (${name}):`);
+    if (text && text.trim().length > 0) {
+        await saveTextToFirestore(name, text.trim());
+        showReferencesPanel(null, name, 'textobiblico');
+    }
+};
 
 
 async function hideReferencesPanel() {
@@ -21507,24 +21610,40 @@ async function renderListCategoryItems(categoryId) {
                 return;
             }
             if (lastNav.type === 'bible-chapter') {
-                const bookData = BIBLE_DATA.find(b => b.nome === lastNav.book);
-                let totalVersicles = bookData?.versiculos ? bookData.versiculos[lastNav.chapter - 1] : 50;
-                const existingVerses = allEntities['textobiblico'] || [];
-                const prefix = `${lastNav.book} ${lastNav.chapter}:`;
-                middlePanelTitle.textContent = `${lastNav.book} ${lastNav.chapter}`;
-                middlePanelList.innerHTML = '<div class="bible-grid"></div>';
-                const grid = middlePanelList.querySelector('.bible-grid');
-                for (let v = 1; v <= totalVersicles; v++) {
-                    const fullVerseName = `${prefix}${v}`;
-                    const alreadyExists = existingVerses.some(e => e.nome === fullVerseName);
-                    const btn = document.createElement('div');
-                    btn.className = `bible-grid-btn ${alreadyExists ? 'exists' : ''}`;
-                    btn.textContent = v;
-                    btn.onclick = () => showReferencesPanel(null, fullVerseName, 'textobiblico');
-                    grid.appendChild(btn);
-                }
-                return;
-            }
+    // 1. Encontra os dados do livro selecionado
+    const bookData = BIBLE_DATA.find(b => b.nome === lastNav.book);
+    
+    // 2. Tenta obter o número real de versículos para aquele capítulo específico
+    // Se por acaso não existir no array, usa 50 como segurança (fallback)
+    let totalVersicles = 50;
+    if (bookData && bookData.versiculos && bookData.versiculos[lastNav.chapter - 1]) {
+        totalVersicles = bookData.versiculos[lastNav.chapter - 1];
+    }
+    
+    const existingVerses = allEntities['textobiblico'] || [];
+    const prefix = `${lastNav.book} ${lastNav.chapter}:`;
+    
+    middlePanelTitle.textContent = `${lastNav.book} ${lastNav.chapter}`;
+    middlePanelList.innerHTML = '<div class="bible-grid"></div>';
+    const grid = middlePanelList.querySelector('.bible-grid');
+
+    // 3. Gera exatamente o número de botões correspondente aos versículos reais
+    for (let v = 1; v <= totalVersicles; v++) {
+        const fullVerseName = `${prefix}${v}`;
+        const alreadyExists = existingVerses.some(e => e.nome === fullVerseName);
+        
+        const btn = document.createElement('div');
+        // Se o versículo já estiver na base de dados, adiciona a classe 'exists' (fica verde)
+        btn.className = `bible-grid-btn ${alreadyExists ? 'exists' : ''}`;
+        btn.textContent = v;
+        
+        // Ao clicar, abre o painel de referências (Quarta Coluna)
+        btn.onclick = () => showReferencesPanel(null, fullVerseName, 'textobiblico');
+        
+        grid.appendChild(btn);
+    }
+    return;
+}
         }
 
         // --- CAMINHO C: CATEGORIAS GENÉRICAS ---
@@ -22147,6 +22266,7 @@ window.movePanelLink = async function(index, direction) {
         console.error("Erro ao mover link no painel:", e);
     }
 };
+
 
     </script>
 </body>
