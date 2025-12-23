@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="pt-pt">
+<head>
+    <meta charset="UTF-8">
+    <title>Importador Ultra-Rápido - JW Notebook</title>
+    <style>
+        :root { --bg: #1a1a1d; --panel: #252528; --accent: #f1c40f; --text: #f0f0f0; }
+        body { font-family: sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .container { width: 100%; max-width: 800px; background: var(--panel); padding: 25px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        textarea { width: 100%; height: 200px; background: #111; color: #fff; border: 1px solid #444; border-radius: 8px; padding: 12px; margin-bottom: 15px; outline: none; font-family: monospace; resize: vertical; }
+        
+        .btn-box { display: flex; gap: 10px; justify-content: center; margin-bottom: 20px; }
+        button { padding: 12px 25px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        #btn-parse { background: #4a90e2; color: white; }
+        #btn-save { background: var(--accent); color: black; display: none; }
+        
+        .status { margin: 10px 0; font-weight: bold; text-align: center; padding: 12px; border-radius: 5px; }
+        .status.error { background: rgba(231, 76, 60, 0.2); color: #e74c3c; border: 1px solid #e74c3c; }
+        .status.success { background: rgba(46, 204, 113, 0.2); color: #2ecc71; border: 1px solid #2ecc71; }
+        
+        .summary-item { padding: 12px 18px; margin: 5px 0; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; font-weight: 500; background: rgba(255,255,255,0.05); }
+        .summary-item.ok { border-left: 5px solid #2ecc71; }
+        .summary-item.fail { border-left: 5px solid #e74c3c; background: rgba(231, 76, 60, 0.1); }
+        .new-tag { font-size: 11px; background: #4a90e2; color: white; padding: 2px 8px; border-radius: 10px; margin-left: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2 style="text-align:center; color:var(--accent)">🚀 Importador Ultra-Rápido (V5)</h2>
+    
+    <textarea id="raw-text" placeholder="Cola múltiplos capítulos aqui..."></textarea>
+
+    <div class="btn-box">
+        <button id="btn-parse">🔍 Analisar Tudo</button>
+        <button id="btn-save">🚀 Gravar Tudo</button>
+    </div>
+
+    <div id="status" class="status"></div>
+    <div id="summary-list"></div>
+</div>
+
+<script type="module">
+    import { db, auth } from './js/firebase-config.js';
+    import { BIBLE_DATA } from './js/bible-data.js';
+    import { doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
+
+    let versesToSave = [];
+
+    const slug = (str) => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '_');
+
+    document.getElementById('btn-parse').addEventListener('click', async () => {
+        const raw = document.getElementById('raw-text').value;
+        if (!raw.trim()) return;
+
+        const status = document.getElementById('status');
+        const listDiv = document.getElementById('summary-list');
+        const btnSave = document.getElementById('btn-save');
+        
+        status.className = "status";
+        status.textContent = "⌛ A validar capítulos...";
+        listDiv.innerHTML = "";
+        btnSave.style.display = "none";
+        versesToSave = [];
+
+        let cleanText = raw.replace(/\+|\*/g, '').replace(/\u202f/g, ' ');
+        const bookNames = BIBLE_DATA.map(b => b.nome).join('|');
+        const chapterRegex = new RegExp(`(${bookNames})\\s*\\n\\s*(\\d+)\\s+`, 'gi');
+        
+        let matches = [...cleanText.matchAll(chapterRegex)];
+        
+        if (matches.length === 0) {
+            status.className = "status error";
+            status.textContent = "❌ Nenhum capítulo detetado. Verifique o formato.";
+            return;
+        }
+
+        for (let i = 0; i < matches.length; i++) {
+            const match = matches[i];
+            const bookName = match[1];
+            const chapterNum = match[2];
+            const startPos = match.index + match[0].length;
+            const endPos = matches[i+1] ? matches[i+1].index : cleanText.length;
+            const body = cleanText.substring(startPos, endPos);
+
+            await processSummary(bookName, chapterNum, body, listDiv);
+        }
+
+        if (versesToSave.length > 0) {
+            status.className = "status success";
+            status.innerHTML = `✅ Análise concluída. <b>${versesToSave.length}</b> novos versículos encontrados.`;
+            btnSave.style.display = "block";
+        } else {
+            status.className = "status success";
+            status.textContent = "✅ Tudo em ordem! (Não há versículos novos para adicionar).";
+        }
+    });
+
+    async function processSummary(bookName, chapterNum, body, container) {
+        const bookData = BIBLE_DATA.find(b => b.nome.toLowerCase() === bookName.toLowerCase());
+        const expected = bookData.versiculos[parseInt(chapterNum) - 1];
+        
+        const parts = body.split(/\s+(\d+)\s+/);
+        let processed = [];
+        let curNum = 1;
+        let curText = parts[0] || "";
+
+        for (let i = 1; i < parts.length; i += 2) {
+            let potential = parseInt(parts[i]);
+            if (potential === curNum + 1) {
+                processed.push({ num: curNum, text: curText.trim() });
+                curNum = potential;
+                curText = parts[i+1] || "";
+            } else {
+                curText += ` ${parts[i]} ${parts[i+1] || ""}`;
+            }
+        }
+        processed.push({ num: curNum, text: curText.trim() });
+
+        const count = processed.length;
+        const isError = count !== expected;
+        
+        const item = document.createElement('div');
+        item.className = `summary-item ${isError ? 'fail' : 'ok'}`;
+        
+        let newInChapter = 0;
+        if (!isError) {
+            // Verificar no Firebase apenas se a sequência estiver certa
+            for (const v of processed) {
+                const vId = `${slug(bookData.nome)}_${chapterNum}_${v.num}`;
+                const snap = await getDoc(doc(db, 'bible_verses_public', vId));
+                if (!snap.exists()) {
+                    newInChapter++;
+                    versesToSave.push({ id: vId, nome: `${bookData.nome} ${chapterNum}:${v.num}`, texto: v.text });
+                }
+            }
+        }
+
+        item.innerHTML = `
+            <span>${bookData.nome} ${chapterNum} - ${count} / ${expected} versículos ${isError ? '❌' : '✅'}</span>
+            ${newInChapter > 0 ? `<span class="new-tag">+${newInChapter} novos</span>` : ''}
+        `;
+        
+        if (isError) {
+            item.innerHTML += `<small style="display:block; color: #e74c3c; font-size: 11px;">Erro: Detetados ${count}, mas o livro tem ${expected}.</small>`;
+        }
+
+        container.appendChild(item);
+    }
+
+    document.getElementById('btn-save').addEventListener('click', async () => {
+        if (!auth.currentUser) return alert("Faz login!");
+        const status = document.getElementById('status');
+        const btn = document.getElementById('btn-save');
+        btn.disabled = true;
+        
+        let count = 0;
+        try {
+            for (const v of versesToSave) {
+                await setDoc(doc(db, 'bible_verses_public', v.id), {
+                    nome: v.nome, texto: v.texto, contribuidoPor: auth.currentUser.uid, createdAt: serverTimestamp()
+                });
+                count++;
+                status.textContent = `🚀 Gravando: ${count} / ${versesToSave.length}`;
+            }
+            status.className = "status success";
+            status.textContent = "✅ Gravado com sucesso!";
+            setTimeout(() => window.location.reload(), 1500);
+        } catch (e) {
+            status.className = "status error";
+            status.textContent = "❌ Erro ao gravar.";
+            btn.disabled = false;
+        }
+    });
+</script>
+</body>
+</html>
