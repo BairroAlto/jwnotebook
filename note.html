@@ -12371,34 +12371,53 @@ async function savePuzzleData() {
 
 // --- NOVO LOAD (Unificado) ---
 async function loadPuzzleData(entityId, entityType) {
-    // 1. Se não houver ID (ex: versículo novo ainda não gravado), limpa o quadro e sai
     const container = document.getElementById('puzzle-board-container');
     const emptyMsg = document.getElementById('puzzle-empty-msg');
 
-    if (!entityId) {
-        if (container) container.querySelectorAll('.board-card').forEach(el => el.remove());
-        if (emptyMsg) emptyMsg.style.display = 'block';
-        return; 
-    }
+    // 1. Limpeza visual imediata do quadro antes de carregar
+    if (container) container.querySelectorAll('.board-card').forEach(el => el.remove());
 
-    // 2. DEFINIR O NOME DA COLEÇÃO (O que estava a faltar)
     const collectionName = getCollectionFromType(entityType);
-    if (!collectionName) {
-        console.error("❌ [PUZZLE] Tipo de entidade desconhecido para carregar puzzle:", entityType);
-        return;
-    }
+    if (!collectionName) return;
 
     try {
-        const entityDoc = await getDoc(doc(db, collectionName, entityId));
-        
-        // Limpa o visual atual antes de carregar os itens da base de dados
-        if (container) container.querySelectorAll('.board-card').forEach(el => el.remove());
+        let entityDoc = null;
 
-        if (!entityDoc.exists()) {
+        // 2. Tentar carregar por ID (se o ID for enviado e for válido)
+        if (entityId) {
+            const docRef = doc(db, collectionName, entityId);
+            const snap = await getDoc(docRef);
+            if (snap.exists()) entityDoc = snap;
+        }
+
+        // 3. Se não encontrou por ID (ou ID era null), procura pelo CAMPO "nome"
+        if (!entityDoc) {
+            const nameToFind = activeReferenceEntity.name; // "Ecclesiastes 9:11"
+            
+            // IMPORTANTE: Precisamos importar query, where e getDocs se não estiverem no topo
+            const q = query(
+                collection(db, collectionName), 
+                where("nome", "==", nameToFind),
+                where("userId", "==", auth.currentUser.uid)
+            );
+            
+            const querySnapshot = await getDocs(q);
+            
+            if (!querySnapshot.empty) {
+                entityDoc = querySnapshot.docs[0];
+                // Sincroniza o ID real do documento na variável global para permitir edição/save
+                activeReferenceEntity.id = entityDoc.id; 
+            }
+        }
+
+        // 4. Verificação final: se após a busca ainda não existe nada
+        if (!entityDoc || !entityDoc.exists()) {
             if (emptyMsg) emptyMsg.style.display = 'block';
+            console.log("Nenhum registo pessoal encontrado para:", activeReferenceEntity.name);
             return;
         }
 
+        // 5. Renderizar os dados encontrados
         const data = entityDoc.data();
         let boardItems = data.puzzleBoard || [];
 
@@ -12409,54 +12428,13 @@ async function loadPuzzleData(entityId, entityType) {
         
         if (emptyMsg) emptyMsg.style.display = 'none';
 
-        // 3. Atualizar referências de texto ao vivo (opcional, mas mantém os snippets frescos)
-        const refItems = boardItems.filter(item => item.type === 'ref');
-        
-        if (refItems.length > 0) {
-            const fetchPromises = refItems.map(async (item) => {
-                const currentSnippet = decodeURIComponent(item.snippet || "");
-                // Se já for um clone complexo (HTML), não atualiza para não perder a estrutura
-                if (currentSnippet.includes('mini-note-wrapper') || currentSnippet.includes('toggle-section')) {
-                    return; 
-                }
-                
-                try {
-                    let content = "";
-                    let noteName = item.noteName;
-
-                    if (selectedNoteId === item.noteId) {
-                        content = document.getElementById('note-content-editor').innerHTML;
-                        noteName = document.getElementById('note-title-input').value;
-                    } else {
-                        const noteSnap = await getDoc(doc(db, 'pastas', item.noteId));
-                        if (noteSnap.exists()) {
-                            content = noteSnap.data().conteudo;
-                            noteName = noteSnap.data().nome;
-                        } else {
-                            item._deleted = true; return;
-                        }
-                    }
-                    item.snippet = generateReferenceContext(content, activeReferenceEntity.name);
-                    item.noteName = noteName;
-                } catch (err) { console.warn("Erro ao atualizar snippet:", err); }
-            });
-
-            await Promise.all(fetchPromises);
-        }
-
-        // 4. Renderizar os cartões no ecrã
         boardItems.forEach(item => {
-            if (item._deleted) return;
-            if (item.type === 'text') {
-                createBoardItem('text', { content: item.content }); 
-            } else if (item.type === 'ref') {
-                createBoardItem('ref', {
-                    noteId: item.noteId,
-                    noteName: item.noteName,
-                    parentId: item.parentId,
-                    snippet: item.snippet
-                });
-            }
+            createBoardItem(item.type, {
+                content: item.content,
+                noteId: item.noteId,
+                noteName: item.noteName,
+                snippet: item.snippet
+            });
         });
 
     } catch (e) { 
@@ -12623,42 +12601,28 @@ async function showReferencesPanel(entityId, entityName, entityType, anexoId = n
 
     // --- LÓGICA 1: CARREGAR DESCRIÇÃO (BÍBLIA PÚBLICA VS OUTROS) ---
     if (entityType === 'textobiblico') {
-        if (editBtn) editBtn.style.display = 'none'; 
-        if (wolBtn) wolBtn.style.display = 'block';
-        if (bookmarkBtn) bookmarkBtn.style.display = 'block';
-        descElement.style.borderLeft = '3px solid #f1c40f';
-        
-        descElement.innerHTML = `<em>A consultar biblioteca comum...</em>`;
+    if (editBtn) editBtn.style.display = 'none'; 
+    if (wolBtn) wolBtn.style.display = 'block';
+    if (bookmarkBtn) bookmarkBtn.style.display = 'block';
+    descElement.style.borderLeft = '3px solid #f1c40f';
+    
+    descElement.innerHTML = `<em>A consultar biblioteca...</em>`;
 
-        try {
-            const texto = await fetchBibleText(entityName);
-            if (texto) {
-                descElement.innerHTML = `<div style="color: var(--text-color); font-size: 1.15em; line-height: 1.5; padding: 5px 0;">"${texto}"</div>`;
-            } else {
-                descElement.innerHTML = `
-                    <div style="background: rgba(255,255,255,0.03); padding: 15px; border-radius: 8px; text-align: center;">
-                        <p style="color: #888; font-size: 0.85em; margin-bottom: 12px;">Este versículo ainda não foi registado na biblioteca comum.</p>
-                        <button onclick="window.manualInsertBibleText('${entityName}')" 
-                                style="background: #f1c40f; border: none; color: #000; width: 100%; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.9em;">
-                                📥 Colar para Todos Verem
-                        </button>
-                    </div>`;
-            }
-        } catch (e) {
-            descElement.innerHTML = `<span>Texto disponível na WOL 📖</span>`;
+    try {
+        const texto = await fetchBibleText(entityName);
+        if (texto) {
+            // Se o texto existir na biblioteca comum, mostra-o
+            descElement.innerHTML = `<div style="color: var(--text-color); font-size: 1.15em; line-height: 1.5; padding: 5px 0;">"${texto}"</div>`;
+        } else {
+            // Se NÃO existir, mostra apenas um link discreto ou aviso simples, sem botões gigantes
+            descElement.innerHTML = `<div style="color: #888; font-size: 0.9em; font-style: italic; padding: 10px 0;">
+                Texto não disponível na biblioteca local. Consulte na Bíblia Online.
+            </div>`;
         }
-    } else {
-        if (editBtn) editBtn.style.display = 'block';
-        if (wolBtn) wolBtn.style.display = 'none';
-        if (bookmarkBtn) bookmarkBtn.style.display = 'none';
-        descElement.style.borderLeft = '3px solid var(--accent-color)';
-        
-        const collectionName = getCollectionFromType(entityType);
-        if (entityId && collectionName) {
-            const entitySnap = await getDoc(doc(db, collectionName, entityId));
-            descElement.textContent = entitySnap.exists() ? (entitySnap.data().descricao || 'Sem descrição.') : 'Registo virtual.';
-        }
+    } catch (e) {
+        descElement.innerHTML = `<span>Texto disponível na WOL 📖</span>`;
     }
+}
 
     // 3. CARREGAR O QUADRO (PUZZLE) PRIVADO
     loadPuzzleData(entityId, entityType);
