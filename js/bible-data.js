@@ -57,7 +57,7 @@ export const BIBLE_DATA = [
     { id: 54, nome: "1 Timóteo", caps: 6, abrev: "1 Tim", versiculos: [20, 15, 16, 16, 25, 21] },
     { id: 55, nome: "2 Timóteo", caps: 4, abrev: "2 Tim", versiculos: [18, 26, 17, 22] },
     { id: 56, nome: "Tito", caps: 3, abrev: "Tito", versiculos: [16, 15, 15] },
-    { id: 57, nome: "Filémom", caps: 1, abrev: "Flm", versiculos: [25] },
+    { id: 57, nome: "Filémon", caps: 1, abrev: "Flm", versiculos: [25] },
     { id: 58, nome: "Hebreus", caps: 13, abrev: "Heb", versiculos: [14, 18, 19, 16, 14, 20, 28, 13, 28, 39, 40, 29, 25] },
     { id: 59, nome: "Tiago", caps: 5, abrev: "Tia", versiculos: [27, 26, 18, 17, 20] },
     { id: 60, nome: "1 Pedro", caps: 5, abrev: "1 Ped", versiculos: [25, 25, 22, 19, 14] },
