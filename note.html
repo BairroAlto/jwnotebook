@@ -5661,6 +5661,8 @@ a.board-link:hover {
     import { db, auth } from './js/firebase-config.js';
     import { BIBLE_DATA, BIBLICAL_BOOKS } from './js/bible-data.js';
     import { sanitizeHTML, debounce, removeAccents, escapeRegExp } from './js/utils.js';
+    import { SIGLAS_PUBLICACOES } from './js/siglas-data.js';
+
 
 
     // 2. Importações do Firestore
@@ -19004,13 +19006,15 @@ window.createCodexRow = function(data = null) {
             <div class="serie-wrapper">
                 <label class="codex-label">SÉRIE / PUBLICAÇÃO</label>
                 <input type="text" class="codex-input-modern serie-main" placeholder="Ex: w24 05" value="${data ? data.serie : ''}">
+                <!-- Onde aparecerá o nome completo da publicação -->
+                <div class="serie-fullname" style="font-size: 11px; color: var(--accent-color); margin-top: 4px; height: 14px; font-weight: 500; font-style: italic;"></div>
             </div>
             <div class="manual-controls">
-                <label class="codex-label">ANO/MÊS</label>
+                <label class="codex-label">OPÇÕES</label>
                 <div style="display:flex; gap:4px;">
-                    <button class="btn-control-small" onclick="window.toggleManual(this, 'A')">A</button>
-                    <button class="btn-control-small" onclick="window.toggleManual(this, 'M')">M</button>
-                    <button class="btn-control-small" onclick="window.toggleManual(this, 'T')">T</button>
+                    <button class="btn-control-small" onclick="window.toggleManual(this, 'A')" title="Ano Manual">A</button>
+                    <button class="btn-control-small" onclick="window.toggleManual(this, 'M')" title="Mês Manual">M</button>
+                    <button class="btn-control-small" onclick="window.toggleManual(this, 'T')" title="Tempo (H:M:S)">T</button>
                 </div>
             </div>
         </div>
@@ -19031,16 +19035,50 @@ window.createCodexRow = function(data = null) {
         </div>
     `;
 
+    // --- LÓGICA DE IDENTIFICAÇÃO DA SIGLA ---
+    const inputSerie = row.querySelector('.serie-main');
+    const displayFullName = row.querySelector('.serie-fullname');
+
+    const updateFullName = (val) => {
+        if (!val) {
+            displayFullName.textContent = "";
+            return;
+        }
+
+        const valorBaixo = val.toLowerCase().trim();
+        
+        // 1. Extração da Sigla: 
+        // Pega as letras iniciais. Se houver hífen e número (ex: it-1), pega também.
+        // Se houver espaço ou número logo após as letras (ex: w24), isola as letras.
+        let sigla = "";
+        const match = valorBaixo.match(/^[a-z]+(?:-[0-9])?/);
+        if (match) sigla = match[0];
+
+        // 2. Busca no dicionário importado (SIGLAS_PUBLICACOES)
+        // Nota: Certifique-se de que SIGLAS_PUBLICACOES está acessível neste escopo
+        const nomeCompleto = SIGLAS_PUBLICACOES[sigla];
+
+        if (nomeCompleto) {
+            displayFullName.textContent = `📚 ${nomeCompleto}`;
+        } else {
+            displayFullName.textContent = "";
+        }
+    };
+
+    // Listener para quando o utilizador escreve
+    inputSerie.addEventListener('input', (e) => updateFullName(e.target.value));
+
     container.appendChild(row);
 
-    // Se houver dados (edição), preenchemos os chips
+    // Se houver dados (edição), preenchemos os chips e o nome completo
     if (data) {
+        updateFullName(data.serie);
         const pContainer = row.querySelector('.pages-container');
         const pgContainer = row.querySelector('.paragraphs-container');
         if (data.paginas) data.paginas.forEach(p => window.addCodexUnit(pContainer, 'Pág', p));
         if (data.paragrafos) data.paragrafos.forEach(p => window.addCodexUnit(pgContainer, 'Par', p));
     } else {
-        // Linha nova: adiciona um chip vazio em cada campo por padrão (opcional)
+        // Linha nova: adiciona chips vazios para facilitar
         window.addCodexUnit(row.querySelector('.pages-container'), 'Pág');
         window.addCodexUnit(row.querySelector('.paragraphs-container'), 'Par');
     }
@@ -22208,7 +22246,6 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
     // --- 1. RESET TOTAL DA INTERFACE ---
     if (tabHeader) tabHeader.style.display = 'none'; 
     if (addCodexBtn) addCodexBtn.style.display = 'none'; 
-    if (addUrlBtn) addUrlBtn.onclick = () => addUrlField();
     
     document.getElementById('link-remove-btn').style.display = 'none';
     codexContainer.innerHTML = '';
@@ -22235,6 +22272,8 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
     if (type === 'link') {
         refsTabContent.style.display = 'block';
         codexTabContent.style.display = 'none';
+        if (addUrlBtn) addUrlBtn.style.display = 'block';
+        
         titleInput.value = existingData ? existingData.title : "";
         if (existingData && existingData.urls) {
             Object.values(existingData.urls).forEach(url => addUrlField(url));
@@ -22242,9 +22281,10 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
     } else {
         codexTabContent.style.display = 'block';
         refsTabContent.style.display = 'none';
+        if (addCodexBtn) addCodexBtn.style.display = 'block';
+        
         window.createCodexRow(existingData); 
 
-        // Se for edição de Codex, reativar os campos manuais que estavam salvos
         if (existingData) {
             const row = codexContainer.querySelector('.codex-row');
             if (existingData.ano) window.toggleManual(row.querySelector("button[onclick*='A']"), 'A', existingData.ano);
@@ -22262,12 +22302,11 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
         newSaveBtn.textContent = "A processar...";
 
         try {
-            const { collection, addDoc, serverTimestamp, doc, setDoc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
             const myUid = auth.currentUser.uid;
             let dataToSave = null;
 
             if (type === 'link') {
-                // Lógica de Links Web (mantida igual)
+                // LÓGICA DE LINKS WEB
                 const urlsMap = {};
                 urlsContainer.querySelectorAll('input').forEach((inp, i) => {
                     if(inp.value.trim()) {
@@ -22280,38 +22319,43 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
                 dataToSave = { type: 'link', title: titleInput.value.trim() || "Link", urls: urlsMap, createdAt: existingData?.createdAt || Date.now() };
             } 
             else {
-                // --- LÓGICA CODEX ATUALIZADA ---
+                // --- LÓGICA CODEX: IDENTIFICAÇÃO E FORMATAÇÃO ---
                 const row = codexContainer.querySelector('.codex-row');
                 const rowData = getCodexDataFromRow(row);
                 if (!rowData.serie) throw new Error("A Série é obrigatória.");
 
-                // Processar Tempo
+                // A. Identificar Nome da Publicação
+                const valorBaixo = rowData.serie.toLowerCase().trim();
+                const siglaMatch = valorBaixo.match(/^[a-z]+(?:-[0-9])?/);
+                const sigla = siglaMatch ? siglaMatch[0] : "";
+                const pubNome = SIGLAS_PUBLICACOES[sigla] || rowData.serie;
+
+                // B. Processar Data e Tempo
+                const auto = parseSerieInfo(rowData.serie);
+                const finalYear = rowData.manualYear || auto.ano || "";
+                const finalMonth = rowData.manualMonth || auto.mes || "";
+                
                 let tempoFinal = "";
                 if (rowData.h || rowData.m || rowData.s) {
                     const pad = (v) => v.toString().padStart(2, '0');
                     tempoFinal = `${pad(rowData.h || 0)}:${pad(rowData.m || 0)}:${pad(rowData.s || 0)}`;
                 }
 
-                // Processar Data
-                const auto = parseSerieInfo(rowData.serie);
-                const finalYear = rowData.manualYear || auto.ano || "";
-                const finalMonth = rowData.manualMonth || auto.mes || "";
+                // C. Gerar o campo "codiceshow" (String amigável)
+                let codiceShow = pubNome;
+                if (finalMonth && finalYear) codiceShow += ` ${finalMonth}/${finalYear}`;
+                else if (finalYear) codiceShow += ` ${finalYear}`;
 
-                // --- GERAR NOME COMBINADO ---
-                let nomeCombinado = rowData.serie;
-                if (finalMonth || finalYear) {
-                    nomeCombinado += " " + (finalMonth ? finalMonth : "") + (finalMonth && finalYear ? "/" : "") + finalYear;
-                }
-                if (tempoFinal) {
-                    nomeCombinado += ", " + tempoFinal;
-                }
-                if (rowData.paginas.length > 0) nomeCombinado += ", página " + rowData.paginas.join(', ');
-                if (rowData.paragrafos.length > 0) nomeCombinado += ", parágrafo " + rowData.paragrafos.join(', ');
+                if (rowData.paginas.length > 0) codiceShow += `, página ${rowData.paginas.join(', ')}`;
+                if (rowData.paragrafos.length > 0) codiceShow += `, parágrafo ${rowData.paragrafos.join(', ')}`;
+                if (tempoFinal) codiceShow += `, [${tempoFinal}]`;
 
-                // Dados para Coleção Global
+                // D. Gravar na Coleção Global 'codex'
                 let globalId = existingData?.id || null;
                 const globalData = {
-                    nome: nomeCombinado,
+                    nome: codiceShow,
+                    publicacaonome: pubNome, // Campo solicitado
+                    codiceshow: codiceShow,   // Campo solicitado
                     userId: myUid,
                     entityId: activeReferenceEntity.id,
                     entityName: activeReferenceEntity.name,
@@ -22321,9 +22365,6 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
                     paragrafos: rowData.paragrafos,
                     ano: finalYear,
                     mes: finalMonth,
-                    horas: rowData.h || "",
-                    minutos: rowData.m || "",
-                    segundos: rowData.s || "",
                     tempo: tempoFinal,
                     updatedAt: serverTimestamp()
                 };
@@ -22335,21 +22376,21 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
                     await setDoc(doc(db, 'codex', globalId), globalData, { merge: true });
                 }
 
-                // Dados para o Array panelLinks da Entidade
+                // E. Preparar objeto para o array panelLinks
                 dataToSave = { 
-                    type: 'codex', 
+                    ...rowData,
                     id: globalId, 
-                    ...rowData, 
-                    nome: nomeCombinado,
+                    type: 'codex', 
+                    publicacaonome: pubNome,
+                    codiceshow: codiceShow,
                     ano: finalYear,
                     mes: finalMonth,
                     tempo: tempoFinal,
-                    total: nomeCombinado, // Usado para exibição simples
                     createdAt: existingData?.createdAt || Date.now() 
                 };
             }
 
-            // --- 5. ATUALIZAR ENTIDADE ---
+            // --- 5. ATUALIZAR O DOCUMENTO DA ENTIDADE (Personagem/Local/etc) ---
             const collectionName = getCollectionFromType(activeReferenceEntity.type);
             const docRef = doc(db, collectionName, activeReferenceEntity.id);
             const docSnap = await getDoc(docRef);
