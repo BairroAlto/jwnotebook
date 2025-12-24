@@ -5973,7 +5973,7 @@ onAuthStateChanged(auth, async (user) => {
     // ============================================================
     // LÓGICA DE ENTRADA AUTOMÁTICA EM ARQUIVO (COLABORAÇÃO)
     // ============================================================
-    if (openArchiveId && user) {
+   if (openArchiveId && user) {
         try {
             const archiveRef = doc(db, 'pastas', openArchiveId);
             const archiveSnap = await getDoc(archiveRef);
@@ -5981,30 +5981,33 @@ onAuthStateChanged(auth, async (user) => {
             if (archiveSnap.exists()) {
                 const archiveData = archiveSnap.data();
 
-                // REGRA: Só entra se o campo "partilhado" for "ativo"
                 if (archiveData.partilhado === "ativo") {
-                    
-                    // Adiciona o UID do utilizador atual ao Map de colaboradores
+                    // 1. Regista o utilizador como colaborador
                     await updateDoc(archiveRef, {
                         [`colaboradores.${user.uid}`]: true,
                         "ultimaedicao": serverTimestamp()
                     });
                     
-                    
-                    // Configura a UI para mostrar o Arquivo imediatamente
+                    // 2. FORÇA A MUDANÇA VISUAL DA BARRA LATERAL
                     currentViewMode = 'shared';
+                    
+                    // 3. ATUALIZA AS COLUNAS (Isto vai por o "Partilha" a azul e carregar a 2ª coluna)
+                    updateNavigationView(true, openArchiveId);
+                    
+                    // 4. ABRE O ARQUIVO NO PAINEL DIREITO
                     displayArchive(openArchiveId, { ...archiveData, id: openArchiveId });
                     
-                    // Opcional: Limpar o URL para ficar mais limpo
+                    // Limpa o URL para não reprocessar ao fazer refresh
                     window.history.replaceState({}, document.title, "note.html?view=shared");
 
                 } else {
-                    alert("Este link de colaboração já não está ativo ou o acesso foi revogado.");
+                    alert("Este link de colaboração já não está ativo.");
                     currentViewMode = 'local';
+                    updateNavigationView(false);
                 }
             }
         } catch (e) {
-            console.error("Erro ao processar entrada em colaboração:", e);
+            console.error("Erro ao processar link:", e);
         }
     }
 
@@ -9389,6 +9392,7 @@ function showContextMenu(e) {
         id: item.dataset.id,
         name: item.dataset.name,
         type: item.dataset.type,
+         ownerId: item.dataset.userid,
         parentId: item.dataset.parentid === 'null' ? null : item.dataset.parentid,
         isProtected: item.hasAttribute('data-protected'),
      isSuperfolder: item.getAttribute('data-superpasta') === "true"
@@ -17099,23 +17103,45 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
     else if (action === 'manage-topics') {
         openTopicsModal(itemContext.id, itemContext.type);
     } 
-  else if (action === 'hide') {
-        const confirmed = await showConfirmation('Ocultar Item?', `Tem certeza que deseja ocultar "${itemContext.name}"?`);
-        if (confirmed) {
-            // Se estivermos a ver a nota que vamos ocultar, limpa o editor
-            if (selectedNoteId && itemContext.id === selectedNoteId) {
-                resetEditor();
-            }
+ else if (action === 'hide') {
+        const isOwner = (activeItemContext.ownerId === auth.currentUser.uid);
+        const isSharedFile = (activeItemContext.type === 'partilhado');
 
-            // IMPORTANTE: Aqui usamos 'itemContext.id'.
-            // Como a lista mostra os documentos da NOSSA coleção 'pastas' (sejam atalhos ou notas reais),
-            // atualizar este documento afeta APENAS a nossa visão.
-            // O atalho passa a 'estado: desativa', mas o documento original (que tem outro ID) não é tocado.
+        if (isSharedFile && !isOwner) {
+            // LÓGICA PARA COLABORADOR: "Sair da Partilha"
+            const confirmed = await showConfirmation(
+                'Sair deste Arquivo?', 
+                `Não és o dono de "${activeItemContext.name}". Se clicares em Confirmar, este arquivo deixará de aparecer na tua lista, mas continuará a existir para o dono.`
+            );
+
+            if (confirmed) {
+                if (selectedNoteId === activeItemContext.id) resetEditor();
+
+                // Remove o utilizador atual da lista de colaboradores
+                const itemRef = doc(db, 'pastas', activeItemContext.id);
+                await updateDoc(itemRef, {
+                    [`colaboradores.${auth.currentUser.uid}`]: deleteField()
+                });
+                
+                // Força o sistema a recarregar a lista de partilhas
+                if (currentViewMode === 'shared') switchFolderView('shared');
+            }
+        } 
+        else {
+            // LÓGICA PARA DONO: "Ocultar" (Comportamento normal)
+            const confirmed = await showConfirmation(
+                'Ocultar Item?', 
+                `Tem certeza que deseja ocultar "${activeItemContext.name}"? Ele irá para a tua Reciclagem.`
+            );
             
-            await updateDoc(doc(db, 'pastas', itemContext.id), { 
-                estado: 'desativa',
-                ultimaedicao: serverTimestamp()
-            });
+            if (confirmed) {
+                if (selectedNoteId === activeItemContext.id) resetEditor();
+
+                await updateDoc(doc(db, 'pastas', activeItemContext.id), { 
+                    estado: 'desativa',
+                    ultimaedicao: serverTimestamp()
+                });
+            }
         }
     }
 
