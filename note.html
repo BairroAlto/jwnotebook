@@ -16250,17 +16250,18 @@ async function loadAppendList(parentId) {
     
     list.innerHTML = '<li style="padding:10px;">A carregar...</li>';
 
-    // Gestão de Títulos e Botão Voltar
+    // Identifica o ponto de partida (Raiz Global ou ID da Superpasta)
+    const startRootId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
+
+    // Gestão de Títulos e Botão Voltar (Breadcrumbs)
     if (parentId === "VIRTUAL_SHARED_ROOT") {
         pathLabel.textContent = "🤝 Partilha";
         backBtn.style.display = 'block';
-        backBtn.textContent = "⬅ Raiz Global";
     } else if (appendStack.length > 0) {
         pathLabel.textContent = appendStack[appendStack.length - 1].name;
         backBtn.style.display = 'block';
-        backBtn.textContent = "⬅ Voltar";
     } else {
-        pathLabel.textContent = "🌍 Raiz Global";
+        pathLabel.textContent = (startRootId) ? "🏠 Superpasta" : "🌍 Raiz Global";
         backBtn.style.display = 'none';
     }
 
@@ -16268,27 +16269,25 @@ async function loadAppendList(parentId) {
         const foldersRef = collection(db, 'pastas');
         let unifiedDocs = new Map();
 
+        // --- BLOCO A: BUSCAR ARQUIVOS PARTILHADOS (Se estivermos dentro da "pasta" Partilha) ---
         if (parentId === "VIRTUAL_SHARED_ROOT") {
-            // REGRA: Buscar onde sou DONO ou onde sou COLABORADOR (true)
             const qOwner = query(foldersRef, 
                 where('tipo', '==', 'partilhado'), 
                 where('estado', '==', 'ativa'),
                 where('userId', '==', myUid)
             );
-
             const qCollab = query(foldersRef, 
                 where('tipo', '==', 'partilhado'), 
                 where('estado', '==', 'ativa'),
-                where(`colaboradores.${myUid}`, '==', true) // A tua regra nova aqui
+                where(`colaboradores.${myUid}`, '==', true)
             );
 
             const [snapOwner, snapCollab] = await Promise.all([getDocs(qOwner), getDocs(qCollab)]);
-            
             snapOwner.forEach(doc => unifiedDocs.set(doc.id, {id: doc.id, ...doc.data()}));
             snapCollab.forEach(doc => unifiedDocs.set(doc.id, {id: doc.id, ...doc.data()}));
-
-        } else {
-            // Navegação normal de pastas locais
+        } 
+        // --- BLOCO B: BUSCAR PASTAS E NOTAS LOCAIS (Comportamento normal) ---
+        else {
             const qNormal = query(foldersRef,
                 where('parentId', '==', parentId),
                 where('estado', '==', 'ativa'),
@@ -16300,10 +16299,11 @@ async function loadAppendList(parentId) {
             snapNormal.forEach(doc => unifiedDocs.set(doc.id, {id: doc.id, ...doc.data()}));
         }
 
+        // LIMPAR LISTA E COMEÇAR A RENDERIZAR
         list.innerHTML = '';
 
-        // Injetar a "Porta" para a Partilha se estivermos na Raiz Global
-        if (parentId === null) {
+        // 1. INJETAR O ACESSO À PARTILHA (Apenas se estivermos no "início" da navegação)
+        if (parentId === startRootId) {
             const sharedLink = document.createElement('li');
             sharedLink.style.cssText = "display:flex; justify-content:space-between; padding:12px; border-bottom:2px solid var(--border-color); background: rgba(231, 76, 60, 0.05); cursor:pointer; color: #e74c3c; font-weight: bold;";
             sharedLink.innerHTML = `<span>🤝 Partilha (Arquivos)</span> <span>➔</span>`;
@@ -16311,14 +16311,13 @@ async function loadAppendList(parentId) {
             list.appendChild(sharedLink);
         }
 
-        if (unifiedDocs.size === 0 && parentId !== null) {
-            list.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Vazio.</li>';
-            return;
+        // 2. RENDERIZAR AS PASTAS E NOTAS LOCAIS (O que tinha desaparecido)
+        if (unifiedDocs.size === 0 && parentId !== startRootId && parentId !== null) {
+            list.innerHTML += '<li style="padding:20px; color:#888; text-align:center;">Vazio.</li>';
         }
 
-        // Renderizar itens
         Array.from(unifiedDocs.values())
-        .sort((a, b) => (a.nome || "").localeCompare(b.nome || ""))
+        .sort((a, b) => (a.tipo === b.tipo) ? (a.nome || "").localeCompare(b.nome || "") : (a.tipo === 'pasta' ? -1 : 1))
         .forEach(item => {
             const li = document.createElement('li');
             li.className = "list-item";
@@ -16333,10 +16332,10 @@ async function loadAppendList(parentId) {
             } else {
                 const isOwner = item.userId === myUid;
                 const icon = (item.tipo === 'partilhado' || item.tipo === 'arquivo') ? '🗄️' : '📄';
-                const collabIcon = isOwner ? '👑' : '🤝';
+                const collabIcon = (parentId === "VIRTUAL_SHARED_ROOT") ? (isOwner ? '👑' : '🤝') : '';
                 
                 li.innerHTML = `
-                    <span>${icon} ${parentId === "VIRTUAL_SHARED_ROOT" ? collabIcon : ''} ${item.nome}</span> 
+                    <span>${icon} ${collabIcon} ${item.nome}</span> 
                     <span title="Enviar para o Topo">📥</span>
                 `;
                 li.onclick = () => confirmAppendToNote(item.id, item.nome, item.tipo);
