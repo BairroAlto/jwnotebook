@@ -4387,6 +4387,16 @@ a.board-link:hover {
     transition: background 0.2s;
 }
 
+/* Estilo para o versículo que está aberto na 4ª coluna */
+.bible-grid-btn.active-verse {
+    background-color: var(--accent-color) !important;
+    color: white !important;
+    border-color: white !important;
+    transform: scale(1.1);
+    z-index: 5;
+    box-shadow: 0 0 12px rgba(74, 144, 226, 0.5);
+}
+
 </style>
 
 
@@ -5836,6 +5846,9 @@ let colorHexBeingRenamed = null;
 let isPanelEditMode = false;
 let allFoundReferenceBoxes = [];
 let currentReferencePageIndex = 0;
+let noteStackMemory = [];
+let listsStackMemory = [];
+let currentlyOpenVerseName = null;
 
 
 // Função: Gravação Silenciosa (Mantém o editor aberto)
@@ -7080,26 +7093,27 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
 
     // Título do painel esquerdo / Breadcrumbs
     if (depth === 0) {
-        setLeftPanelTitle(currentViewMode === 'local' ? 'Pastas' : 'Partilha'); 
-    } else {
-        const parentFolder = (depth > 1) ? navigationStack[depth - 2] : null;
-        const parentName = parentFolder ? parentFolder.name : (currentViewMode === 'shared' ? 'Partilhadas' : 'Pastas');
-        setLeftPanelTitle(parentName, true);
-    }
+    setLeftPanelTitle(currentViewMode === 'local' ? 'Pastas' : 'Partilha'); 
+} else {
+    const parentFolder = (depth > 1) ? navigationStack[depth - 2] : null;
+    const parentName = parentFolder ? parentFolder.name : (currentViewMode === 'shared' ? 'Partilhadas' : 'Pastas');
+    setLeftPanelTitle(parentName, true);
+}
 
     let leftPanelParentId = null;
     let middlePanelParentId = null;
 
-    if (depth === 0) {
-        // --- ESTAMOS NA RAIZ ---
-        if (currentViewMode === 'local') {
-            leftPanelParentId = isSuperContext ? SUPERFOLDER_ID : null;
-            middlePanelTitle.textContent = 'Selecione';
-            backBtn.style.display = 'none';
-        } else {
-            leftPanelParentId = "EMPTY_SIDEBAR_FOR_SHARED";
-            middlePanelTitle.textContent = 'Arquivos Partilhados';
-            backBtn.style.display = window.innerWidth <= 768 ? 'flex' : 'none';
+   if (depth === 0) {
+    if (currentViewMode === 'local') {
+        leftPanelParentId = isSuperContext ? SUPERFOLDER_ID : null;
+        middlePanelTitle.textContent = 'Selecione';
+        middlePanelList.innerHTML = ''; // Limpa o meio no modo local raiz
+        backBtn.style.display = 'none';
+    } else {
+        // MODO PARTILHA RAIZ
+        leftPanelParentId = "EMPTY_SIDEBAR_FOR_SHARED";
+        backBtn.style.display = window.innerWidth <= 768 ? 'flex' : 'none';
+        loadSharedFilesRoot(); 
         }
         middlePanelList.innerHTML = '';
     } else {
@@ -10589,12 +10603,12 @@ refCards.forEach((card, index) => {
 // FUNÇÃO PARA EXIBIR DETALHES DO TÓPICO (4ª COLUNA)
 // ============================================================
 async function showTopicReferencesPanel(id, name, description, type) {
-    console.log(`%c📑 [SISTEMA] Abrindo Tópico: ${name}`, "color: #3498db; font-weight: bold;");
+
     
     // 1. Gravar o puzzle/quadro anterior antes de mudar o contexto
     // Isto evita que percas alterações se estivesses a editar outro tópico
     await forceSaveAndClosePuzzleMode();
-
+  resetReferencesPanelUI();
     // 2. DEFINIR ENTIDADE ATIVA (CRÍTICO para o +Ref funcionar)
     // Se o 'type' vier vazio, assume 'topico' por padrão
     activeReferenceEntity = { 
@@ -12482,7 +12496,7 @@ async function showTagReferencesPanel(tagName) {
     
     // 1. Gravar o puzzle/quadro anterior antes de mudar o contexto (evita perda de dados)
     await forceSaveAndClosePuzzleMode();
-
+ resetReferencesPanelUI();
     // 2. DEFINIR ENTIDADE ATIVA (Essencial para que o botão +Ref funcione no modo edição do quadro)
     // Nas tags, usamos o próprio nome da tag como ID único
     activeReferenceEntity = { 
@@ -12607,13 +12621,52 @@ async function showTagReferencesPanel(tagName) {
     }
 }
 
+
 // ============================================================
 // MOTOR DA 4ª COLUNA - BÍBLIA PÚBLICA + PUZZLE PRIVADO (FIXED)
 // ============================================================
 
+function resetReferencesPanelUI() {
+    // 1. Esconder todos os conteúdos de abas
+    document.querySelectorAll('.ref-tab-content').forEach(el => {
+        el.style.display = 'none';
+    });
+
+    // 2. Mostrar apenas o conteúdo do Puzzle (padrão)
+    const puzzleContent = document.getElementById('ref-content-puzzle');
+    if (puzzleContent) puzzleContent.style.display = 'flex';
+
+    // 3. Resetar visual dos botões das abas
+    document.querySelectorAll('#ref-tabs button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    const puzzleTabBtn = document.querySelector('[data-ref-tab="puzzle"]');
+    if (puzzleTabBtn) puzzleTabBtn.classList.add('active');
+
+    // 4. Limpar a lista de Links (Doc.) para não mostrar o lixo do item anterior
+    const linksList = document.getElementById('panel-links-list');
+    if (linksList) linksList.innerHTML = '';
+
+    // 5. Resetar o modo de edição (se tiver ficado ligado)
+    isPanelEditMode = false;
+    const editLinksBtn = document.getElementById('toggle-links-edit-btn');
+    const linksActions = document.getElementById('links-edit-actions');
+    if (editLinksBtn) {
+        editLinksBtn.textContent = "Editar";
+        editLinksBtn.style.color = "";
+        editLinksBtn.style.borderColor = "";
+        editLinksBtn.style.backgroundColor = "";
+    }
+    if (linksActions) linksActions.style.display = 'none';
+}
+
+
+
+
 async function showReferencesPanel(entityId, entityName, entityType, anexoId = null) {
     // 1. Grava o puzzle anterior se estiver em modo edição
     await forceSaveAndClosePuzzleMode();
+  resetReferencesPanelUI(); 
 
     // 2. Definir contexto da entidade
     activeReferenceEntity = { id: entityId || entityName, type: entityType, name: entityName };
@@ -12800,10 +12853,16 @@ window.manualInsertBibleText = async function(name) {
 
 
 async function hideReferencesPanel() {
-    // >>> LINHA NOVA: Grava o puzzle se estiver em edição antes de fechar <<<
     await forceSaveAndClosePuzzleMode();
 
     notebookContainer.classList.remove('references-panel-visible');
+    
+    // --- NOVO: Limpar Versículo Selecionado ---
+    currentlyOpenVerseName = null;
+    document.querySelectorAll('.bible-grid-btn.active-verse').forEach(btn => {
+        btn.classList.remove('active-verse');
+    });
+
     const descriptionElement = document.getElementById('references-panel-description');
     if (descriptionElement) {
         descriptionElement.textContent = '';
@@ -14793,6 +14852,7 @@ function setLeftPanelTitle(text, isBackAction = false) {
 async function showHighlightReferencesPanel(hexCode, colorName) {
     // 1. Gravar antes de mudar
     await forceSaveAndClosePuzzleMode();
+  resetReferencesPanelUI();
 
     // 2. Configuração Visual
     document.getElementById('references-panel-description').style.display = 'none';
@@ -14991,35 +15051,37 @@ function stringToColor(str) {
 
 
 document.querySelector('.tabs-container').addEventListener('click', (e) => {
-     leaveArchivePresence(); 
+    leaveArchivePresence(); 
     const clickedTabBtn = e.target.closest('button');
     if (!clickedTabBtn) return;
 
-    e.currentTarget.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
-    clickedTabBtn.classList.add('active');
-
     const newTab = clickedTabBtn.dataset.tab;
-    
     if (newTab === 'book') {
         window.open('book.html', '_blank'); 
         return; 
     }
 
     if (currentSaveStatus === 'unsaved') {
-        saveNote(true); // Grava imediatamente
+        saveNote(true); // Grava imediatamente se houver alterações
     }
 
-    // 1. Atualização Visual dos Botões
-    document.querySelectorAll('.tabs-container button').forEach(btn => btn.classList.remove('active'));
+    // --- SISTEMA DE MEMÓRIA ---
+    // 1. Antes de mudar, guarda a navegação da aba ATUAL na memória dela
+    if (currentTab === 'note') noteStackMemory = [...navigationStack];
+    if (currentTab === 'lists') listsStackMemory = [...navigationStack];
+
+    // 2. Atualiza visual das abas
+    e.currentTarget.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
     clickedTabBtn.classList.add('active');
-    
-    // 2. Atualiza o estado da aba atual
+
+    // 3. Muda a aba ativa
     currentTab = newTab;
+
+    // 4. Carrega a navegação da NOVA aba a partir da memória dela
+    if (currentTab === 'note') navigationStack = [...noteStackMemory];
+    if (currentTab === 'lists') navigationStack = [...listsStackMemory];
     
-    // 3. Limpa a pilha de navegação
-    navigationStack = []; 
-    
-    // 4. Atualiza a vista mantendo o editor aberto (true)
+    // 5. Atualiza a vista (mantendo o editor aberto se houver uma nota ativa)
     updateNavigationView(true);
 });
 
@@ -19482,6 +19544,7 @@ async function switchFolderView(mode) {
     resetEditor();             
     currentViewMode = mode;    
     navigationStack = [];      
+    noteStackMemory = [];
 
     // 5. Sincroniza a interface
     updateNavigationView(true);
@@ -21612,12 +21675,8 @@ async function renderListCategoryItems(categoryId) {
                 }
                 return;
             }
-            if (lastNav.type === 'bible-chapter') {
-    // 1. Encontra os dados do livro selecionado
+         if (lastNav.type === 'bible-chapter') {
     const bookData = BIBLE_DATA.find(b => b.nome === lastNav.book);
-    
-    // 2. Tenta obter o número real de versículos para aquele capítulo específico
-    // Se por acaso não existir no array, usa 50 como segurança (fallback)
     let totalVersicles = 50;
     if (bookData && bookData.versiculos && bookData.versiculos[lastNav.chapter - 1]) {
         totalVersicles = bookData.versiculos[lastNav.chapter - 1];
@@ -21630,18 +21689,29 @@ async function renderListCategoryItems(categoryId) {
     middlePanelList.innerHTML = '<div class="bible-grid"></div>';
     const grid = middlePanelList.querySelector('.bible-grid');
 
-    // 3. Gera exatamente o número de botões correspondente aos versículos reais
     for (let v = 1; v <= totalVersicles; v++) {
         const fullVerseName = `${prefix}${v}`;
         const alreadyExists = existingVerses.some(e => e.nome === fullVerseName);
+        // VERIFICAÇÃO SE ESTÁ ATIVO
+        const isActive = (fullVerseName === currentlyOpenVerseName);
         
         const btn = document.createElement('div');
-        // Se o versículo já estiver na base de dados, adiciona a classe 'exists' (fica verde)
-        btn.className = `bible-grid-btn ${alreadyExists ? 'exists' : ''}`;
+        btn.className = `bible-grid-btn ${alreadyExists ? 'exists' : ''} ${isActive ? 'active-verse' : ''}`;
         btn.textContent = v;
         
-        // Ao clicar, abre o painel de referências (Quarta Coluna)
-        btn.onclick = () => showReferencesPanel(null, fullVerseName, 'textobiblico');
+        btn.onclick = () => {
+            // 1. Define este como o versículo aberto
+            currentlyOpenVerseName = fullVerseName;
+            
+            // 2. Remove o destaque de todos os outros botões da grelha atual
+            grid.querySelectorAll('.bible-grid-btn').forEach(b => b.classList.remove('active-verse'));
+            
+            // 3. Adiciona destaque a este botão
+            btn.classList.add('active-verse');
+            
+            // 4. Abre o painel
+            showReferencesPanel(null, fullVerseName, 'textobiblico');
+        };
         
         grid.appendChild(btn);
     }
@@ -22270,6 +22340,75 @@ window.movePanelLink = async function(index, direction) {
     }
 };
 
+function loadSharedFilesRoot() {
+    // 1. Limpeza de listeners antigos para evitar duplicados
+    if (unsubscribeShared1) { unsubscribeShared1(); unsubscribeShared1 = null; }
+    if (unsubscribeShared2) { unsubscribeShared2(); unsubscribeShared2 = null; }
+
+    middlePanelTitle.textContent = "Arquivos Partilhados";
+    middlePanelList.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A procurar arquivos...</span></div>';
+
+    const addItemBtn = document.getElementById('add-item-btn');
+    if (addItemBtn) addItemBtn.classList.add('shared-mode');
+
+    let resultsMap = new Map();
+    const myUid = auth.currentUser.uid;
+    const foldersRef = collection(db, 'pastas');
+
+   const renderUnifiedList = () => {
+    middlePanelList.innerHTML = '';
+    if (resultsMap.size === 0) {
+        middlePanelList.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum arquivo partilhado encontrado.</li>';
+        return;
+    }
+
+    Array.from(resultsMap.values())
+        .sort((a, b) => (a.nome || "").localeCompare(b.nome || ""))
+        .forEach(item => {
+            const li = document.createElement('li');
+            li.className = 'list-item';
+            li.setAttribute('data-id', item.id);
+            li.setAttribute('data-type', item.tipo);
+            li.setAttribute('data-name', item.nome);
+            li.setAttribute('data-userid', item.userId);
+
+            // --- CORREÇÃO DA SELEÇÃO VISUAL ---
+            // Verifica se este item é o que está atualmente aberto (selectedNoteId)
+            if (item.id === selectedNoteId) {
+                li.classList.add('selected-red');
+            }
+
+            li.style.borderLeft = "4px solid #e74c3c";
+            const isOwner = item.userId === myUid;
+            li.innerHTML = `<span>${isOwner ? '👑' : '🤝'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+            
+            // Se for o dono mas o arquivo não estiver ativo para outros, fica mais transparente
+            if (isOwner && item.partilhado !== "ativo") li.style.opacity = "0.7";
+
+            middlePanelList.appendChild(li);
+        });
+};
+
+    // Queries para buscar arquivos onde sou dono ou colaborador
+    const q1 = query(foldersRef, where('userId', '==', myUid), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
+    const q2 = query(foldersRef, where(`colaboradores.${myUid}`, '==', true), where('partilhado', '==', 'ativo'), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
+
+    unsubscribeShared1 = onSnapshot(q1, (snapshot) => {
+        snapshot.docChanges().forEach(change => {
+            if (change.type === "removed") resultsMap.delete(change.doc.id);
+            else resultsMap.set(change.doc.id, { ...change.doc.data(), id: change.doc.id });
+        });
+        renderUnifiedList();
+    });
+
+    unsubscribeShared2 = onSnapshot(q2, (snapshot) => {
+        snapshot.docChanges().forEach(change => {
+            if (change.type === "removed") resultsMap.delete(change.doc.id);
+            else resultsMap.set(change.doc.id, { ...change.doc.data(), id: change.doc.id });
+        });
+        renderUnifiedList();
+    });
+}
 
     </script>
 </body>
