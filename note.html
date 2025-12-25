@@ -5944,6 +5944,7 @@ let isDossieEditMode = false;
 let activeMicaId = null; 
 let allCitationsResults = []; // Guarda todos os resultados encontrados
 let currentCitationsPageIndex = 0; // Controla a página atual
+let col1SelectedId = null;
 
 
 // Função: Gravação Silenciosa (Mantém o editor aberto)
@@ -7031,7 +7032,7 @@ function resetEditor() {
 
     // 3. Limpa seleção visual da lista
     document.querySelectorAll('#middle-panel-list .list-item.selected').forEach(el => el.classList.remove('selected'));
-    document.querySelectorAll('#file-list .list-item.selected').forEach(el => el.classList.remove('selected'));
+    document.querySelectorAll('#file-list .list-item.selected').forEach(el => el.classList.remove('selected', 'selected-red'));
     
     updateSaveStatus('hidden');
 }
@@ -7039,16 +7040,9 @@ function resetEditor() {
 function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
     if (!auth.currentUser) return;
 
-    // 1. Definição de Tipos Permitidos com base no modo de visualização
-    // Isso garante que arquivos "partilhados" nunca apareçam na aba Local
-    let allowedTypes;
-    if (currentViewMode === 'local') {
-        // Na aba Local, permitimos tudo EXCETO o tipo 'partilhado'
-        allowedTypes = ['pasta', 'nota', 'agregacao', 'arquivo'];
-    } else {
-        // Na aba Partilha (dentro de pastas), mostramos todos os tipos
-        allowedTypes = ['pasta', 'nota', 'agregacao', 'arquivo', 'partilhado'];
-    }
+    let allowedTypes = currentViewMode === 'local' 
+        ? ['pasta', 'nota', 'agregacao', 'arquivo'] 
+        : ['pasta', 'nota', 'agregacao', 'arquivo', 'partilhado'];
 
     const itemsRef = collection(db, 'pastas');
     const q = query(
@@ -7063,11 +7057,8 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
     return onSnapshot(q, (querySnapshot) => {
         listElement.innerHTML = '';
         
-        // Identifica qual a nota que está aberta no editor no momento
-        const currentActiveNote = selectedNoteId ? String(selectedNoteId) : null;
-        
-        // Verifica se a nota aberta pertence a esta lista específica (para lógica de destaque)
-        const isOpenedNoteInThisList = Array.from(querySnapshot.docs).some(d => String(d.id) === currentActiveNote);
+        // Identifica se estamos a renderizar a Coluna 1 ou a Coluna 2
+        const isColumn1 = (listElement.id === 'left-panel-list');
 
         querySnapshot.forEach((doc) => {
             const item = { id: doc.id, ...doc.data() };
@@ -7076,16 +7067,7 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             li.setAttribute('data-id', item.id);
             li.setAttribute('data-type', item.tipo);
             li.setAttribute('data-name', item.nome);
-            li.setAttribute('data-userid', item.userId);
-
-              // ADICIONE ESTA LINHA ABAIXO (MUITO IMPORTANTE):
-    li.setAttribute('data-parentid', item.parentId === undefined ? null : item.parentId);
-    
-            // Normalização visual: Ambos os tipos de arquivo usam o ícone da gaveta 🗄️
-            if (item.tipo === 'arquivo' || item.tipo === 'partilhado') {
-                li.setAttribute('data-type', 'arquivo'); 
-            }
-
+            
             // Atributos de Superpasta e Ícones personalizados
             li.setAttribute('data-superpasta', item.superpasta || "false");
             if (item.customIcon) {
@@ -7096,25 +7078,34 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             let lockIcon = (item.passe && item.passe.trim() !== "") ? "🔒 " : "";
             li.innerHTML = `<span>${lockIcon}${item.nome}</span><button class="item-menu-btn">…</button>`;
 
-            // --- LÓGICA DE DESTAQUE (SELEÇÃO) ---
+            // ============================================================
+            // REGRA DE SELEÇÃO PERSISTENTE E POR COLUNA
+            // ============================================================
             let active = false;
 
-            // Se este item for a nota aberta no editor, destaca-o sempre
-            if (String(item.id) === currentActiveNote) {
-                active = true;
-            } 
-            // Se for uma pasta, destaca apenas se não houver uma nota aberta nesta mesma lista
-            else if (item.tipo === 'pasta' && navigationStack.length > 0) {
-                const lastFolder = navigationStack[navigationStack.length - 1].id;
-                if (String(item.id) === String(lastFolder) && !isOpenedNoteInThisList) {
+            if (isColumn1) {
+                // COLUNA 1: Ativa se foi o último clicado OU se faz parte do caminho de pastas
+                if (item.id === col1SelectedId) {
+                    active = true;
+                } else if (navigationStack.some(nav => nav.id === item.id)) {
+                    active = true;
+                }
+            } else {
+                // COLUNA 2: Ativa apenas se for a nota aberta no momento
+                if (selectedNoteId && item.id === selectedNoteId) {
                     active = true;
                 }
             }
 
             if (active) {
-                // Aplica cor vermelha se estiver na aba partilha, azul se for local
-                const isSharedTab = (currentViewMode === 'shared');
-                li.classList.add(isSharedTab ? 'selected-red' : 'selected');
+                if (isColumn1) {
+                    // Coluna 1 é SEMPRE azul (identidade fixa)
+                    li.classList.add('selected');
+                } else {
+                    // Coluna 2 segue o tema do modo (Vermelho se Partilha, Azul se Local)
+                    const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+                    li.classList.add(selectionClass);
+                }
             }
 
             listElement.appendChild(li);
@@ -7124,13 +7115,11 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
 
 async function updateNavigationView(keepEditorOpen = false, targetSelectId = null) {
-    // 1. Reset visual e limpeza de listeners antigos para evitar duplicados
     notebookContainer.classList.remove('left-panel-collapsed');
 
     if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
     if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
     
-    // Só reseta o editor se não for uma atualização "silenciosa"
     if (!keepEditorOpen) {
         resetEditor();
     }
@@ -7138,89 +7127,83 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
     const depth = navigationStack.length;
     const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
-    // ============================================================
-    // MODO: LISTS (Categorias, Bíblia, Entidades)
-    // ============================================================
-    if (currentTab === 'lists') {
-        if (depth === 0) {
-            // Esconde o botão + na raiz de Lists
-            addItemBtn.style.display = 'none';
+   if (currentTab === 'lists') {
+    const activeCategory = navigationStack.length > 0 ? navigationStack[0].id : null;
 
-            setLeftPanelTitle('Categorias'); 
-            leftPanelList.innerHTML = `
-                <li class="list-item" data-type="list-category" data-id="topico">📑 Tópicos</li>
-                <li class="list-item" data-type="list-category" data-id="destaque">🎨 Destaques</li>
-                <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">
-                <li class="list-item" data-type="list-category" data-id="biblia-root">📖 Bíblia</li>
-                <li class="list-item" data-type="list-category" data-id="textobiblico">📖 Textos Bíblicos</li>
-                <li class="list-item" data-type="list-category" data-id="marcadores">🔖 Marcadores</li>
-                <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">
-                <li class="list-item" data-type="list-category" data-id="personagem">👤 Personagens</li>
-                <li class="list-item" data-type="list-category" data-id="local">📍 Locais</li>
-                <li class="list-item" data-type="list-category" data-id="data">📅 Datas</li>
-                <li class="list-item" data-type="list-category" data-id="tag">🏷️ Tags</li>
-            `;
-            middlePanelTitle.textContent = 'Selecione uma categoria';
-            middlePanelList.innerHTML = '';
-            backBtn.style.display = 'none';
+    // Gerar categorias dinamicamente para aplicar a classe 'selected'
+    const categories = [
+        { id: 'topico', icon: '📑', name: 'Tópicos' },
+        { id: 'destaque', icon: '🎨', name: 'Destaques' },
+        { separator: true },
+        { id: 'biblia-root', icon: '📖', name: 'Bíblia' },
+        { id: 'textobiblico', icon: '📖', name: 'Textos Bíblicos' },
+        { id: 'marcadores', icon: '🔖', name: 'Marcadores' },
+        { separator: true },
+        { id: 'personagem', icon: '👤', name: 'Personagens' },
+        { id: 'local', icon: '📍', name: 'Locais' },
+        { id: 'data', icon: '📅', name: 'Datas' },
+        { id: 'tag', icon: '🏷️', name: 'Tags' }
+    ];
+
+    let categoriesHTML = '';
+    categories.forEach(cat => {
+        if (cat.separator) {
+            categoriesHTML += `<hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">`;
         } else {
-            const currentContext = navigationStack[depth - 1];
-            middlePanelTitle.textContent = currentContext.name;
-            backBtn.style.display = 'flex';
-            
-            // --- LÓGICA DO BOTÃO + AMARELO ---
-            // Pegamos o ID da categoria original (o primeiro item no stack)
-            const rootCategoryId = navigationStack[0].id;
-            const validYellowCategories = ['topico', 'personagem', 'local', 'data'];
-
-            if (validYellowCategories.includes(rootCategoryId)) {
-                addItemBtn.style.display = 'flex';
-                addItemBtn.classList.add('yellow-mode');
-            } else {
-                // Esconde para Bíblia, Tags, Marcadores ou Destaques
-                addItemBtn.style.display = 'none';
-            }
-
-            renderListCategoryItems(currentContext.id);
+            const isSelected = activeCategory === cat.id ? 'selected' : '';
+            categoriesHTML += `<li class="list-item ${isSelected}" data-type="list-category" data-id="${cat.id}">${cat.icon} ${cat.name}</li>`;
         }
-        return; 
-    }
+    });
 
-    // ============================================================
-    // MODO: NOTE (Pastas, Notas e Arquivos)
-    // ============================================================
-    
-    // Fora das listas, o botão deve estar visível e em modo normal (azul)
+    leftPanelList.innerHTML = categoriesHTML;
+
+    if (depth === 0) {
+        addItemBtn.style.display = 'none';
+        setLeftPanelTitle('Categorias'); 
+        middlePanelTitle.textContent = 'Selecione uma categoria';
+        middlePanelList.innerHTML = '';
+        backBtn.style.display = 'none';
+    } else {
+        const currentContext = navigationStack[depth - 1];
+        setLeftPanelTitle('Categorias', true); 
+        middlePanelTitle.textContent = currentContext.name;
+        backBtn.style.display = 'flex';
+        
+        // Lógica do botão + (Amarelo)
+        const rootCategoryId = navigationStack[0].id;
+        const validYellowCategories = ['topico', 'personagem', 'local', 'data'];
+        updateAddButtonState(validYellowCategories.includes(rootCategoryId), true);
+
+        renderListCategoryItems(currentContext.id);
+    }
+    return; 
+}
+
     addItemBtn.style.display = 'flex';
     addItemBtn.classList.remove('yellow-mode');
 
-    // Título do painel esquerdo / Breadcrumbs
     if (depth === 0) {
-    setLeftPanelTitle(currentViewMode === 'local' ? 'Pastas' : 'Partilha'); 
-} else {
-    const parentFolder = (depth > 1) ? navigationStack[depth - 2] : null;
-    const parentName = parentFolder ? parentFolder.name : (currentViewMode === 'shared' ? 'Partilhadas' : 'Pastas');
-    setLeftPanelTitle(parentName, true);
-}
+        setLeftPanelTitle(currentViewMode === 'local' ? 'Pastas' : 'Partilha'); 
+    } else {
+        const parentFolder = (depth > 1) ? navigationStack[depth - 2] : null;
+        const parentName = parentFolder ? parentFolder.name : (currentViewMode === 'shared' ? 'Partilhadas' : 'Pastas');
+        setLeftPanelTitle(parentName, true);
+    }
 
     let leftPanelParentId = null;
     let middlePanelParentId = null;
 
-   if (depth === 0) {
-    if (currentViewMode === 'local') {
+    if (depth === 0) {
+         if (currentViewMode === 'shared') {
+        leftPanelParentId = "EMPTY_SIDEBAR_FOR_SHARED"; // Força a busca a vir vazia
+    } else {
         leftPanelParentId = isSuperContext ? SUPERFOLDER_ID : null;
+    }
         middlePanelTitle.textContent = 'Selecione';
-        middlePanelList.innerHTML = ''; // Limpa o meio no modo local raiz
-        backBtn.style.display = 'none';
-    } else {
-        // MODO PARTILHA RAIZ
-        leftPanelParentId = "EMPTY_SIDEBAR_FOR_SHARED";
-        backBtn.style.display = window.innerWidth <= 768 ? 'flex' : 'none';
-        loadSharedFilesRoot(); 
-        }
         middlePanelList.innerHTML = '';
+        backBtn.style.display = 'none';
+        if (currentViewMode === 'shared') loadSharedFilesRoot();
     } else {
-        // --- ESTAMOS DENTRO DE UMA PASTA ---
         const currentFolder = navigationStack[depth - 1];
         middlePanelParentId = currentFolder.id;
         middlePanelTitle.textContent = currentFolder.name;
@@ -7233,14 +7216,11 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
         }
     }
     
-    // Iniciar ouvintes do Firebase
     unsubscribeLeftPanel = fetchAndDisplayItems(leftPanelParentId, leftPanelList, null);
-    
     if (middlePanelParentId) {
         unsubscribeMiddlePanel = fetchAndDisplayItems(middlePanelParentId, middlePanelList, targetSelectId);
     }
 }
-
 
 
 
@@ -8291,6 +8271,21 @@ function updateMiddlePanelForFolderSelection(folderId, folderName, selectedEleme
 }
 
 
+// Adiciona/Atualiza isto dentro da displayNote e displayArchive:
+function syncVisualSelection(selectedId) {
+    // 1. Remove destaques antigos apenas da segunda coluna (para não matar a Coluna 1)
+    document.querySelectorAll('#file-list .list-item').forEach(el => {
+        el.classList.remove('selected', 'selected-red');
+    });
+
+    // 2. Aplica o destaque ao item clicado na Coluna 2
+    const target = document.querySelector(`#file-list .list-item[data-id="${selectedId}"]`);
+    if (target) {
+        const isShared = (currentViewMode === 'shared');
+        target.classList.add(isShared ? 'selected-red' : 'selected');
+    }
+}
+
 
 
 async function displayNote(noteId, noteElement, searchTerm = null) {
@@ -8325,8 +8320,8 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
     }
 
     // Limpeza visual da seleção na lista lateral
-    document.querySelectorAll('.list-item.selected, .list-item.selected-red').forEach(el => {
-        el.classList.remove('selected', 'selected-red');
+ document.querySelectorAll('#file-list .list-item').forEach(el => {
+    el.classList.remove('selected', 'selected-red');
     });
 
     if (noteElement) {
@@ -12493,7 +12488,6 @@ async function savePuzzleData() {
                     createdAt: serverTimestamp()
                 });
                 activeReferenceEntity.id = newDoc.id; // Atualiza para o ID novo
-                console.log("✅ Novo registro privado criado para o versículo.");
                 return; // Já gravou, podemos sair
             }
         } else {
@@ -12561,7 +12555,6 @@ async function loadPuzzleData(entityId, entityType) {
         // 4. Verificação final: se após a busca ainda não existe nada
         if (!entityDoc || !entityDoc.exists()) {
             if (emptyMsg) emptyMsg.style.display = 'block';
-            console.log("Nenhum registo pessoal encontrado para:", activeReferenceEntity.name);
             return;
         }
 
@@ -14421,8 +14414,7 @@ async function loadBackupsForNote() {
     
 
     // --- LISTENER DO PAINEL ESQUERDO COM LOGS DE DEPURAÇÃO ---
-  leftPanelList.addEventListener('click', async (e) => {
-    // 1. GESTÃO DE CLIQUES ESPECIAIS (Menu e Contexto)
+leftPanelList.addEventListener('click', async (e) => {
     const itemMenuBtn = e.target.closest('.item-menu-btn');
     if (itemMenuBtn) { 
         showContextMenu(e); 
@@ -14434,6 +14426,9 @@ async function loadBackupsForNote() {
 
     const { id, name, type } = listItem.dataset;
 
+    // --- GRAVAR O ID NA MEMÓRIA ---
+    col1SelectedId = id; 
+ 
     // --- MODO LISTS (Categorias Especiais) ---
    if (currentTab === 'lists') {
     if (type === 'list-category' || type === 'bible-book') { // <--- Adicionado bible-book
@@ -14741,51 +14736,50 @@ window.addEventListener('beforeunload', (event) => {
 
 
 middlePanelList.addEventListener('click', async (e) => {
-    if (currentTab === 'lists') return; 
     const item = e.target.closest('.list-item');
     if (!item) return;
 
-    // 1. CAPTURAR CLIQUE NOS TRÊS PONTOS (CORREÇÃO AQUI)
-    const menuBtn = e.target.closest('.item-menu-btn');
-    if (menuBtn) {
-        e.preventDefault();
-        e.stopPropagation();
-        showContextMenu(e); // Chama a função que mostra o painel
-        return; // Para aqui para não tentar abrir a nota ao mesmo tempo
+    const itemMenuBtn = e.target.closest('.item-menu-btn');
+    if (itemMenuBtn) { 
+        showContextMenu(e); 
+        return; 
     }
 
-    // 2. Extração de dados do elemento clicado (Nota/Pasta/Arquivo)
     const id = item.getAttribute('data-id');
-    const name = item.getAttribute('data-name');
     const type = item.getAttribute('data-type');
-    const ownerId = item.getAttribute('data-userid');
+    const name = item.getAttribute('data-name');
 
-    // 3. CASO: PASTAS OU AGREGAÇÕES
+    console.log(`%c[CLIQUE COL 2] Iniciado no item: ${name}`, "color: #f39c12; font-weight: bold;");
+    console.log("ID clicado:", id, "| Modo atual:", currentViewMode);
+
     if (type === 'pasta' || type === 'agregacao') {
         const action = () => {
-            selectedNoteId = null;
-            resetEditor();
-            navigationStack.push({ id, name }); 
-            updateNavigationView();
+            if (item.dataset.superpasta === "true") {
+                navigateWithUnsavedCheck(() => { window.location.href = `note.html?rootId=${id}`; });
+                return;
+            }
+            navigationStack.push({ id, name });
+            updateNavigationView(true);
         };
         navigateWithUnsavedCheck(action);
     }
     
-    // 4. CASO: NOTAS OU ARQUIVOS
-    else if (type === 'nota' || type === 'arquivo' || type === 'partilhado') {
-        const action = () => {
-            if (window.innerWidth <= 768) {
-                document.body.classList.remove('mobile-view-middle');
-                document.body.classList.add('mobile-view-editor');
-            }
+   else if (type === 'nota' || type === 'arquivo' || type === 'partilhado') {
+    const action = () => {
+        // 1. Limpa seleção APENAS da Coluna 2
+        document.querySelectorAll('#file-list .list-item').forEach(el => {
+            el.classList.remove('selected', 'selected-red');
+        });
+        
+        // 2. Aplica a cor (Vermelho se Partilha, Azul se Local)
+        const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+        item.classList.add(selectionClass);
 
-            if (type === 'nota') {
-                displayNote(id, item);
-            } else {
-                displayArchive(id, { id: id, nome: name, tipo: type, userId: ownerId }, item); 
-            }
-        };
-        navigateWithUnsavedCheck(action);
+        // 3. PASSA O ELEMENTO "item" como argumento (Correção Crítica)
+        if (type === 'nota') displayNote(id, item);
+        else displayArchive(id, { id, nome: name, tipo: type }, item); // <--- 'item' adicionado aqui
+    };
+    navigateWithUnsavedCheck(action);
     }
 });
 
@@ -17600,12 +17594,9 @@ document.getElementById('right-panel').addEventListener('click', (event) => {
     const target = event.target;
     
     // LOG 1: O clique chegou ao painel?
-    console.log("%c[DEBUG CLIQUE] Clique capturado no Painel Direito", "color: orange; font-weight: bold;");
-    console.log("Elemento clicado:", target.tagName, "Classe:", target.className);
 
     // 1. Verificar se é um botão (para ignorar)
     if (target.closest('button')) {
-        console.log("Ignorado: É um botão.");
         return;
     }
 
@@ -17626,16 +17617,13 @@ document.getElementById('right-panel').addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
         
-        console.log("%c✅ ALVO IDENTIFICADO!", "color: green; font-weight: bold;");
 
         if (anchor) {
             const name = anchor.dataset.entityName;
             const type = anchor.dataset.entityType;
-            console.log(`Abrindo Entidade: ${name} (${type})`);
             
             // LOG 3: Verificar se o cache de entidades está vazio
             const all = Object.values(allEntities).flat();
-            console.log("Total de entidades no cache:", all.length);
             
             const entity = all.find(e => e.nome === name);
             if (entity) {
@@ -17648,19 +17636,16 @@ document.getElementById('right-panel').addEventListener('click', (event) => {
         } 
         else if (link) {
             const id = link.dataset.anexoId;
-            console.log("Abrindo Anexo ID:", id);
             openViewLinkModal(id);
         } 
         else if (tag) {
             const tagName = tag.textContent.replace('#', '').trim();
-            console.log("Abrindo Tag:", tagName);
             showTagReferencesPanel(tagName);
         }
         
         // LOG 4: Verificar se a classe de visibilidade foi adicionada
         setTimeout(() => {
             const visible = notebookContainer.classList.contains('references-panel-visible');
-            console.log("Estado final da UI: Painel de Referências está Visível?", visible);
         }, 100);
     } else {
         console.log("❌ O clique não foi em cima de nenhum elemento rastreável.");
@@ -18686,7 +18671,6 @@ if (!container.classList.contains('edit-mode-active')) {
     } 
     // B. SAIR DO MODO EDIÇÃO (CLICOU EM CONCLUÍDO)
     else {
-        console.log("💾 [MODE] Clicou Concluído. A chamar savePuzzleData()...");
         
         // Gravar explicitamente
         await savePuzzleData();
@@ -18944,8 +18928,7 @@ if (globalSearchBtn) {
 noteContentEditor.addEventListener('keydown', (e) => {
     // 1. DETETOR BÁSICO
     if (e.key === 'Enter') {
-        console.log("--------------------------------------------------");
-        console.log("⌨️ TECLA ENTER PRESSIONADA!");
+
         
         if (e.shiftKey) {
             console.log("   (Shift+Enter detetado -> Ignorando lógica customizada)");
@@ -19605,6 +19588,7 @@ async function switchFolderView(mode) {
       updateAddButtonState(true, false);
     // 1. Se já estivermos no modo e na raiz, não faz nada
     if (mode === currentViewMode && navigationStack.length === 0) return;
+ col1SelectedId = null; 
 
     // 2. 🚀 GRAVAÇÃO AUTOMÁTICA ANTES DE MUDAR
     // Verifica se há algo por guardar (Nota normal ou Post de Arquivo)
@@ -19722,14 +19706,15 @@ function displayArchive(id, data, element = null) {
     currentArchiveId = id; 
     currentArchiveData = data;
 
-    // Reset visual de seleções na lista
-    document.querySelectorAll('.list-item.selected, .list-item.selected-red').forEach(el => {
+    // --- CORREÇÃO: Limpa apenas a Coluna 2 para proteger o azul da Coluna 1 ---
+    document.querySelectorAll('#file-list .list-item').forEach(el => {
         el.classList.remove('selected', 'selected-red');
     });
 
+    // Se o elemento foi passado, aplica a cor correta
     if (element) {
-        const isSharedTab = (currentViewMode === 'shared');
-        element.classList.add(isSharedTab ? 'selected-red' : 'selected');
+        const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+        element.classList.add(selectionClass);
     }
 
     const placeholder = document.getElementById('editor-placeholder');
@@ -21058,10 +21043,12 @@ async function leaveArchivePresence() {
 
 // Função Mestra para garantir que NADA no notebook está selecionado visualmente
 function clearAllListSelections() {
-    const allSelected = document.querySelectorAll('.list-item.selected, .list-item.selected-red');
-    allSelected.forEach(el => {
+    // Agora limpamos apenas a Coluna 2. 
+    // A Coluna 1 é gerida automaticamente pelo onSnapshot + col1SelectedId
+    document.querySelectorAll('#file-list .list-item').forEach(el => {
         el.classList.remove('selected', 'selected-red');
     });
+    console.log("🧹 [SISTEMA] Seleção visual da Coluna 2 limpa.");
 }
 
 // === GESTÃO DE GAVETAS (ADICIONAR NO FIM DO SCRIPT) ===
@@ -21734,22 +21721,28 @@ async function renderListCategoryItems(categoryId) {
         }
 
         // --- CAMINHO B: BÍBLIA (Explorador / Criar Novos) ---
-        if (origin === 'biblia-root') {
-            if (categoryId === 'biblia-root') {
-                middlePanelTitle.textContent = "Bíblia";
-                middlePanelList.innerHTML = '';
-                BIBLE_DATA.forEach(book => {
-                    const li = document.createElement('li');
-                    li.className = 'list-item';
-                    li.innerHTML = `<span>📖 ${book.nome}</span>`;
-                    li.onclick = () => {
-                        navigationStack.push({ id: book.nome, name: book.nome, type: 'bible-book', caps: book.caps });
-                        updateNavigationView(true);
-                    };
-                    middlePanelList.appendChild(li);
-                });
-                return;
+      if (origin === 'biblia-root') {
+    if (categoryId === 'biblia-root') {
+        middlePanelTitle.textContent = "Bíblia";
+        middlePanelList.innerHTML = '';
+        BIBLE_DATA.forEach(book => {
+            const li = document.createElement('li');
+            li.className = 'list-item';
+            
+            // VERIFICA SE O LIVRO ESTÁ NA STACK DE NAVEGAÇÃO
+            if (navigationStack.some(nav => nav.id === book.nome)) {
+                li.classList.add('selected');
             }
+
+            li.innerHTML = `<span>📖 ${book.nome}</span>`;
+            li.onclick = () => {
+                navigationStack.push({ id: book.nome, name: book.nome, type: 'bible-book', caps: book.caps });
+                updateNavigationView(true);
+            };
+            middlePanelList.appendChild(li);
+        });
+        return;
+    }
             if (lastNav.type === 'bible-book') {
                 middlePanelTitle.textContent = lastNav.name;
                 middlePanelList.innerHTML = '<div class="bible-grid"></div>';
@@ -21849,34 +21842,54 @@ async function renderListCategoryItems(categoryId) {
 
 // Função auxiliar para não repetir código de renderização
 function renderStandardList(items) {
+    // 1. Limpa apenas a Coluna 2
     middlePanelList.innerHTML = '';
+    
     if (items.length === 0) {
         middlePanelList.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nada encontrado.</li>';
         return;
     }
+    
     items.forEach(item => {
         const li = document.createElement('li');
         li.className = 'list-item';
         
-        // Define o ícone correto
+        // ============================================================
+        // REGRA DE COR DINÂMICA PARA LISTAS (COLUNA 2)
+        // ============================================================
+        // Verifica se o item é o que está atualmente aberto no painel de referências
+        if (activeReferenceEntity && activeReferenceEntity.id === item.id) {
+            const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+            li.classList.add(selectionClass);
+        }
+
         let icon = '🔹';
         if (item.type === 'topico') icon = '📑';
         if (item.type === 'tag') icon = '🏷️';
         if (item.type === 'textobiblico') icon = '📜';
-        if (item.type === 'marcadores') icon = '🔖'; // <--- ADICIONA ESTA LINHA
+        if (item.type === 'marcadores') icon = '🔖';
+        if (item.type === 'destaque') icon = '🎨';
         
         li.innerHTML = `<span>${icon} ${item.nome}</span>`;
         
         li.onclick = () => {
+            // Limpa a seleção visual apenas da Coluna 2 antes de marcar o novo
+            document.querySelectorAll('#file-list .list-item').forEach(el => {
+                el.classList.remove('selected', 'selected-red');
+            });
+            
+            // Aplica a cor correta baseada no modo
+            const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+            li.classList.add(selectionClass);
+
+            // Ação de abrir as referências
             if (item.type === 'topico') showTopicReferencesPanel(item.id, item.nome, item.desc, 'topico');
             else if (item.type === 'tag') showTagReferencesPanel(item.nome);
             else if (item.type === 'destaque') showHighlightReferencesPanel(item.id, item.nome);
-            
-            // Lógica específica para Marcadores: ver quais versículos têm este marcador
             else if (item.type === 'marcadores') showMarkerReferencesPanel(item.id, item.nome); 
-            
             else showReferencesPanel(item.id, item.nome, item.type);
         };
+        
         middlePanelList.appendChild(li);
     });
 }
@@ -22491,55 +22504,46 @@ window.movePanelLink = async function(index, direction) {
 };
 
 function loadSharedFilesRoot() {
-    // 1. Limpeza de listeners antigos para evitar duplicados
+    console.log("%c[SISTEMA] A carregar raiz de Partilha...", "color: #e74c3c;");
+    
     if (unsubscribeShared1) { unsubscribeShared1(); unsubscribeShared1 = null; }
     if (unsubscribeShared2) { unsubscribeShared2(); unsubscribeShared2 = null; }
 
     middlePanelTitle.textContent = "Arquivos Partilhados";
     middlePanelList.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A procurar arquivos...</span></div>';
 
-    const addItemBtn = document.getElementById('add-item-btn');
-    if (addItemBtn) addItemBtn.classList.add('shared-mode');
-
     let resultsMap = new Map();
     const myUid = auth.currentUser.uid;
     const foldersRef = collection(db, 'pastas');
 
-   const renderUnifiedList = () => {
-    middlePanelList.innerHTML = '';
-    if (resultsMap.size === 0) {
-        middlePanelList.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum arquivo partilhado encontrado.</li>';
-        return;
-    }
+    const renderUnifiedList = () => {
+        middlePanelList.innerHTML = '';
+        console.log("Renderizando lista unificada. selectedNoteId ativo:", selectedNoteId);
 
-    Array.from(resultsMap.values())
-        .sort((a, b) => (a.nome || "").localeCompare(b.nome || ""))
-        .forEach(item => {
-            const li = document.createElement('li');
-            li.className = 'list-item';
-            li.setAttribute('data-id', item.id);
-            li.setAttribute('data-type', item.tipo);
-            li.setAttribute('data-name', item.nome);
-            li.setAttribute('data-userid', item.userId);
+        Array.from(resultsMap.values())
+            .sort((a, b) => (a.nome || "").localeCompare(b.nome || ""))
+            .forEach(item => {
+                const li = document.createElement('li');
+                li.className = 'list-item';
+                li.setAttribute('data-id', item.id);
+                li.setAttribute('data-type', item.tipo);
+                li.setAttribute('data-name', item.nome);
 
-            // --- CORREÇÃO DA SELEÇÃO VISUAL ---
-            // Verifica se este item é o que está atualmente aberto (selectedNoteId)
-            if (item.id === selectedNoteId) {
-                li.classList.add('selected-red');
-            }
+                if (item.id === selectedNoteId) {
+                    li.classList.add('selected-red');
+                    console.log(`%cMATCH! Pintando o item ${item.nome} de vermelho via Re-render.`, "background: #e74c3c; color: white; padding: 2px;");
+                }
 
-            li.style.borderLeft = "4px solid #e74c3c";
-            const isOwner = item.userId === myUid;
-            li.innerHTML = `<span>${isOwner ? '👑' : '🤝'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
-            
-            // Se for o dono mas o arquivo não estiver ativo para outros, fica mais transparente
-            if (isOwner && item.partilhado !== "ativo") li.style.opacity = "0.7";
+                li.style.borderLeft = "4px solid #e74c3c";
+                const isOwner = item.userId === myUid;
+                li.innerHTML = `<span>${isOwner ? '👑' : '🤝'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+                
+                if (isOwner && item.partilhado !== "ativo") li.style.opacity = "0.7";
+                middlePanelList.appendChild(li);
+            });
+    };
 
-            middlePanelList.appendChild(li);
-        });
-};
-
-    // Queries para buscar arquivos onde sou dono ou colaborador
+    // Queries (q1 e q2 seguem iguais...)
     const q1 = query(foldersRef, where('userId', '==', myUid), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
     const q2 = query(foldersRef, where(`colaboradores.${myUid}`, '==', true), where('partilhado', '==', 'ativo'), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
 
