@@ -12785,33 +12785,30 @@ function resetReferencesPanelUI() {
 
 
 async function showReferencesPanel(entityId, entityName, entityType, anexoId = null) {
-    // --- CORREÇÃO MOBILE: Fecha o teclado ao abrir o painel ---
-    if (document.activeElement && typeof document.activeElement.blur === 'function') {
-        document.activeElement.blur();
+    // --- 1. CORREÇÃO MOBILE: Fecha o teclado e tira o foco para o painel subir limpo ---
+    if (window.innerWidth <= 768) {
+        if (document.activeElement && typeof document.activeElement.blur === 'function') {
+            document.activeElement.blur();
+        }
     }
 
-    // 1. Grava o puzzle anterior se estivesse em modo edição
+    // 2. Grava o puzzle anterior se estivesse em modo edição
     await forceSaveAndClosePuzzleMode();
     
-    // 2. Limpa a interface do painel (abas, botões e listas)
+    // 3. Limpa a interface do painel
     resetReferencesPanelUI(); 
 
-    // 3. Definir contexto da entidade ativa
+    // 4. Definir contexto da entidade ativa
     activeReferenceEntity = { 
         id: entityId || entityName, 
         type: entityType, 
         name: entityName 
     };
 
-    // 4. Tornar o painel visível (CSS ativa o slide-in no PC e Bottom Sheet no Mobile)
+    // 5. Tornar o painel visível
     notebookContainer.classList.add('references-panel-visible');
 
-    const descElement = document.getElementById('references-panel-description');
-    const editBtn = document.getElementById('references-edit-btn');
-    const wolBtn = document.getElementById('references-wol-btn');
-    const bookmarkBtn = document.getElementById('references-bookmark-btn');
-
-    // 5. Sincronização de abas: Abre sempre na aba "Puzzle" (Quadro) por padrão
+    // 6. Sincronização de abas (Abre no Puzzle por padrão)
     document.querySelectorAll('#ref-tabs button').forEach(b => b.classList.remove('active'));
     const puzzleTab = document.querySelector('[data-ref-tab="puzzle"]');
     if (puzzleTab) puzzleTab.classList.add('active');
@@ -12821,91 +12818,26 @@ async function showReferencesPanel(entityId, entityName, entityType, anexoId = n
     document.getElementById('ref-content-links').style.display = 'none';
     document.getElementById('ref-content-dossie').style.display = 'none';
 
-    // Define o título principal do painel
+    // Título e Descrição
     referencesPanelTitle.textContent = `Referências: ${entityName}`;
+    const descElement = document.getElementById('references-panel-description');
+    const editBtn = document.getElementById('references-edit-btn');
 
-    // --- LÓGICA DE CONTEÚDO: BÍBLIA PÚBLICA VS OUTROS ---
+    // --- LÓGICA DE CONTEÚDO (Bíblia vs Outros) ---
     if (entityType === 'textobiblico') {
-        // Mostra botões específicos para Bíblia
         if (editBtn) editBtn.style.display = 'none'; 
-        if (wolBtn) wolBtn.style.display = 'block';
-        if (bookmarkBtn) bookmarkBtn.style.display = 'block';
-        
-        descElement.style.borderLeft = '3px solid #f1c40f'; // Destaque dourado
         descElement.innerHTML = `<em>A consultar biblioteca...</em>`;
-
         try {
             const texto = await fetchBibleText(entityName);
-            if (texto) {
-                descElement.innerHTML = `<div style="color: var(--text-color); font-size: 0.95em; line-height: 1.5; padding: 5px 0;">"${texto}"</div>`;
-            } else {
-                descElement.innerHTML = `<div style="color: #888; font-size: 0.9em; font-style: italic; padding: 10px 0;">
-                    Texto não disponível na biblioteca local. Clique em 📖 para ler na WOL.
-                </div>`;
-            }
-        } catch (e) {
-            descElement.innerHTML = `<span>Referência Bíblica ativa.</span>`;
-        }
+            descElement.innerHTML = texto ? `<div style="color:var(--text-color); font-size:0.95em;">"${texto}"</div>` : `<em>Texto não disponível.</em>`;
+        } catch (e) { descElement.innerHTML = `<span>Ref. Bíblica ativa.</span>`; }
     } else {
-        // Mostra botão editar para Personagens, Locais, etc.
         if (editBtn) editBtn.style.display = 'block';
-        if (wolBtn) wolBtn.style.display = 'none';
-        if (bookmarkBtn) bookmarkBtn.style.display = 'none';
-        descElement.style.borderLeft = '3px solid var(--accent-color)';
     }
 
-    // 6. CARREGAR O QUADRO (PUZZLE) PRIVADO
-    // Busca os dados salvos anteriormente para este tópico/entidade
+    // 7. Carregar dados do Quadro e Citações
     loadPuzzleData(entityId, entityType);
-
-    // --- LÓGICA DE PESQUISA: CITAÇÕES EM OUTRAS NOTAS ---
-    const listElement = document.getElementById('references-list');
-    listElement.innerHTML = `<div class="spinner-container"><div class="spinner"></div><span>A procurar citações...</span></div>`;
-
-    try {
-        // Busca em todas as notas do utilizador onde este nome é mencionado
-        const qNotes = query(
-            collection(db, 'pastas'), 
-            where('estado', '==', 'ativa'), 
-            where('userId', '==', auth.currentUser.uid)
-        );
-        const snapshot = await getDocs(qNotes);
-        
-        // Reset da lista global de resultados para a aba "Cita"
-        allCitationsResults = []; 
-
-        snapshot.forEach(docSnap => {
-            const data = docSnap.data();
-            const content = data.conteudo || "";
-            const noteName = data.nome || "";
-            
-            // Verifica se o nome da entidade aparece no título ou no texto da nota
-            if (content.toLowerCase().includes(entityName.toLowerCase()) || noteName.toLowerCase().includes(entityName.toLowerCase())) {
-                
-                // Respeita as definições de privacidade (se pesquisa em notas protegidas)
-                let isProtected = (data.passe && data.passe.trim() !== "");
-                if (isProtected && !appSettings.searchAnchorsInProtected) return;
-
-                allCitationsResults.push({ 
-                    id: docSnap.id, 
-                    name: noteName, 
-                    snippet: generateReferenceContext(content, entityName),
-                    isProtected: isProtected,
-                    ultimaedicao: data.ultimaedicao?.toMillis() || data.createdAt?.toMillis() || 0
-                });
-            }
-        });
-
-        // Ordenar as citações: Mais recentes primeiro
-        allCitationsResults.sort((a, b) => b.ultimaedicao - a.ultimaedicao);
-
-        // Renderiza a primeira página de resultados na aba "Cita"
-        window.renderCitationsPage(false);
-
-    } catch (error) {
-        console.error("Erro ao carregar citações:", error);
-        listElement.innerHTML = '<li>Erro ao carregar lista de citações.</li>';
-    }
+    renderTopicResultsList(entityId, entityType); // Função que alimenta a aba "Cita"
 }
 
 // 2. BUSCAR TEXTO NA BIBLIOTECA PÚBLICA (COMUM)
@@ -21966,13 +21898,6 @@ function renderStandardList(items) {
 }
 
 
-// Fechar painel de referências ao clicar fora dele no Mobile
-document.getElementById('right-panel').addEventListener('click', (e) => {
-    if (window.innerWidth <= 768 && notebookContainer.classList.contains('references-panel-visible')) {
-        // Se clicar no editor enquanto o painel está aberto, fecha o painel
-        hideReferencesPanel();
-    }
-});
 
 // ============================================================
 // LÓGICA DE ARRASTO DO PAINEL DE REFERÊNCIAS (MOBILE)
