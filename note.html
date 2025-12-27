@@ -4512,6 +4512,108 @@ a.board-link:hover {
     background-color: rgba(74, 144, 226, 0.1) !important;
 }
 
+
+
+
+/* Estado visual do card sendo arrastado */
+.board-card.dragging-mica {
+    opacity: 0.4;
+    border: 1px dashed var(--accent-color);
+}
+
+/* Estilo para o conteúdo oculto da Bíblia no Dossié */
+.bible-collapsible-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out, opacity 0.2s, margin-top 0.3s;
+    opacity: 0;
+    font-size: 0.92em;
+    color: var(--text-color);
+    padding-left: 8px;
+    line-height: 1.5;
+    font-style: italic;
+    opacity: 0.9;
+}
+
+/* Quando o card está expandido */
+.board-card.bible-open .bible-collapsible-content {
+    max-height: 1000px; /* Valor alto para permitir qualquer tamanho de texto */
+    opacity: 1;
+    margin-top: 10px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    padding-top: 10px;
+}
+
+/* Cursor e Seta no Título da Bíblia */
+.bible-clickable-area {
+    cursor: pointer;
+}
+
+.bible-clickable-area .ref-title-text::after {
+    content: ' ▾';
+    font-size: 0.8em;
+    opacity: 0.5;
+    display: inline-block;
+    transition: transform 0.3s;
+}
+
+.board-card.bible-open .ref-title-text::after {
+    transform: rotate(180deg);
+}
+
+/* Botões de navegação subir/descer no Dossié */
+.mica-nav-btn {
+    background: none;
+    border: 1px solid transparent;
+    color: var(--text-muted-color);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mica-nav-btn:hover {
+    background-color: var(--hover-color);
+    color: var(--accent-color);
+    border-color: var(--border-color);
+}
+
+/* Garante que o texto dos cards seja selecionável para cópia */
+.board-card.type-ref {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    cursor: default !important;
+}
+
+/* Ajuste na área clicável da bíblia para não interferir na seleção */
+.bible-clickable-area {
+    user-select: text;
+}
+
+.mica-card {
+    transition: transform 0.1s, background-color 0.2s;
+    /* Impede que o texto seja selecionado enquanto tentas clicar rápido */
+    user-select: none; 
+}
+
+.mica-card:active {
+    transform: scale(0.98); /* Efeito de "apertar" o botão ao clicar */
+    background-color: var(--hover-color);
+}
+
+.bible-card-mica {
+    border-left: 4px solid #5d4037 !important; /* Castanho em vez de Roxo */
+    padding-left: 10px;
+}
+
+
+
+
+
 </style>
 
 
@@ -5825,6 +5927,47 @@ a.board-link:hover {
     </div>
 </div>
 
+<!-- MODAL DE SELEÇÃO BÍBLICA PARA MICA -->
+<div id="mica-bible-modal" class="modal-overlay" style="z-index: 3000;">
+    <div class="modal-content" style="max-width: 450px;">
+        <h3>Adicionar Texto Bíblico</h3>
+        
+        <label class="codex-label">Título do Card (Opcional)</label>
+        <input type="text" id="bible-card-title" placeholder="Ex: Base para a esperança" class="codex-input-modern" style="margin-bottom: 15px;">
+
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 15px;">
+            <div>
+                <label class="codex-label">Livro</label>
+                <select id="bible-book-select" class="codex-input-modern"></select>
+            </div>
+            <div>
+                <label class="codex-label">Capítulo</label>
+                <select id="bible-chapter-select" class="codex-input-modern"></select>
+            </div>
+        </div>
+
+        <label class="codex-label">Versículos</label>
+        <div id="verse-inputs-container" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 15px;">
+            <!-- Linhas de versículos entrarão aqui -->
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+            <button id="add-single-verse-btn" class="modal-btn" style="flex: 1; background: var(--panel-color); border: 1px solid var(--border-color);">+ Versículo</button>
+            <button id="add-range-verse-btn" class="modal-btn" style="flex: 1; background: var(--panel-color); border: 1px solid var(--border-color);">- Intervalo</button>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 20px;">
+            <button class="modal-btn secondary" onclick="document.getElementById('mica-bible-modal').style.display='none'">Cancelar</button>
+            <button id="confirm-mica-bible-save" class="modal-btn primary">Adicionar à Mica</button>
+        </div>
+    </div>
+</div>
+
+<!-- Popup de Cores das Micas -->
+<div id="mica-color-popup" style="display: none;"></div>
+
+
+
 </body>
 
 
@@ -6074,7 +6217,7 @@ let currentCitationsPageIndex = 0; // Controla a página atual
 let col1SelectedId = null;
 let selectedCosmosEmoji = "💼"; // Antes era 🪐
 let tempEditEmoji = "💼";
-
+let currentDossieVersion = 0;
 
 
 // Função: Gravação Silenciosa (Mantém o editor aberto)
@@ -12104,62 +12247,55 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = rawSnippet;
 
-        // 1. EXTRAÇÃO DE TÍTULO
+        // 1. EXTRAÇÃO DE TÍTULO (Subnota, Questão, Toggle ou Ideia)
         const titleEl = tempDiv.querySelector('.mini-note-title-input');
         const h2El = tempDiv.querySelector('h2');
         const ideaEl = tempDiv.querySelector('.idea-span');
         
-        let titleText = "";
+        let extractedTitle = "";
         if (titleEl) {
-            titleText = titleEl.textContent || titleEl.value || titleEl.getAttribute('value') || "";
+            extractedTitle = titleEl.textContent || titleEl.value || titleEl.getAttribute('value') || "";
         } else if (h2El) {
-            titleText = h2El.textContent;
+            extractedTitle = h2El.textContent;
         } else if (ideaEl) {
-            titleText = ideaEl.textContent;
+            extractedTitle = ideaEl.textContent;
         }
 
-        // 2. DEFINIÇÃO DE CORES E ÍCONES (CONFORME PEDIDO)
-        let icon = "📦"; let label = "Ref"; 
-        let color = "#95a5a6"; // Cinzento (Nota normal) por padrão
+        // 2. LÓGICA DE PRIORIDADE: Se não houver título na caixa, usa o nome da nota (Ex: Génesis 1:1-4)
+        // Removemos o texto fixo "Texto da Nota" para permitir que a referência bíblica suba para o título
+        let finalDisplayTitle = extractedTitle.trim();
+        if (!finalDisplayTitle || finalDisplayTitle === "Texto da Nota") {
+            finalDisplayTitle = data.noteName || "Sem Título";
+        }
+
+        // 3. DEFINIÇÃO DE ÍCONE E COR (Apenas para a borda e ícone lateral)
+        let icon = "📄"; 
+        let color = "#95a5a6"; // Cinzento (Corpo da nota)
         
-        if (rawSnippet.includes('question-mode')) { 
-            icon = "📗"; label = "Questão"; color = "#2ecc71"; // Verde
-        } else if (rawSnippet.includes('free-mode')) { 
-            icon = "📙"; label = "Contentor"; color = "#e67e22"; // Laranja
-            if (!titleText) titleText = tempDiv.textContent.substring(0, 40) + "...";
-        } else if (rawSnippet.includes('toggle-section')) { 
-            icon = "☂"; label = "Secção"; color = "#9b59b6"; // Roxo
-        } else if (rawSnippet.includes('idea-span')) {
-            icon = "💡"; label = "Ideia"; color = "#e74c3c"; // Vermelho
-        } else if (rawSnippet.includes('blockquote')) {
-            icon = "📄"; label = "Corpo"; color = "#95a5a6"; // Cinzento
-            titleText = "Texto da Nota";
-        } else if (rawSnippet.includes('mini-note-wrapper')) { 
-            icon = "📘"; label = "SubNota"; color = "#3498db"; // Azul
-        }
+        if (rawSnippet.includes('question-mode')) { icon = "📗"; color = "#2ecc71"; }
+        else if (rawSnippet.includes('free-mode')) { icon = "📙"; color = "#e67e22"; }
+        else if (rawSnippet.includes('toggle-section')) { icon = "☂"; color = "#9b59b6"; }
+        else if (rawSnippet.includes('idea-span')) { icon = "💡"; color = "#e74c3c"; }
+        else if (rawSnippet.includes('mini-note-wrapper')) { icon = "📘"; color = "#3498db"; }
 
-        if (!titleText || titleText.trim() === "") titleText = "Sem Título";
-
-        // APLICAÇÃO DA COR NA BORDA ESQUERDA DO CARD
         card.style.borderLeft = `4px solid ${color}`;
 
-        // 3. EXTRAÇÃO DE CONTEÚDO (PREVIEW)
+        // 4. EXTRAÇÃO DE CONTEÚDO (PREVIEW)
         const contentDiv = tempDiv.querySelector('.mini-note-content') || tempDiv.querySelector('.toggle-content') || tempDiv;
         let bodyText = contentDiv.innerText.replace(/\s+/g, ' ').trim();
         if (bodyText.length > 150) bodyText = bodyText.substring(0, 150) + "...";
 
+        // 5. CONSTRUÇÃO DO HTML (Sem o "REF" e com Título/Referência no topo)
         headerHtml = `
             <div style="padding-left: 5px; margin-bottom: 5px;">
-                <div style="font-size:0.75em; font-weight:bold; color:${color}; text-transform:uppercase; margin-bottom:2px;">
-                    ${icon} ${label}
-                </div>
-                <div style="font-weight:bold; font-size:0.95em; cursor:pointer; color:var(--text-color);" 
-                     onclick="openNoteFromBoard('${data.noteId}', '${encodeURIComponent(titleText)}')"
+                <div style="font-weight:bold; font-size:1em; cursor:pointer; color:var(--text-color); display: flex; align-items: center; gap: 8px;" 
+                     onclick="window.openNoteFromBoard('${data.noteId}', '${encodeURIComponent(finalDisplayTitle)}')"
                      onmouseover="this.style.textDecoration='underline'" 
                      onmouseout="this.style.textDecoration='none'">
-                    ${titleText}
+                    <span style="font-size: 1.2em;">${icon}</span> ${finalDisplayTitle}
                 </div>
             </div>`;
+
         displayHtml = `<div style="font-size:0.9em; color:var(--text-muted-color); padding-left: 8px; line-height:1.4;">${bodyText}</div>`;
 
         innerHTML = `<div class="ref-card-content">${headerHtml}${displayHtml}</div>`;
@@ -12390,22 +12526,54 @@ function renderReferenceBoxesPage() {
             </div>
         `;
 
-        li.onclick = () => {
-            createBoardItem('ref', {
-                noteId: item.id,
-                noteName: item.name,
-                snippet: item.snippet,
-                isClone: true
-            }, true);
-            document.getElementById('puzzle-ref-selection-modal').style.display = 'none';
-            if (document.getElementById('ref-content-puzzle').classList.contains('edit-mode-active')) {
-                savePuzzleData();
+        // --- LÓGICA DE CLIQUE INTELIGENTE ---
+        li.onclick = async () => {
+            // Se existir um activeMicaId, significa que estamos na aba Dossié
+            if (window.activeMicaId) {
+                try {
+                    const collectionName = getCollectionFromType(activeReferenceEntity.type);
+                    const docRef = doc(db, collectionName, activeReferenceEntity.id);
+                    const docSnap = await getDoc(docRef);
+                    
+                    if (docSnap.exists()) {
+                        let dossie = docSnap.data().dossie || [];
+                        const mica = dossie.find(m => m.id === window.activeMicaId);
+                        
+                        if (mica) {
+                            if (!mica.items) mica.items = [];
+                            mica.items.push({
+                                noteId: item.id,
+                                noteName: item.name,
+                                snippet: encodeURIComponent(item.snippet)
+                            });
+                            
+                            await updateDoc(docRef, { dossie: dossie });
+                            window.renderDossie(); // Atualiza a lista visual da Mica
+                        }
+                    }
+                } catch (e) {
+                    console.error("Erro ao salvar na Mica:", e);
+                }
+            } else {
+                // Se não houver Mica aberta, envia para o Quadro (Puzzle)
+                createBoardItem('ref', {
+                    noteId: item.id,
+                    noteName: item.name,
+                    snippet: item.snippet,
+                    isClone: true
+                }, true);
+                if (document.getElementById('ref-content-puzzle').classList.contains('edit-mode-active')) {
+                    savePuzzleData();
+                }
             }
+            
+            // Fecha o modal após selecionar
+            document.getElementById('puzzle-ref-selection-modal').style.display = 'none';
         };
         list.appendChild(li);
     });
 
-    // Se ainda houver mais itens, adiciona o botão
+    // Adiciona botão "Carregar mais" se houver mais resultados
     if (end < allFoundReferenceBoxes.length) {
         currentReferencePageIndex++;
         const loadMoreBtn = document.createElement('button');
@@ -12413,13 +12581,17 @@ function renderReferenceBoxesPage() {
         loadMoreBtn.className = 'modal-btn secondary';
         loadMoreBtn.style.width = "100%";
         loadMoreBtn.style.marginTop = "10px";
-        loadMoreBtn.style.marginBottom = "20px";
         loadMoreBtn.textContent = `+ ${allFoundReferenceBoxes.length - end} resultados`;
         loadMoreBtn.onclick = () => renderReferenceBoxesPage();
         list.appendChild(loadMoreBtn);
     }
 }
 
+// 4. Adicionar ao Dossié (+Add)
+document.getElementById('mica-add-content-btn').onclick = async () => {
+    // Apenas abre o modal. O clique no item agora é gerido pela função de renderização abaixo.
+    await openReferenceSelectionPopup();
+};
 // --- FUNÇÃO DE NAVEGAÇÃO INTELIGENTE ENTRE SUPERPASTAS ---
 
 /**
@@ -13486,22 +13658,7 @@ leftPanelList.addEventListener('click', (e) => {
     }
 });
 
-// 2. Ao clicar numa NOTA (Meio -> Direita/Editor)
- middlePanelList.addEventListener('click', (e) => {
-    const item = e.target.closest('.list-item');
-    if (!item) return;
-    if (e.target.closest('.item-menu-btn')) return;
 
-    const type = item.dataset.type;
-
-    if (window.innerWidth <= 768) {
-        // Se for pasta, mantemos no meio (apenas recarrega lista)
-        // Se for NOTA, vamos para o editor
-        if (type === 'nota') {
-            document.body.classList.add('mobile-view-editor');
-        }
-    }
-});
 
 // 3. Botão VOLTAR (Correção: Referência Global + Clique Único)
 // Certifique-se que não apaga a linha 'const backBtn = ...' no início do script
@@ -14900,10 +15057,12 @@ window.addEventListener('beforeunload', (event) => {
 // Listeners de Navegação (Protegidos pelo Gatekeeper)
 
 
+// LISTENER ÚNICO DA COLUNA 2 (Unifica Logs, Navegação e Mobile)
 middlePanelList.addEventListener('click', async (e) => {
     const item = e.target.closest('.list-item');
     if (!item) return;
 
+    // Se clicar no menu de 3 pontos
     const itemMenuBtn = e.target.closest('.item-menu-btn');
     if (itemMenuBtn) { 
         showContextMenu(e); 
@@ -14914,38 +15073,41 @@ middlePanelList.addEventListener('click', async (e) => {
     const type = item.getAttribute('data-type');
     const name = item.getAttribute('data-name');
 
-    console.log(`%c[CLIQUE COL 2] Iniciado no item: ${name}`, "color: #f39c12; font-weight: bold;");
-    console.log("ID clicado:", id, "| Modo atual:", currentViewMode);
+    // LOGS EXATOS DE DIAGNÓSTICO
+    console.log(`%c[CLIQUE COL 2] Item: ${name}`, "color: #f39c12; font-weight: bold;");
+    console.log("ID:", id, "| Tipo:", type, "| Vista:", currentViewMode);
 
-    if (type === 'pasta' || type === 'agregacao') {
-        const action = () => {
+    const action = async () => {
+        // Se for PASTA
+        if (type === 'pasta' || type === 'agregacao') {
             if (item.dataset.superpasta === "true") {
                 navigateWithUnsavedCheck(() => { window.location.href = `note.html?rootId=${id}`; });
                 return;
             }
             navigationStack.push({ id, name });
             updateNavigationView(true);
-        };
-        navigateWithUnsavedCheck(action);
-    }
-    
-   else if (type === 'nota' || type === 'arquivo' || type === 'partilhado') {
-    const action = () => {
-        // 1. Limpa seleção APENAS da Coluna 2
-        document.querySelectorAll('#file-list .list-item').forEach(el => {
-            el.classList.remove('selected', 'selected-red');
-        });
-        
-        // 2. Aplica a cor (Vermelho se Partilha, Azul se Local)
-        const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
-        item.classList.add(selectionClass);
+            
+            // Mobile: Mantém na vista de lista para ver o interior da pasta
+            if (window.innerWidth <= 768) {
+                document.body.classList.add('mobile-view-middle');
+            }
+        }
+        // Se for NOTA ou ARQUIVO
+        else if (type === 'nota' || type === 'arquivo' || type === 'partilhado') {
+            document.querySelectorAll('#file-list .list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
+            const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+            item.classList.add(selectionClass);
 
-        // 3. PASSA O ELEMENTO "item" como argumento (Correção Crítica)
-        if (type === 'nota') displayNote(id, item);
-        else displayArchive(id, { id, nome: name, tipo: type }, item); // <--- 'item' adicionado aqui
+            // Mobile: Pula para o Editor
+            if (window.innerWidth <= 768) {
+                document.body.classList.add('mobile-view-editor');
+            }
+
+            if (type === 'nota') displayNote(id, item);
+            else displayArchive(id, { id, nome: name, tipo: type }, item);
+        }
     };
     navigateWithUnsavedCheck(action);
-    }
 });
 
 
@@ -22694,124 +22856,196 @@ window.renderDossie = async function() {
     const titleEl = document.getElementById('dossie-view-title');
     const editBtn = document.getElementById('toggle-dossie-edit-btn');
     const editActions = document.getElementById('dossie-edit-actions');
-    if (!container) return;
     const backBtn = document.getElementById('mica-back-btn');
     const addBtn = document.getElementById('mica-add-content-btn');
-     const bibleBtn = document.getElementById('mica-add-bible-btn');
+    const bibleBtn = document.getElementById('mica-add-bible-btn');
 
     if (!container) return;
-    container.innerHTML = '';
-    
-    if (!activeReferenceEntity || !activeReferenceEntity.id) return;
 
-    const collectionName = getCollectionFromType(activeReferenceEntity.type);
-    const docSnap = await getDoc(doc(db, collectionName, activeReferenceEntity.id));
-    const dossieData = docSnap.exists() ? (docSnap.data().dossie || []) : [];
+    // --- 1. SEGURANÇA E LOADING ---
+    const thisVersion = ++currentDossieVersion;
+    container.innerHTML = ''; // Limpeza imediata
 
-    editBtn.textContent = window.isDossieEditMode ? "Salvar" : "Editar";
-    editActions.style.display = (window.isDossieEditMode && !window.activeMicaId) ? 'flex' : 'none';
-    
-    if (window.activeMicaId) {
-        // --- MODO: VISUALIZAR CONTEÚDO DA MICA ---
-        const mica = dossieData.find(m => m.id === window.activeMicaId);
-        if (!mica) { window.activeMicaId = null; window.renderDossie(); return; }
+    if (!activeReferenceEntity || !activeReferenceEntity.id) {
+        container.innerHTML = '<p style="text-align:center; color:#888; margin-top:20px;">Selecione um tópico ou versículo.</p>';
+        return;
+    }
 
-        titleEl.textContent = mica.name;
-        backBtn.style.display = 'block';
-        addBtn.style.display = 'block';
-         bibleBtn.style.display = 'block';
-        editBtn.style.display = 'none'; 
+    // Mostrar Spinner centralizado
+    container.innerHTML = `
+        <div class="spinner-container" style="margin-top: 50px; display: flex; flex-direction: column; align-items: center;">
+            <div class="spinner"></div>
+            <span style="font-style: italic; font-size: 0.9em; margin-top:10px; color: var(--text-muted-color);">A organizar Dossié...</span>
+        </div>`;
 
-        if (!mica.items || mica.items.length === 0) {
-            container.innerHTML = '<p style="text-align:center; color:#888; font-style:italic; margin-top:20px;">Mica vazia. Clique em +Add para importar citações.</p>';
-        } else {
-          mica.items.forEach((item, idx) => {
-    const card = document.createElement('div');
-    card.className = 'board-card type-ref';
-    card.style.position = 'relative'; // Garante que o X se posicione corretamente
+    try {
+        const collectionName = getCollectionFromType(activeReferenceEntity.type);
+        const docSnap = await getDoc(doc(db, collectionName, activeReferenceEntity.id));
+        
+        // Aborta se o utilizador já mudou de contexto
+        if (thisVersion !== currentDossieVersion) return;
 
-    // --- LÓGICA VISUAL IGUAL AO PUZZLE ---
-    let rawSnippet = decodeURIComponent(item.snippet || '');
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = rawSnippet;
+        const dossieData = docSnap.exists() ? (docSnap.data().dossie || []) : [];
+        editBtn.textContent = window.isDossieEditMode ? "Salvar" : "Editar";
+        
+        if (window.activeMicaId) {
+            // ==========================================
+            // MODO: CONTEÚDO DA MICA (CARDS)
+            // ==========================================
+            const mica = dossieData.find(m => m.id === window.activeMicaId);
+            if (!mica) { window.activeMicaId = null; window.renderDossie(); return; }
 
-    let icon = "📦"; let label = "Ref"; let color = "#95a5a6";
-    if (rawSnippet.includes('question-mode')) { icon = "📗"; label = "Questão"; color = "#2ecc71"; }
-    else if (rawSnippet.includes('free-mode')) { icon = "📙"; label = "Contentor"; color = "#e67e22"; }
-    else if (rawSnippet.includes('toggle-section')) { icon = "☂"; label = "Secção"; color = "#9b59b6"; }
-    else if (rawSnippet.includes('idea-span')) { icon = "💡"; label = "Ideia"; color = "#e74c3c"; }
-    else if (rawSnippet.includes('mini-note-wrapper')) { icon = "📘"; label = "SubNota"; color = "#3498db"; }
+            titleEl.textContent = mica.name;
+            backBtn.style.display = 'block';
+            addBtn.style.display = 'block';
+            bibleBtn.style.display = 'block';
+            editBtn.style.display = 'none'; 
+            editActions.style.display = 'none';
 
-    const titleInput = tempDiv.querySelector('.mini-note-title-input');
-    const h2El = tempDiv.querySelector('h2');
-    const ideaEl = tempDiv.querySelector('.idea-span');
-    let titleText = titleInput ? (titleInput.textContent || titleInput.value || titleInput.getAttribute('value')) : 
-                    (h2El ? h2El.textContent : (ideaEl ? ideaEl.textContent : "Texto da Nota"));
+            if (!mica.items || mica.items.length === 0) {
+                container.innerHTML = '<p style="text-align:center; color:#888; font-style:italic; margin-top:40px;">Mica vazia. Clique em +Add ou +Bíblia.</p>';
+            } else {
+                const tempFragment = document.createDocumentFragment();
 
-    const contentDiv = tempDiv.querySelector('.mini-note-content') || tempDiv.querySelector('.toggle-content') || tempDiv;
-    let bodyText = contentDiv.innerText.replace(/\s+/g, ' ').trim();
-    if (bodyText.length > 150) bodyText = bodyText.substring(0, 150) + "...";
+                for (let idx = 0; idx < mica.items.length; idx++) {
+                    const item = mica.items[idx];
+                    const card = document.createElement('div');
+                    card.className = 'board-card type-ref';
+                    card.style.position = 'relative';
 
-    card.style.borderLeft = `4px solid ${color}`;
-    
-    // --- NOVO HTML COM O BOTÃO X ---
-    card.innerHTML = `
-        <!-- Botão X para remover o item da Mica -->
-        <button onclick="window.removeItemFromMica(${idx})" 
-                style="position:absolute; top:8px; right:8px; background:none; border:none; color:var(--text-muted-color); cursor:pointer; font-size:18px; font-weight:bold; padding:0; line-height:1; transition:color 0.2s; z-index:10;"
-                onmouseover="this.style.color='#e74c3c'"
-                onmouseout="this.style.color='var(--text-muted-color)'"
-                title="Remover Citação">×</button>
+                    let rawSnippet = decodeURIComponent(item.snippet || '');
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = rawSnippet;
 
-        <div class="ref-card-content">
-            <div style="padding-left: 5px; margin-bottom: 5px;">
-                <div style="font-size:0.75em; font-weight:bold; color:${color}; text-transform:uppercase; margin-bottom:2px;">
-                    ${icon} ${label}
-                </div>
-                <div style="font-weight:bold; font-size:0.95em; cursor:pointer; color:var(--text-color); padding-right:20px;" 
-                     onclick="window.openNoteFromBoard('${item.noteId}', '${encodeURIComponent(titleText)}')">
-                    ${titleText}
-                </div>
-            </div>
-            <div style="font-size:0.9em; color:var(--text-muted-color); padding-left: 8px; line-height:1.4;">
-                ${bodyText}
-            </div>
-        </div>
-    `;
-    container.appendChild(card);
-});
-        }
-    } else {
-        // --- MODO: LISTA DE MICAS (PASTAS) ---
-        titleEl.textContent = "Micas";
-        backBtn.style.display = 'none';
-        addBtn.style.display = 'none';
-         bibleBtn.style.display = 'none';
-        editBtn.style.display = 'block';
+                    let icon = "📦"; let label = "Ref"; let color = "#95a5a6";
+                    let isBible = rawSnippet.includes('bible-card-mica') || item.noteId === 'bible_internal';
+                    let bodyText = ""; let titleText = "";
 
-        if (dossieData.length === 0) {
-            container.innerHTML = '<p style="text-align:center; color:#888; margin-top:20px;">Nenhuma mica criada.</p>';
-        } else {
-            dossieData.forEach((mica) => {
-                const div = document.createElement('div');
-                div.className = 'mica-card';
-                div.style.borderLeft = `6px solid ${mica.color || '#95a5a6'}`;
-                div.innerHTML = `
-                    <div onclick="window.activeMicaId='${mica.id}'; window.renderDossie();">
-                        <strong style="color:var(--text-color);">${mica.name}</strong>
-                        <p style="margin:4px 0 0 0; font-size:0.85em; color:var(--text-muted-color);">${mica.description || ''}</p>
-                    </div>
-                    ${window.isDossieEditMode ? `
-                        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:10px; border-top:1px solid var(--border-color); padding-top:8px;">
-                            <button onclick="window.changeMicaColor(event, '${mica.id}')" title="Cor">🎨</button>
-                            <button onclick="window.moveMica('${mica.id}', -1)" title="Subir">↑</button>
-                            <button onclick="window.moveMica('${mica.id}', 1)" title="Descer">↓</button>
-                            <button onclick="window.deleteMica('${mica.id}')" style="color:#e74c3c;" title="Apagar">🗑️</button>
+                    // Lógica de salto: Se tem nota física e não é bíblia interna, pode saltar
+                    const isJumpable = item.noteId && item.noteId !== 'bible_internal';
+
+                    if (isBible) {
+                        icon = "📖"; 
+                        color = "#5d4037"; // Cor do botão +Bíblia
+                        label = item.title || "Bíblia";
+                        titleText = item.noteName;
+                        try {
+                            const verseText = await fetchBibleRangeText(item.noteName);
+                            if (thisVersion !== currentDossieVersion) return;
+                            bodyText = verseText || 'Texto não disponível.';
+                        } catch(e) { bodyText = "Erro ao carregar versículos."; }
+                    } else {
+                        // Notas normais
+                        if (rawSnippet.includes('question-mode')) { icon = "📗"; label = "Questão"; color = "#2ecc71"; }
+                        else if (rawSnippet.includes('free-mode')) { icon = "📙"; label = "Contentor"; color = "#e67e22"; }
+                        else if (rawSnippet.includes('toggle-section')) { icon = "☂"; label = "Secção"; color = "#9b59b6"; }
+                        else if (rawSnippet.includes('idea-span')) { icon = "💡"; label = "Ideia"; color = "#e74c3c"; }
+                        else if (rawSnippet.includes('mini-note-wrapper')) { icon = "📘"; label = "SubNota"; color = "#3498db"; }
+
+                        const titleInput = tempDiv.querySelector('.mini-note-title-input');
+                        const h2El = tempDiv.querySelector('h2');
+                        const ideaEl = tempDiv.querySelector('.idea-span');
+                        titleText = titleInput ? (titleInput.textContent || titleInput.value || titleInput.getAttribute('value')) : 
+                                    (h2El ? h2El.textContent : (ideaEl ? ideaEl.textContent : "Texto da Nota"));
+
+                        const contentDiv = tempDiv.querySelector('.mini-note-content') || tempDiv.querySelector('.toggle-content') || tempDiv;
+                        bodyText = contentDiv.innerText.replace(/\s+/g, ' ').trim();
+                        if (bodyText.length > 400) bodyText = bodyText.substring(0, 400) + "...";
+                    }
+
+                    card.style.borderLeft = `4px solid ${color}`;
+                    card.innerHTML = `
+                        <!-- CONTROLOS: SETAS ▲ ▼ E FECHAR X -->
+                        <div style="position:absolute; top:8px; right:8px; display:flex; gap:3px; z-index:20; background:var(--panel-color); border-radius:5px; padding:2px;">
+                            <button class="mica-nav-btn" onclick="window.moveMicaItem(${idx}, -1); event.stopPropagation();">▲</button>
+                            <button class="mica-nav-btn" onclick="window.moveMicaItem(${idx}, 1); event.stopPropagation();">▼</button>
+                            <button class="mica-nav-btn" onclick="window.removeItemFromMica(${idx}); event.stopPropagation();" onmouseover="this.style.color='#e74c3c'" onmouseout="this.style.color='var(--text-muted-color)'">×</button>
                         </div>
-                    ` : ''}
-                `;
-                container.appendChild(div);
-            });
+
+                        <div class="ref-card-content ${isBible ? 'bible-clickable-area' : ''}" 
+                             ${isBible ? `onclick="this.parentElement.classList.toggle('bible-open')"` : ""}>
+                            <div style="padding-left: 5px; margin-bottom: 2px;">
+                                <div style="font-size:0.72em; font-weight:bold; color:${color}; text-transform:uppercase; margin-bottom:2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;">
+                                    ${icon} ${label}
+                                </div>
+                                <div class="ref-title-text" 
+                                     style="font-weight:bold; font-size:0.95em; color:var(--text-color); padding-right:75px; ${isJumpable ? 'cursor:pointer;' : ''}"
+                                     onclick="${isJumpable ? `window.openNoteFromBoard('${item.noteId}', '${encodeURIComponent(titleText)}'); event.stopPropagation();` : ''}"
+                                     onmouseover="${isJumpable ? "this.style.textDecoration='underline'" : ""}"
+                                     onmouseout="this.style.textDecoration='none'">
+                                    ${titleText}
+                                </div>
+                            </div>
+                            
+                            ${isBible ? 
+                                `<div class="bible-collapsible-content">${bodyText}</div>` : 
+                                `<div class="post-view-content" style="font-size:0.9em; color:var(--text-muted-color); padding-left: 8px; line-height:1.4; margin-top:8px; user-select:text;">${bodyText}</div>`
+                            }
+                        </div>`;
+                    
+                    tempFragment.appendChild(card);
+                }
+                
+                if (thisVersion === currentDossieVersion) {
+                    container.innerHTML = ''; 
+                    container.appendChild(tempFragment);
+                }
+            }
+        } else {
+            // ==========================================
+            // MODO: LISTA DE MICAS (PASTAS)
+            // ==========================================
+            titleEl.textContent = "Micas";
+            backBtn.style.display = 'none';
+            addBtn.style.display = 'none';
+            bibleBtn.style.display = 'none';
+            editBtn.style.display = 'block';
+            editActions.style.display = (window.isDossieEditMode) ? 'flex' : 'none';
+
+            if (dossieData.length === 0) {
+                container.innerHTML = '<p style="text-align:center; color:#888; margin-top:20px;">Nenhuma mica criada.</p>';
+            } else {
+                const listFragment = document.createDocumentFragment();
+                dossieData.forEach((mica) => {
+                    const div = document.createElement('div');
+                    div.className = 'mica-card';
+                    div.style.borderLeft = `6px solid ${mica.color || '#95a5a6'}`;
+                    
+                    div.innerHTML = `
+                        <div class="mica-clickable-area" style="cursor:pointer; padding: 5px;">
+                            <strong style="color:var(--text-color); display:block; pointer-events:none;">${mica.name}</strong>
+                            <p style="margin:4px 0 0 0; font-size:0.85em; color:var(--text-muted-color); pointer-events:none;">${mica.description || ''}</p>
+                        </div>
+                        ${window.isDossieEditMode ? `
+                            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:10px; border-top:1px solid var(--border-color); padding-top:8px;">
+                                <button onclick="window.changeMicaColor(event, '${mica.id}')">🎨</button>
+                                <button onclick="window.moveMica('${mica.id}', -1)">↑</button>
+                                <button onclick="window.moveMica('${mica.id}', 1)">↓</button>
+                                <button onclick="window.deleteMica('${mica.id}')" style="color:#e74c3c;">🗑️</button>
+                            </div>
+                        ` : ''}`;
+
+                    const clickArea = div.querySelector('.mica-clickable-area');
+                    clickArea.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        div.style.opacity = '0.5'; // Feedback de clique
+                        window.activeMicaId = mica.id;
+                        window.renderDossie();
+                    });
+
+                    listFragment.appendChild(div);
+                });
+
+                if (thisVersion === currentDossieVersion) {
+                    container.innerHTML = '';
+                    container.appendChild(listFragment);
+                }
+            }
+        }
+    } catch (error) {
+        if (thisVersion === currentDossieVersion) {
+            console.error("Erro no Dossié:", error);
+            container.innerHTML = '<p style="text-align:center; color:red; padding:20px;">Erro ao carregar dados.</p>';
         }
     }
 };
@@ -22926,305 +23160,238 @@ document.getElementById('mica-back-btn').onclick = () => {
     window.renderDossie();
 };
 
-document.getElementById('toggle-dossie-edit-btn').onclick = () => {
-    window.isDossieEditMode = !window.isDossieEditMode;
-    const btn = document.getElementById('toggle-dossie-edit-btn');
-    const actions = document.getElementById('dossie-edit-actions');
+// --- IMPORTANTE: Coloque estas funções no seu script debaixo das lógicas de Mica ---
+
+// ============================================================
+// MOTOR DA BÍBLIA PARA O DOSSIÉ (MICAS)
+// ============================================================
+
+// 1. AÇÃO AO CLICAR NO BOTÃO "+Bíblia"
+document.getElementById('mica-add-bible-btn').onclick = () => {
+    const bookSelect = document.getElementById('bible-book-select');
+    const chapterSelect = document.getElementById('bible-chapter-select');
+    const container = document.getElementById('verse-inputs-container');
+    const titleInput = document.getElementById('bible-card-title');
+
+    titleInput.value = "";
+    container.innerHTML = "";
     
-    if (window.isDossieEditMode) {
-        btn.textContent = "Salvar";
-        btn.classList.add('is-active'); // Adiciona o brilho azul
-        if (actions) actions.style.display = 'flex';
+    // Preenche livros do BIBLE_DATA
+    bookSelect.innerHTML = BIBLE_DATA.map(b => `<option value="${b.nome}">${b.nome}</option>`).join('');
+    
+    const updateVerseLimits = () => {
+        const book = BIBLE_DATA.find(b => b.nome === bookSelect.value);
+        chapterSelect.innerHTML = Array.from({length: book.caps}, (_, i) => `<option value="${i+1}">${i+1}</option>`).join('');
+        container.innerHTML = "";
+        addMicaVerseRow('single');
+    };
+
+    bookSelect.onchange = updateVerseLimits;
+    chapterSelect.onchange = () => { container.innerHTML = ""; addMicaVerseRow('single'); };
+
+    // Função interna para criar linhas de versículos
+  window.addMicaVerseRow = (type) => {
+    console.log("%c[BÍBLIA] Solicitado:", "color: #3498db; font-weight: bold;", type);
+
+    const container = document.getElementById('verse-inputs-container');
+    const bookSelect = document.getElementById('bible-book-select');
+    const chapterSelect = document.getElementById('bible-chapter-select');
+    const book = BIBLE_DATA.find(b => b.nome === bookSelect.value);
+    const totalV = book.versiculos[parseInt(chapterSelect.value) - 1] || 50;
+    const options = Array.from({length: totalV}, (_, i) => `<option value="${i+1}">${i+1}</option>`).join('');
+
+    const lastRow = container.lastElementChild;
+
+    // Se clicar em Intervalo e a última linha for simples, TRANSFORMA
+    if (type === 'range' && lastRow && lastRow.dataset.type === 'single') {
+        console.log("✅ Condição met: Transformando linha 1 em intervalo.");
+        lastRow.dataset.type = 'range';
+        const separator = document.createElement('span');
+        separator.textContent = '-';
+        separator.style.padding = '0 4px';
+        const selectEnd = document.createElement('select');
+        selectEnd.className = 'codex-input-modern v-end';
+        selectEnd.style.flex = '1';
+        selectEnd.innerHTML = options;
+        const delBtn = lastRow.querySelector('button');
+        lastRow.insertBefore(separator, delBtn);
+        lastRow.insertBefore(selectEnd, delBtn);
+        return; 
+    }
+
+    // Se não for para transformar, CRIA NOVA
+    console.log("🆕 Criando nova linha.");
+    const row = document.createElement('div');
+    row.className = 'verse-selection-row';
+    row.style.cssText = "display:flex; align-items:center; gap:8px; margin-bottom:8px;";
+    row.dataset.type = type; // IMPORTANTE: Define se é single ou range
+
+    if (type === 'single') {
+        row.innerHTML = `<select class="codex-input-modern v-start" style="flex:1">${options}</select>`;
     } else {
-        btn.textContent = "Editar";
-        btn.classList.remove('is-active');
-        if (actions) actions.style.display = 'none';
-    }
-    window.renderDossie();
-};
-
-// 4. Adicionar ao Dossié (+Add)
-document.getElementById('mica-add-content-btn').onclick = async () => {
-    await openReferenceSelectionPopup();
-    const items = document.querySelectorAll('#puzzle-ref-selection-list li');
-    items.forEach((li, idx) => {
-        li.onclick = async () => {
-            const refData = allFoundReferenceBoxes[idx];
-            const col = getCollectionFromType(activeReferenceEntity.type);
-            const docRef = doc(db, col, activeReferenceEntity.id);
-            const snap = await getDoc(docRef);
-            const dossie = snap.data().dossie;
-            const mica = dossie.find(m => m.id === window.activeMicaId);
-            if (mica) {
-                if (!mica.items) mica.items = [];
-                mica.items.push({
-                    noteId: refData.id,
-                    noteName: refData.name,
-                    snippet: encodeURIComponent(refData.snippet)
-                });
-                await updateDoc(docRef, { dossie });
-                window.renderDossie();
-            }
-            document.getElementById('puzzle-ref-selection-modal').style.display = 'none';
-        };
-    });
-};
-
-// --- GESTÃO DE CORES DA MICA (EXPOSTO PARA O HTML) ---
-
-window.changeMicaColor = function(event, micaId) {
-    event.preventDefault();
-    event.stopPropagation();
-    
-    let popup = document.getElementById('mica-color-popup');
-    
-    if (!popup) {
-        popup = document.createElement('div');
-        popup.id = 'mica-color-popup';
-        document.body.appendChild(popup);
+        row.innerHTML = `
+            <select class="codex-input-modern v-start" style="flex:1">${options}</select>
+            <span>-</span>
+            <select class="codex-input-modern v-end" style="flex:1">${options}</select>
+        `;
     }
 
-    // Configura as cores e o clique
-    popup.style.display = 'grid';
-    popup.innerHTML = MICA_COLORS.map(c => 
-        `<div class="mica-color-dot" style="background:${c.hex}" onclick="window.updateMicaColor('${micaId}', '${c.hex}')"></div>`
+    const delBtn = document.createElement('button');
+    delBtn.innerHTML = '×';
+    delBtn.style.cssText = "background:none; border:none; color:#e74c3c; cursor:pointer; font-size:22px; font-weight:bold; padding:0 5px;";
+    delBtn.onclick = () => row.remove();
+    row.appendChild(delBtn);
+    container.appendChild(row);
+};
+
+    updateVerseLimits();
+    document.getElementById('add-single-verse-btn').onclick = (e) => { e.preventDefault(); addMicaVerseRow('single'); };
+    document.getElementById('add-range-verse-btn').onclick = (e) => { e.preventDefault(); addMicaVerseRow('range'); };
+    document.getElementById('mica-bible-modal').style.display = 'flex';
+};
+
+// 2. ATUALIZAR DROPDOWNS (CAPÍTULOS E LIMITES DE VERSÍCULOS)
+function updateMicaBibleDropdowns() {
+    const bookName = document.getElementById('bible-book-select').value;
+    const chapterSelect = document.getElementById('bible-chapter-select');
+    const book = BIBLE_DATA.find(b => b.nome === bookName);
+
+    // Se o capítulo selecionado for maior que o novo livro permite, reseta para 1
+    let currentCap = parseInt(chapterSelect.value) || 1;
+    if (currentCap > book.caps) currentCap = 1;
+
+    // Atualizar dropdown de capítulos
+    chapterSelect.innerHTML = Array.from({length: book.caps}, (_, i) => 
+        `<option value="${i+1}" ${i+1 === currentCap ? 'selected' : ''}>${i+1}</option>`
     ).join('');
 
-    // --- LÓGICA DE POSICIONAMENTO PARA MOBILE ---
-    const rect = event.target.getBoundingClientRect();
-    const popupWidth = 160; // Definido no CSS
-    const screenWidth = window.innerWidth;
-    const screenHeight = window.innerHeight;
+    // Sempre que mudar Livro ou Capítulo, resetamos as linhas de versículos para evitar erros de limites
+    const container = document.getElementById('verse-inputs-container');
+    if (container.innerHTML !== "") {
+        container.innerHTML = "";
+        addVerseRow('single');
+    }
+}
 
-    // Posição Vertical: Tenta colocar abaixo do botão, se não couber, coloca acima
-    let top = rect.bottom + 5;
-    if (top + 150 > screenHeight) {
-        top = rect.top - 150;
+// 3. ADICIONAR LINHA DE VERSÍCULO (Simples ou Intervalo)
+window.addMicaVerseRow = (type) => {
+    const container = document.getElementById('verse-inputs-container');
+    const bookSelect = document.getElementById('bible-book-select');
+    const chapterSelect = document.getElementById('bible-chapter-select');
+
+    // Preparar as opções de versículos
+    const book = BIBLE_DATA.find(b => b.nome === bookSelect.value);
+    const totalV = book.versiculos[parseInt(chapterSelect.value) - 1] || 50;
+    const options = Array.from({length: totalV}, (_, i) => `<option value="${i+1}">${i+1}</option>`).join('');
+
+    // Pegamos na última linha que está no container
+    const lastRow = container.lastElementChild;
+
+    // --- SE FOR INTERVALO: TRANSFORMAR A LINHA ATUAL SE ELA FOR SIMPLES ---
+    if (type === 'range' && lastRow && lastRow.dataset.type === 'single') {
+        console.log("🛠️ Transformando linha atual em intervalo...");
+        lastRow.dataset.type = 'range'; // Muda o estado para intervalo
+
+        const separator = document.createElement('span');
+        separator.textContent = '-';
+        separator.style.padding = '0 4px';
+        separator.style.color = 'var(--text-muted-color)';
+
+        const selectEnd = document.createElement('select');
+        selectEnd.className = 'codex-input-modern v-end';
+        selectEnd.style.flex = '1';
+        selectEnd.innerHTML = options;
+
+        // Inserir ANTES do botão de apagar (o último elemento da linha)
+        const delBtn = lastRow.querySelector('button');
+        lastRow.insertBefore(separator, delBtn);
+        lastRow.insertBefore(selectEnd, delBtn);
+        return; 
     }
 
-    // Posição Horizontal: Garante que não foge para fora das bordas laterais
-    let left = rect.left - (popupWidth / 2);
-    if (left < 10) left = 10;
-    if (left + popupWidth > screenWidth - 10) {
-        left = screenWidth - popupWidth - 10;
-    }
+    // --- CASO CONTRÁRIO: CRIAR LINHA NOVA (Normal) ---
+    const row = document.createElement('div');
+    row.className = 'verse-selection-row';
+    row.style.cssText = "display:flex; align-items:center; gap:8px; margin-bottom:8px;";
+    row.dataset.type = type;
 
-    popup.style.top = `${top}px`;
-    popup.style.left = `${left}px`;
-
-    // Fecha o popup ao clicar em qualquer lugar da tela
-    const closePopup = (e) => { 
-        if (!popup.contains(e.target)) {
-            popup.style.display = 'none'; 
-            document.removeEventListener('click', closePopup); 
-        }
-    };
-    
-    // O timeout evita que o próprio clique que abriu o feche imediatamente
-    setTimeout(() => document.addEventListener('click', closePopup), 50);
-};
-
-window.updateMicaColor = async function(micaId, hex) {
-    try {
-        const collectionName = getCollectionFromType(activeReferenceEntity.type);
-        const docRef = doc(db, collectionName, activeReferenceEntity.id);
-        const snap = await getDoc(docRef);
-        
-        if (!snap.exists()) return;
-        
-        let dossie = snap.data().dossie || [];
-        const mica = dossie.find(m => m.id === micaId);
-        
-        if (mica) {
-            mica.color = hex;
-            await updateDoc(docRef, { dossie: dossie });
-            
-            // --- A LINHA QUE FAZ O PAINEL DESAPARECER ---
-            const popup = document.getElementById('mica-color-popup');
-            if (popup) popup.style.display = 'none';
-            
-            window.renderDossie(); // Atualiza a vista
-        }
-    } catch (e) {
-        console.error("Erro ao mudar cor da mica:", e);
-    }
-};
-
-// --- MOTOR DE PAGINAÇÃO DE CITAÇÕES (Unificado) ---
-window.renderCitationsPage = function(append = false) {
-    const listElement = document.getElementById('references-list');
-    if (!listElement) return;
-
-    if (!append) {
-        listElement.innerHTML = '';
-        currentCitationsPageIndex = 0;
-    }
-
-    // Remove o botão anterior se existir
-    const oldBtn = document.getElementById('load-more-citations-btn');
-    if (oldBtn) oldBtn.remove();
-
-    if (allCitationsResults.length === 0) {
-        listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhuma citação encontrada.</li>';
-        return;
-    }
-
-    // Pega os próximos 10 itens
-    const start = currentCitationsPageIndex * CITATIONS_PER_PAGE;
-    const end = start + CITATIONS_PER_PAGE;
-    const pageItems = allCitationsResults.slice(start, end);
-
-    pageItems.forEach(item => {
-        const details = document.createElement('details');
-        details.className = 'reference-item';
-        const safeName = encodeURIComponent(item.name);
-        const safeSnippet = encodeURIComponent(item.snippet);
-
-        details.innerHTML = `
-            <summary>
-                <div class="ref-item-header">
-                    <button class="add-to-puzzle-btn" title="Adicionar ao Quadro" 
-                            onclick="event.preventDefault(); event.stopPropagation(); window.addItemToPuzzle('${item.id}', decodeURIComponent('${safeName}'), decodeURIComponent('${safeSnippet}'))">+</button>
-                    <span class="ref-item-title">${item.isProtected ? '🔒' : '📄'} ${item.name}</span>
-                    <button class="go-to-note-btn" onclick="event.preventDefault(); event.stopPropagation(); window.navigateToNoteSmart('${item.id}')" title="Ir para a nota">➔</button>
-                </div>
-            </summary>
-            <div class="reference-context">${item.snippet}</div>
+    if (type === 'single') {
+        row.innerHTML = `<select class="codex-input-modern v-start" style="flex:1">${options}</select>`;
+    } else {
+        row.innerHTML = `
+            <select class="codex-input-modern v-start" style="flex:1">${options}</select>
+            <span style="color:var(--text-muted-color);">-</span>
+            <select class="codex-input-modern v-end" style="flex:1">${options}</select>
         `;
-        listElement.appendChild(details);
+    }
+
+    const delBtn = document.createElement('button');
+    delBtn.innerHTML = '×';
+    delBtn.style.cssText = "background:none; border:none; color:#e74c3c; cursor:pointer; font-size:22px; font-weight:bold; padding:0 5px;";
+    delBtn.onclick = () => {
+        if (container.querySelectorAll('.verse-selection-row').length > 1) row.remove();
+    };
+
+    row.appendChild(delBtn);
+    container.appendChild(row);
+};
+
+// Ligar botões de + e - do modal
+document.getElementById('add-single-verse-btn').onclick = (e) => { e.preventDefault(); addVerseRow('single'); };
+document.getElementById('add-range-verse-btn').onclick = (e) => { e.preventDefault(); addVerseRow('range'); };
+
+// 4. GRAVAR: FIREBASE + 4ª COLUNA
+document.getElementById('confirm-mica-bible-save').onclick = async () => {
+    const book = document.getElementById('bible-book-select').value;
+    const chapter = document.getElementById('bible-chapter-select').value;
+    const title = document.getElementById('bible-card-title').value.trim();
+    const rows = document.querySelectorAll('.verse-selection-row');
+    const myUid = auth.currentUser.uid;
+
+    let parts = [];
+    rows.forEach(r => {
+        const s = r.querySelector('.v-start').value;
+        if (r.dataset.type === 'range') {
+            const e = r.querySelector('.v-end').value;
+            parts.push(s === e ? s : (parseInt(s) < parseInt(e) ? `${s}-${e}` : `${e}-${s}`));
+        } else parts.push(s);
     });
 
-    // Adiciona botão se houver mais páginas
-    if (end < allCitationsResults.length) {
-        currentCitationsPageIndex++;
-        const loadMoreBtn = document.createElement('button');
-        loadMoreBtn.id = 'load-more-citations-btn';
-        loadMoreBtn.style.cssText = "width: 100%; margin: 15px 0; padding: 12px; border: 1px dashed var(--accent-color); color: var(--accent-color); background: none; cursor: pointer; font-weight: bold; border-radius: 6px;";
-        loadMoreBtn.textContent = `+ resultados (${allCitationsResults.length - end} restantes)`;
-        loadMoreBtn.onclick = () => window.renderCitationsPage(true);
-        listElement.appendChild(loadMoreBtn);
-    }
-};
-
-// 1. Gerir cliques nos Emojis do Modal
-document.getElementById('cosmos-emoji-grid').addEventListener('click', (e) => {
-    const btn = e.target.closest('.emoji-btn');
-    if (!btn) return;
-    
-    // Se clicou no botão de emoji fixo
-    if (btn.id !== 'custom-emoji-btn') {
-        document.querySelectorAll('.emoji-btn').forEach(b => b.style.backgroundColor = "");
-        selectedCosmosEmoji = btn.dataset.emoji;
-        btn.style.backgroundColor = "var(--accent-color)";
-    } 
-    // Se clicou no "+" para emoji personalizado
-    else {
-        const modal = document.getElementById('custom-emoji-modal');
-        const input = document.getElementById('custom-emoji-input');
-        const confirmBtn = document.getElementById('confirm-custom-emoji-btn');
-        
-        input.value = "";
-        modal.style.display = 'flex';
-        setTimeout(() => input.focus(), 100);
-
-        // Ação ao confirmar o emoji personalizado
-        confirmBtn.onclick = () => {
-            const val = input.value.trim();
-            if (val) {
-                selectedCosmosEmoji = val;
-                // Atualiza o botão "+" visualmente para o emoji escolhido
-                btn.textContent = val;
-                document.querySelectorAll('.emoji-btn').forEach(b => b.style.backgroundColor = "");
-                btn.style.backgroundColor = "var(--accent-color)";
-                modal.style.display = 'none';
-            } else {
-                alert("Por favor, insira um emoji.");
-            }
-        };
-
-        // Atalho: Enter no input também confirma
-        input.onkeydown = (ev) => {
-            if (ev.key === 'Enter') confirmBtn.click();
-        };
-    }
-});
-
-// 2. Integrar com o Clique do Botão + Principal
-// No seu listener do addItemBtn, adicione esta condição:
-addItemBtn.addEventListener('click', async () => {
-    // ... lógicas existentes
-    const lastNav = navigationStack[navigationStack.length - 1];
-    const origin = navigationStack[0]?.id;
-
- if (origin === 'cosmos') {
-    const modal = document.getElementById('cosmos-modal');
-    const title = document.getElementById('cosmos-modal-title');
-    
-    // Limpar campos
-    document.getElementById('cosmos-name-input').value = "";
-    document.getElementById('cosmos-desc-input').value = "";
-    
-    selectedCosmosEmoji = "💼"; // Mude aqui também para garantir o reset
-    
-    // Opcional: Resetar visualmente os botões de emoji no modal
-    document.querySelectorAll('.emoji-btn').forEach(b => b.style.backgroundColor = "");
-    
-    if (lastNav.type === 'list-category') {
-        title.textContent = "Criar Novo Tema/Conceito";
-    } else {
-        title.textContent = `Criar SubTema em "${lastNav.name}"`;
-    }
-    
-    modal.style.display = 'flex';
-    return;
-}
-});
-
-// 3. Função para Gravar Cosmos/Subcosmos
-document.getElementById('save-cosmos-btn').addEventListener('click', async () => {
-    const nome = document.getElementById('cosmos-name-input').value.trim();
-    const descricao = document.getElementById('cosmos-desc-input').value.trim();
-    const lastNav = navigationStack[navigationStack.length - 1];
-    
-    if (!nome) return alert("Nome é obrigatório.");
-
-    const btn = document.getElementById('save-cosmos-btn');
-    btn.disabled = true;
-    btn.textContent = "A gravar...";
+    const fullName = `${book} ${chapter}:${parts.join(',')}`;
 
     try {
-        if (lastNav.type === 'list-category') {
-            // GRAVAR TEMA PAI (Cosmos)
-            await addDoc(collection(db, 'cosmos'), {
-                nome,
-                descricao,
-                emoji: selectedCosmosEmoji,
-                userId: auth.currentUser.uid,
-                createdAt: serverTimestamp()
-            });
-        } else {
-            // GRAVAR SUBTEMA (Subcosmos)
-            await addDoc(collection(db, 'subcosmos'), {
-                nome,
-                descricao,
-                emoji: selectedCosmosEmoji,
-                cosmosId: lastNav.id,
-                userId: auth.currentUser.uid,
-                createdAt: serverTimestamp()
+        // Verifica se já existe no Firebase (textosbiblicos)
+        const q = query(collection(db, 'textosbiblicos'), where('userId', '==', myUid), where('nome', '==', fullName));
+        const snap = await getDocs(q);
+        if (snap.empty) {
+            await addDoc(collection(db, 'textosbiblicos'), {
+                nome: fullName, userId: myUid, createdAt: serverTimestamp(), referencias: {}
             });
         }
 
-        document.getElementById('cosmos-modal').style.display = 'none';
-        renderListCategoryItems('cosmos'); // Recarregar lista
-        fetchAllEntities(); // Atualizar cache global
-    } catch (e) {
-        console.error(e);
-        alert("Erro ao gravar.");
-    } finally {
-        btn.disabled = false;
-        btn.textContent = "Criar";
-    }
-});
+        // Adiciona ao Dossié da Mica ativa
+        const col = getCollectionFromType(activeReferenceEntity.type);
+        const docRef = doc(db, col, activeReferenceEntity.id);
+        const docSnap = await getDoc(docRef);
+        const dossie = docSnap.data().dossie || [];
+        const mica = dossie.find(m => m.id === window.activeMicaId);
+
+        if (mica) {
+            const bibleSnippet = `
+                <div class="bible-card-mica" style="border-left: 4px solid #9b59b6; padding-left:10px;">
+                    ${title ? `<div style="font-weight:bold; color:var(--accent-color); margin-bottom:4px;">${title}</div>` : ''}
+                    <div style="font-size: 1.1em; color:var(--text-color);">📜 ${fullName}</div>
+                </div>`;
+            if (!mica.items) mica.items = [];
+            mica.items.push({
+                noteId: 'bible_internal', noteName: fullName, title: title, snippet: encodeURIComponent(bibleSnippet)
+            });
+            await updateDoc(docRef, { dossie });
+            document.getElementById('mica-bible-modal').style.display = 'none';
+            window.renderDossie(); // Atualiza a vista da Mica
+        }
+    } catch (e) { console.error(e); alert("Erro ao gravar."); }
+};
 
 async function renderUniversalTextSearch(name) {
     const listElement = document.getElementById('references-list');
@@ -23240,13 +23407,11 @@ async function renderUniversalTextSearch(name) {
         const snapshot = await getDocs(q);
         allCitationsResults = [];
 
-        // Regex para garantir palavra inteira e ignorar acentos/maiúsculas
         const wholeWordRegex = new RegExp(`\\b${escapeRegExp(name)}\\b`, 'i');
 
         snapshot.forEach(docSnap => {
             const data = docSnap.data();
             const content = data.conteudo || "";
-            
             let isProtected = (data.passe && data.passe.trim() !== "");
             if (isProtected && !appSettings.searchAnchorsInProtected) return;
 
@@ -23270,44 +23435,210 @@ async function renderUniversalTextSearch(name) {
         listElement.innerHTML = '<li>Erro ao carregar citações.</li>';
     }
 }
+window.renderCitationsPage = function(append = false) {
+    const listElement = document.getElementById('references-list');
+    if (!listElement) return;
 
-// Adicione este listener junto aos outros listeners do Dossié no final do script
-document.getElementById('mica-add-bible-btn').onclick = async () => {
-    const verse = prompt("Digite a referência bíblica (ex: João 3:16):");
-    if (!verse) return;
+    if (!append) {
+        listElement.innerHTML = '';
+        currentCitationsPageIndex = 0;
+    }
 
-    // Tenta buscar o texto na biblioteca pública
-    const text = await fetchBibleText(verse) || "Texto não disponível na biblioteca pública.";
+    // Remove o botão "Carregar mais" antigo se ele existir
+    const oldBtn = document.getElementById('load-more-citations-btn');
+    if (oldBtn) oldBtn.remove();
+
+    if (allCitationsResults.length === 0) {
+        listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhuma citação encontrada.</li>';
+        return;
+    }
+
+    // Define quantos itens mostrar (usa a constante CITATIONS_PER_PAGE ou o padrão 10)
+    const perPage = typeof CITATIONS_PER_PAGE !== 'undefined' ? CITATIONS_PER_PAGE : 10;
+    const start = currentCitationsPageIndex * perPage;
+    const end = start + perPage;
+    const pageItems = allCitationsResults.slice(start, end);
+
+    pageItems.forEach(item => {
+        const details = document.createElement('details');
+        details.className = 'reference-item';
+        
+        // Proteção para caracteres especiais no nome e snippet
+        const safeName = encodeURIComponent(item.name);
+        const safeSnippet = encodeURIComponent(item.snippet);
+
+        details.innerHTML = `
+            <summary>
+                <div class="ref-item-header">
+                    <button class="add-to-puzzle-btn" title="Adicionar ao Quadro" 
+                            onclick="event.preventDefault(); event.stopPropagation(); window.addItemToPuzzle('${item.id}', decodeURIComponent('${safeName}'), decodeURIComponent('${safeSnippet}'))">+</button>
+                    <span class="ref-item-title">${item.isProtected ? '🔒' : '📄'} ${item.name}</span>
+                    <button class="go-to-note-btn" onclick="event.preventDefault(); event.stopPropagation(); window.navigateToNoteSmart('${item.id}')" title="Ir para a nota">➔</button>
+                </div>
+            </summary>
+            <div class="reference-context">${item.snippet}</div>
+        `;
+        listElement.appendChild(details);
+    });
+
+    // Adiciona o botão "Mostrar mais" se houver mais resultados
+    if (end < allCitationsResults.length) {
+        currentCitationsPageIndex++;
+        const loadMoreBtn = document.createElement('button');
+        loadMoreBtn.id = 'load-more-citations-btn';
+        loadMoreBtn.style.cssText = "width: 100%; margin: 15px 0; padding: 12px; border: 1px dashed var(--accent-color); color: var(--accent-color); background: none; cursor: pointer; font-weight: bold; border-radius: 6px;";
+        loadMoreBtn.textContent = `+ resultados (${allCitationsResults.length - end} restantes)`;
+        loadMoreBtn.onclick = () => window.renderCitationsPage(true);
+        listElement.appendChild(loadMoreBtn);
+    }
+};
+
+async function fetchBibleRangeText(fullRef) {
+    // Regex para separar Livro Capítulo:Versículos
+    const match = fullRef.match(/(.+)\s(\d+):(.+)/);
+    if (!match) return await fetchBibleText(fullRef);
+
+    const book = match[1];
+    const chapter = match[2];
+    const versePart = match[3];
+    let allTexts = [];
+
+    // Lida com múltiplos segmentos (ex: 1-3, 5)
+    const segments = versePart.split(',');
+
+    for (const segment of segments) {
+        if (segment.includes('-')) {
+            // É um intervalo (ex: 1-5)
+            const [start, end] = segment.split('-').map(Number);
+            for (let v = start; v <= end; v++) {
+                const text = await fetchBibleText(`${book} ${chapter}:${v}`);
+                if (text) allTexts.push(text.trim());
+            }
+        } else {
+            // É um versículo único
+            const text = await fetchBibleText(`${book} ${chapter}:${segment.trim()}`);
+            if (text) allTexts.push(text.trim());
+        }
+    }
+
+    return allTexts.length > 0 ? allTexts.join(' ') : null;
+}
+
+// --- LÓGICA DE REORDENAÇÃO DO DOSSIÉ ---
+const dossieContainer = document.getElementById('dossie-list-container');
+
+
+
+// --- LÓGICA DE MOVIMENTO POR BOTÕES NO DOSSIÉ ---
+window.moveMicaItem = async function(oldIdx, direction) {
+    const newIdx = oldIdx + direction;
     
-    // Cria o snippet no formato que o Dossié entende
-    const bibleSnippet = `
-        <div class="mini-note-wrapper question-mode" style="border-color: #9b59b6; background-color: rgba(155, 89, 182, 0.05);">
-            <div style="font-weight: bold; color: #9b59b6; margin-bottom: 5px;">📖 ${verse}</div>
-            <div class="mini-note-content">"${text}"</div>
-        </div>
-    `;
-
     try {
-        const col = getCollectionFromType(activeReferenceEntity.type);
-        const docRef = doc(db, col, activeReferenceEntity.id);
-        const snap = await getDoc(docRef);
-        const dossie = snap.data().dossie;
+        const collectionName = getCollectionFromType(activeReferenceEntity.type);
+        const docRef = doc(db, collectionName, activeReferenceEntity.id);
+        const docSnap = await getDoc(docRef);
+        
+        if (!docSnap.exists()) return;
+
+        let dossie = docSnap.data().dossie || [];
         const mica = dossie.find(m => m.id === window.activeMicaId);
 
-        if (mica) {
-            if (!mica.items) mica.items = [];
-            mica.items.push({
-                noteId: 'bible_internal',
-                noteName: 'Bíblia',
-                snippet: encodeURIComponent(bibleSnippet)
-            });
-            await updateDoc(docRef, { dossie });
+        if (mica && mica.items) {
+            // Verifica se o movimento é válido (dentro dos limites do array)
+            if (newIdx < 0 || newIdx >= mica.items.length) return;
+
+            // Troca os itens de lugar
+            const item = mica.items[oldIdx];
+            mica.items.splice(oldIdx, 1);
+            mica.items.splice(newIdx, 0, item);
+
+            // Grava no Firebase
+            await updateDoc(docRef, { dossie: dossie });
+            
+            // Recarrega a vista imediatamente
             window.renderDossie();
         }
     } catch (e) {
-        console.error("Erro ao adicionar versículo à Mica:", e);
+        console.error("Erro ao mover item da mica:", e);
     }
 };
+
+// --- GATILHO DO BOTÃO EDITAR DO DOSSIÉ ---
+document.getElementById('toggle-dossie-edit-btn').addEventListener('click', () => {
+    // 1. Inverte o valor (se era falso fica verdadeiro, e vice-versa)
+    window.isDossieEditMode = !window.isDossieEditMode;
+    
+    // 2. Chama a função de renderização para mostrar as setas e o botão "+ Micas"
+    window.renderDossie();
+});
+
+// Variável para saber qual Mica estamos a pintar
+let activeMicaIdForColor = null;
+
+// 1. FUNÇÃO PARA ABRIR O POPUP DE CORES
+window.changeMicaColor = function(event, micaId) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    activeMicaIdForColor = micaId;
+    const popup = document.getElementById('mica-color-popup');
+    
+    // Configura as bolas de cores se o popup estiver vazio
+    if (popup.innerHTML === '') {
+        MICA_COLORS.forEach(color => {
+            const dot = document.createElement('div');
+            dot.className = 'mica-color-dot';
+            dot.style.backgroundColor = color.hex;
+            dot.title = color.name;
+            dot.onclick = () => window.applyColorToMica(color.hex);
+            popup.appendChild(dot);
+        });
+    }
+
+    // Posiciona o popup perto do botão clicado
+    const rect = event.target.getBoundingClientRect();
+    popup.style.display = 'grid';
+    popup.style.top = (rect.bottom + window.scrollY + 5) + 'px';
+    popup.style.left = (rect.left + window.scrollX - 50) + 'px';
+};
+
+// 2. FUNÇÃO PARA GRAVAR A COR NO FIREBASE
+window.applyColorToMica = async function(hexColor) {
+    if (!activeMicaIdForColor) return;
+
+    try {
+        const collectionName = getCollectionFromType(activeReferenceEntity.type);
+        const docRef = doc(db, collectionName, activeReferenceEntity.id);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+            let dossie = docSnap.data().dossie || [];
+            const micaIndex = dossie.findIndex(m => m.id === activeMicaIdForColor);
+
+            if (micaIndex > -1) {
+                // Atualiza a cor no array
+                dossie[micaIndex].color = hexColor;
+                
+                // Grava de volta no Firestore
+                await updateDoc(docRef, { dossie: dossie });
+                
+                // Fecha o popup e atualiza a vista
+                document.getElementById('mica-color-popup').style.display = 'none';
+                window.renderDossie();
+            }
+        }
+    } catch (e) {
+        console.error("Erro ao mudar cor da mica:", e);
+    }
+};
+
+// 3. FECHAR POPUP AO CLICAR FORA
+document.addEventListener('click', (e) => {
+    const popup = document.getElementById('mica-color-popup');
+    if (popup && popup.style.display === 'grid' && !popup.contains(e.target) && !e.target.closest('button')) {
+        popup.style.display = 'none';
+    }
+});
 
     </script>
 </body>
