@@ -4940,6 +4940,16 @@ button[data-action="creative-mode"].active {
     letter-spacing: 1px;
 }
 
+/* Cor vermelha para o toggle de colaboração quando ativo */
+#collab-share-toggle:checked + .slider {
+    background-color: #e74c3c !important;
+}
+
+/* Opcional: Efeito visual para a bolinha branca quando está em modo vermelho */
+#collab-share-toggle:checked + .slider:before {
+    box-shadow: 0 0 5px rgba(231, 76, 60, 0.5);
+}
+
 </style>
 
 
@@ -7893,6 +7903,7 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             li.setAttribute('data-id', item.id);
             li.setAttribute('data-type', item.tipo);
             li.setAttribute('data-name', item.nome);
+            li.setAttribute('data-userid', item.userId);
             li.setAttribute('data-parent-id', item.parentId || "null");
             li.setAttribute('data-protected', (item.passe && item.passe.trim() !== "") ? "true" : "false");
             
@@ -17647,8 +17658,22 @@ document.getElementById('middle-panel').addEventListener('click', () => {
 
 // Outros Listeners
 document.addEventListener('click', (e) => {
+    // 1. Fechar Context Menu
     if (!e.target.closest('.context-menu')) hideContextMenu();
-    if (!noteContentEditor.contains(e.target) && !tagSuggestionPopup.contains(e.target)) hideTagPopup();
+    
+    // 2. Fechar Tag Popup
+    const tagPop = document.getElementById('tag-suggestion-popup');
+    if (tagPop && !noteContentEditor.contains(e.target) && !tagPop.contains(e.target)) hideTagPopup();
+
+    // 3. Fechar Formatting Popup (Aqui estava o erro)
+    const fPopup = document.getElementById('formatting-popup');
+    const fBtn = document.getElementById('more-formatting-btn');
+    if (fPopup && fPopup.style.display === 'block') {
+        if (!fPopup.contains(e.target) && e.target !== fBtn) {
+            fPopup.style.display = 'none';
+            if (fBtn) fBtn.classList.remove('active');
+        }
+    }
 });
 
 leftPanelToggleBtn.addEventListener('click', () => {
@@ -18621,7 +18646,6 @@ document.getElementById('right-panel').addEventListener('click', (event) => {
             const visible = notebookContainer.classList.contains('references-panel-visible');
         }, 100);
     } else {
-        console.log("❌ O clique não foi em cima de nenhum elemento rastreável.");
     }
 }, true);
 
@@ -20589,20 +20613,11 @@ function displayArchive(id, data, element = null) {
     document.body.classList.remove('show-fab');
     console.log(`%c🎨 [SISTEMA] Preparando entrada no Arquivo: ${data.nome}`, "color: #e74c3c; font-weight: bold;");
     
-    // ============================================================
-    // 🧹 RESET DE ESTADO (LIMPEZA DE FANTASMAS)
-    // ============================================================
-    
-    // 1. Limpa qualquer gaveta que estivesse aberta no Arquivo anterior
+    // 1. Reset de Estado e Limpeza
     window.activeGavetaId = null;
     window.activeGavetaData = null;
-    console.log("🚿 [RESET] Sub-navegação de Gavetas limpa.");
-
-    // 2. Volta sempre para a aba "Prateleira" (Padrão) ao trocar de Arquivo
-    // Isto garante que o utilizador não caia na aba "Gavetão" de outro ficheiro por erro
     currentArchiveTab = 'prateleira';
     
-    // 3. Sincroniza visualmente os botões das abas e botões de criação
     document.querySelectorAll('.archive-tab-btn').forEach(btn => {
         btn.classList.remove('active');
         if (btn.dataset.archiveTab === 'prateleira') btn.classList.add('active');
@@ -20613,13 +20628,26 @@ function displayArchive(id, data, element = null) {
     if (postBtn) postBtn.style.display = 'block';
     if (drawerBtn) drawerBtn.style.display = 'none';
 
-    // ============================================================
-
+    // 2. Definir IDs Globais
     selectedNoteId = id; 
     currentArchiveId = id; 
     currentArchiveData = data;
 
-    // Limpa apenas a seleção da Coluna 2
+    // 3. Regra de Segurança: Ocultar cadeado para colaboradores
+    const shareBtn = document.querySelector('button[data-action="archive-share"]');
+    if (shareBtn) {
+        const isOwner = data.userId === auth.currentUser.uid;
+        const isSharedType = (data.tipo === 'partilhado');
+
+        if (isSharedType && !isOwner) {
+            console.log("🛡️ [SEGURANÇA] Arquivo partilhado detetado. Ocultando cadeado para colaborador.");
+            shareBtn.style.display = 'none';
+        } else {
+            shareBtn.style.display = 'block';
+        }
+    }
+
+    // 4. Sincronização Visual da Lista Lateral (Coluna 2)
     document.querySelectorAll('#file-list .list-item').forEach(el => {
         el.classList.remove('selected', 'selected-red');
     });
@@ -20629,7 +20657,7 @@ function displayArchive(id, data, element = null) {
         element.classList.add(selectionClass);
     }
 
-    // Gerir visibilidade dos painéis
+    // 5. Visibilidade dos Painéis
     const placeholder = document.getElementById('editor-placeholder');
     const editorArea = document.getElementById('editor-area');
     const archiveArea = document.getElementById('archive-area');
@@ -20645,14 +20673,14 @@ function displayArchive(id, data, element = null) {
     const titleInput = document.getElementById('archive-title-input');
     if (titleInput) titleInput.value = data.nome || "";
 
-    // Reinicia sistemas de colaboração
+    // 6. Iniciar Colaboração e Presença
     if (typeof leaveArchivePresence === 'function') leaveArchivePresence(); 
     initRealtimeCollab(id);
     initPresenceSystem(id);
 
-    // Renderiza o feed (que agora, devido ao reset acima, será a Prateleira do novo arquivo)
     renderArchiveFeed();
 
+    // Ajuste Mobile
     if (window.innerWidth <= 768) {
         document.body.classList.remove('mobile-view-middle');
         document.body.classList.add('mobile-view-editor');
@@ -21326,37 +21354,16 @@ document.getElementById('archive-toolbar').addEventListener('click', (e) => {
 
     const action = btn.dataset.action;
     
-    // Garante que temos o ID do arquivo atual
-    // (Nota: selectedNoteId é atualizado automaticamente pelo displayArchive para manter compatibilidade)
-    if (!selectedNoteId) {
-        console.warn("Nenhum arquivo selecionado.");
-        return;
-    }
-
-    // 1. AÇÃO: PARTILHA (🔓)
     if (action === 'archive-share') {
-        // Reutiliza a lógica existente de partilha de notas
-        // Precisamos simular o evento do botão da nota para carregar os dados
-        const dummyBtn = document.createElement('button');
-        dummyBtn.dataset.action = 'note-sharing-settings';
-        
-        // Dispara manualmente a lógica que já existe no 'editorToolbar' listener
-        // (Ou podes copiar o código de lá, mas chamar o evento é mais limpo se a função for acessível)
-        
-        // Como o código de partilha está dentro de um listener anónimo gigante, 
-        // vamos replicar a parte essencial de abrir o modal aqui:
-        
-        openShareModalForArchive();
+        e.stopPropagation(); // ✋ PARA TUDO! Não deixa o clique sair daqui
+        window.openShareModalForArchive();
     }
-
-    // 2. AÇÃO: TÓPICOS (📑)
     else if (action === 'archive-topics') {
-        // Reutiliza o modal de tópicos existente
+        e.stopPropagation(); 
         openTopicsModal(selectedNoteId, 'arquivo');
     }
-
-   // 3. AÇÃO: HISTÓRICO (🕒) - RECICLAGEM
     else if (action === 'archive-history') {
+        e.stopPropagation(); 
         openArchiveRecycleBin();
     }
 });
@@ -21433,33 +21440,23 @@ if (collabShareToggle) {
         const noteRef = doc(db, 'pastas', selectedNoteId);
         
         try {
-            const docSnap = await getDoc(noteRef);
-            const data = docSnap.data();
-            const ownerId = data.userId;
-
-            // Se desligar, removemos todos menos o dono
-            let newCollabs = isCollabActive ? (data.colaboradores || { [ownerId]: true }) : { [ownerId]: true };
-
             const updateData = {
                 "partilhado": isCollabActive ? "ativo" : "inativo",
-                "colaboradores": newCollabs,
                 "ultimaedicao": serverTimestamp()
             };
 
             await updateDoc(noteRef, updateData);
 
-            // Atualiza visualmente o link no ecrã
+            // Atualiza a interface
             const collabLinkContainer = document.getElementById('collab-share-link-container');
             collabLinkContainer.style.display = isCollabActive ? 'block' : 'none';
             
             if (isCollabActive) {
-                const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
+                const baseUrl = window.location.origin + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
                 document.getElementById('collab-share-url').value = `${baseUrl}/note.html?openArchive=${selectedNoteId}&mode=collab`;
             }
-
         } catch (e) {
-            console.error("Erro ao atualizar colaboração:", e);
-            alert("Erro ao gravar definições de colaboração.");
+            console.error("❌ Erro ao atualizar colaboração:", e);
         }
     });
 }
@@ -21548,19 +21545,34 @@ if (archiveFeed) {
 // ============================================================
 
 function openArchiveRecycleBin() {
+    console.log("🕒 [SISTEMA] A abrir Reciclagem do Arquivo...");
+    
     const modal = document.getElementById('history-modal');
     const titleEl = document.getElementById('history-modal-title');
     const listEl = document.getElementById('history-list-content');
-    const backupBtn = document.getElementById('backup-now-btn'); // Botão de backup manual
+    const backupBtn = document.getElementById('backup-now-btn');
 
-    // Configurar Modal
-    titleEl.textContent = "Histórico & Reciclagem";
-    // Esconde o botão de backup manual da nota normal, pois aqui é automático
-    backupBtn.style.display = 'none'; 
+    if (!modal) return console.error("Modal #history-modal não encontrado!");
+
+    // --- TRUQUE DE CAMADA (Z-INDEX) ---
+    // Move o modal para a raiz do body para ele não ficar escondido
+    document.body.appendChild(modal);
     
-    modal.style.display = 'flex';
-    listEl.innerHTML = '';
+    // Força a visibilidade total
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "9999999"; 
+    modal.style.visibility = "visible";
+    modal.style.opacity = "1";
 
+    // Configurar o Título do Modal
+    if (titleEl) titleEl.textContent = "Histórico & Reciclagem";
+    
+    // Esconde o botão de backup manual (que é para notas normais)
+    if (backupBtn) backupBtn.style.display = 'none'; 
+    
+    listEl.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar itens eliminados...</span></div>';
+
+    // Carregar os dados
     const deletedItems = currentArchiveData.deletedPosts || [];
 
     if (deletedItems.length === 0) {
@@ -21569,37 +21581,34 @@ function openArchiveRecycleBin() {
     }
 
     // Ordenar por data (mais recente primeiro)
-    deletedItems.sort((a, b) => b.deletedAt - a.deletedAt);
+    const sortedItems = [...deletedItems].sort((a, b) => b.deletedAt - a.deletedAt);
 
-    deletedItems.forEach((item, index) => {
+    listEl.innerHTML = '';
+    sortedItems.forEach((item, index) => {
         const li = document.createElement('li');
         li.className = 'list-item';
         li.style.flexDirection = 'column';
         li.style.alignItems = 'flex-start';
         li.style.borderBottom = '1px solid var(--border-color)';
         li.style.padding = '10px';
-        li.style.gap = '5px';
+        li.style.backgroundColor = 'rgba(255,255,255,0.02)';
+        li.style.marginBottom = '5px';
 
         const dateStr = new Date(item.deletedAt).toLocaleString();
-        
-        // Define ícone/cor baseado no motivo
-        const isCleaned = item.deleteReason && item.deleteReason.includes('Limpo');
-        const badgeColor = isCleaned ? '#f39c12' : '#c0392b'; // Laranja para limpo, Vermelho para apagado
-        const icon = isCleaned ? '🧹' : '🗑️';
+        const icon = item.deleteReason?.includes('Limpo') ? '🧹' : '🗑️';
 
         li.innerHTML = `
             <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
-                <strong style="color:var(--text-color); font-size:1.1em;">${item.title || 'Sem Título'}</strong>
-                <span style="font-size:0.8em; color:white; background:${badgeColor}; padding:2px 6px; border-radius:4px;">${icon} ${item.deleteReason || 'Apagado'}</span>
+                <strong style="color:var(--text-color);">${item.title || 'Sem Título'}</strong>
+                <span style="font-size:0.7em; background:#c0392b; color:white; padding:2px 6px; border-radius:4px;">${icon} ELIMINADO</span>
             </div>
-            <div style="font-size:0.85em; color:var(--text-muted-color); width:100%;">
-                ${dateStr} • Tipo: ${item.subType || item.type}
+            <div style="font-size:0.8em; color:var(--text-muted-color); margin-top:5px;">
+                ${dateStr}
             </div>
-            <div style="margin-top:5px; width:100%; display:flex; justify-content:flex-end;">
-                <button class="modal-btn primary" onclick="restoreArchiveItem(${index})" style="padding:5px 15px; font-size:0.9em;">Restaurar</button>
+            <div style="margin-top:10px; width:100%; display:flex; justify-content:flex-end;">
+                <button class="modal-btn primary" onclick="restoreArchiveItem(${index})" style="padding:5px 15px; font-size:0.85em;">Restaurar</button>
             </div>
         `;
-        
         listEl.appendChild(li);
     });
 }
@@ -21721,28 +21730,28 @@ function initRealtimeCollab(docId) {
         if (!docSnap.exists()) return;
 
         const newData = docSnap.data();
-        
-        // A. Atualizar a memória local dos bloqueios
         currentLocks = newData.locks || {};
-        
-        // B. Chamar a função visual IMEDIATAMENTE
         applyVisualLocks();
 
-        // C. Atualizar os posts se não estivermos a editar (para evitar perda de foco)
-        if (!activeEditingPostId) {
-            const oldPostsJson = JSON.stringify(currentArchiveData.posts);
-            const newPostsJson = JSON.stringify(newData.posts);
+        // --- REAVALIAÇÃO DE SEGURANÇA DO CADEADO EM TEMPO REAL ---
+        const shareBtn = document.querySelector('button[data-action="archive-share"]');
+        if (shareBtn) {
+            const isOwner = newData.userId === auth.currentUser.uid;
+            const isSharedType = (newData.tipo === 'partilhado');
             
-            if (oldPostsJson !== newPostsJson) {
-                currentArchiveData.posts = newData.posts;
-                currentArchiveData.deletedPosts = newData.deletedPosts || [];
-                renderArchiveFeed();
-                // Re-aplica os bloqueios após renderizar os novos posts
-                applyVisualLocks();
+            if (isSharedType && !isOwner) {
+                shareBtn.style.display = 'none';
+            } else {
+                shareBtn.style.display = 'block';
             }
         }
-    }, (error) => {
-        console.error("❌ [COLLAB] Erro no listener:", error);
+        // -------------------------------------------------------
+
+        if (!activeEditingPostId) {
+            currentArchiveData.posts = newData.posts;
+            renderArchiveFeed();
+            applyVisualLocks();
+        }
     });
 }
 
@@ -22177,11 +22186,31 @@ window.applyColorStyle = function(command, color) {
 
 // 3. Fechar se clicar fora
 document.addEventListener('click', (e) => {
-    if (formattingPopup.style.display === 'block' && 
-        !formattingPopup.contains(e.target) && 
-        e.target !== formattingBtn) {
-        formattingPopup.style.display = 'none';
-        formattingBtn.classList.remove('active'); // Remove o azul ao fechar fora
+    const sharePop = document.getElementById('note-share-popup');
+    
+    // 1. Fechar Context Menu
+    if (!e.target.closest('.context-menu')) hideContextMenu();
+
+    // 2. Lógica do Popup de Partilha (Ajustada)
+    if (sharePop && sharePop.style.display === 'flex') {
+        // Se o clique NÃO foi dentro do popup E NÃO foi nos botões de abrir partilha...
+        if (!sharePop.contains(e.target) && 
+            !e.target.closest('button[data-action="note-sharing-settings"]') && 
+            !e.target.closest('button[data-action="archive-share"]')) {
+            
+            console.log("🧹 Fechando partilha por clique fora.");
+            sharePop.style.display = 'none';
+        }
+    }
+
+    // 3. Fechar Formatting Popup
+    const fPopup = document.getElementById('formatting-popup');
+    const fBtn = document.getElementById('more-formatting-btn');
+    if (fPopup && fPopup.style.display === 'block') {
+        if (!fPopup.contains(e.target) && e.target !== fBtn) {
+            fPopup.style.display = 'none';
+            if (fBtn) fBtn.classList.remove('active');
+        }
     }
 });
 
@@ -25387,6 +25416,110 @@ document.getElementById('create-separator-btn').onclick = async () => {
         
         renderArchiveFeed();
     } catch (e) { console.error(e); }
+};
+
+// 1. Definir a função como global para evitar conflitos de nome
+window.openShareModalForArchive = async function() {
+    console.log("🚀 [NUCLEAR-START] A abrir popup de partilha...");
+    
+    const modal = document.getElementById('note-share-popup');
+    if (!modal) return console.error("❌ Erro: #note-share-popup não encontrado.");
+
+    // 1. Configuração de IDs
+    const id = selectedNoteId || currentArchiveId;
+    if (!id) return;
+
+    // 2. RECONSTRUÇÃO FÍSICA DO MODAL (Força Bruta)
+    document.body.appendChild(modal); 
+    modal.style.cssText = `
+        display: flex !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        background-color: rgba(0, 0, 0, 0.85) !important;
+        z-index: 9999999 !important;
+        justify-content: center !important;
+        align-items: center !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        pointer-events: all !important;
+    `;
+
+    const content = modal.querySelector('.modal-content');
+    if (content) {
+        content.style.cssText = `
+            display: block !important;
+            background-color: var(--sidebar-color, #252528) !important;
+            padding: 30px !important;
+            border-radius: 12px !important;
+            width: 90% !important;
+            max-width: 450px !important;
+            position: relative !important;
+            z-index: 10000000 !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+        `;
+    }
+
+    try {
+        const docRef = doc(db, 'pastas', id);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+
+            // 🛡️ BLOQUEIO DE SEGURANÇA: Se não for o dono, fecha e sai
+            if (data.userId !== auth.currentUser.uid) {
+                console.warn("🚫 Acesso negado: Apenas o dono pode gerir a partilha.");
+                modal.style.display = 'none';
+                return;
+            }
+
+            currentNoteShareData = data.shareSettings || { shared: false, shareId: null };
+
+            // A. Configurar Link de Leitura
+            const mainToggle = document.getElementById('note-share-toggle');
+            if(mainToggle) mainToggle.checked = currentNoteShareData.shared || false;
+
+            const linkContainer = document.getElementById('note-share-link-container');
+            if (currentNoteShareData.shared) {
+                if(linkContainer) linkContainer.style.display = 'block';
+                const baseUrl = window.location.origin + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
+                const shareId = currentNoteShareData.shareId || id;
+                const urlInput = document.getElementById('note-share-url');
+                if(urlInput) urlInput.value = `${baseUrl}/sharenote.html?id=${shareId}`;
+            } else {
+                if(linkContainer) linkContainer.style.display = 'none';
+            }
+
+            // B. Configurar Link de Colaboração (Visível apenas se estiver no modo partilha)
+            const collabSection = document.getElementById('archive-collab-section');
+            if (currentViewMode === 'shared') {
+                if(collabSection) collabSection.style.display = 'block';
+                const collabToggle = document.getElementById('collab-share-toggle');
+                if(collabToggle) collabToggle.checked = (data.partilhado === "ativo");
+                
+                const collabLinkContainer = document.getElementById('collab-share-link-container');
+                if (data.partilhado === "ativo") {
+                    if(collabLinkContainer) collabLinkContainer.style.display = 'block';
+                    const baseUrl = window.location.origin + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
+                    const collabUrl = `${baseUrl}/note.html?openArchive=${id}&mode=collab`;
+                    const collabInput = document.getElementById('collab-share-url');
+                    if(collabInput) collabInput.value = collabUrl;
+                } else {
+                    if(collabLinkContainer) collabLinkContainer.style.display = 'none';
+                }
+            } else {
+                if(collabSection) collabSection.style.display = 'none';
+            }
+            
+            console.log("✨ [NUCLEAR-SUCCESS] Configuração de partilha carregada.");
+        }
+    } catch (err) {
+        console.error("🔥 Erro ao carregar dados de partilha:", err);
+    }
 };
 
     </script>
