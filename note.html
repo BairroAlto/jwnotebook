@@ -4610,9 +4610,45 @@ a.board-link:hover {
     padding-left: 10px;
 }
 
+/* Estilo para o Modo Pins (Rosa) */
+.folder-mode-item.active.mode-pins {
+    color: #ff69b4 !important; /* Hot Pink */
+}
 
+.folder-mode-item.active.mode-pins::after {
+    background-color: #ff69b4 !important;
+    height: 3px;
+}
 
+/* Ícone de Pin na lista */
+.list-item[data-pinned="true"]::after {
+    content: '📌';
+    font-size: 14px;            /* Tamanho do pin */
+    position: absolute;
+    left: 18px;                 /* Ajusta horizontalmente sobre o ícone */
+    top: 8px;                   /* Ajusta verticalmente (sobe um pouco) */
+    z-index: 10;                /* Garante que fica por cima do ícone */
+    pointer-events: none;       /* O clique passa através do pin para a pasta */
+    
+    /* Efeito de sombra para o pin destacar-se do ícone amarelo */
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.6); 
+    
+    /* Leve inclinação para parecer espetado na pasta */
+    transform: rotate(-10deg); 
+}
 
+/* Garante que o ícone original não seja empurrado */
+.list-item {
+    position: relative; 
+}
+
+/* Linha divisória dentro do menu de contexto */
+.menu-sep {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: 4px 5px;
+    opacity: 0.4;
+}
 
 </style>
 
@@ -4646,6 +4682,8 @@ a.board-link:hover {
                 <span class="folder-mode-item active" onclick="window.switchFolderView('local')">Local</span>
                 <span class="folder-mode-separator">|</span>
                 <span class="folder-mode-item" onclick="window.switchFolderView('shared')">Partilha</span>
+                <span class="folder-mode-separator">|</span>
+    <span class="folder-mode-item" onclick="window.switchFolderView('pins')">Pins</span>
             </div>
         </div>
         
@@ -4989,18 +5027,27 @@ a.board-link:hover {
         </div>
     </div>
 
-    <div id="context-menu" class="context-menu" style="display: none;">
-        <button data-action="rename">Mudar Nome</button>
-         <button data-action="change-cosmos-emoji" style="display: none;">Mudar Emoji</button>
-        <button data-action="protect" style="display:none;">Proteger</button>
-        <button data-action="unprotect" style="display:none;">Tirar Proteção</button>
-        <button data-action="move-position">Mover Posição</button>
-        <button data-action="move-folder">Mover de Pasta</button> 
-        <button data-action="manage-topics">Anexar Tópico</button>
-        <button data-action="toggle-superfolder">Tornar Superpasta</button>
-        <button data-action="change-icon" style="display: none;">Mudar Icon</button>
-        <button data-action="hide">Ocultar</button>
-    </div>
+  <div id="context-menu" class="context-menu" style="display: none;">
+    <!-- GRUPO 1: Identidade e Segurança -->
+    <button data-action="rename">Mudar Nome</button>
+    <button data-action="toggle-pin">Adicionar Pin</button>
+    <button data-action="protect">Proteger</button>
+    <button data-action="unprotect" style="display:none;">Tirar Proteção</button>
+    <hr class="menu-sep">
+    <!-- GRUPO 2: Organização -->
+    <button data-action="move-position">Mover Posição</button>
+    <button data-action="move-folder">Mover de Pasta</button>
+    <hr class="menu-sep">
+    <!-- GRUPO 3: Atribuições e Tipo -->
+    <button data-action="manage-topics">Anexar Tópico</button>
+    <!-- Este botão só aparece em Superpastas -->
+    <button data-action="change-icon" style="display: none;">Mudar Icon</button>
+    <!-- Este muda texto entre Tornar Superpasta / Tornar Pasta -->
+    <button data-action="toggle-superfolder">Tornar Superpasta</button>
+    <hr class="menu-sep">
+    <!-- GRUPO 4: Eliminação -->
+    <button data-action="hide">Ocultar</button>
+</div>
 
     <div id="move-to-folder-modal" class="modal-overlay">
         <div class="modal-content">
@@ -5966,6 +6013,20 @@ a.board-link:hover {
 <!-- Popup de Cores das Micas -->
 <div id="mica-color-popup" style="display: none;"></div>
 
+<!-- MODAL PARA RENOMEAR ITENS -->
+<div id="rename-modal" class="modal-overlay" style="z-index: 3000;">
+    <div class="modal-content" style="max-width: 350px;">
+        <h3>Mudar Nome</h3>
+        <p style="font-size: 0.85em; color: var(--text-muted-color); margin-bottom: 10px;">Insira o novo nome para o item:</p>
+        <input type="text" id="rename-input" placeholder="Novo nome..." 
+               style="width: 100%; padding: 12px; background-color: var(--bg-color); border: 1px solid var(--border-color); border-radius: 5px; color: var(--text-color); font-size: 16px; margin-bottom: 20px;">
+        
+        <div class="modal-actions">
+            <button class="modal-btn secondary" id="cancel-rename-btn">Cancelar</button>
+            <button class="modal-btn primary" id="confirm-rename-btn">Gravar</button>
+        </div>
+    </div>
+</div>
 
 
 </body>
@@ -7347,6 +7408,7 @@ function resetEditor() {
 function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
     if (!auth.currentUser) return;
 
+    // Define que tipos de ficheiro mostrar dependendo do modo
     let allowedTypes = currentViewMode === 'local' 
         ? ['pasta', 'nota', 'agregacao', 'arquivo'] 
         : ['pasta', 'nota', 'agregacao', 'arquivo', 'partilhado'];
@@ -7371,9 +7433,14 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             const item = { id: doc.id, ...doc.data() };
             const li = document.createElement('li');
             li.className = 'list-item';
+            
+            // Atributos base
             li.setAttribute('data-id', item.id);
             li.setAttribute('data-type', item.tipo);
             li.setAttribute('data-name', item.nome);
+            
+            // Atributo de PIN (Novo)
+            li.setAttribute('data-pinned', item.isPinned ? "true" : "false");
             
             // Atributos de Superpasta e Ícones personalizados
             li.setAttribute('data-superpasta', item.superpasta || "false");
@@ -7383,15 +7450,16 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
             // Ícone de cadeado se tiver senha
             let lockIcon = (item.passe && item.passe.trim() !== "") ? "🔒 " : "";
+            
             li.innerHTML = `<span>${lockIcon}${item.nome}</span><button class="item-menu-btn">…</button>`;
 
             // ============================================================
-            // REGRA DE SELEÇÃO PERSISTENTE E POR COLUNA
+            // LÓGICA DE SELEÇÃO VISUAL
             // ============================================================
             let active = false;
 
             if (isColumn1) {
-                // COLUNA 1: Ativa se foi o último clicado OU se faz parte do caminho de pastas
+                // COLUNA 1: Ativa se foi o último clicado ou faz parte do caminho
                 if (item.id === col1SelectedId) {
                     active = true;
                 } else if (navigationStack.some(nav => nav.id === item.id)) {
@@ -7406,10 +7474,9 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
             if (active) {
                 if (isColumn1) {
-                    // Coluna 1 é SEMPRE azul (identidade fixa)
-                    li.classList.add('selected');
+                    li.classList.add('selected'); // Coluna 1 é sempre azul
                 } else {
-                    // Coluna 2 segue o tema do modo (Vermelho se Partilha, Azul se Local)
+                    // Coluna 2 segue o tema (Vermelho para Partilha, Azul para Local)
                     const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
                     li.classList.add(selectionClass);
                 }
@@ -7422,11 +7489,14 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
 
 async function updateNavigationView(keepEditorOpen = false, targetSelectId = null) {
+    // Remove qualquer estado colapsado ao navegar
     notebookContainer.classList.remove('left-panel-collapsed');
 
+    // 1. Limpeza de Ouvintes (Listeners) ativos para evitar fugas de memória
     if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
     if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
     
+    // 2. Reset do Editor se não for solicitado manter aberto
     if (!keepEditorOpen) {
         resetEditor();
     }
@@ -7434,62 +7504,82 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
     const depth = navigationStack.length;
     const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
-   if (currentTab === 'lists') {
-    const activeCategory = navigationStack.length > 0 ? navigationStack[0].id : null;
+    // ============================================================
+    // CASO A: ABA DE LISTAS (Tópicos, Bíblia, Personagens, etc)
+    // ============================================================
+    if (currentTab === 'lists') {
+        const activeCategory = navigationStack.length > 0 ? navigationStack[0].id : null;
 
-    // Gerar categorias dinamicamente para aplicar a classe 'selected'
-  const categories = [
-    { id: 'topico', icon: '📑', name: 'Tópicos' },
-    { id: 'destaque', icon: '🎨', name: 'Destaques' },
-    { separator: true },
-    { id: 'biblia-root', icon: '📖', name: 'Bíblia' },
-    { id: 'textobiblico', icon: '📜', name: 'Textos Bíblicos' },
-    { id: 'marcadores', icon: '🔖', name: 'Marcadores' },
-    { separator: true },
-    { id: 'personagem', icon: '👤', name: 'Personagens' },
-    { id: 'local', icon: '📍', name: 'Locais' },
-    { id: 'data', icon: '📅', name: 'Datas' },
-    { id: 'cosmos', icon: '🪐', name: 'Cosmos' }, // <-- NOVA LINHA
-    { id: 'tag', icon: '🏷️', name: 'Tags' }
-];
+        // Gerar categorias dinamicamente
+        const categories = [
+            { id: 'topico', icon: '📑', name: 'Tópicos' },
+            { id: 'destaque', icon: '🎨', name: 'Destaques' },
+            { separator: true },
+            { id: 'biblia-root', icon: '📖', name: 'Bíblia' },
+            { id: 'textobiblico', icon: '📜', name: 'Textos Bíblicos' },
+            { id: 'marcadores', icon: '🔖', name: 'Marcadores' },
+            { separator: true },
+            { id: 'personagem', icon: '👤', name: 'Personagens' },
+            { id: 'local', icon: '📍', name: 'Locais' },
+            { id: 'data', icon: '📅', name: 'Datas' },
+            { id: 'cosmos', icon: '🪐', name: 'Cosmos' },
+            { id: 'tag', icon: '🏷️', name: 'Tags' }
+        ];
 
-    let categoriesHTML = '';
-    categories.forEach(cat => {
-        if (cat.separator) {
-            categoriesHTML += `<hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">`;
+        let categoriesHTML = '';
+        categories.forEach(cat => {
+            if (cat.separator) {
+                categoriesHTML += `<hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">`;
+            } else {
+                const isSelected = activeCategory === cat.id ? 'selected' : '';
+                categoriesHTML += `<li class="list-item ${isSelected}" data-type="list-category" data-id="${cat.id}">${cat.icon} ${cat.name}</li>`;
+            }
+        });
+
+        leftPanelList.innerHTML = categoriesHTML;
+
+        if (depth === 0) {
+            addItemBtn.style.display = 'none';
+            setLeftPanelTitle('Categorias'); 
+            middlePanelTitle.textContent = 'Selecione uma categoria';
+            middlePanelList.innerHTML = '';
+            backBtn.style.display = 'none';
         } else {
-            const isSelected = activeCategory === cat.id ? 'selected' : '';
-            categoriesHTML += `<li class="list-item ${isSelected}" data-type="list-category" data-id="${cat.id}">${cat.icon} ${cat.name}</li>`;
+            const currentContext = navigationStack[depth - 1];
+            setLeftPanelTitle('Categorias', true); 
+            middlePanelTitle.textContent = currentContext.name;
+            backBtn.style.display = 'flex';
+            
+            const rootCategoryId = navigationStack[0].id;
+            const validYellowCategories = ['topico', 'personagem', 'local', 'data'];
+            updateAddButtonState(validYellowCategories.includes(rootCategoryId), true);
+
+            renderListCategoryItems(currentContext.id);
         }
-    });
-
-    leftPanelList.innerHTML = categoriesHTML;
-
-    if (depth === 0) {
-        addItemBtn.style.display = 'none';
-        setLeftPanelTitle('Categorias'); 
-        middlePanelTitle.textContent = 'Selecione uma categoria';
-        middlePanelList.innerHTML = '';
-        backBtn.style.display = 'none';
-    } else {
-        const currentContext = navigationStack[depth - 1];
-        setLeftPanelTitle('Categorias', true); 
-        middlePanelTitle.textContent = currentContext.name;
-        backBtn.style.display = 'flex';
-        
-        // Lógica do botão + (Amarelo)
-        const rootCategoryId = navigationStack[0].id;
-        const validYellowCategories = ['topico', 'personagem', 'local', 'data'];
-        updateAddButtonState(validYellowCategories.includes(rootCategoryId), true);
-
-        renderListCategoryItems(currentContext.id);
+        return; 
     }
-    return; 
-}
 
+    // ============================================================
+    // CASO B: MODO PINS (NOVO)
+    // ============================================================
+    if (currentViewMode === 'pins' && currentTab === 'note') {
+        addItemBtn.style.display = 'none'; 
+        backBtn.style.display = 'none';
+        setLeftPanelTitle('Pins'); 
+        
+        // FORÇA O CARREGAMENTO DA COLUNA 1 SEMPRE QUE ENTRA/VOLTA
+        loadPinsView(); 
+        
+        return; 
+    }
+
+    // ============================================================
+    // CASO C: MODO NOTE (LOCAL OU PARTILHA)
+    // ============================================================
     addItemBtn.style.display = 'flex';
     addItemBtn.classList.remove('yellow-mode');
 
+    // 1. Definir Título da Esquerda (Coluna 1)
     if (depth === 0) {
         setLeftPanelTitle(currentViewMode === 'local' ? 'Pastas' : 'Partilha'); 
     } else {
@@ -7501,17 +7591,21 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
     let leftPanelParentId = null;
     let middlePanelParentId = null;
 
+    // 2. Definir o que mostrar em cada coluna baseando-se na profundidade
     if (depth === 0) {
-         if (currentViewMode === 'shared') {
-        leftPanelParentId = "EMPTY_SIDEBAR_FOR_SHARED"; // Força a busca a vir vazia
-    } else {
-        leftPanelParentId = isSuperContext ? SUPERFOLDER_ID : null;
-    }
+        // RAIZ
+        if (currentViewMode === 'shared') {
+            leftPanelParentId = "EMPTY_SIDEBAR_FOR_SHARED"; // A coluna 1 fica limpa para focar na lista
+        } else {
+            leftPanelParentId = isSuperContext ? SUPERFOLDER_ID : null;
+        }
         middlePanelTitle.textContent = 'Selecione';
         middlePanelList.innerHTML = '';
         backBtn.style.display = 'none';
+        
         if (currentViewMode === 'shared') loadSharedFilesRoot();
     } else {
+        // DENTRO DE PASTAS
         const currentFolder = navigationStack[depth - 1];
         middlePanelParentId = currentFolder.id;
         middlePanelTitle.textContent = currentFolder.name;
@@ -7524,6 +7618,7 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
         }
     }
     
+    // 3. Disparar a renderização das listas via onSnapshot
     unsubscribeLeftPanel = fetchAndDisplayItems(leftPanelParentId, leftPanelList, null);
     if (middlePanelParentId) {
         unsubscribeMiddlePanel = fetchAndDisplayItems(middlePanelParentId, middlePanelList, targetSelectId);
@@ -9773,74 +9868,112 @@ function showContextMenu(e) {
     const item = e.target.closest('.list-item');
     if (!item) return;
 
-    // ============================================================
-    // REGRA ESPECIAL PARA TEMAS COSMOS (CLIQUE ABRE LOGO EMOJI)
-    // ============================================================
+    // Caso especial Cosmos (seletor de emoji)
     if (item.dataset.type === 'cosmos-parent') {
         const themeId = item.dataset.id;
-        
         const modal = document.getElementById('custom-emoji-modal');
         const input = document.getElementById('custom-emoji-input');
         const confirmBtn = document.getElementById('confirm-custom-emoji-btn');
-        
         input.value = ""; 
         modal.style.display = 'flex';
         setTimeout(() => input.focus(), 100);
-
         confirmBtn.onclick = async () => {
             const newEmoji = input.value.trim();
             if (newEmoji) {
                 try {
-                    await updateDoc(doc(db, 'cosmos', themeId), {
-                        emoji: newEmoji
-                    });
+                    await updateDoc(doc(db, 'cosmos', themeId), { emoji: newEmoji });
                     modal.style.display = 'none';
-                    renderListCategoryItems('cosmos'); // Atualiza a lista na hora
-                } catch (err) {
-                    console.error("Erro ao mudar emoji:", err);
-                }
+                    renderListCategoryItems('cosmos');
+                } catch (err) { console.error(err); }
             }
         };
-        return; // SAI DA FUNÇÃO AQUI (Não abre o menu de contexto)
+        return;
     }
 
-    // ============================================================
-    // LÓGICA NORMAL PARA PASTAS E NOTAS (ABRE O MENU DE OPÇÕES)
-    // ============================================================
     const menu = document.getElementById('context-menu');
+    const myUid = auth.currentUser.uid;
     
+    // Captura o contexto completo do item
     activeItemContext = {
         id: item.dataset.id,
         name: item.dataset.name,
         type: item.dataset.type,
-        userId: item.dataset.userid,
+        userId: item.dataset.userid, // ID do dono do ficheiro
         parentId: item.dataset.parentid === 'null' ? null : item.dataset.parentid,
         isProtected: item.hasAttribute('data-protected'),
-        isSuperfolder: item.getAttribute('data-superpasta') === "true"
+        isSuperfolder: item.getAttribute('data-superpasta') === "true",
+        isPinned: item.getAttribute('data-pinned') === "true"
     };
 
+    // Identifica se é um arquivo de outro utilizador na aba Partilha
+    const isOwner = activeItemContext.userId === myUid;
+    const isSharedNotMine = (currentViewMode === 'shared' && !isOwner);
+
+    // Referências aos botões e separadores
+    const btnRename = menu.querySelector('[data-action="rename"]');
+    const btnPin = menu.querySelector('[data-action="toggle-pin"]');
     const btnProtect = menu.querySelector('[data-action="protect"]');
     const btnUnprotect = menu.querySelector('[data-action="unprotect"]');
+    const btnMovePos = menu.querySelector('[data-action="move-position"]');
+    const btnMoveFold = menu.querySelector('[data-action="move-folder"]');
+    const btnTopics = menu.querySelector('[data-action="manage-topics"]');
+    const btnIcon = menu.querySelector('[data-action="change-icon"]');
     const btnSuper = menu.querySelector('[data-action="toggle-superfolder"]');
-    const btnChangeIcon = menu.querySelector('[data-action="change-icon"]');
+    const btnHide = menu.querySelector('[data-action="hide"]');
+    const dividers = menu.querySelectorAll('.menu-sep');
 
-    // Visibilidade dos botões baseada no contexto
-    if (activeItemContext.isProtected) {
-        btnProtect.style.display = 'none'; btnUnprotect.style.display = 'block';
-    } else {
-        btnProtect.style.display = 'block'; btnUnprotect.style.display = 'none';
+    // 1. Reset visual: Esconde tudo primeiro
+    menu.querySelectorAll('button, hr').forEach(el => el.style.display = 'none');
+
+    if (isSharedNotMine) {
+        // ============================================================
+        // MODO: ARQUIVO ALHEIO (Apenas 3 opções, sem separadores)
+        // ============================================================
+        btnRename.style.display = 'block';
+        btnTopics.style.display = 'block';
+        btnHide.style.display = 'block';
+    } 
+    else {
+        // ============================================================
+        // MODO: MEU CONTEÚDO (Local ou Partilha Própria)
+        // ============================================================
+        
+        // GRUPO 1
+        btnRename.style.display = 'block';
+        btnPin.style.display = 'block';
+        btnPin.textContent = activeItemContext.isPinned ? "Remover Pin" : "Adicionar Pin";
+        
+        if (activeItemContext.isProtected) btnUnprotect.style.display = 'block';
+        else btnProtect.style.display = 'block';
+        
+        dividers[0].style.display = 'block'; // Linha 1
+
+        // GRUPO 2
+        btnMovePos.style.display = 'block';
+        btnMoveFold.style.display = 'block';
+        
+        dividers[1].style.display = 'block'; // Linha 2
+
+        // GRUPO 3
+        btnTopics.style.display = 'block';
+        
+        if (activeItemContext.type === 'pasta') {
+            btnSuper.style.display = 'block';
+            if (activeItemContext.isSuperfolder) {
+                btnSuper.textContent = "Tornar Pasta";
+                btnIcon.style.display = 'block';
+            } else {
+                btnSuper.textContent = "Tornar Superpasta";
+            }
+        }
+
+        dividers[2].style.display = 'block'; // Linha 3
+
+        // GRUPO 4
+        btnHide.style.display = 'block';
     }
 
-    if (activeItemContext.type === 'pasta') {
-        btnSuper.style.display = 'block';
-        btnSuper.textContent = activeItemContext.isSuperfolder ? "Tornar Pasta" : "Tornar Superpasta";
-        btnChangeIcon.style.display = activeItemContext.isSuperfolder ? 'block' : 'none';
-    } else {
-        btnSuper.style.display = 'none';
-        btnChangeIcon.style.display = 'none';
-    }
-
-    // Posicionamento do Menu
+    // Exibir e posicionar menu
     menu.style.visibility = 'hidden';
     menu.style.display = 'flex';
 
@@ -9848,7 +9981,6 @@ function showContextMenu(e) {
     const menuHeight = menu.offsetHeight;
     if (e.clientY + menuHeight > window.innerHeight) menu.style.top = `${e.clientY - menuHeight}px`;
     else menu.style.top = `${e.clientY}px`;
-
     if (e.clientX + menuWidth > window.innerWidth) menu.style.left = `${e.clientX - menuWidth}px`;
     else menu.style.left = `${e.clientX}px`;
 
@@ -15122,55 +15254,58 @@ function setLeftPanelTitle(text, isBackAction = false) {
     const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
     // ============================================================
-    // REGRA PRIORITÁRIA: MODO SUPERPASTA
+    // REGRA 1: MODO SUPERPASTA (Mantém o botão de Sair para segurança)
     // ============================================================
     if (isSuperContext) {
-        // Remove a classe do seletor e limpa eventos para garantir que os botões somem
         titleEl.className = ''; 
         titleEl.style.display = 'block';
         titleEl.onclick = null;
 
-        // Se for a RAIZ da Superpasta (text será o nome dela)
-        if (!isBackAction) {
-            titleEl.innerHTML = `
-                <h2 style="font-size:18px; cursor:pointer; display: flex; align-items: center;" title="Sair desta Superpasta">
-                    <span style="font-size: 0.8em; opacity: 0.7; margin-right: 8px;">🔙</span> 
-                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${text}</span>
-                </h2>`;
-            
-            // Ao clicar no nome/seta, sai da Superpasta e volta ao modo normal
-            titleEl.onclick = () => {
-                navigateWithUnsavedCheck(() => {
+        titleEl.innerHTML = `
+            <h2 style="font-size:18px; cursor:pointer; display: flex; align-items: center;" title="Sair desta Superpasta">
+                <span style="font-size: 0.8em; opacity: 0.7; margin-right: 8px;">🔙</span> 
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${text}</span>
+            </h2>`;
+        
+        titleEl.onclick = () => {
+            navigateWithUnsavedCheck(() => {
+                if (isBackAction && navigationStack.length > 0) {
+                    navigationStack.pop();
+                    selectedNoteId = null; 
+                    updateNavigationView();
+                } else {
                     window.location.href = "note.html"; 
-                });
-            };
-        } 
-        // Se estiveres navegando em subpastas DENTRO da Superpasta
-        else {
-            titleEl.innerHTML = `
-                <h2 style="font-size:18px; cursor:pointer; display: flex; align-items: center;">
-                    <span style="font-size: 0.8em; opacity: 0.7; margin-right: 8px;">🔙</span> 
-                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${text}</span>
-                </h2>`;
-            titleEl.onclick = () => {
-                navigateWithUnsavedCheck(() => {
-                    if (navigationStack.length > 0) {
-                        navigationStack.pop();
-                        selectedNoteId = null; 
-                        updateNavigationView();
-                    }
-                });
-            };
-        }
-        return; // Sai da função aqui, impedindo que o seletor seja desenhado abaixo
+                }
+            });
+        };
+        return;
     }
 
     // ============================================================
-    // MODO NORMAL (FORA DE SUPERPASTA)
+    // REGRA 2: ABA NOTE (SELETOR SEMPRE VISÍVEL)
     // ============================================================
-    
-    // 1. Se for uma ação de voltar numa pasta normal
-    if (isBackAction) {
+    // Aqui forçamos o seletor mesmo que isBackAction seja true.
+    if (currentTab === 'note') {
+        titleEl.className = 'folder-mode-container';
+        titleEl.style.display = 'flex';
+        titleEl.onclick = null;
+
+        const localActive = currentViewMode === 'local' ? 'active' : '';
+        const sharedActive = currentViewMode === 'shared' ? 'active mode-shared' : '';
+        const pinsActive = currentViewMode === 'pins' ? 'active mode-pins' : '';
+
+        titleEl.innerHTML = `
+            <span class="folder-mode-item ${localActive}" onclick="window.switchFolderView('local')">Local</span>
+            <span class="folder-mode-separator">|</span>
+            <span class="folder-mode-item ${sharedActive}" onclick="window.switchFolderView('shared')">Partilha</span>
+            <span class="folder-mode-separator">|</span>
+            <span class="folder-mode-item ${pinsActive}" onclick="window.switchFolderView('pins')">Pins</span>
+        `;
+    } 
+    // ============================================================
+    // REGRA 3: OUTRAS ABAS (Lists, etc - Mantém comportamento de voltar)
+    // ============================================================
+    else if (isBackAction) {
         titleEl.className = ''; 
         titleEl.style.display = 'block';
         titleEl.innerHTML = `<h2 style="font-size:18px; cursor:pointer;"><span style="font-size: 0.8em; opacity: 0.7; margin-right: 8px;">🔙</span> ${text}</h2>`;
@@ -15184,22 +15319,6 @@ function setLeftPanelTitle(text, isBackAction = false) {
             });
         };
     } 
-    // 2. RAIZ DA ABA NOTE: Aqui sim, mostra o seletor "Local | Partilha"
-    else if (currentTab === 'note') {
-        titleEl.className = 'folder-mode-container';
-        titleEl.style.display = 'flex';
-        titleEl.onclick = null;
-
-        const localActive = currentViewMode === 'local' ? 'active' : '';
-        const sharedActive = currentViewMode === 'shared' ? 'active mode-shared' : '';
-
-        titleEl.innerHTML = `
-            <span class="folder-mode-item ${localActive}" onclick="window.switchFolderView('local')">Local</span>
-            <span class="folder-mode-separator">|</span>
-            <span class="folder-mode-item ${sharedActive}" onclick="window.switchFolderView('shared')">Partilha</span>
-        `;
-    } 
-    // 3. Outras abas (Lists, Book, etc)
     else {
         titleEl.className = '';
         titleEl.style.display = 'block';
@@ -17402,27 +17521,31 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
     }
 
     // --- AÇÃO: RENOMEAR ---
-    if (action === 'rename') {
-        const currentName = itemContext.name;
-        const newName = prompt("Mudar nome para:", currentName);
-        if (newName && newName.trim() !== "" && newName !== currentName) {
+   if (action === 'rename') {
+    openRenameModal(itemContext.name, async (newName) => {
+        try {
             // Determina a coleção correta
             const collectionName = itemContext.type === 'cosmos-parent' ? 'cosmos' : 'pastas';
             
             await updateDoc(doc(db, collectionName, itemContext.id), {
-                nome: newName.trim(),
+                nome: newName,
                 ultimaedicao: serverTimestamp()
             });
 
-            // Se for cosmos, recarrega a lista
+            // Se for cosmos, recarrega a lista lateral
             if (itemContext.type === 'cosmos-parent') renderListCategoryItems('cosmos');
             
-            // Se for a nota que está aberta no editor, atualiza o título
+            // Se for a nota que está aberta no editor, atualiza o título no topo
             if (selectedNoteId && itemContext.id === selectedNoteId) {
-                if(noteTitleInput) noteTitleInput.value = newName.trim();
+                const titleInput = document.getElementById('note-title-input');
+                if(titleInput) titleInput.value = newName;
             }
+        } catch (err) {
+            console.error("Erro ao renomear:", err);
+            alert("Erro ao gravar novo nome.");
         }
-    }
+    });
+}
 
     // --- AÇÃO: MUDAR ÍCONE (SUPERPASTA) ---
     else if (action === 'change-icon') {
@@ -17456,6 +17579,20 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
             if (itemContext.type === 'cosmos-parent') renderListCategoryItems('cosmos');
         }
     }
+
+    if (action === 'toggle-pin') {
+    try {
+        const itemRef = doc(db, 'pastas', itemContext.id);
+        await updateDoc(itemRef, {
+            isPinned: !itemContext.isPinned,
+            ultimaedicao: serverTimestamp()
+        });
+        // Feedback visual rápido
+        console.log("Pin atualizado com sucesso");
+    } catch (error) {
+        console.error("Erro ao alternar Pin:", error);
+    }
+}
 
     // --- OUTRAS AÇÕES (MOVER, TÓPICOS, ETC) ---
     else if (action === 'move-position') { await openMoveModal(itemContext); }
@@ -19824,111 +19961,44 @@ noteContentEditor.addEventListener('drop', (e) => {
 
 // --- NOVA FUNÇÃO: MUDAR ENTRE LOCAL E PARTILHA ---
 async function switchFolderView(mode) {
-      updateAddButtonState(true, false);
-    // 1. Se já estivermos no modo e na raiz, não faz nada
+    // 1. Reseta estado visual e gravações pendentes
+    updateAddButtonState(true, false);
     if (mode === currentViewMode && navigationStack.length === 0) return;
- col1SelectedId = null; 
+    col1SelectedId = null;
 
-    // 2. 🚀 GRAVAÇÃO AUTOMÁTICA ANTES DE MUDAR
-    // Verifica se há algo por guardar (Nota normal ou Post de Arquivo)
     if (currentSaveStatus === 'unsaved' || activeEditingPostId) {
-        console.log("💾 [SISTEMA] Alterações detetadas. A gravar antes de mudar de vista...");
-        
         try {
-            if (activeEditingPostId) {
-                // Se estiver num Arquivo e a editar um Post
-                await saveArchivePost(activeEditingPostId);
-            } else if (selectedNoteId) {
-                // Se estiver numa Nota normal
-                await saveNote(true); // O 'true' força a gravação imediata sem esperar pelo timer
-            }
-        } catch (e) {
-            console.error("Erro ao gravar automaticamente:", e);
-            // Opcional: Avisar o utilizador se a gravação falhar (ex: sem net)
-            if (!confirm("Não foi possível gravar as alterações. Deseja mudar de vista na mesma?")) return;
-        }
+            if (activeEditingPostId) await saveArchivePost(activeEditingPostId);
+            else if (selectedNoteId) await saveNote(true);
+        } catch (e) { console.error("Erro ao gravar antes de mudar:", e); }
     }
 
-    // 3. Limpeza total de ouvintes (listeners) ativos
+    // 2. Limpa todos os ouvintes do Firebase
     if (unsubscribeShared1) { unsubscribeShared1(); unsubscribeShared1 = null; }
     if (unsubscribeShared2) { unsubscribeShared2(); unsubscribeShared2 = null; }
+    if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
     if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
     
-    // 4. Reset de estado e troca de modo
+    // 3. Atualiza o modo e limpa a navegação
     resetEditor();             
     currentViewMode = mode;    
     navigationStack = [];      
-    noteStackMemory = [];
 
-    // 5. Sincroniza a interface
+    // 4. Reconstrói o cabeçalho (setLeftPanelTitle será chamada aqui)
     updateNavigationView(true);
 
-    // Suporte Mobile
-    if (window.innerWidth <= 768) {
-        document.body.classList.add('mobile-view-middle');
-        document.body.classList.remove('mobile-view-editor');
-    }
-
-    const myUid = auth.currentUser.uid;
-    const foldersRef = collection(db, 'pastas');
-
-    // --- LÓGICA DE CARREGAMENTO DA LISTA (LOCAL OU PARTILHA) ---
-    if (mode === 'local') {
-        const addItemBtn = document.getElementById('add-item-btn');
-        if (addItemBtn) addItemBtn.classList.remove('shared-mode');
+    // 5. Encaminha para a função de carga correta
+    if (mode === 'pins') {
+        loadPinsView(); // <--- CHAMA A FUNÇÃO ACIMA
     } 
     else if (mode === 'shared') {
-        middlePanelTitle.textContent = "Arquivos Partilhados";
-        middlePanelList.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A procurar arquivos...</span></div>';
-
+        loadSharedFilesRoot(); // Carrega na Coluna 2 por padrão
+    }
+    else if (mode === 'local') {
+        // No modo local, o botão Adicionar volta a ser Azul
         const addItemBtn = document.getElementById('add-item-btn');
-        if (addItemBtn) addItemBtn.classList.add('shared-mode');
-
-        let resultsMap = new Map();
-
-        const renderUnifiedList = () => {
-            middlePanelList.innerHTML = '';
-            if (resultsMap.size === 0) {
-                middlePanelList.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum arquivo partilhado encontrado.</li>';
-                return;
-            }
-
-            Array.from(resultsMap.values())
-                .sort((a, b) => (a.nome || "").localeCompare(b.nome || ""))
-                .forEach(item => {
-                    const li = document.createElement('li');
-                    li.className = 'list-item';
-                    li.setAttribute('data-id', item.id);
-                    li.setAttribute('data-type', item.tipo);
-                    li.setAttribute('data-name', item.nome);
-                    li.setAttribute('data-userid', item.userId);
-
-                    li.style.borderLeft = "4px solid #e74c3c";
-                    const isOwner = item.userId === myUid;
-                    li.innerHTML = `<span>${isOwner ? '👑' : '🤝'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
-                    if (isOwner && item.partilhado !== "ativo") li.style.opacity = "0.7";
-                    middlePanelList.appendChild(li);
-                });
-        };
-
-        const q1 = query(foldersRef, where('userId', '==', myUid), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
-        const q2 = query(foldersRef, where(`colaboradores.${myUid}`, '==', true), where('partilhado', '==', 'ativo'), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
-
-        unsubscribeShared1 = onSnapshot(q1, (snapshot) => {
-            snapshot.docChanges().forEach(change => {
-                if (change.type === "removed") resultsMap.delete(change.doc.id);
-                else resultsMap.set(change.doc.id, { ...change.doc.data(), id: change.doc.id });
-            });
-            renderUnifiedList();
-        });
-
-        unsubscribeShared2 = onSnapshot(q2, (snapshot) => {
-            snapshot.docChanges().forEach(change => {
-                if (change.type === "removed") resultsMap.delete(change.doc.id);
-                else resultsMap.set(change.doc.id, { ...change.doc.data(), id: change.doc.id });
-            });
-            renderUnifiedList();
-        });
+        if (addItemBtn) addItemBtn.classList.remove('shared-mode', 'yellow-mode');
+        // A atualização da lista local já é disparada pelo updateNavigationView acima
     }
 }
 window.switchFolderView = switchFolderView;
@@ -23639,6 +23709,111 @@ document.addEventListener('click', (e) => {
         popup.style.display = 'none';
     }
 });
+
+
+function loadPinsView() {
+    // Limpeza de segurança para não duplicar ouvintes
+    if (unsubscribeShared1) { unsubscribeShared1(); unsubscribeShared1 = null; }
+
+    const listElement = document.getElementById('left-panel-list');
+    listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div></div>';
+    
+    middlePanelTitle.textContent = "Selecione um Pin";
+    middlePanelList.innerHTML = '<li style="padding:20px; color:#888; text-align:center; font-size:0.9em;">Os detalhes aparecerão aqui ao clicar.</li>';
+
+    const myUid = auth.currentUser.uid;
+    
+    const q = query(
+        collection(db, 'pastas'), 
+        where('userId', '==', myUid), 
+        where('isPinned', '==', true),
+        where('estado', '==', 'ativa'),
+        orderBy('nome')
+    );
+
+    unsubscribeShared1 = onSnapshot(q, (snapshot) => {
+        listElement.innerHTML = '';
+        
+        if (snapshot.empty) {
+            listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center; font-size:0.9em;">Ainda não tens Pins.</li>';
+            return;
+        }
+
+        snapshot.forEach(doc => {
+            const item = { id: doc.id, ...doc.data() };
+            const li = document.createElement('li');
+            li.className = 'list-item';
+            
+            // Atributos cruciais
+            li.setAttribute('data-id', item.id);
+            li.setAttribute('data-type', item.tipo); // O CSS usa isto para o ícone correto
+            li.setAttribute('data-name', item.nome);
+            li.setAttribute('data-pinned', 'true'); // O CSS usa isto para o Pin rosa
+            
+            // Adiciona a borda rosa lateral apenas nesta vista
+            li.style.borderLeft = "4px solid #ff69b4";
+
+            // REMOVIDO O ${icon} DAQUI PARA EVITAR DUPLICAÇÃO
+            li.innerHTML = `<span>${item.nome}</span><button class="item-menu-btn">…</button>`;
+
+            // LÓGICA DO SALTO
+            li.onclick = (e) => {
+                if (e.target.closest('.item-menu-btn')) return;
+                middlePanelList.innerHTML = '<div class="spinner-container"><div class="spinner"></div></div>';
+
+                navigateWithUnsavedCheck(async () => {
+                    currentViewMode = 'local';
+                    if (item.tipo === 'nota' || item.tipo === 'arquivo' || item.tipo === 'partilhado') {
+                        await navigateToNoteSmart(item.id);
+                    } else {
+                        await reconstructFolderNavigation(item.id);
+                    }
+
+                    if (window.innerWidth <= 768) {
+                        if (item.tipo === 'nota') document.body.classList.add('mobile-view-editor');
+                        else document.body.classList.add('mobile-view-middle');
+                    }
+                });
+            };
+
+            listElement.appendChild(li);
+        });
+    });
+}
+
+// FUNÇÃO UNIVERSAL PARA RENOMEAR VIA POPUP
+function openRenameModal(currentName, onConfirm) {
+    const modal = document.getElementById('rename-modal');
+    const input = document.getElementById('rename-input');
+    const confirmBtn = document.getElementById('confirm-rename-btn');
+    const cancelBtn = document.getElementById('cancel-rename-btn');
+
+    input.value = currentName;
+    modal.style.display = 'flex';
+    setTimeout(() => { input.focus(); input.select(); }, 100);
+
+    // Limpa listeners antigos
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+    const closeModal = () => { modal.style.display = 'none'; };
+
+    newConfirmBtn.onclick = () => {
+        const newName = input.value.trim();
+        if (newName && newName !== currentName) {
+            onConfirm(newName);
+        }
+        closeModal();
+    };
+
+    cancelBtn.onclick = closeModal;
+
+    // Atalhos de teclado
+    input.onkeydown = (e) => {
+        if (e.key === 'Enter') newConfirmBtn.onclick();
+        if (e.key === 'Escape') closeModal();
+    };
+}
 
     </script>
 </body>
