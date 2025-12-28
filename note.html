@@ -6855,56 +6855,84 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
 // --- PROTEÇÃO DE ROTA E CARREGAMENTO DE USUÁRIO ---
  onAuthStateChanged(auth, async (user) => {
     const loader = document.getElementById('app-loader');
+    const container = document.querySelector('.notebook-container');
 
     if (!user) {
-        // 🛡️ SEGURO: Se não há login, o body continua com opacity: 0
-        // e saltamos imediatamente para o login.
+        // 🛡️ SEGURO: Se não há login, salta para fora. 
+        // Como o container está com "display: none", o interior nunca é visto.
         window.location.href = "index.html";
         return; 
     } else {
-        console.log("🔐 Acesso garantido. A preparar dados...");
+        console.log("🔐 Login confirmado. A preparar dados...");
 
-        // --- 1. CARREGAMENTO DE DADOS (O código que já tinhas) ---
+        // --- TODA A TUA LÓGICA DE CARREGAMENTO (Parâmetros, Perfil, Pastas) ---
+        const params = new URLSearchParams(window.location.search);
+        const urlRootId = params.get('rootId');
+        const openFolderId = params.get('openFolder'); 
+        const targetNoteId = params.get('noteId');
+        const redirectSearch = params.get('search');
+        const viewParam = params.get('view');
+        const openArchiveId = params.get('openArchive'); 
+        const modeParam = params.get('mode');           
+
+        SUPERFOLDER_ID = urlRootId || null; 
+        if (viewParam === 'shared' || modeParam === 'collab') currentViewMode = 'shared';
+
         try {
-            const params = new URLSearchParams(window.location.search);
-            const targetNoteId = params.get('noteId');
-            const urlRootId = params.get('rootId');
-            SUPERFOLDER_ID = urlRootId || null;
-
-            // Carregar Perfil, Configurações, Pastas...
+            // Carregar Perfil e Configurações
             const userDocRef = doc(db, "users", user.uid);
             const userDoc = await getDoc(userDocRef);
             if (userDoc.exists()) currentUserData = userDoc.data();
+            
+            const configRef = doc(db, "configuracoes", user.uid);
+            const configSnap = await getDoc(configRef);
+            if (configSnap.exists()) appSettings = { ...appSettings, ...configSnap.data() };
 
-            // Inicializar a vista do painel
-            updateNavigationView(false, targetNoteId);
+            // Inicializar a navegação (Pastas/Arquivos)
+            if (openFolderId) {
+                await reconstructFolderNavigation(openFolderId, targetNoteId);
+            } else if (SUPERFOLDER_ID) {
+                const rootSnap = await getDoc(doc(db, 'pastas', SUPERFOLDER_ID));
+                if (rootSnap.exists()) {
+                    currentSuperfolderName = rootSnap.data().nome;
+                    updateNavigationView(false, targetNoteId);
+                }
+            } else {
+                updateNavigationView(false, targetNoteId); 
+            }
 
-            if (targetNoteId) displayNote(targetNoteId, null);
+            if (targetNoteId) displayNote(targetNoteId, null, redirectSearch);
+            if (openArchiveId) {
+                const arcSnap = await getDoc(doc(db, 'pastas', openArchiveId));
+                if (arcSnap.exists()) displayArchive(openArchiveId, arcSnap.data());
+            }
 
-            // Carregar Caches
+            // Iniciar caches de fundo
             fetchAllEntities();
             fetchAllTags();
             loadUserHighlights();
 
-        } catch (e) { console.error("Erro no carregamento:", e); }
+        } catch (e) { console.error(e); }
 
         // ============================================================
-        // 🚀 A REVELAÇÃO (Exatamente como pediste: 1 segundo depois)
+        // 🚀 O MOMENTO DA REVELAÇÃO (Só após os dados estarem prontos)
         // ============================================================
+        
+        // 1. Esperamos um pequeno fôlego para o navegador processar o HTML das listas
         setTimeout(() => {
-            // 1. Faz o body aparecer (opacity 1)
-            document.body.style.transition = "opacity 0.5s ease";
-            document.body.style.opacity = "1";
-            
-            // 2. Remove o loader com um efeito suave
-            if (loader) {
-                loader.style.transition = "opacity 0.5s ease";
-                loader.style.opacity = "0";
-                setTimeout(() => loader.remove(), 500);
+            if (container) {
+                // Remove o "display: none" e mostra a interface
+                container.style.setProperty('display', 'flex', 'important');
             }
             
-            console.log("✨ Site revelado.");
-        }, 1000); // 1 segundo de espera após detetar o login
+            if (loader) {
+                // Efeito suave de saída do loader
+                loader.style.opacity = '0';
+                setTimeout(() => {
+                    loader.remove();
+                }, 500);
+            }
+        }, 800); // 800ms é o tempo perfeito para evitar qualquer "pulo" visual
     }
 });
 
