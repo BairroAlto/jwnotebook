@@ -5763,11 +5763,11 @@ input:checked + .scope-slider:before { transform: translateX(16px); background-c
 </div>
 
 <!-- MODAL DE BLOQUEIO DE GRAVAÇÃO -->
-<div id="forcing-save-modal" class="modal-overlay" style="z-index: 9999; background-color: rgba(0,0,0,0.8);">
-    <div class="modal-content" style="text-align: center; max-width: 300px;">
+<div id="forcing-save-modal" class="modal-overlay" style="z-index: 9999; background-color: rgba(0,0,0,0.85);">
+    <div class="modal-content" style="text-align: center; max-width: 300px; border: 1px solid var(--accent-color);">
         <div class="spinner" style="margin: 0 auto 15px auto; border-left-color: var(--accent-color);"></div>
-        <h3 style="margin-bottom: 10px;">A Guardar...</h3>
-        <p style="color: var(--text-muted-color);">Por favor, aguarde enquanto guardamos as suas alterações.</p>
+        <h3 style="margin-bottom: 10px; color: white;">A Guardar...</h3>
+        <p style="color: var(--text-muted-color); font-size: 0.9em;">Por favor, aguarde enquanto as suas alterações são enviadas.</p>
     </div>
 </div>
 
@@ -6216,14 +6216,14 @@ input:checked + .scope-slider:before { transform: translateX(16px); background-c
 </div>
 
 <!-- MODAL PARA EMOJI PERSONALIZADO -->
-<div id="custom-emoji-modal" class="modal-overlay" style="z-index: 2700;">
+<div id="custom-emoji-modal" class="modal-overlay" style="z-index: 9000000;">
     <div class="modal-content" style="max-width: 350px; text-align: center;">
         <h3>Editar Tema</h3>
         <p style="font-size: 0.85em; color: var(--text-muted-color); margin-bottom: 15px;">Ajuste o nome e o ícone do tema:</p>
         
         <!-- Campo Nome -->
         <input type="text" id="custom-theme-name-input" placeholder="Nome do Tema" 
-               style="width: 100%; padding: 10px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 8px; color: white; margin-bottom: 15px; outline: none; transition: border-color 0.2s;">
+               style="width: 100%; padding: 10px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 8px; color: white; margin-bottom: 15px; outline: none;">
 
         <!-- Campo Emoji -->
         <label style="display:block; margin-bottom:8px; font-size: 0.75em; text-transform: uppercase; color: var(--text-muted-color);">Emoji / Ícone:</label>
@@ -6309,6 +6309,7 @@ input:checked + .scope-slider:before { transform: translateX(16px); background-c
         </div>
     </div>
 </div>
+
 
 
 </body>
@@ -6918,31 +6919,37 @@ function checkInitialConnection() {
  * @param {function} navigationAction A função a ser executada se a navegação for confirmada.
  */
 async function navigateWithUnsavedCheck(navigationAction) {
-    // Se o estado for 'unsaved' (por guardar) ou 'saving' (a guardar)
+    // Verifica se há algo por guardar
     if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
-        
         const savingModal = document.getElementById('forcing-save-modal');
         
+        if (savingModal) {
+            console.log("⏳ Mostrando painel de gravação forçada...");
+            // MOVE PARA O TOPO E FORÇA VISIBILIDADE
+            document.body.appendChild(savingModal);
+            savingModal.style.setProperty('display', 'flex', 'important');
+            savingModal.style.zIndex = "9999999"; // O nível mais alto
+            savingModal.style.opacity = "1";
+            savingModal.style.visibility = "visible";
+        }
+
         try {
-            // 1. Mostrar o painel de "A Guardar..."
-            savingModal.style.display = 'flex';
+            // Executa a gravação e ESPERA (await) que o Firebase confirme
+            await saveNote(true); 
 
-            // 2. Forçar a gravação imediata e ESPERAR que termine (await)
-            await saveNote(true);
-
-            // 3. Esconder o painel
-            savingModal.style.display = 'none';
-
-            // 4. Executar a navegação (mudar de página/nota)
+            // Esconde o painel após o sucesso
+            if (savingModal) savingModal.style.display = 'none';
+            
+            // Segue com a navegação que o utilizador queria fazer
             navigationAction();
 
         } catch (error) {
-            // Se der erro ao gravar (ex: sem internet), remove o modal e avisa
-            savingModal.style.display = 'none';
-            alert("Não foi possível guardar as alterações. A navegação foi cancelada para não perder dados.");
+            console.error("❌ Erro na gravação forçada:", error);
+            if (savingModal) savingModal.style.display = 'none';
+            alert("Não foi possível guardar as alterações. Verifique a sua ligação.");
         }
     } else {
-        // Se já estava guardado, navega logo
+        // Se já estava tudo guardado, apenas navega
         navigationAction();
     }
 }
@@ -6952,78 +6959,106 @@ async function navigateWithUnsavedCheck(navigationAction) {
 async function openTopicsModal(targetId, type) {
     if (!targetId) return alert("Erro: Nenhum item selecionado.");
 
-    topicTargetId = targetId; // Define quem estamos a editar
+    console.log(`🚀 Abrindo tópicos para ${type}: ${targetId}`);
     
-    // Atualiza o Título do Modal dinamicamente
-    const modalTitle = document.querySelector('#topics-modal h3');
-    const typeName = type === 'pasta' ? 'Pasta' : 'Nota';
-    modalTitle.textContent = `Tópicos da ${typeName}`;
+    // 1. CONFIGURAÇÃO DE ESTADO
+    topicTargetId = targetId; // ID da Nota Principal
+    activeMiniNoteElement = null; // Garante que NÃO estamos em modo "caixa"
 
-    // 1. Carregar estado atual do item alvo (Pasta ou Nota)
-    const docSnap = await getDoc(doc(db, 'pastas', targetId)); // 'pastas' é a coleção, mesmo para pastas
-    
-    if (docSnap.exists()) {
-        currentNoteTopics = docSnap.data().topicosSelecionados || {}; 
-    } else {
-        currentNoteTopics = {};
+    const modal = document.getElementById('topics-modal');
+    if (!modal) return console.error("Modal #topics-modal não encontrado!");
+
+    // 2. MOVE PARA O BODY E DEFINE Z-INDEX ALTO
+    document.body.appendChild(modal);
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "8000000"; // No mesmo nível do Histórico
+    modal.style.visibility = "visible";
+    modal.style.opacity = "1";
+
+    // 3. ATUALIZA TÍTULO DO MODAL
+    const modalTitle = modal.querySelector('h3');
+    if (modalTitle) {
+        const typeName = type === 'pasta' ? 'Pasta' : 'Nota';
+        modalTitle.textContent = `Tópicos da ${typeName}`;
     }
 
-    activeTopicIdForSelection = null;
-    document.getElementById('topics-modal').style.display = 'flex';
-    
-    await renderTopicsSelectionList();
+    // 4. CARREGAR DADOS ATUAIS DA NOTA
+    try {
+        const docSnap = await getDoc(doc(db, 'pastas', targetId));
+        if (docSnap.exists()) {
+            currentNoteTopics = docSnap.data().topicosSelecionados || {}; 
+        } else {
+            currentNoteTopics = {};
+        }
+
+        // Reset visual e carregamento da lista
+        activeTopicIdForSelection = null;
+        document.getElementById('subtopics-list-select').innerHTML = 
+            '<li style="color: #888; font-style: italic; padding: 10px;">Selecione um tópico à esquerda.</li>';
+        
+        await renderTopicsSelectionList();
+
+    } catch (e) {
+        console.error("Erro ao carregar tópicos da nota:", e);
+    }
 }
 
 async function renderTopicsSelectionList() {
     const list = document.getElementById('topics-list-select');
-    list.innerHTML = '<li>A carregar...</li>';
+    if (!list) return;
 
-    const q = query(
-        collection(db, 'topicos'), 
-        where('userId', '==', auth.currentUser.uid),
-        orderBy('nome')
-    );
-    const snapshot = await getDocs(q);
-    
-    list.innerHTML = '';
-    
-    if (snapshot.empty) {
-        list.innerHTML = '<li style="padding:10px; color:#888;">Nenhum tópico criado.</li>';
-        return;
-    }
+    list.innerHTML = '<li style="padding:10px;">A carregar...</li>';
 
-    snapshot.forEach(doc => {
-        const topic = { id: doc.id, ...doc.data() };
-        const li = document.createElement('li');
+    try {
+        console.log("📡 [FIREBASE] Buscando tópicos...");
+        const q = query(
+            collection(db, 'topicos'), 
+            where('userId', '==', auth.currentUser.uid),
+            orderBy('nome')
+        );
+        const snapshot = await getDocs(q);
         
-        // Verifica se este tópico (ou algum subtópico dele) já está selecionado
-        const isSelected = !!currentNoteTopics[topic.id];
-        if (topic.id === activeTopicIdForSelection) li.classList.add('active-topic');
+        list.innerHTML = '';
+        
+        if (snapshot.empty) {
+            console.log("ℹ️ [FIREBASE] Nenhum tópico encontrado.");
+            list.innerHTML = '<li style="padding:10px; color:#888;">Nenhum tópico criado.</li>';
+            return;
+        }
 
-        li.innerHTML = `
-            <input type="checkbox" class="topic-checkbox" ${isSelected ? 'checked' : ''}>
-            <span>${topic.nome}</span>
-        `;
-
-        // Clique na linha: Abre os subtópicos à direita
-        li.onclick = () => {
-            activeTopicIdForSelection = topic.id;
-            // Atualiza visual da seleção na esquerda
-            document.querySelectorAll('#topics-list-select li').forEach(el => el.classList.remove('active-topic'));
-            li.classList.add('active-topic');
+        snapshot.forEach(docSnap => {
+            const topic = { id: docSnap.id, ...docSnap.data() };
+            const li = document.createElement('li');
             
-            renderSubtopicsSelectionList(topic.id, topic.nome);
-        };
+            // Verifica se este tópico (ou subtópicos dele) já estão no data-topics da caixa
+            const isSelected = !!currentNoteTopics[topic.id];
+            
+            li.innerHTML = `
+                <input type="checkbox" class="topic-checkbox" ${isSelected ? 'checked' : ''}>
+                <span>${topic.nome}</span>
+            `;
 
-        // Clique no checkbox: Seleciona o tópico sem abrir subtópicos obrigatoriamente
-        const cb = li.querySelector('.topic-checkbox');
-        cb.onclick = (e) => {
-            e.stopPropagation();
-            toggleTopicSelection(topic.id, cb.checked);
-        };
+            li.onclick = () => {
+                activeTopicIdForSelection = topic.id;
+                document.querySelectorAll('#topics-list-select li').forEach(el => el.classList.remove('active-topic'));
+                li.classList.add('active-topic');
+                renderSubtopicsSelectionList(topic.id, topic.nome);
+            };
 
-        list.appendChild(li);
-    });
+            const cb = li.querySelector('.topic-checkbox');
+            cb.onclick = (e) => {
+                e.stopPropagation();
+                toggleTopicSelection(topic.id, cb.checked);
+            };
+
+            list.appendChild(li);
+        });
+        console.log("🎨 [UI] Lista de tópicos renderizada.");
+
+    } catch (error) {
+        console.error("❌ [ERRO] Falha ao renderizar lista de tópicos:", error);
+        list.innerHTML = '<li style="color:red; padding:10px;">Erro ao carregar.</li>';
+    }
 }
 
 async function renderSubtopicsSelectionList(topicId, topicName) {
@@ -7187,30 +7222,74 @@ editorToolbar.addEventListener('input', (e) => {
 
 // 1. Abrir o Modal Principal de Marcadores
 async function openBookmarksModal() {
-    if (!activeReferenceEntity || activeReferenceEntity.type !== 'textobiblico') return;
-
+    console.log("🚀 [INÍCIO] openBookmarksModal acionado.");
+    
     const modal = document.getElementById('bookmarks-modal');
     const list = document.getElementById('bookmarks-list');
     
-    modal.style.display = 'flex';
+    if (!modal || !list) {
+        console.error("❌ [ERRO] Elementos do modal não encontrados no DOM.");
+        return;
+    }
+
+    // 1. FORÇAR EXIBIÇÃO IMEDIATA (Para sabermos que o JS chegou aqui)
+    document.body.appendChild(modal); // Move para a raiz para evitar ser tapado
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "9999999";
+    modal.style.opacity = "1";
+    modal.style.visibility = "visible";
+
     list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar marcadores...</span></div>';
 
-    try {
-        const marcadoresRef = collection(db, 'marcadores');
-        const qMarcadores = query(marcadoresRef, where('userId', '==', auth.currentUser.uid), orderBy('nome'));
-        const marcadoresSnap = await getDocs(qMarcadores);
+    if (!activeReferenceEntity || activeReferenceEntity.type !== 'textobiblico') {
+        console.warn("⚠️ Entidade ativa não é texto bíblico ou está vazia.", activeReferenceEntity);
+        list.innerHTML = '<li style="padding:20px; color:orange;">Selecione um versículo bíblico primeiro.</li>';
+        return;
+    }
 
-        const textoRef = doc(db, 'textosbiblicos', activeReferenceEntity.id);
-        const textoSnap = await getDoc(textoRef);
+    try {
+        const nameToFind = activeReferenceEntity.name;
+        const myUid = auth.currentUser.uid;
+        console.log("📡 [FIREBASE] Iniciando busca para:", nameToFind, "UID:", myUid);
+
+        // A. Buscar se o texto já existe no DB do usuário
+        const qTexto = query(
+            collection(db, 'textosbiblicos'), 
+            where('nome', '==', nameToFind),
+            where('userId', '==', myUid)
+        );
         
-        const marcadoresAssociados = (textoSnap.exists() && textoSnap.data().marcadoresAssociados) 
-                                     ? textoSnap.data().marcadoresAssociados 
-                                     : {};
+        const textoSnap = await getDocs(qTexto);
+        let marcadoresAssociados = {};
+        
+        if (!textoSnap.empty) {
+            console.log("✅ Texto bíblico encontrado no DB.");
+            const data = textoSnap.docs[0].data();
+            marcadoresAssociados = data.marcadoresAssociados || {};
+            activeReferenceEntity.id = textoSnap.docs[0].id;
+        } else {
+            console.log("ℹ️ Texto bíblico novo (ainda não está no DB).");
+        }
+
+        // B. Buscar lista global de Marcadores do usuário
+        console.log("📡 [FIREBASE] Buscando lista de gêneros de marcadores...");
+        const qMarcadores = query(
+            collection(db, 'marcadores'), 
+            where('userId', '==', myUid), 
+            orderBy('nome')
+        );
+        
+        const marcadoresSnap = await getDocs(qMarcadores);
+        console.log("📊 Total de marcadores encontrados:", marcadoresSnap.size);
 
         list.innerHTML = '';
 
         if (marcadoresSnap.empty) {
-            list.innerHTML = '<li style="padding: 15px; text-align: center; color: var(--text-muted-color);">Nenhum marcador criado.<br>Clique no "+" acima para criar.</li>';
+            list.innerHTML = `
+                <li style="padding: 20px; text-align: center; color: #888;">
+                    Nenhum marcador criado.<br>
+                    <button class="modal-btn primary" style="margin-top:10px;" onclick="document.getElementById('open-create-bookmark-btn').click()">+ Criar Novo Marcador</button>
+                </li>`;
             return;
         }
 
@@ -7220,8 +7299,6 @@ async function openBookmarksModal() {
 
             const li = document.createElement('li');
             li.className = `bookmark-item ${isChecked ? 'active' : ''}`;
-            li.onclick = () => toggleBookmark(marcador.id, !isChecked, li);
-
             li.innerHTML = `
                 <div class="bookmark-info">
                     <span class="bookmark-title">${marcador.nome}</span>
@@ -7230,12 +7307,17 @@ async function openBookmarksModal() {
                 <div class="bookmark-check"></div>
             `;
 
+            li.onclick = () => toggleBookmark(marcador.id, !li.classList.contains('active'), li);
             list.appendChild(li);
         });
 
     } catch (error) {
-        console.error("Erro ao carregar marcadores:", error);
-        list.innerHTML = '<li>Erro ao carregar dados.</li>';
+        console.error("❌ [ERRO CRÍTICO] Falha no openBookmarksModal:", error);
+        list.innerHTML = `<li style="color:red; padding:20px;">
+            <strong>Erro ao carregar:</strong><br>
+            ${error.message}<br><br>
+            <small>Verifique se os índices do Firestore foram criados.</small>
+        </li>`;
     }
 }
 
@@ -7275,98 +7357,51 @@ async function toggleBookmark(marcadorId, shouldAdd, liElement) {
 }
 
 // --- FUNÇÃO UTILITÁRIA PARA O PROMPT PERSONALIZADO ---
- function showCustomInput(title, namePlaceholder = "") {
+function showCustomInput(title, namePlaceholder = "") {
     return new Promise((resolve) => {
         const modal = document.getElementById('custom-input-modal');
         const titleEl = document.getElementById('custom-input-title');
         const nameInput = document.getElementById('custom-input-name');
-        const descInput = document.getElementById('custom-input-desc'); // Novo
+        const descInput = document.getElementById('custom-input-desc');
         const confirmBtn = document.getElementById('custom-input-confirm');
         const cancelBtn = document.getElementById('custom-input-cancel');
 
-        // Configura o UI
+        if (!modal) return console.error("Modal custom-input-modal não encontrado!");
+
+        // 1. MOVE PARA O TOPO ABSOLUTO
+      document.body.appendChild(modal);
+        modal.style.setProperty('display', 'flex', 'important');
+        modal.style.zIndex = "9000000";
+
+        // 2. CONFIGURA INTERFACE
         titleEl.textContent = title;
         nameInput.value = '';
         nameInput.placeholder = namePlaceholder;
-        descInput.value = ''; // Limpa a descrição
+        descInput.value = '';
         
-        modal.style.display = 'flex';
-        nameInput.focus();
+        setTimeout(() => nameInput.focus(), 100);
 
-        // Limpeza
         const cleanup = () => {
             modal.style.display = 'none';
             confirmBtn.onclick = null;
             cancelBtn.onclick = null;
-            nameInput.onkeydown = null;
-            descInput.onkeydown = null; // Limpa listener do textarea também
         };
 
-        // Confirmar
-        const onConfirm = () => {
+        confirmBtn.onclick = () => {
             const nameVal = nameInput.value.trim();
             const descVal = descInput.value.trim();
-            
-            if (!nameVal) {
-                alert("O nome é obrigatório.");
-                return;
-            }
-            
+            if (!nameVal) return alert("O nome é obrigatório.");
             cleanup();
-            // Retorna um objeto com ambos os valores
             resolve({ name: nameVal, description: descVal }); 
         };
 
-        // Cancelar
-        const onCancel = () => {
+        cancelBtn.onclick = () => {
             cleanup();
             resolve(null);
         };
-
-        // Configura Eventos
-        confirmBtn.onclick = onConfirm;
-        cancelBtn.onclick = onCancel;
-
-        // Enter no campo Nome submete (mas no textarea permite quebra de linha ou tab)
-        nameInput.onkeydown = (e) => {
-            if (e.key === 'Enter') onConfirm();
-            if (e.key === 'Escape') onCancel();
-        };
-        
-        // Escape no textarea cancela
-        descInput.onkeydown = (e) => {
-            if (e.key === 'Escape') onCancel();
-        };
     });
 }
-// --- 3. GRAVAÇÃO NA NOTA ---
 
-document.getElementById('save-topics-btn').addEventListener('click', async () => {
-    // CASO 1: Gravando tópicos de uma CAIXA (Questão/SubNota)
-    if (activeMiniNoteElement) {
-        activeMiniNoteElement.setAttribute('data-topics', JSON.stringify(currentNoteTopics));
-        updateMiniNoteButtonState(activeMiniNoteElement);
-        document.getElementById('topics-modal').style.display = 'none';
-        activeMiniNoteElement = null;
-        saveNote(true); // Força gravação da nota
-        return;
-    }
-
-    // CASO 2: Gravando tópicos da NOTA PRINCIPAL
-    if (topicTargetId) {
-        try {
-            const itemRef = doc(db, 'pastas', topicTargetId);
-            await updateDoc(itemRef, {
-                topicosSelecionados: currentNoteTopics,
-                ultimaedicao: serverTimestamp()
-            });
-            document.getElementById('topics-modal').style.display = 'none';
-            updateSaveStatus('saved');
-        } catch (error) {
-            console.error("Erro ao gravar tópicos:", error);
-        }
-    }
-});
 
 
 // ============================================================
@@ -7375,81 +7410,153 @@ document.getElementById('save-topics-btn').addEventListener('click', async () =>
 
 // A. LISTENER DE CLIQUE NO BOTÃO 📋
 noteContentEditor.addEventListener('click', (e) => {
+    console.log("🖱️ Clique detetado no editor. Alvo:", e.target);
+
     const topicBtn = e.target.closest('button[data-action="manage-mini-note-topics"]');
+    
     if (topicBtn) {
-        e.preventDefault(); e.stopPropagation(); // Impede foco indesejado
+        console.log("✅ Botão 📋 identificado com sucesso!");
+        e.preventDefault(); 
+        e.stopPropagation();
+        
         const wrapper = topicBtn.closest('.mini-note-wrapper');
-        openTopicsModalForMiniNote(wrapper);
+        if (wrapper) {
+            console.log("📦 Pai .mini-note-wrapper encontrado (ID:", wrapper.id, ")");
+            openTopicsModalForMiniNote(wrapper);
+        } else {
+            console.error("❌ ERRO: Clique no botão 📋 mas não encontrei o pai .mini-note-wrapper.");
+        }
+    } else {
+        console.log("ℹ️ Clique não foi no botão de tópicos.");
     }
 });
 
-// B. FUNÇÃO PARA ABRIR O MODAL (Modo SubNota)
-async function openTopicsModalForMiniNote(wrapperElement) {
-    if (!wrapperElement) return;
-
-    // 1. Configurar Estado Global
-    activeMiniNoteElement = wrapperElement; // Dizemos ao sistema que estamos a editar ESTE elemento
-    topicTargetId = null; // Anula o ID da nota principal para não confundir
-    
-    // 2. Ler tópicos atuais do atributo HTML
-    const topicsString = wrapperElement.dataset.topics || '{}';
-    try {
-        currentNoteTopics = JSON.parse(topicsString);
-    } catch (e) {
-        currentNoteTopics = {};
-    }
-
-    // 3. Configurar UI do Modal
-    const modalTitle = document.querySelector('#topics-modal h3');
-    const isQuestion = wrapperElement.classList.contains('question-mode');
-    modalTitle.textContent = isQuestion ? "Tópicos da Questão" : "Tópicos da SubNota";
-
-    document.getElementById('topics-modal').style.display = 'flex';
-    
-    // 4. Renderizar a lista (Reutiliza a função existente!)
-    await renderTopicsSelectionList();
+// OUVINTE PARA O FEED DO ARQUIVO (Caso use tópicos lá também)
+const archiveFeedEl = document.getElementById('archive-feed');
+if (archiveFeedEl) {
+    archiveFeedEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-action="manage-mini-note-topics"]');
+        if (btn) {
+            e.preventDefault(); e.stopPropagation();
+            const wrapper = btn.closest('.mini-note-wrapper');
+            if (wrapper) openTopicsModalForMiniNote(wrapper);
+        }
+    });
 }
 
-// C. ATUALIZAR O LISTENER DO BOTÃO "GRAVAR TÓPICOS"
-// Substitua o listener existente do 'save-topics-btn' por este:
-document.getElementById('save-topics-btn').addEventListener('click', async () => {
-    
-    // CASO 1: Estamos a gravar tópicos de uma SUB-NOTA (Elemento DOM)
-    if (activeMiniNoteElement) {
-        // Converte o objeto de tópicos em string JSON
-        const jsonTopics = JSON.stringify(currentNoteTopics);
-        
-        // Grava no atributo do HTML
-        activeMiniNoteElement.setAttribute('data-topics', jsonTopics);
-        
-        // >>> NOVO: Chama a função auxiliar para atualizar a cor imediatamente <<<
-        updateMiniNoteButtonState(activeMiniNoteElement);
+// B. FUNÇÃO PARA ABRIR O MODAL (Modo SubNota)
+async function openTopicsModalForMiniNote(wrapperElement) {
+    console.log("🚀 [DEBUG] Iniciando abertura de tópicos para caixa...");
 
-        document.getElementById('topics-modal').style.display = 'none';
-        
-        // Limpa a variável global e grava a Nota Principal
-        activeMiniNoteElement = null;
-        saveNote(); 
+    if (!wrapperElement) {
+        console.error("❌ [ERRO] wrapperElement nulo.");
         return;
     }
 
-    // CASO 2: Estamos a gravar tópicos da NOTA PRINCIPAL (Firebase)
-    // (Este é o código original que já tinha)
-    if (topicTargetId) {
-        try {
+    // 1. Configuração de Estado
+    activeMiniNoteElement = wrapperElement; 
+    topicTargetId = null; 
+
+    // 2. Leitura dos Dados
+    const topicsString = wrapperElement.getAttribute('data-topics') || '{}';
+    console.log("📊 [DEBUG] Dados lidos:", topicsString);
+
+    try {
+        currentNoteTopics = JSON.parse(topicsString);
+    } catch (e) {
+        console.warn("⚠️ [AVISO] JSON de tópicos inválido, resetando.");
+        currentNoteTopics = {};
+    }
+
+    // 3. CAPTURA E MOVIMENTAÇÃO DO MODAL (Correção de Visibilidade)
+    const modal = document.getElementById('topics-modal');
+    if (!modal) {
+        console.error("❌ [ERRO] Modal #topics-modal não encontrado no HTML!");
+        return;
+    }
+
+    // Move o modal para a raiz do body para garantir que nenhum 'overflow:hidden' o tape
+    document.body.appendChild(modal);
+
+    // 4. Configuração Visual
+    const modalTitle = modal.querySelector('h3');
+    if (modalTitle) {
+        const isQuestion = wrapperElement.classList.contains('question-mode');
+        modalTitle.textContent = isQuestion ? "Tópicos da Questão" : "Tópicos da SubNota";
+    }
+
+    // Reset de busca e seleção anterior
+    activeTopicIdForSelection = null;
+    const subList = document.getElementById('subtopics-list-select');
+    if(subList) subList.innerHTML = '<li style="color:#888; padding:10px;">Selecione um tópico à esquerda.</li>';
+
+    // 5. FORÇAR EXIBIÇÃO
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "999999"; // Valor extremo para ficar à frente de tudo
+    modal.style.visibility = "visible";
+    modal.style.opacity = "1";
+
+    console.log("✨ [DEBUG] Modal disparado com sucesso!");
+
+    // 6. Carregar a Lista
+    await renderTopicsSelectionList();
+    console.log("✅ [DEBUG] renderTopicsSelectionList finalizado.");
+}
+
+// --- FUNÇÃO UNIFICADA E ÚNICA PARA O BOTÃO GRAVAR TÓPICOS ---
+document.getElementById('save-topics-btn').onclick = async () => {
+    const btn = document.getElementById('save-topics-btn');
+    
+    // 1. Bloqueia o botão para evitar cliques duplos
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "A gravar...";
+
+    try {
+        // CENÁRIO A: Gravando tópicos de uma CAIXA INDIVIDUAL (Questão, Subnota, etc.)
+        if (activeMiniNoteElement) {
+            console.log("💾 Gravando tópicos na Caixa:", activeMiniNoteElement.id);
+            
+            // Converte a seleção do modal para texto JSON e guarda no atributo da caixa
+            const jsonTopics = JSON.stringify(currentNoteTopics);
+            activeMiniNoteElement.setAttribute('data-topics', jsonTopics);
+            
+            // Atualiza a cor azul do ícone 📋 na caixa
+            if (typeof updateMiniNoteButtonState === 'function') {
+                updateMiniNoteButtonState(activeMiniNoteElement);
+            }
+
+            // Fecha o modal e limpa a referência
+            document.getElementById('topics-modal').style.display = 'none';
+            activeMiniNoteElement = null; 
+            
+            // Grava a nota principal para persistir as mudanças no Firebase
+            await saveNote(true); 
+        } 
+        // CENÁRIO B: Gravando tópicos da NOTA ou PASTA principal
+        else if (topicTargetId) {
+            console.log("💾 Gravando tópicos na Nota/Pasta:", topicTargetId);
             const itemRef = doc(db, 'pastas', topicTargetId);
+            
             await updateDoc(itemRef, {
                 topicosSelecionados: currentNoteTopics,
                 ultimaedicao: serverTimestamp()
             });
+
             document.getElementById('topics-modal').style.display = 'none';
+            
+            // Se for a nota que temos aberta agora, mostra o "Guardado" no topo
             if (topicTargetId === selectedNoteId) updateSaveStatus('saved');
-        } catch (error) {
-            console.error("Erro ao gravar tópicos:", error);
-            alert("Erro ao gravar.");
         }
+    } catch (error) {
+        console.error("❌ Erro crítico ao gravar tópicos:", error);
+        alert("Erro ao gravar. Verifique a sua ligação à internet.");
+    } finally {
+        // Restaura o botão
+        btn.disabled = false;
+        btn.textContent = originalText;
     }
-});
+};
 
 document.getElementById('manage-topics-btn').addEventListener('click', () => {
     activeTopicIdForManagement = null;
@@ -7469,41 +7576,46 @@ document.getElementById('close-manage-topics-btn').addEventListener('click', () 
 
 async function renderManageTopicsList(filterText = '') {
     const list = document.getElementById('topics-list-manage');
+    if (!list) return;
+
     list.innerHTML = '<li>Carregando...</li>';
 
-    const q = query(collection(db, 'topicos'), where('userId', '==', auth.currentUser.uid), orderBy('nome'));
-    const snapshot = await getDocs(q);
-    
-    list.innerHTML = '';
-    
-    snapshot.forEach(doc => {
-        const topic = { id: doc.id, ...doc.data() };
+    try {
+        const q = query(
+            collection(db, 'topicos'), 
+            where('userId', '==', auth.currentUser.uid), 
+            orderBy('nome')
+        );
+        const snapshot = await getDocs(q);
         
-        // Filtro de pesquisa
-        if (filterText && !topic.nome.toLowerCase().includes(filterText.toLowerCase())) {
-            return;
-        }
+        list.innerHTML = '';
+        
+        snapshot.forEach(docSnap => {
+            const topic = { id: docSnap.id, ...docSnap.data() };
+            if (filterText && !topic.nome.toLowerCase().includes(filterText.toLowerCase())) return;
 
-        const li = document.createElement('li');
-        if (topic.id === activeTopicIdForManagement) li.classList.add('active-topic');
-        
-        li.textContent = topic.nome;
-        
-        li.onclick = () => {
-            list.querySelectorAll('li').forEach(el => el.classList.remove('active-topic'));
-            li.classList.add('active-topic');
-            activeTopicIdForManagement = topic.id;
+            const li = document.createElement('li');
+            li.textContent = topic.nome;
+            if (topic.id === activeTopicIdForManagement) li.classList.add('active-topic');
             
-            // Mostra botão de criar subtópico
-            const createSubBtn = document.getElementById('create-new-subtopic-btn');
-            createSubBtn.style.display = 'block';
-            createSubBtn.textContent = `+ Subtópico em "${topic.nome}"`;
-            
-            renderManageSubtopicsList(topic.id);
-        };
-
-        list.appendChild(li);
-    });
+            li.onclick = () => {
+                document.querySelectorAll('#topics-list-manage li').forEach(el => el.classList.remove('active-topic'));
+                li.classList.add('active-topic');
+                activeTopicIdForManagement = topic.id;
+                
+                const createSubBtn = document.getElementById('create-new-subtopic-btn');
+                if (createSubBtn) {
+                    createSubBtn.style.display = 'block';
+                    createSubBtn.textContent = `+ Subtópico em "${topic.nome}"`;
+                }
+                
+                renderManageSubtopicsList(topic.id);
+            };
+            list.appendChild(li);
+        });
+    } catch (e) {
+        console.error("Erro ao carregar gestão de tópicos:", e);
+    }
 }
 
 async function renderManageSubtopicsList(topicId) {
@@ -7730,6 +7842,8 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             li.setAttribute('data-id', item.id);
             li.setAttribute('data-type', item.tipo);
             li.setAttribute('data-name', item.nome);
+            li.setAttribute('data-parent-id', item.parentId || "null");
+            li.setAttribute('data-protected', (item.passe && item.passe.trim() !== "") ? "true" : "false");
             
             // Atributo de PIN (Novo)
             li.setAttribute('data-pinned', item.isPinned ? "true" : "false");
@@ -8512,100 +8626,98 @@ function updateMiniNoteButtonState(wrapperElement) {
 }
 
 // --- FUNÇÃO PARA CORRIGIR SUBNOTAS ANTIGAS ---
- function fixLegacyMiniNotes() {
+function fixLegacyMiniNotes() {
     const editor = document.getElementById('note-content-editor');
     if (!editor) return;
 
-    // --- 1. LIMPEZA DE SEGURANÇA (SETAS FANTASMA) ---
-    // Remove especificamente o span que está a causar o triângulo indesejado
+    // 1. LIMPEZA DE SEGURANÇA (Remove elementos órfãos de versões antigas)
     const ghostArrows = editor.querySelectorAll('.title-expand-arrow');
-    if (ghostArrows.length > 0) {
-        ghostArrows.forEach(arrow => {
-            arrow.remove();
-        });
-    }
+    ghostArrows.forEach(arrow => arrow.remove());
 
     const wrappers = editor.querySelectorAll('.mini-note-wrapper');
     
     wrappers.forEach(wrapper => {
-        // 2. GARANTIA DE ATRIBUTOS ESSENCIAIS
+        // 2. GARANTIA DE ATRIBUTOS ESSENCIAIS (Inicia se não existirem)
         if (!wrapper.hasAttribute('data-topics')) wrapper.setAttribute('data-topics', '{}');
         if (!wrapper.hasAttribute('data-shared')) wrapper.setAttribute('data-shared', 'false');
         if (!wrapper.hasAttribute('data-box-links')) wrapper.setAttribute('data-box-links', '{}');
 
+        // 3. RECONSTRUÇÃO DA TOOLBAR
         let toolbar = wrapper.querySelector('.mini-note-toolbar');
-        
-        // Se a nota for muito antiga e não tiver toolbar, criamos a estrutura base
         if (!toolbar) {
             toolbar = document.createElement('div');
             toolbar.className = 'mini-note-toolbar';
             toolbar.setAttribute('contenteditable', 'false');
-            wrapper.insertBefore(toolbar, wrapper.querySelector('.mini-note-content'));
+            // Insere a toolbar antes do conteúdo da nota
+            const content = wrapper.querySelector('.mini-note-content');
+            wrapper.insertBefore(toolbar, content);
         }
 
-        // 3. RECONSTRUÇÃO DA TOOLBAR (Garante que todos os botões existem)
-        const buttonsConfig = [
-            { action: 'sharing-settings', icon: '🔐', title: 'Definições de Partilha' },
-            { action: 'move-up', icon: '🔺', title: 'Mover para cima', isGroup: true },
-            { action: 'move-down', icon: '🔻', title: 'Mover para baixo', isGroup: true },
-            { action: 'manage-box-links', icon: '⚡', title: 'Hiperligações da Caixa' },
-            { action: 'append-mini-note', icon: '🧬', title: 'Enviar para outra nota' },
-            { action: 'highlight-color', icon: '🎨', title: 'Destacar' },
-            { action: 'manage-mini-note-topics', icon: '📋', title: 'Gerir Tópicos' },
-            { action: 'delete-mini-note', icon: '🗑️', title: 'Apagar Caixa' }
-        ];
-
-        // Garante que o grupo de setas existe
+        // Garante que o grupo de setas (Mover) existe
         let arrowGroup = toolbar.querySelector('.toolbar-btn-group');
         if (!arrowGroup) {
             arrowGroup = document.createElement('div');
             arrowGroup.className = 'toolbar-btn-group';
-            // Insere após o botão de partilha se ele existir
-            const shareBtn = toolbar.querySelector('[data-action="sharing-settings"]');
-            if (shareBtn) shareBtn.after(arrowGroup);
-            else toolbar.appendChild(arrowGroup);
+            toolbar.appendChild(arrowGroup);
         }
 
-        buttonsConfig.forEach(config => {
-            let btn = toolbar.querySelector(`button[data-action="${config.action}"]`);
+        // Configuração de todos os botões necessários
+        const buttonsConfig = [
+            { action: 'sharing-settings', icon: '🔐', title: 'Partilha', parent: toolbar },
+            { action: 'move-up', icon: '🔺', title: 'Subir', parent: arrowGroup },
+            { action: 'move-down', icon: '🔻', title: 'Descer', parent: arrowGroup },
+            { action: 'manage-box-links', icon: '⚡', title: 'Links/Codex', parent: toolbar },
+            { action: 'append-mini-note', icon: '🧬', title: 'Clonar para Nota', parent: toolbar },
+            { action: 'highlight-color', icon: '🎨', title: 'Destacar Cor', parent: toolbar },
+            { action: 'manage-mini-note-topics', icon: '📋', title: 'Gerir Tópicos', parent: toolbar },
+            { action: 'delete-mini-note', icon: '🗑️', title: 'Apagar', parent: toolbar }
+        ];
+
+        buttonsConfig.forEach(cfg => {
+            let btn = toolbar.querySelector(`button[data-action="${cfg.action}"]`);
             if (!btn) {
                 btn = document.createElement('button');
                 btn.type = 'button';
-                btn.dataset.action = config.action;
-                btn.title = config.title;
-                btn.textContent = config.icon;
-                
-                if (config.isGroup) {
-                    arrowGroup.appendChild(btn);
-                } else {
-                    toolbar.appendChild(btn);
-                }
+                btn.dataset.action = cfg.action;
+                btn.textContent = cfg.icon;
+                btn.title = cfg.title;
+                cfg.parent.appendChild(btn);
             }
         });
 
-        // 4. GARANTIA DE EDIÇÃO CORRETA
-        toolbar.setAttribute('contenteditable', 'false');
-        
-        const titleArea = wrapper.querySelector('.mini-note-title-input');
-        if (titleArea) {
-            titleArea.removeAttribute('readonly'); // Garante que é editável
-            // Se a configuração global de "Título Completo" estiver ativa:
-            if (typeof appSettings !== 'undefined' && appSettings.showFullTitles) {
-                titleArea.classList.add('wrap-enabled');
-                if (typeof autoResizeTitle === 'function') autoResizeTitle(titleArea);
-            }
+        // 4. CONVERSÃO DE TÍTULOS (Input -> Textarea para múltiplas linhas)
+        let titleArea = wrapper.querySelector('.mini-note-title-input');
+        if (titleArea && titleArea.tagName === 'INPUT') {
+            const textarea = document.createElement('textarea');
+            textarea.className = titleArea.className;
+            textarea.value = titleArea.getAttribute('value') || titleArea.value || "";
+            textarea.placeholder = titleArea.placeholder;
+            textarea.setAttribute('spellcheck', 'false');
+            titleArea.parentNode.replaceChild(textarea, titleArea);
+            titleArea = textarea;
         }
 
+        // Aplica o comportamento de quebra de linha se a configuração global estiver ativa
+        if (titleArea && typeof appSettings !== 'undefined' && appSettings.showFullTitles) {
+            titleArea.classList.add('wrap-enabled');
+            // Ajusta a altura inicial baseado no conteúdo
+            setTimeout(() => {
+                titleArea.style.height = 'auto';
+                titleArea.style.height = titleArea.scrollHeight + 'px';
+            }, 0);
+        }
+
+        // 5. GARANTIA DE EDIÇÃO
+        toolbar.setAttribute('contenteditable', 'false');
         const contentDiv = wrapper.querySelector('.mini-note-content');
         if (contentDiv) contentDiv.setAttribute('contenteditable', 'true');
 
-        // 5. ATUALIZAÇÃO VISUAL DOS BOTÕES (Cores e Estados)
+        // 6. ATUALIZAÇÃO VISUAL (Cores dos botões baseadas nos dados)
         if (typeof updateMiniNoteButtonState === 'function') updateMiniNoteButtonState(wrapper); 
         if (typeof updateHighlightButtonState === 'function') updateHighlightButtonState(wrapper); 
         if (typeof updateSharingButtonState === 'function') updateSharingButtonState(wrapper); 
         if (typeof updateBoxLinkButtonState === 'function') updateBoxLinkButtonState(wrapper);
     });
-
 }
 
 
@@ -8689,68 +8801,58 @@ async function loadUserHighlights() {
 
 // 2. Abrir Modal de Cores (Agora muito mais simples)
 async function openHighlightPopup(wrapper) {
-    // IMPORTANTE: Definir o wrapper ativo ANTES de renderizar a lista
+    console.log("🚀 Abrindo seletor de cores...");
     activeWrapperForColor = wrapper; 
-    
-    const modal = document.getElementById('highlight-modal');
-    
-    await loadUserHighlights();
-    
-    // Agora o render vai conseguir ler activeWrapperForColor.dataset.highlight
-    renderHighlightList(); 
 
-    modal.style.display = 'flex';
+    const modal = document.getElementById('highlight-modal');
+    if (!modal) return console.error("Modal #highlight-modal não encontrado!");
+
+    // 1. MOVE PARA O BODY (Top Level)
+    document.body.appendChild(modal);
+
+    // 2. FORÇA VISIBILIDADE E CAMADA
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "3000000"; // Nível muito alto
+    modal.style.visibility = "visible";
+    modal.style.opacity = "1";
+
+    // 3. CARREGA DADOS
+    await loadUserHighlights();
+    renderHighlightList(); 
 }
 
 // 3. Renomear Destaque
 async function renameHighlight(hexCode, currentName) {
     const modal = document.getElementById('rename-highlight-modal');
-    const input = document.getElementById('new-highlight-name-input');
-    const confirmBtn = document.getElementById('confirm-rename-highlight-btn');
-    const cancelBtn = document.getElementById('cancel-rename-highlight-btn');
+    if (!modal) return;
 
+    // Move para o body e define Z-index supremo
+    document.body.appendChild(modal);
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "4000000"; // Acima do seletor de cores
+
+    const input = document.getElementById('new-highlight-name-input');
     colorHexBeingRenamed = hexCode;
     input.value = currentName;
-    modal.style.display = 'flex';
     
     setTimeout(() => {
         input.focus();
         input.select();
     }, 100);
 
-    const newConfirmBtn = confirmBtn.cloneNode(true);
-    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
-    
-    const newCancelBtn = cancelBtn.cloneNode(true);
-    cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
-
-    // Cancelar agora apenas fecha o de cima
-    newCancelBtn.onclick = (e) => {
-        e.stopPropagation(); // Impede o clique de subir para o document
-        modal.style.display = 'none';
-        colorHexBeingRenamed = null;
-    };
-
-    const onSave = async (e) => {
-        if (e) e.stopPropagation(); // Impede o clique de subir para o document
+    // Lógica dos botões Cancelar/Gravar (mantém a tua original, apenas garante o fecho)
+    document.getElementById('confirm-rename-highlight-btn').onclick = async () => {
         const newName = input.value.trim();
-        if (newName && newName !== currentName) {
-            userCustomHighlights[colorHexBeingRenamed] = newName;
+        if (newName) {
+            userCustomHighlights[hexCode] = newName;
             await syncColorsToFirebase();
             renderHighlightList();
         }
         modal.style.display = 'none';
-        
-        // Reforça a visibilidade do modal de baixo
-        document.getElementById('highlight-modal').style.display = 'flex';
-        colorHexBeingRenamed = null;
     };
 
-    newConfirmBtn.onclick = onSave;
-
-    input.onkeydown = (e) => {
-        if (e.key === 'Enter') onSave(e);
-        if (e.key === 'Escape') newCancelBtn.onclick(e);
+    document.getElementById('cancel-rename-highlight-btn').onclick = () => {
+        modal.style.display = 'none';
     };
 }
 
@@ -8818,27 +8920,22 @@ async function syncColorsToFirebase() {
 async function applyHighlight(colorCode) {
     if (!activeWrapperForColor) return;
 
-    // 1. Lógica de Base de Dados (Gravar a cor no perfil se for nova)
     if (colorCode) {
-        const colorObj = DEFAULT_HIGHLIGHTS.find(c => c.code === colorCode);
-        const colorName = userCustomHighlights[colorCode] || (colorObj ? colorObj.name : "Cor Personalizada");
-        await ensureColorExistsInFirebase(colorCode, colorName);
-        
-        // Define o atributo no HTML
         activeWrapperForColor.dataset.highlight = colorCode;
     } else {
-        // Remove o atributo
         activeWrapperForColor.removeAttribute('data-highlight');
     }
 
-    // 2. Lógica Visual (Chama a função centralizada que acabámos de criar)
     updateHighlightButtonState(activeWrapperForColor);
-
-    // 3. Fechar e Gravar
+    
+    // FECHA O MODAL
     document.getElementById('highlight-modal').style.display = 'none';
+    
     activeWrapperForColor = null;
-    saveNote();
+    saveNote(true); // Grava a nota imediatamente
 }
+
+
 // Função Auxiliar: Garante que a cor existe na coleção 'destaques'
 async function ensureColorExistsInFirebase(hexCode, defaultName) {
     // Se já temos esta cor carregada localmente, não precisamos de ir à BD
@@ -9135,18 +9232,15 @@ function scrollToAndHighlightText(term) {
 }
 
 function saveNote(forceImmediate = false) {
-    // 1. Cancela o temporizador anterior (se existir)
     clearTimeout(saveTimeout);
 
-    // 2. Se for para gravar IMEDIATAMENTE (navegação)
     if (forceImmediate) {
-        return executeSave(); // Retorna a promessa da gravação
+        // Retorna a promessa da gravação real
+        return executeSave(); 
     }
 
-    // 3. Se for escrita normal (espera 2 minutos)
-    updateSaveStatus('unsaved'); // Mostra "por guardar..."
-    
-    // 120000 ms = 2 minutos
+    // Gravação automática normal (espera 2 minutos)
+    updateSaveStatus('unsaved');
     saveTimeout = setTimeout(async () => {
         await executeSave();
     }, 120000); 
@@ -10005,151 +10099,75 @@ function maintainEntityProtection() {
 function requestPassword(mode, itemId) {
     return new Promise((resolve) => {
         const modal = document.getElementById('password-modal');
+        const input = document.getElementById('password-input');
+        const confirmBtn = document.getElementById('password-confirm-btn');
+        const cancelBtn = document.querySelector('#password-modal [data-action="cancel"]');
+        const errorMsg = document.getElementById('password-error');
+
+        if (!modal) return resolve(null);
+
+        document.body.appendChild(modal);
+        modal.style.setProperty('display', 'flex', 'important');
+        modal.style.zIndex = "10000000";
+
+        input.value = '';
+        if (errorMsg) errorMsg.style.display = 'none';
+
         const title = document.getElementById('password-modal-title');
         const desc = document.getElementById('password-modal-desc');
-        const input = document.getElementById('password-input');
-        const errorMsg = document.getElementById('password-error');
-        const confirmBtn = document.getElementById('password-confirm-btn');
-        const cancelBtn = modal.querySelector('[data-action="cancel"]');
-
-        // Configuração baseada no modo
-        input.value = '';
-        errorMsg.style.display = 'none';
-        modal.style.display = 'flex';
-        input.focus();
-
-        // Clona botões para limpar listeners antigos
-        const newConfirmBtn = confirmBtn.cloneNode(true);
-        confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
-        
-        const cleanup = () => {
-            modal.style.display = 'none';
-            cancelBtn.onclick = null;
-        };
 
         if (mode === 'create') {
             title.textContent = 'Definir Proteção';
             desc.textContent = 'Escolha uma palavra-passe para este item.';
-            newConfirmBtn.textContent = 'Proteger';
-            
-newConfirmBtn.onclick = async () => {
-        let targetId = selectedDestFolderId;
+        } else {
+            title.textContent = 'Item Protegido';
+            desc.textContent = 'Insira a palavra-passe para aceder.';
+        }
+
+        setTimeout(() => input.focus(), 200);
+
+        const newConfirmBtn = confirmBtn.cloneNode(true);
+        confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
         
-        // Fallback: Se não selecionou nada, assume a pasta atual da vista
-        if (targetId === null) {
-            const startRootId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
-            const currentViewId = moveStack.length > 0 ? moveStack[moveStack.length - 1].id : startRootId;
-            if(!confirm(`Mover "${itemContext.name}" para a pasta que está a ver agora?`)) return;
-            targetId = currentViewId;
-        }
-
-        if (targetId === itemContext.id) {
-            alert("Não pode mover uma pasta para dentro de si mesma.");
-            return;
-        }
-
-        try {
-           // --- VERIFICAÇÃO QUÁDRUPLA DE SEGURANÇA (FINAL) ---
-            const moveId = String(itemContext.id).trim();
-            const currentId = String(selectedNoteId).trim();
-            const currentTitle = document.getElementById('note-title-input').value;
-            
-            // 1. É o ID da nota aberta?
-            const matchID = (moveId === currentId);
-            
-            // 2. É o ID do ATALHO que abriu a nota? (A CORREÇÃO PRINCIPAL)
-            const matchShortcut = (currentShortcutId && moveId === String(currentShortcutId));
-
-            // 3. É o mesmo Nome? (Fallback)
-            const matchName = (itemContext.name === currentTitle);
-            
-            // 4. É um pointer?
-            let matchPointer = false;
-            if (activeItemContext && activeItemContext.pointerId && activeItemContext.pointerId === currentId) {
-                matchPointer = true;
-            }
-
-            // Se QUALQUER um for verdade, é a mesma nota!
-            const isMovingCurrentNote = matchID || matchShortcut || matchName || matchPointer;
-
-            const itemRef = doc(db, 'pastas', itemContext.id);
-            
-            // 1. Atualizar na BD
-            await updateDoc(itemRef, {
-                parentId: targetId, 
-                ultimaedicao: serverTimestamp()
-            });
-
+        const cleanup = (value) => {
             modal.style.display = 'none';
-            
-            // 2. Atualizar Vista (Passando a decisão de proteção)
-            if (typeof updateNavigationView === 'function') {
-                updateNavigationView(isMovingCurrentNote);
-            }
-            
-        } catch (error) {
-            console.error("Erro ao mover:", error);
-            alert("Erro ao mover o item.");
-        }
-    };
+            resolve(value);
+        };
 
-        } else { 
-            // Modos: 'access' (abrir) ou 'remove' (tirar proteção)
-            title.textContent = mode === 'remove' ? 'Remover Proteção' : 'Item Protegido';
-            desc.textContent = 'Insira a palavra-passe atual.';
-            newConfirmBtn.textContent = mode === 'remove' ? 'Remover' : 'Aceder';
+    newConfirmBtn.onclick = async (e) => {
+    e.preventDefault();
+    const pass = input.value.trim();
+    if (!pass) return;
 
-            newConfirmBtn.onclick = async () => {
-                const pass = input.value.trim();
-                
-                // 1. Buscar a passe real no Firebase para comparar
-                try {
-                    const docSnap = await getDoc(doc(db, 'pastas', itemId));
-                    if (docSnap.exists()) {
-                        const realPass = docSnap.data().passe;
-                        
-                        if (pass === realPass) {
-                            // Senha Correta
-                            if (mode === 'remove') {
-                                await updateDoc(doc(db, 'pastas', itemId), {
-                                    passe: deleteField(), // Remove o campo
-                                    ultimaedicao: serverTimestamp()
-                                });
-                            }
-                            cleanup();
-                            resolve(true);
-                        } else {
-                            // Senha Incorreta
-                            errorMsg.style.display = 'block';
-                            input.value = '';
-                            input.focus();
-                            // Não resolvemos a promise ainda, damos outra chance
-                        }
-                    } else {
-                        alert("Item não encontrado.");
-                        cleanup();
-                        resolve(false);
-                    }
-                } catch (e) {
-                    console.error(e);
-                    alert("Erro ao verificar senha.");
-                    cleanup();
-                    resolve(false);
+    if (mode === 'create') {
+        cleanup(pass);
+    } else {
+        // MODO ACESSO ou REMOVE
+        try {
+            const docRef = doc(db, 'pastas', itemId);
+            const docSnap = await getDoc(docRef);
+            
+            if (docSnap.exists() && docSnap.data().passe === pass) {
+                if (mode === 'remove') {
+                    // SE FOR PARA REMOVER, APAGA O CAMPO NO FIREBASE
+                    await updateDoc(docRef, {
+                        passe: deleteField() 
+                    });
                 }
-            };
+                cleanup(true);
+            } else {
+                if (errorMsg) errorMsg.style.display = 'block';
+                input.value = '';
+                input.focus();
+            }
+        } catch (err) {
+            console.error(err);
+            cleanup(false);
         }
+    }
+};
 
-        // Cancelar
-        cancelBtn.onclick = () => {
-            cleanup();
-            resolve(false);
-        };
-        
-        // Enter no input
-        input.onkeydown = (e) => {
-            if (e.key === 'Enter') newConfirmBtn.click();
-            if (e.key === 'Escape') { cleanup(); resolve(false); }
-        };
+        if (cancelBtn) cancelBtn.onclick = () => cleanup(null);
     });
 }
 
@@ -10162,86 +10180,67 @@ function showContextMenu(e) {
     const item = e.target.closest('.list-item');
     if (!item) return;
 
-    const myUid = auth.currentUser.uid;
     const menu = document.getElementById('context-menu');
+    const myUid = auth.currentUser.uid;
     
-    // Captura o contexto do item
     activeItemContext = {
         id: item.dataset.id,
         name: item.dataset.name,
         type: item.dataset.type,
-        userId: item.dataset.userid,
         emoji: item.dataset.emoji,
-        parentId: item.dataset.parentid === 'null' ? null : item.dataset.parentid,
-        isProtected: item.hasAttribute('data-protected'),
-        isSuperfolder: item.getAttribute('data-superpasta') === "true",
-        isPinned: item.getAttribute('data-pinned') === "true"
+        parentId: item.dataset.parentId === "null" ? null : item.dataset.parentId,
+        isSuperfolder: item.dataset.superpasta === "true",
+        isPinned: item.dataset.pinned === "true",
+        isProtected: item.dataset.protected === "true", // Lê o atributo que criámos
+        userId: item.dataset.userid || myUid
     };
 
-    // Referências aos elementos do menu
-    const buttons = menu.querySelectorAll('button');
-    const dividers = menu.querySelectorAll('.menu-sep');
+    menu.querySelectorAll('button').forEach(b => b.style.display = 'none');
+    menu.querySelectorAll('.menu-sep').forEach(d => d.style.display = 'none');
 
-    // 1. Reset visual: Esconde tudo por padrão
-    buttons.forEach(b => b.style.display = 'none');
-    dividers.forEach(d => d.style.display = 'none');
+    if (activeItemContext.type === 'cosmos-parent' || activeItemContext.type === 'subcosmos') {
+        menu.querySelector('[data-action="rename"]').style.display = 'block';
+        menu.querySelector('[data-action="hide"]').style.display = 'block';
+    } else {
+        menu.querySelector('[data-action="rename"]').style.display = 'block';
+        menu.querySelector('[data-action="hide"]').style.display = 'block';
 
-    // ============================================================
-    // REGRA PARA A ABA PINS (EXCLUSIVA)
-    // ============================================================
-    if (currentViewMode === 'pins') {
-        const btnPin = menu.querySelector('[data-action="toggle-pin"]');
-        btnPin.style.display = 'block';
-        btnPin.textContent = "Remover Pin"; // Força o texto para remover
-    } 
-    // ============================================================
-    // RESTO DAS REGRAS (LOCAL E PARTILHA)
-    // ============================================================
-    else {
-        const isOwner = activeItemContext.userId === myUid;
-        const isSharedNotMine = (currentViewMode === 'shared' && !isOwner);
-
-        if (isSharedNotMine) {
-            menu.querySelector('[data-action="rename"]').style.display = 'block';
-            menu.querySelector('[data-action="manage-topics"]').style.display = 'block';
-            menu.querySelector('[data-action="hide"]').style.display = 'block';
-        } 
-        else {
-            menu.querySelector('[data-action="rename"]').style.display = 'block';
-            const btnPin = menu.querySelector('[data-action="toggle-pin"]');
-            btnPin.style.display = 'block';
-            btnPin.textContent = activeItemContext.isPinned ? "Remover Pin" : "Adicionar Pin";
-            
-            if (activeItemContext.isProtected) menu.querySelector('[data-action="unprotect"]').style.display = 'block';
-            else menu.querySelector('[data-action="protect"]').style.display = 'block';
-            
-            dividers[0].style.display = 'block';
+        if (currentViewMode === 'local' || currentViewMode === 'pins') {
+            menu.querySelector('[data-action="toggle-pin"]').style.display = 'block';
             menu.querySelector('[data-action="move-position"]').style.display = 'block';
             menu.querySelector('[data-action="move-folder"]').style.display = 'block';
-            dividers[1].style.display = 'block';
-            menu.querySelector('[data-action="manage-topics"]').style.display = 'block';
             
-            if (activeItemContext.type === 'pasta') {
-                const btnSuper = menu.querySelector('[data-action="toggle-superfolder"]');
-                btnSuper.style.display = 'block';
-                btnSuper.textContent = activeItemContext.isSuperfolder ? "Tornar Pasta" : "Tornar Superpasta";
-                if (activeItemContext.isSuperfolder) menu.querySelector('[data-action="change-icon"]').style.display = 'block';
+            // --- LÓGICA DE PROTEÇÃO DINÂMICA ---
+            const protectBtn = menu.querySelector('[data-action="protect"]');
+            const unprotectBtn = menu.querySelector('[data-action="unprotect"]');
+
+            if (activeItemContext.isProtected) {
+                unprotectBtn.style.display = 'block'; // Mostra "Tirar Proteção"
+            } else {
+                protectBtn.style.display = 'block';   // Mostra "Proteger"
             }
-            dividers[2].style.display = 'block';
-            menu.querySelector('[data-action="hide"]').style.display = 'block';
+            // -----------------------------------
+
+            menu.querySelectorAll('.menu-sep').forEach(sep => sep.style.display = 'block');
         }
     }
 
-    // Exibir e posicionar (mantém o código de posicionamento original abaixo)
-    menu.style.visibility = 'hidden';
+    menu.style.opacity = "0";
     menu.style.display = 'flex';
+    menu.style.position = 'fixed';
+    menu.style.zIndex = "10000000";
+
     const menuWidth = menu.offsetWidth;
     const menuHeight = menu.offsetHeight;
-    if (e.clientY + menuHeight > window.innerHeight) menu.style.top = `${e.clientY - menuHeight}px`;
-    else menu.style.top = `${e.clientY}px`;
-    if (e.clientX + menuWidth > window.innerWidth) menu.style.left = `${e.clientX - menuWidth}px`;
-    else menu.style.left = `${e.clientX}px`;
-    menu.style.visibility = 'visible';
+    let posX = e.clientX;
+    let posY = e.clientY;
+
+    if (posX + menuWidth > window.innerWidth) posX = window.innerWidth - menuWidth - 10;
+    if (posY + menuHeight > window.innerHeight) posY = window.innerHeight - menuHeight - 10;
+
+    menu.style.left = `${posX}px`;
+    menu.style.top = `${posY}px`;
+    menu.style.opacity = "1";
 }
 
 
@@ -10307,34 +10306,38 @@ async function openMoveModal(itemContext) {
     const modal = document.getElementById('move-item-modal');
     const list = document.getElementById('move-list');
     
-    // 1. Mostrar o modal e resetar a lista
     list.innerHTML = '<li style="padding:10px;">Carregando...</li>';
     modal.style.display = 'flex';
     
     try {
-        // 2. Ajustar o parentId (tratar "null" como nulo real para a query)
         let pId = itemContext.parentId;
-        if (pId === "null" || pId === undefined) pId = null;
 
-        // Query: Busca todos os itens do MESMO nível (mesmo pai)
+        // SEURANÇA PARA SUPERPASTAS: 
+        // Se pId for null mas o itemContext não tiver essa info, vamos validar no Firebase
+        if (pId === undefined) {
+            const docSnap = await getDoc(doc(db, 'pastas', itemContext.id));
+            if (docSnap.exists()) {
+                pId = docSnap.data().parentId;
+            }
+        }
+
+        // Query: Busca todos os itens que têm o MESMO pai que o item clicado
         const q = query(
             collection(db, 'pastas'), 
             where('parentId', '==', pId), 
             where('estado', '==', 'ativa'), 
             where('userId', '==', auth.currentUser.uid), 
-            orderBy('ordem') // Importante para carregar na ordem atual
+            orderBy('ordem')
         );
         
         const snapshot = await getDocs(q);
         let items = [];
-        
         snapshot.forEach(doc => {
             items.push({ id: doc.id, ...doc.data() });
         });
 
-        // 3. Verificar se encontrou itens
         if (items.length === 0) {
-            list.innerHTML = '<li style="padding:10px; color:#888;">Nenhum item encontrado nesta pasta.</li>';
+            list.innerHTML = '<li style="padding:10px; color:#888;">Nenhum item encontrado nesta localização.</li>';
         } else {
             renderMoveList(items);
         }
@@ -14967,44 +14970,81 @@ async function loadBackupsForNote() {
     /**
      * Abre o modal de histórico e configura os seus eventos.
      */
-    async function openHistoryModal() {
-        if (!selectedNoteId) {
-            alert("Por favor, selecione uma nota primeiro.");
-            return;
-        }
-
-        const modal = document.getElementById('history-modal');
-        const titleEl = document.getElementById('history-modal-title');
-        const backupBtn = document.getElementById('backup-now-btn');
-        
-        titleEl.textContent = `Histórico de "${noteTitleInput.value}"`;
-        
-        // Remove listener antigo para evitar duplicados e adiciona um novo
-        const newBackupBtn = backupBtn.cloneNode(true);
-        backupBtn.parentNode.replaceChild(newBackupBtn, backupBtn);
-        newBackupBtn.onclick = async () => {
-            newBackupBtn.disabled = true;
-            newBackupBtn.textContent = 'A criar backup...';
-            try {
-                const backupsRef = collection(db, 'pastas', selectedNoteId, 'backups');
-                await addDoc(backupsRef, {
-                    titulo: noteTitleInput.value,
-                    conteudo: noteContentEditor.innerHTML,
-                    timestamp: serverTimestamp()
-                });
-                await loadBackupsForNote(); // Atualiza a lista
-            } catch (error) {
-                console.error("Erro ao criar backup:", error);
-                alert("Ocorreu um erro ao criar o backup.");
-            } finally {
-                newBackupBtn.disabled = false;
-                newBackupBtn.textContent = 'Fazer backup do estado atual';
-            }
-        };
-
-        modal.style.display = 'flex';
-        await loadBackupsForNote();
+ async function openHistoryModal() {
+    if (!selectedNoteId) {
+        alert("Por favor, selecione uma nota primeiro.");
+        return;
     }
+
+    console.log("🚀 Abrindo modal de Histórico para a nota:", selectedNoteId);
+    
+    const modal = document.getElementById('history-modal');
+    const backupBtn = document.getElementById('backup-now-btn');
+    const titleEl = document.getElementById('history-modal-title');
+
+    if (!modal || !backupBtn) return console.error("Elementos do Histórico não encontrados!");
+
+    // 1. GARANTIA DE VISIBILIDADE (O que já fizemos antes)
+    document.body.appendChild(modal);
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "8000000";
+
+    if (titleEl) titleEl.textContent = `Histórico de "${noteTitleInput.value}"`;
+
+    // 2. RECONFIGURAR O BOTÃO DE BACKUP (Limpa e cria novo evento)
+    // Clonamos para garantir que não há acumulação de cliques
+    const newBackupBtn = backupBtn.cloneNode(true);
+    backupBtn.parentNode.replaceChild(newBackupBtn, backupBtn);
+
+    newBackupBtn.onclick = async () => {
+        console.log("💾 Iniciando criação de backup manual...");
+        
+        // Feedback visual no botão
+        const originalText = newBackupBtn.textContent;
+        newBackupBtn.disabled = true;
+        newBackupBtn.textContent = 'A guardar versão...';
+
+        try {
+            const backupsRef = collection(db, 'pastas', selectedNoteId, 'backups');
+            
+            // Captura o conteúdo atual do editor
+            const currentTitle = document.getElementById('note-title-input').value || "Sem Título";
+            const currentContent = document.getElementById('note-content-editor').innerHTML;
+
+            await addDoc(backupsRef, {
+                titulo: currentTitle,
+                conteudo: currentContent,
+                timestamp: serverTimestamp(),
+                isSafetyBackup: false // Marca como backup manual
+            });
+
+            console.log("✅ Backup criado com sucesso!");
+            
+            // Feedback de sucesso no botão
+            newBackupBtn.textContent = 'Versão Guardada!';
+            newBackupBtn.style.backgroundColor = '#27ae60';
+
+            // Recarrega a lista abaixo para mostrar o novo backup
+            await loadBackupsForNote();
+
+            // Restaura o botão após 2 segundos
+            setTimeout(() => {
+                newBackupBtn.disabled = false;
+                newBackupBtn.textContent = originalText;
+                newBackupBtn.style.backgroundColor = '';
+            }, 2000);
+
+        } catch (error) {
+            console.error("❌ Erro ao criar backup:", error);
+            alert("Erro ao criar o backup. Verifique a sua ligação.");
+            newBackupBtn.disabled = false;
+            newBackupBtn.textContent = originalText;
+        }
+    };
+
+    // 3. CARREGAR A LISTA DE BACKUPS EXISTENTES
+    await loadBackupsForNote();
+}
 
     /**
      * Restaura um backup criando uma nova nota.
@@ -15094,143 +15134,145 @@ async function loadBackupsForNote() {
      * Exibe o conteúdo de um backup num modal de visualização.
      * @param {string} backupId O ID do documento de backup.
      */
-    async function viewBackup(backupId) {
-        if (!selectedNoteId) return;
+ async function viewBackup(backupId) {
+    if (!selectedNoteId) return;
 
-        try {
-            const backupRef = doc(db, 'pastas', selectedNoteId, 'backups', backupId);
-            const backupSnap = await getDoc(backupRef);
-            if (!backupSnap.exists()) {
-                throw new Error("Backup não encontrado.");
-            }
-            const backupData = backupSnap.data();
+    const modal = document.getElementById('view-backup-modal');
+    const titleEl = document.getElementById('view-backup-title');
+    const contentEl = document.getElementById('view-backup-content');
+
+    if (!modal) return console.error("Modal #view-backup-modal não encontrado!");
+
+    // 1. FORÇA HIERARQUIA (Z-Index maior que o do Histórico)
+    document.body.appendChild(modal);
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.setProperty('z-index', '9000000', 'important'); // Histórico está em 8M
+    modal.style.visibility = "visible";
+    modal.style.opacity = "1";
+
+    contentEl.innerHTML = '<div class="spinner"></div><p>A carregar conteúdo...</p>';
+
+    try {
+        // 2. BUSCA OS DADOS NO FIREBASE
+        const backupRef = doc(db, 'pastas', selectedNoteId, 'backups', backupId);
+        const backupSnap = await getDoc(backupRef);
+
+        if (backupSnap.exists()) {
+            const data = backupSnap.data();
+            const dateStr = data.timestamp ? new Date(data.timestamp.seconds * 1000).toLocaleString() : 'Data desconhecida';
             
-            const modal = document.getElementById('view-backup-modal');
-            const titleEl = document.getElementById('view-backup-title');
-            const contentEl = document.getElementById('view-backup-content');
-
-            const backupDate = formatTimestamp(backupData.timestamp);
-            titleEl.textContent = `Visualizando Backup de ${backupDate}`;
-            // Usar textContent para evitar renderização de HTML malicioso
-            contentEl.textContent = backupData.conteudo.replace(/<[^>]*>/g, ''); // Remove tags HTML para visualização simples
+            titleEl.textContent = `Conteúdo da Versão: ${dateStr}`;
             
-            modal.style.display = 'flex';
-
-        } catch (error) {
-            console.error("Erro ao visualizar backup:", error);
-            alert("Ocorreu um erro ao carregar o conteúdo do backup.");
+            // 3. RENDERIZAÇÃO SEGURA
+            // Removemos as tags de toolbar e botões para a pré-visualização ser limpa
+            let cleanHTML = data.conteudo || "";
+            cleanHTML = cleanHTML.replace(/<div class="mini-note-toolbar".*?<\/div>/g, '');
+            
+            contentEl.innerHTML = cleanHTML;
+        } else {
+            alert("Erro: O backup já não existe.");
+            modal.style.display = 'none';
         }
+    } catch (error) {
+        console.error("Erro ao carregar backup:", error);
+        alert("Não foi possível carregar o conteúdo.");
+        modal.style.display = 'none';
     }
+}
     
 
     // --- LISTENER DO PAINEL ESQUERDO COM LOGS DE DEPURAÇÃO ---
 leftPanelList.addEventListener('click', async (e) => {
-    const itemMenuBtn = e.target.closest('.item-menu-btn');
-    if (itemMenuBtn) { 
-        showContextMenu(e); 
-        return; 
-    }
-    
+    // 1. Identifica o que foi clicado (o item da lista)
     const listItem = e.target.closest('.list-item');
     if (!listItem) return;
 
-    const { id, name, type } = listItem.dataset;
+    // --- A. DETEÇÃO DO BOTÃO DE MENU (TRÊS PONTOS OU LÁPIS ✏) ---
+    const itemMenuBtn = e.target.closest('.item-menu-btn');
+    if (itemMenuBtn) {
+        console.log("🛠️ Abrindo menu para:", listItem.dataset.name);
+        showContextMenu(e); // O menu de contexto trata as ações de edição e Cosmos
+        return; // Pára aqui para não tentar navegar/abrir o item
+    }
 
-    // --- GRAVAR O ID NA MEMÓRIA ---
-    col1SelectedId = id; 
- 
-    // --- MODO LISTS (Categorias Especiais) ---
-   if (currentTab === 'lists') {
-    if (type === 'list-category' || type === 'bible-book') { // <--- Adicionado bible-book
-        if (currentSaveStatus === 'unsaved') saveNote(true);
+    // --- B. CAPTURA DE DADOS DO ITEM ---
+    const id = listItem.dataset.id;
+    const name = listItem.dataset.name;
+    const type = listItem.dataset.type;
+    const emoji = listItem.dataset.emoji;
+
+    // --- C. VERIFICAÇÃO DE PROTEÇÃO (APENAS MODO NOTE) ---
+    if (currentTab === 'note') {
+        // Se for pasta, nota ou superpasta, verifica se tem senha antes de prosseguir
+        const canAccess = await checkItemProtection(id, name);
+        if (!canAccess) return; // Se o usuário cancelar ou errar a senha, sai
+    }
+
+    // --- D. LÓGICA DE NAVEGAÇÃO: ABA "LISTS" (CATEGORIAS E COSMOS) ---
+    if (currentTab === 'lists') {
+        const listNavigationAction = async () => {
+            // Caso 1: Categoria base (ex: Tópicos, Bíblia) ou Livro Bíblico
+            if (type === 'list-category' || type === 'bible-book') {
+                if (type === 'list-category') {
+                    navigationStack = [{ id, name, type }];
+                } else {
+                    navigationStack.push({ id, name, type });
+                }
+                updateNavigationView(true);
+            } 
+            // Caso 2: Tema do Cosmos (Entra para ver Subtemas)
+            else if (type === 'cosmos-parent') {
+                navigationStack.push({ id, name, type, emoji });
+                updateNavigationView(true);
+            }
+            // Caso 3: Subtema do Cosmos (Abre Citações na 4ª Coluna)
+            else if (type === 'subcosmos') {
+                leftPanelList.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected'));
+                listItem.classList.add('selected');
+                showReferencesPanel(id, name, 'subcosmos');
+            }
+        };
+
+        navigateWithUnsavedCheck(listNavigationAction);
+        return;
+    }
+
+    // --- E. LÓGICA DE NAVEGAÇÃO: ABA "NOTE" (PASTAS E NOTAS LOCAIS) ---
+    if (currentTab === 'note') {
         
-        // Se for uma categoria base (como Biblia ou Topicos), reseta a stack
-        if (type === 'list-category') {
-            navigationStack = [{ id: id, name: name, type: type }];
-        } else {
-            // Se já estamos dentro (ex: escolhendo capítulo), adiciona à stack
-            navigationStack.push({ id: id, name: name, type: type });
-        }
-        
-        updateNavigationView(true);
-    }
-    return;
-}
-
-    // --- MODO NOTE (Pastas e Ficheiros) ---
-
-    // CASO 1: PASTA ou AGREGAÇÃO
-    if (type === 'pasta' || type === 'agregacao') {
-        if (listItem.classList.contains('selected')) return;
-
-        // A. Superpasta (Isolamento)
-        if (listItem.dataset.superpasta === "true") {
-            if (listItem.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
-                const access = await requestPassword('access', id);
-                if (access) sessionUnlockedFolders.add(id); else return;
+        // Caso 1: PASTA ou AGREGAÇÃO
+        if (type === 'pasta' || type === 'agregacao') {
+            // Superpasta: Redireciona para o isolamento de raiz
+            if (listItem.dataset.superpasta === "true") {
+                navigateWithUnsavedCheck(() => { 
+                    window.location.href = `note.html?rootId=${id}`; 
+                });
+            } 
+            // Pasta Normal: Navega para dentro
+            else {
+                const folderAction = () => {
+                    if (window.innerWidth <= 768) {
+                        document.body.classList.add('mobile-view-middle');
+                    }
+                    if (navigationStack.length === 0) navigationStack.push({ id, name });
+                    else navigationStack[navigationStack.length - 1] = { id, name };
+                    updateNavigationView(true);
+                };
+                navigateWithUnsavedCheck(folderAction);
             }
-            navigateWithUnsavedCheck(() => { window.location.href = `note.html?rootId=${id}`; });
-            return;
         }
 
-        // B. Pasta Normal (Proteção)
-        if (listItem.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
-            const access = await requestPassword('access', id);
-            if (access) sessionUnlockedFolders.add(id); else return;
+        // Caso 2: NOTA (Abre o editor principal)
+        else if (type === 'nota') {
+            const noteAction = () => {
+                if (window.innerWidth <= 768) {
+                    document.body.classList.remove('mobile-view-middle');
+                    document.body.classList.add('mobile-view-editor');
+                }
+                displayNote(id, listItem);
+            };
+            navigateWithUnsavedCheck(noteAction);
         }
-
-        // Navegação
-        const action = () => {
-             clearAllListSelections();
-            if (navigationStack.length === 0) navigationStack.push({ id, name });
-            else navigationStack[navigationStack.length - 1] = { id, name };
-            updateNavigationView(true);
-        };
-        navigateWithUnsavedCheck(action);
-    }
-
-    // CASO 2: NOTA
-    else if (type === 'nota') {
-        if (id === selectedNoteId) {
-            // FORÇA A TROCA DE VISIBILIDADE
-            document.getElementById('archive-area').style.display = 'none';
-            document.getElementById('editor-area').style.display = 'flex';
-
-            if (window.innerWidth <= 768) {
-                document.body.classList.remove('mobile-view-middle');
-                document.body.classList.add('mobile-view-editor');
-            }
-            return;
-        }
-
-        if (listItem.hasAttribute('data-protected') && !sessionUnlockedFolders.has(id)) {
-            const access = await requestPassword('access', id);
-            if (access) sessionUnlockedFolders.add(id); else return;
-        }
-
-        const action = () => {
-            if (window.innerWidth <= 768) {
-                document.body.classList.remove('mobile-view-middle');
-                document.body.classList.add('mobile-view-editor');
-            }
-            displayNote(id, listItem);
-        };
-        navigateWithUnsavedCheck(action);
-    }
-
-    // CASO 3: ARQUIVO / PARTILHADO
-    else if (type === 'arquivo' || type === 'partilhado') {
-        const action = async () => {
-            if (window.innerWidth <= 768) {
-                document.body.classList.remove('mobile-view-middle');
-                document.body.classList.add('mobile-view-editor');
-            }
-            try {
-                const docSnap = await getDoc(doc(db, 'pastas', id));
-                if (docSnap.exists()) displayArchive(id, docSnap.data());
-            } catch (err) { console.error(err); }
-        };
-        navigateWithUnsavedCheck(action);
     }
 });
 
@@ -15408,19 +15450,21 @@ saveNote();
 
     // --- NOVO EVENT LISTENER PARA O MODAL DE HISTÓRICO ---
     
-    document.getElementById('history-list-content').addEventListener('click', (e) => {
-        const button = e.target.closest('button[data-action]');
-        if (!button) return;
-        
-        const action = button.dataset.action;
-        const backupId = button.dataset.backupId;
+   document.getElementById('history-list-content').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
 
-        if (action === 'restore') {
-            restoreBackup(backupId);
-        } else if (action === 'view') {
-            viewBackup(backupId);
-        }
-    });
+    const action = btn.dataset.action;
+    const backupId = btn.dataset.backupId;
+
+    if (action === 'view') {
+        console.log("📄 Solicitando visualização do backup:", backupId);
+        viewBackup(backupId);
+    } else if (action === 'restore') {
+        console.log("♻️ Solicitando restauro do backup:", backupId);
+        restoreBackup(backupId);
+    }
+});
 
 
 // --- EVENT LISTENERS ---
@@ -15461,8 +15505,8 @@ window.addEventListener('beforeunload', (event) => {
 middlePanelList.addEventListener('click', async (e) => {
     const item = e.target.closest('.list-item');
     if (!item) return;
+     showContextMenu(e); 
 
-    // Se clicar no menu de 3 pontos
     const itemMenuBtn = e.target.closest('.item-menu-btn');
     if (itemMenuBtn) { 
         showContextMenu(e); 
@@ -15473,12 +15517,11 @@ middlePanelList.addEventListener('click', async (e) => {
     const type = item.getAttribute('data-type');
     const name = item.getAttribute('data-name');
 
-    // LOGS EXATOS DE DIAGNÓSTICO
-    console.log(`%c[CLIQUE COL 2] Item: ${name}`, "color: #f39c12; font-weight: bold;");
-    console.log("ID:", id, "| Tipo:", type, "| Vista:", currentViewMode);
+    // --- NOVO: VERIFICAÇÃO DE PROTEÇÃO ANTES DE ABRIR ---
+    const canAccess = await checkItemProtection(id, name);
+    if (!canAccess) return; 
 
     const action = async () => {
-        // Se for PASTA
         if (type === 'pasta' || type === 'agregacao') {
             if (item.dataset.superpasta === "true") {
                 navigateWithUnsavedCheck(() => { window.location.href = `note.html?rootId=${id}`; });
@@ -15486,23 +15529,14 @@ middlePanelList.addEventListener('click', async (e) => {
             }
             navigationStack.push({ id, name });
             updateNavigationView(true);
-            
-            // Mobile: Mantém na vista de lista para ver o interior da pasta
-            if (window.innerWidth <= 768) {
-                document.body.classList.add('mobile-view-middle');
-            }
+            if (window.innerWidth <= 768) document.body.classList.add('mobile-view-middle');
         }
-        // Se for NOTA ou ARQUIVO
         else if (type === 'nota' || type === 'arquivo' || type === 'partilhado') {
             document.querySelectorAll('#file-list .list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
             const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
             item.classList.add(selectionClass);
-
-            // Mobile: Pula para o Editor
-            if (window.innerWidth <= 768) {
-                document.body.classList.add('mobile-view-editor');
-            }
-
+            if (window.innerWidth <= 768) document.body.classList.add('mobile-view-editor');
+            
             if (type === 'nota') displayNote(id, item);
             else displayArchive(id, { id, nome: name, tipo: type }, item);
         }
@@ -17043,13 +17077,22 @@ noteContentEditor.addEventListener('click', (e) => {
 
 // 2. ABRIR O MODAL
 function openAppendModal() {
+    console.log("🚀 Abrindo seletor de destino para clonagem...");
+    
     const modal = document.getElementById('append-to-note-modal');
-    modal.style.display = 'flex';
-    
-    // Reset da navegação
+    if (!modal) return console.error("Modal #append-to-note-modal não encontrado!");
+
+    // 1. MOVE PARA O BODY (Camada Superior)
+    document.body.appendChild(modal);
+
+    // 2. FORÇA VISIBILIDADE E Z-INDEX ALTO
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "5000000"; // Nível de prioridade alto
+    modal.style.visibility = "visible";
+    modal.style.opacity = "1";
+
+    // 3. RESET DA NAVEGAÇÃO INTERNA
     appendStack = [];
-    
-    // Define a raiz (Superpasta ou Global)
     const rootId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
     
     loadAppendList(rootId);
@@ -17193,29 +17236,45 @@ newAppendBackBtn.addEventListener('click', () => {
 // 5. CONFIRMAR E GRAVAR
 async function confirmAppendToNote(targetId, targetName, targetType) {
     const confirmModal = document.getElementById('confirm-modal');
-    const cancelBtn = confirmModal.querySelector('[data-action="cancel"]');
-    const confirmBtn = confirmModal.querySelector('[data-action="confirm"]');
-    
-    confirmModal.style.zIndex = '4000'; // Garante que fica por cima de tudo
+    const appendModal = document.getElementById('append-to-note-modal');
 
-    // 1. Pedir confirmação inicial
+    // 1. REBAIXAR O MODAL "ENVIAR PARA..."
+    // Diminuímos o nível dele para que ele fique "ao fundo"
+    if (appendModal) {
+        appendModal.style.setProperty('z-index', '1000000', 'important');
+    }
+
+    // 2. ELEVAR O MODAL DE CONFIRMAÇÃO AO TOPO ABSOLUTO
+    // Usamos o maior valor de Z-Index possível (2147483647)
+    document.body.appendChild(confirmModal); // Move para o fim do body
+    confirmModal.style.setProperty('display', 'flex', 'important');
+    confirmModal.style.setProperty('z-index', '2147483647', 'important'); 
+    confirmModal.style.visibility = "visible";
+    confirmModal.style.opacity = "1";
+
+    // 3. EXECUTAR A CONFIRMAÇÃO
     const confirmed = await showConfirmation(
         "Confirmar Envio", 
         `Deseja enviar esta caixa para o Topo de "${targetName}"?`
     );
 
+    // 4. LÓGICA DE RETORNO OU SUCESSO
     if (!confirmed) {
-        confirmModal.style.zIndex = ''; 
+        // Se o utilizador cancelar, restauramos o modal "Enviar para..." ao topo
+        if (appendModal) appendModal.style.setProperty('z-index', '5000000', 'important');
+        confirmModal.style.zIndex = ""; 
         return;
     }
 
+    // Se confirmou, processa a gravação
     try {
         const noteRef = doc(db, 'pastas', targetId);
         const docSnap = await getDoc(noteRef);
 
         if (docSnap.exists()) {
             const data = docSnap.data();
-
+            
+            // Gravação para Arquivo ou Nota (mantém a sua lógica original)
             if (targetType === 'partilhado' || targetType === 'arquivo') {
                 const authorName = currentUserData?.nome || auth.currentUser.email.split('@')[0];
                 const newPost = {
@@ -17227,14 +17286,8 @@ async function confirmAppendToNote(targetId, targetName, targetType) {
                     createdAt: Date.now(),
                     updatedAt: Date.now()
                 };
-
-                const currentPosts = data.posts || [];
-                const updatedPosts = [newPost, ...currentPosts];
-
-                await updateDoc(noteRef, {
-                    posts: updatedPosts,
-                    ultimaedicao: serverTimestamp()
-                });
+                const updatedPosts = [newPost, ...(data.posts || [])];
+                await updateDoc(noteRef, { posts: updatedPosts, ultimaedicao: serverTimestamp() });
             } else {
                 const currentContent = data.conteudo || "";
                 await updateDoc(noteRef, {
@@ -17243,30 +17296,17 @@ async function confirmAppendToNote(targetId, targetName, targetType) {
                 });
             }
 
-            // --- SUCESSO: MOSTRAR MODAL DE SUCESSO ---
+            // FECHO TOTAL APÓS SUCESSO
+            confirmModal.style.display = 'none';
+            if (appendModal) appendModal.style.display = 'none';
             
-            // 1. Fecha o seletor de notas
-            document.getElementById('append-to-note-modal').style.display = 'none';
-
-            // 2. Configura o modal de confirmação para modo "Aviso de Sucesso"
-            if (cancelBtn) cancelBtn.style.display = 'none'; // Esconde o botão Cancelar
-            const originalConfirmText = confirmBtn.textContent;
-            confirmBtn.textContent = "Ok"; // Muda "Confirmar" para "Ok"
-
-            // 3. Mostra a mensagem de sucesso usando o teu sistema de modal
-            await showConfirmation("Sucesso!", `Enviado com sucesso para o topo de "${targetName}"!`);
-
-            // 4. Restaura o modal para o estado original (importante para as próximas vezes)
-            if (cancelBtn) cancelBtn.style.display = 'inline-block';
-            confirmBtn.textContent = originalConfirmText;
-            
+            alert(`Enviado para "${targetName}" com sucesso!`);
         }
     } catch (e) {
         console.error("Erro ao enviar:", e);
-        // Em caso de erro, usa o modal também
-        await showConfirmation("Erro", "Não foi possível realizar o envio. Tente novamente.");
+        alert("Erro ao realizar o envio.");
     } finally {
-        confirmModal.style.zIndex = '';
+        confirmModal.style.zIndex = "";
     }
 }
 
@@ -17509,55 +17549,73 @@ leftPanelToggleBtn.addEventListener('click', () => {
 
 // Listener do botão "+" (Adicionar Item)
 addItemBtn.addEventListener('click', async () => {
-    if (currentTab === 'lists') {
-        const rootCategoryId = navigationStack[0]?.id;
-
-        if (rootCategoryId === 'topico') {
-            activeTopicIdForManagement = null;
-            document.getElementById('manage-topics-modal').style.display = 'flex';
-            renderManageTopicsList();
-            document.getElementById('create-new-subtopic-btn').style.display = 'none';
-        } 
-        else if (['personagem', 'local', 'data'].includes(rootCategoryId)) {
-            openEntityModal(rootCategoryId, ""); 
-        }
-        // --- ADICIONADO PARA COSMOS ---
-        else if (rootCategoryId === 'cosmos') {
-            const lastNav = navigationStack[navigationStack.length - 1];
-            if (lastNav.type === 'list-category') {
-                window.openCosmosCreator('cosmos');
-            } else if (lastNav.type === 'cosmos-parent') {
-                window.openCosmosCreator('subcosmos', lastNav.id);
-            }
-        }
-        return; 
-    }
-
-    // ============================================================
-    // 2. COMPORTAMENTO NA ABA "NOTE" (Lógica Original)
-    // ============================================================
     
-    // Grava alterações pendentes antes de abrir o modal para evitar conflitos
-    if (currentSaveStatus === 'unsaved') {
-        updateSaveStatus('saving');
+    // 1. GRAVAÇÃO DE SEGURANÇA: Se houver alterações na nota atual, grava antes de abrir o modal
+    if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
+        console.log("💾 Gravando alterações antes de abrir criador...");
         await saveNote(true); 
     }
 
+    // ============================================================
+    // CASO A: ABA DE LISTAS (Categorias do Banco de Dados)
+    // ============================================================
+    if (currentTab === 'lists') {
+        const rootCategoryId = navigationStack[0]?.id;
+
+        // 1. Tópicos (Abre o modal de gestão/criação)
+        if (rootCategoryId === 'topico') {
+            const manageModal = document.getElementById('manage-topics-modal');
+            document.body.appendChild(manageModal); // Força hierarquia
+            manageModal.style.setProperty('display', 'flex', 'important');
+            manageModal.style.zIndex = "8000000";
+            activeTopicIdForManagement = null;
+            renderManageTopicsList();
+            document.getElementById('create-new-subtopic-btn').style.display = 'none';
+        } 
+        // 2. Entidades Simples (Personagens, Locais, Datas)
+        else if (['personagem', 'local', 'data'].includes(rootCategoryId)) {
+            openEntityModal(rootCategoryId, ""); 
+        }
+        // 3. Cosmos (Temas e Subtemas)
+        else if (rootCategoryId === 'cosmos') {
+            const lastNav = navigationStack[navigationStack.length - 1];
+            if (lastNav.type === 'list-category') {
+                // Se está na raiz do Cosmos, cria um Tema
+                window.openCosmosCreator('cosmos');
+            } else if (lastNav.type === 'cosmos-parent') {
+                // Se está dentro de um tema, cria um Subtema
+                window.openCosmosCreator('subcosmos', lastNav.id);
+            }
+        }
+        return; // Sai da função após tratar a aba de listas
+    }
+
+    // ============================================================
+    // CASO B: ABA NOTE (Pastas, Notas e Arquivos)
+    // ============================================================
     const modal = document.getElementById('add-item-modal');
+    if (!modal) return;
+
+    // --- GARANTIA DE VISIBILIDADE ---
+    document.body.appendChild(modal);
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "8000000";
+
     const modalTitle = modal.querySelector('h3');
     const addFolderBtn = modal.querySelector('button[data-type="pasta"]');
     const addNoteBtn = modal.querySelector('button[data-type="nota"]');
     const addAgregBtn = modal.querySelector('button[data-type="agregacao"]');
     const addArchiveBtn = modal.querySelector('button[data-type="arquivo"]');
 
-    // Reset da interface do Modal
+    // Reset da interface interna do Modal
     newItemNameInput.value = '';
     newItemNameInput.style.display = 'none';
     document.getElementById('confirm-item-addition').style.display = 'none';
     document.getElementById('add-item-options').style.display = 'flex';
 
+    // Lógica de Visibilidade de Botões conforme o Contexto
     if (currentViewMode === 'shared') {
-        // --- MODO PARTILHA ---
+        // MODO PARTILHA: Apenas permite adicionar Arquivos Partilhados
         modalTitle.textContent = "Adicionar Item Partilhado";
         addFolderBtn.style.display = 'none';
         addNoteBtn.style.display = 'none';
@@ -17565,7 +17623,7 @@ addItemBtn.addEventListener('click', async () => {
         addArchiveBtn.style.display = 'block';
     } 
     else {
-        // --- MODO LOCAL ---
+        // MODO LOCAL
         modalTitle.textContent = "Adicionar Item";
         
         let isInSharedFolder = false;
@@ -17575,29 +17633,27 @@ addItemBtn.addEventListener('click', async () => {
         }
 
         if (isInSharedFolder) {
-            // Regras para a pasta especial de sistema
+            // Na pasta de sistema "Partilhadas", apenas Notas e Arquivos são permitidos
             addFolderBtn.style.display = 'none';
             addAgregBtn.style.display = 'none';
             addNoteBtn.style.display = 'block';
             addArchiveBtn.style.display = 'block';
         } 
         else if (navigationStack.length === 0) {
-            // Raiz Local (Apenas pastas, arquivos ou agregações)
+            // Raiz Local (Nível 1): Apenas Pastas, Agregações ou Arquivos (Notas só dentro de pastas)
             addFolderBtn.style.display = 'block';
             addAgregBtn.style.display = 'block'; 
             addNoteBtn.style.display = 'none';
             addArchiveBtn.style.display = 'block';
         } 
         else {
-            // Dentro de pastas normais (Permite tudo)
+            // Dentro de pastas normais: Permite tudo
             addFolderBtn.style.display = 'block';
             addAgregBtn.style.display = 'block'; 
             addNoteBtn.style.display = 'block';
             addArchiveBtn.style.display = 'block';
         }
     }
-
-    modal.style.display = 'flex';
 });
 
 
@@ -17765,117 +17821,148 @@ else if (docData.tipo === 'pasta') {
 
 document.getElementById('context-menu').addEventListener('click', async (e) => {
     const action = e.target.dataset.action;
-    if (!action || !activeItemContext) return;
+    
+    // 1. Verificação de Segurança
+    if (!action || !activeItemContext) {
+        console.warn("⚠️ Clique no menu de contexto ignorado: ação ou item não definidos.");
+        return;
+    }
 
-    // Copia o contexto e fecha o menu
+    // Criamos uma cópia local do contexto para evitar erros durante processos assíncronos
     const itemContext = { ...activeItemContext };
+    console.group(`🎯 Context Menu: ${action.toUpperCase()}`);
+    console.log("📦 Item:", itemContext.name, `(ID: ${itemContext.id})`);
+    
     hideContextMenu(); 
 
-    // --- AÇÃO: MUDAR EMOJI (COSMOS) ---
-    if (action === 'change-cosmos-emoji') {
-        const modal = document.getElementById('custom-emoji-modal');
-        const input = document.getElementById('custom-emoji-input');
-        const confirmBtn = document.getElementById('confirm-custom-emoji-btn');
-        
-        input.value = ""; 
-        modal.style.display = 'flex';
-        setTimeout(() => input.focus(), 100);
-
-        confirmBtn.onclick = async () => {
-            const newEmoji = input.value.trim();
-            if (newEmoji) {
-                try {
-                    await updateDoc(doc(db, 'cosmos', itemContext.id), {
-                        emoji: newEmoji
-                    });
-                    modal.style.display = 'none';
-                    renderListCategoryItems('cosmos'); // Recarrega a lista
-                } catch (err) {
-                    console.error("Erro ao mudar emoji:", err);
-                }
-            }
-        };
-        return; // Finaliza aqui
-    }
-
-    // --- AÇÃO: RENOMEAR ---
-   if (action === 'rename') {
-    openRenameModal(itemContext.name, async (newName) => {
-        try {
-            // Determina a coleção correta
-            const collectionName = itemContext.type === 'cosmos-parent' ? 'cosmos' : 'pastas';
-            
-            await updateDoc(doc(db, collectionName, itemContext.id), {
-                nome: newName,
-                ultimaedicao: serverTimestamp()
-            });
-
-            // Se for cosmos, recarrega a lista lateral
-            if (itemContext.type === 'cosmos-parent') renderListCategoryItems('cosmos');
-            
-            // Se for a nota que está aberta no editor, atualiza o título no topo
-            if (selectedNoteId && itemContext.id === selectedNoteId) {
-                const titleInput = document.getElementById('note-title-input');
-                if(titleInput) titleInput.value = newName;
-            }
-        } catch (err) {
-            console.error("Erro ao renomear:", err);
-            alert("Erro ao gravar novo nome.");
-        }
-    });
-}
-
-    // --- AÇÃO: MUDAR ÍCONE (SUPERPASTA) ---
-    else if (action === 'change-icon') {
-        const modal = document.getElementById('icon-picker-modal');
-        modal.dataset.targetFolderId = itemContext.id; 
-        modal.style.display = 'flex';
-    }
-
-    // --- AÇÃO: TOGGLE SUPERPASTA ---
-    else if (action === 'toggle-superfolder') {
-        try {
-            await updateDoc(doc(db, 'pastas', itemContext.id), {
-                superpasta: !itemContext.isSuperfolder,
-                ultimaedicao: serverTimestamp()
-            });
-            window.location.reload(); // Recarrega para aplicar o isolamento de superpasta
-        } catch (error) {
-            console.error("Erro ao alterar superpasta:", error);
-        }
-    }
-
-    // --- AÇÃO: OCULTAR (APAGAR) ---
-    else if (action === 'hide') {
-        const confirmed = await showConfirmation('Ocultar Item?', `Tem certeza que deseja ocultar "${itemContext.name}"?`);
-        if (confirmed) {
-            const collectionName = itemContext.type === 'cosmos-parent' ? 'cosmos' : 'pastas';
-            await updateDoc(doc(db, collectionName, itemContext.id), { 
-                estado: 'desativa',
-                ultimaedicao: serverTimestamp()
-            });
-            if (itemContext.type === 'cosmos-parent') renderListCategoryItems('cosmos');
-        }
-    }
-
-    if (action === 'toggle-pin') {
     try {
-        const itemRef = doc(db, 'pastas', itemContext.id);
-        await updateDoc(itemRef, {
-            isPinned: !itemContext.isPinned,
-            ultimaedicao: serverTimestamp()
-        });
-        // Feedback visual rápido
-        console.log("Pin atualizado com sucesso");
-    } catch (error) {
-        console.error("Erro ao alternar Pin:", error);
-    }
-}
+        // --- AÇÃO: PROTEGER (🔒) ---
+        if (action === 'protect') {
+            console.log("🛡️ Iniciando criação de proteção...");
+            const newPass = await requestPassword('create', itemContext.id);
+            
+            if (newPass) {
+                console.log("🔑 Senha definida. Gravando no Firebase...");
+                await updateDoc(doc(db, 'pastas', itemContext.id), {
+                    passe: newPass,
+                    ultimaedicao: serverTimestamp()
+                });
+                console.log("✅ Proteção aplicada com sucesso.");
+                // O ícone de cadeado aparecerá via onSnapshot
+            } else {
+                console.log("ℹ️ Proteção cancelada.");
+            }
+        }
 
-    // --- OUTRAS AÇÕES (MOVER, TÓPICOS, ETC) ---
-    else if (action === 'move-position') { await openMoveModal(itemContext); }
-    else if (action === 'move-folder') { await openMoveToFolderModal(itemContext); }
-    else if (action === 'manage-topics') { openTopicsModal(itemContext.id, itemContext.type); }
+        // --- AÇÃO: TIRAR PROTEÇÃO (🔓) ---
+        else if (action === 'unprotect') {
+            console.log("🔓 Solicitando remoção de proteção...");
+            // O modo 'remove' na função requestPassword valida a senha e apaga o campo no Firebase
+            const authorized = await requestPassword('remove', itemContext.id);
+            
+            if (authorized === true) {
+                console.log("✅ Proteção removida com sucesso do banco de dados.");
+                // Limpa o cache de desbloqueio da sessão
+                sessionUnlockedFolders.delete(itemContext.id);
+            } else {
+                console.log("ℹ️ Remoção de proteção cancelada ou senha incorreta.");
+            }
+        }
+
+        // --- AÇÃO: RENOMEAR (✏️) ---
+        else if (action === 'rename') {
+            console.log("📝 Abrindo modal de renomeação...");
+            openRenameModal(itemContext.name, async (newName) => {
+                console.log(`💾 Gravando novo nome: "${newName}"`);
+                const collectionName = itemContext.type === 'cosmos-parent' ? 'cosmos' : 'pastas';
+                await updateDoc(doc(db, collectionName, itemContext.id), {
+                    nome: newName,
+                    ultimaedicao: serverTimestamp()
+                });
+                
+                if (itemContext.type === 'cosmos-parent') renderListCategoryItems('cosmos');
+                if (selectedNoteId && itemContext.id === selectedNoteId) {
+                    const titleInput = document.getElementById('note-title-input');
+                    if(titleInput) titleInput.value = newName;
+                }
+                console.log("✅ Nome atualizado.");
+            });
+        }
+
+        // --- AÇÃO: MUDAR EMOJI COSMOS ---
+        else if (action === 'change-cosmos-emoji') {
+            console.log("🎨 Abrindo seletor de emoji para Cosmos...");
+            if (typeof openCosmosEditPopup === 'function') {
+                openCosmosEditPopup(itemContext.id, itemContext.name, itemContext.emoji, itemContext.type);
+            }
+        }
+
+        // --- AÇÃO: MUDAR ÍCONE SUPERPASTA ---
+        else if (action === 'change-icon') {
+            console.log("🖼️ Abrindo seletor de ícone para Superpasta...");
+            const modal = document.getElementById('icon-picker-modal');
+            modal.dataset.targetFolderId = itemContext.id; 
+            modal.style.display = 'flex';
+        }
+
+        // --- AÇÃO: ALTERNAR PIN (📌) ---
+        else if (action === 'toggle-pin') {
+            const newState = !itemContext.isPinned;
+            console.log(`📌 Pin: ${newState}`);
+            await updateDoc(doc(db, 'pastas', itemContext.id), {
+                isPinned: newState,
+                ultimaedicao: serverTimestamp()
+            });
+        }
+
+        // --- AÇÃO: MOVER POSIÇÃO ---
+        else if (action === 'move-position') {
+            console.log("↕️ Abrindo modal de reordenação...");
+            await openMoveModal(itemContext);
+        }
+
+        // --- AÇÃO: MOVER DE PASTA ---
+        else if (action === 'move-folder') {
+            console.log("📂 Abrindo modal de transferência de pasta...");
+            await openMoveToFolderModal(itemContext);
+        }
+
+        // --- AÇÃO: ANEXAR TÓPICOS ---
+        else if (action === 'manage-topics') {
+            console.log("🏷️ Abrindo gestor de tópicos...");
+            openTopicsModal(itemContext.id, itemContext.type);
+        }
+
+        // --- AÇÃO: OCULTAR ---
+        else if (action === 'hide') {
+            const confirmed = await showConfirmation('Ocultar Item?', `Deseja mover "${itemContext.name}" para a lixeira?`);
+            if (confirmed) {
+                const collectionName = itemContext.type === 'cosmos-parent' ? 'cosmos' : 'pastas';
+                await updateDoc(doc(db, collectionName, itemContext.id), { 
+                    estado: 'desativa',
+                    ultimaedicao: serverTimestamp()
+                });
+                console.log("✅ Item ocultado.");
+            }
+        }
+
+        // --- AÇÃO: TORNAR SUPERPASTA ---
+        else if (action === 'toggle-superfolder') {
+            const newState = !itemContext.isSuperfolder;
+            console.log(`🗃️ Superpasta: ${newState}`);
+            await updateDoc(doc(db, 'pastas', itemContext.id), {
+                superpasta: newState,
+                ultimaedicao: serverTimestamp()
+            });
+            window.location.reload(); 
+        }
+
+    } catch (error) {
+        console.error(`❌ Erro na ação "${action}":`, error);
+        alert("Erro ao processar o pedido.");
+    }
+
+    console.groupEnd();
 });
 
 
@@ -18025,20 +18112,39 @@ noteContentEditor.addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-action="sharing-settings"]');
     if (!btn) return;
 
-    e.preventDefault(); e.stopPropagation();
+    console.log("🔐 Botão de partilha da caixa clicado!");
+    e.preventDefault(); 
+    e.stopPropagation(); // Impede o editor de fechar o popup imediatamente
 
     const wrapper = btn.closest('.mini-note-wrapper');
+    if (!wrapper) return;
+
     activeWrapperForSharing = wrapper;
 
-    // Ler estado atual
-    const currentState = wrapper.getAttribute('data-shared') === 'true';
-    shareToggle.checked = currentState;
+    const popup = document.getElementById('share-settings-popup');
+    if (!popup) return;
 
-    // Posicionar Popup
+    // 1. MOVE PARA O BODY (Para ignorar o overflow:hidden do editor)
+    document.body.appendChild(popup);
+
+    // 2. LER ESTADO ATUAL
+    const isShared = wrapper.getAttribute('data-shared') === 'true';
+    const shareToggle = document.getElementById('mini-note-share-toggle');
+    if (shareToggle) shareToggle.checked = isShared;
+
+    // 3. POSICIONAMENTO E Z-INDEX
     const rect = btn.getBoundingClientRect();
-    sharePopup.style.display = 'flex';
-    sharePopup.style.top = `${rect.bottom + window.scrollY + 5}px`;
-    sharePopup.style.left = `${rect.left + window.scrollX}px`;
+    
+    popup.style.setProperty('display', 'flex', 'important');
+    popup.style.position = 'fixed'; // Fixed é melhor quando está no body
+    popup.style.zIndex = "7000000"; // Mais alto que o editor
+    
+    // Posiciona logo abaixo do botão
+    popup.style.top = `${rect.bottom + 5}px`;
+    popup.style.left = `${rect.left - 100}px`; // Ajuste para a esquerda para não fugir do ecrã
+    
+    popup.style.visibility = "visible";
+    popup.style.opacity = "1";
 });
 
 // 2. Alterar o Toggle
@@ -18085,76 +18191,40 @@ editorToolbar.addEventListener('click', async (e) => {
     // 1. AÇÃO: GERIR TÓPICOS (📑)
     if (action === 'show-topics') {
         if (selectedNoteId) {
+            e.preventDefault();
+            e.stopPropagation();
             openTopicsModal(selectedNoteId, 'nota');
         } else {
             alert("Selecione uma nota primeiro.");
         }
     }
-
     // 2. AÇÃO: HISTÓRICO E BACKUPS (🕒)
     else if (action === 'show-history') {
         if (selectedNoteId) {
+            e.preventDefault();
+            e.stopPropagation();
             openHistoryModal();
         }
     }
-
     // 3. AÇÃO: DEFINIÇÕES DE PARTILHA (🔐)
-  else if (action === 'note-sharing-settings') {
-        if (!selectedNoteId) return;
-
-        try {
-            const docRef = doc(db, 'pastas', selectedNoteId);
-            const docSnap = await getDoc(docRef);
-            
-            if (docSnap.exists()) {
-                const data = docSnap.data();
-                // Carrega definições ou usa padrão
-                currentNoteShareData = data.shareSettings || { shared: false, shareId: null };
-                
-                // 1. Configura Toggle Principal
-                const mainToggle = document.getElementById('note-share-toggle');
-                mainToggle.checked = currentNoteShareData.shared;
-
-                // 3. DEFINIR VISIBILIDADE DAS ÁREAS
-                const linkContainer = document.getElementById('note-share-link-container');
-
-             if (currentNoteShareData.shared) {
-                    // Mostra opções principais
-                    linkContainer.style.display = 'block';
-                    
-                    // Preencher link PRINCIPAL
-                    const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
-                    const shareId = currentNoteShareData.shareId || selectedNoteId;
-                    document.getElementById('note-share-url').value = `${baseUrl}/sharenote.html?id=${shareId}`;
-                
-          
-
-                } else {
-                    // Se não partilhado, esconde tudo
-                    linkContainer.style.display = 'none';
-                }
-            }
-        } catch (err) {
-            console.error("Erro ao carregar partilha:", err);
+    else if (action === 'note-sharing-settings') {
+        if (selectedNoteId) {
+            e.preventDefault();
+            e.stopPropagation();
+            openShareModalForArchive();
         }
-
-    
-
-    // --- AQUI É ONDE O POPUP ABRE ---
-  const popup = document.getElementById('note-share-popup');
-popup.style.display = 'flex'; // O CSS .modal-overlay trata de centrar tudo
-}
-    
-    // 4. AÇÃO: ANEXOS (📎) - Caso clique no clip da barra principal
+    }
+    // 4. AÇÃO: ANEXOS (📎)
     else if (action === 'show-attachments') {
         openAttachmentsModal();
     }
-
-    // 5. AÇÃO: EXPLORADOR (🔍) - Caso clique na lupa da barra principal
+    // 5. AÇÃO: EXPLORADOR (🔍)
     else if (action === 'show-explorer') {
         openExplorerModal();
     }
 });
+
+    
 
 // =========================================================
 // LISTENERS DE PARTILHA (VERSÃO SEGURA)
@@ -19279,57 +19349,50 @@ document.getElementById('references-toolbar').addEventListener('click', (e) => {
     const button = e.target.closest('button');
     if (!button) return;
 
+    console.log("🛠️ Clique na Toolbar da 4ª Coluna:", button.id);
+
     const { id, type, name } = activeReferenceEntity;
-    if (!id || !type || !name) {
-        console.error("Nenhuma entidade de referência ativa.");
+    if (!name) {
+        console.warn("⚠️ Nenhuma entidade ativa no painel.");
         return;
     }
 
     switch (button.id) {
         case 'references-refresh-btn':
-            console.log("A atualizar referências...");
             showReferencesPanel(id, name, type);
             break;
 
-            case 'references-bookmark-btn': // <--- NOVO CASO
-            openBookmarksModal();
+        case 'references-bookmark-btn':
+            console.log("🔖 Solicitando abertura de Marcadores para:", name);
+            // LOG DE VERIFICAÇÃO DE TIPO
+            console.log("🔍 Tipo da entidade ativa:", type);
+            if (type === 'textobiblico') {
+                openBookmarksModal();
+            } else {
+                console.warn("🚫 Marcadores só funcionam em Textos Bíblicos.");
+                alert("Marcadores são exclusivos para Textos Bíblicos.");
+            }
             break;
-        // --- NOVO CÓDIGO AQUI ---
+
         case 'references-wol-btn':
-            // Codifica o nome (ex: "Malaquias 1:3-5") para formato URL e substitui espaços por '+'
-            // O encodeURIComponent transforma espaços em %20, o replace muda para + para ficar igual ao seu exemplo
             const encodedQuery = encodeURIComponent(name).replace(/%20/g, '+');
-            
-            // Constrói o URL específico de "lookup" (/wol/l/)
             const wolUrl = `https://wol.jw.org/pt-PT/wol/l/r296/lp-tpo?q=${encodedQuery}`;
-            
             window.open(wolUrl, '_blank');
             break;
-        // ------------------------
 
         case 'references-search-btn':
-            const query = encodeURIComponent(name);
-            const searchUrl = `https://wol.jw.org/pt/wol/s/r5/lp-t?q=${query}`;
-            window.open(searchUrl, '_blank');
+            window.open(`https://wol.jw.org/pt/wol/s/r5/lp-t?q=${encodeURIComponent(name)}`, '_blank');
             break;
 
-      case 'references-edit-btn':
-    // Verifica se temos um ID válido antes de tentar editar
-    if (activeReferenceEntity && activeReferenceEntity.id) {
-        openEditEntityModal(activeReferenceEntity.id, activeReferenceEntity.type);
-    } else {
-        alert("Selecione um item para editar.");
-    }
-    break;
+        case 'references-edit-btn':
+            if (id) openEditEntityModal(id, type);
+            break;
 
         case 'references-toggle-btn':
             const allDetails = document.querySelectorAll('#references-list details');
-            if (allDetails.length === 0) return;
             const openCount = document.querySelectorAll('#references-list details[open]').length;
             const shouldOpen = openCount <= allDetails.length / 2;
-            allDetails.forEach(detail => {
-                detail.open = shouldOpen;
-            });
+            allDetails.forEach(detail => detail.open = shouldOpen);
             break;
     }
 });
@@ -21076,42 +21139,52 @@ document.getElementById('archive-toolbar').addEventListener('click', (e) => {
 
 // Função Auxiliar para abrir Partilha (Cópia adaptada da Nota)
 async function openShareModalForArchive() {
+    if (!selectedNoteId) return;
+
+    const modal = document.getElementById('note-share-popup');
+    if (!modal) return console.error("Modal #note-share-popup não encontrado!");
+
+    // 1. FORÇA HIERARQUIA (Move para o body e define Z-Index alto)
+    document.body.appendChild(modal);
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "8500000"; // Acima do editor e abas
+    modal.style.visibility = "visible";
+    modal.style.opacity = "1";
+
     try {
         const docRef = doc(db, 'pastas', selectedNoteId);
         const docSnap = await getDoc(docRef);
         
         if (docSnap.exists()) {
             const data = docSnap.data();
-            currentNoteShareData = data.shareSettings || { shared: false, shareId: null, collab: false };
+            // Carrega definições existentes ou inicia padrão
+            currentNoteShareData = data.shareSettings || { shared: false, shareId: null };
             
-            // 1. Configura Toggle de Leitura (Padrão)
+            // 2. CONFIGURA O TOGGLE DE LEITURA
             const mainToggle = document.getElementById('note-share-toggle');
             mainToggle.checked = currentNoteShareData.shared;
 
             const linkContainer = document.getElementById('note-share-link-container');
-            const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
-            const shareId = currentNoteShareData.shareId || selectedNoteId;
-
             if (currentNoteShareData.shared) {
                 linkContainer.style.display = 'block';
+                const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
+                const shareId = currentNoteShareData.shareId || selectedNoteId;
                 document.getElementById('note-share-url').value = `${baseUrl}/sharenote.html?id=${shareId}`;
             } else {
                 linkContainer.style.display = 'none';
             }
 
-            // 2. CONFIGURAÇÃO DE COLABORAÇÃO (Link de Edição)
+            // 3. CONFIGURA SECÇÃO DE COLABORAÇÃO (Apenas para Arquivos)
             const collabSection = document.getElementById('archive-collab-section');
-            const collabToggle = document.getElementById('collab-share-toggle');
-            const collabLinkContainer = document.getElementById('collab-share-link-container');
-
-            // CORREÇÃO: Aceita o novo tipo 'partilhado'
             if ((data.tipo === 'arquivo' || data.tipo === 'partilhado') && currentViewMode === 'shared') {
                 collabSection.style.display = 'block';
+                const collabToggle = document.getElementById('collab-share-toggle');
                 collabToggle.checked = (data.partilhado === "ativo");
-
+                
+                const collabLinkContainer = document.getElementById('collab-share-link-container');
                 if (data.partilhado === "ativo") {
                     collabLinkContainer.style.display = 'block';
-                    // Link configurado para o novo sistema de entrada
+                    const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
                     document.getElementById('collab-share-url').value = `${baseUrl}/note.html?openArchive=${selectedNoteId}&mode=collab`;
                 } else {
                     collabLinkContainer.style.display = 'none';
@@ -21120,11 +21193,8 @@ async function openShareModalForArchive() {
                 collabSection.style.display = 'none';
             }
         }
-        
-        document.getElementById('note-share-popup').style.display = 'flex';
-        
     } catch (err) {
-        console.error("Erro ao abrir partilha:", err);
+        console.error("Erro ao carregar dados de partilha:", err);
     }
 }
 
@@ -22196,28 +22266,35 @@ function convertToTextarea(inputEl) {
 
 async function renderListCategoryItems(categoryId) {
     const listElement = middlePanelList;
-    listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A processar...</span></div>';
-    
     const myUid = auth.currentUser.uid;
+    
+    // 1. ESTADO DE CARREGAMENTO
+    listElement.innerHTML = `
+        <div class="spinner-container" style="margin-top:50px;">
+            <div class="spinner"></div>
+            <span>A processar categoria...</span>
+        </div>`;
+    
+    // Identifica onde estamos na navegação
     const lastNav = navigationStack[navigationStack.length - 1];
     const origin = navigationStack[0]?.id || categoryId;
 
     try {
         // ==========================================
-        // 1. CAMINHO: COSMOS
+        // 1. CAMINHO: COSMOS (TEMAS E SUBTEMAS)
         // ==========================================
         if (origin === 'cosmos') {
-            // NÍVEL 1: TEMAS
+            // NÍVEL 1: LISTA DE TEMAS PRINCIPAIS
             if (lastNav.type === 'list-category') {
                 middlePanelTitle.textContent = "💼 Cosmos: Temas";
-                updateAddButtonState(true, true);
+                updateAddButtonState(true, true); // Botão + amarelo ativo
 
-                const q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('createdAt', 'desc'));
+                const q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('nome'));
                 const snap = await getDocs(q);
                 listElement.innerHTML = '';
 
                 if (snap.empty) {
-                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Sem temas.</li>';
+                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum tema criado. Clique no + para começar.</li>';
                     return;
                 }
 
@@ -22225,31 +22302,39 @@ async function renderListCategoryItems(categoryId) {
                     const item = { id: docSnap.id, ...docSnap.data() };
                     const li = document.createElement('li');
                     li.className = 'list-item';
+                    
+                    // ATRIBUTOS PARA O POPUP DE EDIÇÃO
                     li.setAttribute('data-id', item.id);
-                    li.setAttribute('data-type', 'cosmos-parent');
+                    li.setAttribute('data-type', 'cosmos-parent'); 
                     li.setAttribute('data-name', item.nome);
                     li.setAttribute('data-emoji', item.emoji || '💼');
 
-                    li.innerHTML = `<span>${item.emoji || '💼'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+                    // SUBSTITUÍDO: "…" por "✏"
+                   li.innerHTML = `<span>${item.emoji || '💼'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+
+                    
                     li.onclick = (e) => {
+                        // IMPORTANTE: Se clicar no lápis, para a execução aqui para o listener global abrir o editor
                         if (e.target.closest('.item-menu-btn')) return;
+
+                        // Navega para dentro do Tema para ver os Subtemas
                         navigationStack.push({ id: item.id, name: item.nome, type: 'cosmos-parent', emoji: item.emoji || '💼' });
                         updateNavigationView(true);
                     };
                     listElement.appendChild(li);
                 });
             }
-            // NÍVEL 2: SUBTEMAS
+            // NÍVEL 2: LISTA DE SUBTEMAS DENTRO DE UM TEMA
             else if (lastNav.type === 'cosmos-parent') {
                 middlePanelTitle.textContent = `${lastNav.emoji} ${lastNav.name}`;
                 updateAddButtonState(true, true);
 
-                const q = query(collection(db, 'subcosmos'), where('cosmosId', '==', lastNav.id), where('userId', '==', myUid), orderBy('createdAt', 'desc'));
+                const q = query(collection(db, 'subcosmos'), where('cosmosId', '==', lastNav.id), where('userId', '==', myUid), orderBy('nome'));
                 const snap = await getDocs(q);
                 listElement.innerHTML = '';
 
                 if (snap.empty) {
-                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Sem subtemas.</li>';
+                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Esta pasta está vazia.</li>';
                     return;
                 }
 
@@ -22257,16 +22342,26 @@ async function renderListCategoryItems(categoryId) {
                     const item = { id: docSnap.id, ...docSnap.data() };
                     const li = document.createElement('li');
                     li.className = 'list-item';
+                    
+                    // ATRIBUTOS PARA O POPUP DE EDIÇÃO
                     li.setAttribute('data-id', item.id);
                     li.setAttribute('data-type', 'subcosmos');
                     li.setAttribute('data-name', item.nome);
                     li.setAttribute('data-emoji', item.emoji || '🔹');
 
-                    if (activeReferenceEntity && activeReferenceEntity.id === item.id) li.classList.add('selected');
+                    // Destaque visual se estiver aberto na 4ª coluna
+                    if (activeReferenceEntity && activeReferenceEntity.id === item.id) {
+                        li.classList.add('selected');
+                    }
 
+                    // SUBSTITUÍDO: "…" por "✏"
                     li.innerHTML = `<span>${item.emoji || '🔹'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+                    
                     li.onclick = (e) => {
+                        // IMPORTANTE: Se clicar no lápis, para a execução aqui para o listener global abrir o editor
                         if (e.target.closest('.item-menu-btn')) return;
+
+                        // Limpa seleção anterior e abre o painel de referências (Citações)
                         listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected'));
                         li.classList.add('selected');
                         showReferencesPanel(item.id, item.nome, 'subcosmos');
@@ -22278,9 +22373,10 @@ async function renderListCategoryItems(categoryId) {
         }
 
         // ==========================================
-        // 2. CAMINHO: BÍBLIA
+        // 2. CAMINHO: BÍBLIA (LIVROS > CAPS > VERS)
         // ==========================================
         if (origin === 'biblia-root') {
+            // Nível 1: Lista de Livros
             if (lastNav.type === 'list-category') {
                 middlePanelTitle.textContent = "Bíblia: Livros";
                 updateAddButtonState(false);
@@ -22295,7 +22391,9 @@ async function renderListCategoryItems(categoryId) {
                     };
                     listElement.appendChild(li);
                 });
-            } else if (lastNav.type === 'bible-book') {
+            } 
+            // Nível 2: Grade de Capítulos
+            else if (lastNav.type === 'bible-book') {
                 middlePanelTitle.textContent = lastNav.name;
                 listElement.innerHTML = '<div class="bible-grid"></div>';
                 const grid = listElement.querySelector('.bible-grid');
@@ -22309,12 +22407,15 @@ async function renderListCategoryItems(categoryId) {
                     };
                     grid.appendChild(btn);
                 }
-            } else if (lastNav.type === 'bible-chapter') {
+            } 
+            // Nível 3: Grade de Versículos
+            else if (lastNav.type === 'bible-chapter') {
                 const bookData = BIBLE_DATA.find(b => b.nome === lastNav.book);
                 const prefix = `${lastNav.book} ${lastNav.chapter}:`;
                 middlePanelTitle.textContent = prefix.replace(':', '');
                 listElement.innerHTML = '<div class="bible-grid"></div>';
                 const grid = listElement.querySelector('.bible-grid');
+                
                 const totalV = bookData?.versiculos?.[lastNav.chapter - 1] || 50;
                 const existingVerses = allEntities['textobiblico'] || [];
 
@@ -22322,6 +22423,7 @@ async function renderListCategoryItems(categoryId) {
                     const fullVerse = `${prefix}${v}`;
                     const exists = existingVerses.some(e => e.nome === fullVerse);
                     const isActive = fullVerse === currentlyOpenVerseName;
+                    
                     const btn = document.createElement('div');
                     btn.className = `bible-grid-btn ${exists ? 'exists' : ''} ${isActive ? 'active-verse' : ''}`;
                     btn.textContent = v;
@@ -22338,10 +22440,11 @@ async function renderListCategoryItems(categoryId) {
         }
 
         // ==========================================
-        // 3. OUTRAS CATEGORIAS (TOPICOS, TAGS, ETC)
+        // 3. OUTRAS CATEGORIAS (TÓPICOS, TAGS, ENTIDADES)
         // ==========================================
         if (lastNav.type === 'list-category') {
             let items = [];
+            
             if (categoryId === 'topico') {
                 middlePanelTitle.textContent = "Tópicos";
                 updateAddButtonState(true, true);
@@ -22368,12 +22471,13 @@ async function renderListCategoryItems(categoryId) {
                     snap.forEach(doc => items.push({ id: doc.id, nome: doc.data().nome, type: categoryId }));
                 }
             }
+            
             renderStandardList(items);
         }
 
     } catch (e) {
-        console.error(e);
-        listElement.innerHTML = '<li style="color:red; padding:20px;">Erro ao carregar dados.</li>';
+        console.error("Erro ao renderizar lista de categorias:", e);
+        listElement.innerHTML = '<li style="color:red; padding:20px; text-align:center;">Erro ao ligar à base de dados.</li>';
     }
 }
 
@@ -23058,6 +23162,7 @@ function loadSharedFilesRoot() {
                 li.setAttribute('data-id', item.id);
                 li.setAttribute('data-type', item.tipo);
                 li.setAttribute('data-name', item.nome);
+                
 
                 if (item.id === selectedNoteId) {
                     li.classList.add('selected-red');
@@ -23999,21 +24104,33 @@ function openRenameModal(currentName, onConfirm) {
 // Função para configurar e abrir o modal de criação de Temas/Subtemas
 window.openCosmosCreator = function(targetType, parentId = null) {
     const modal = document.getElementById('cosmos-modal');
-    const title = document.getElementById('cosmos-modal-title');
+    if (!modal) return console.error("Modal #cosmos-modal não encontrado!");
+
+    // 1. MOVE PARA O BODY E DEFINE Z-INDEX ALTO
+    document.body.appendChild(modal);
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "8000000";
+    modal.style.visibility = "visible";
+    modal.style.opacity = "1";
+
+    // 2. RESET DOS CAMPOS
     const nameInput = document.getElementById('cosmos-name-input');
     const descInput = document.getElementById('cosmos-desc-input');
-    const saveBtn = document.getElementById('save-cosmos-btn');
+    const title = document.getElementById('cosmos-modal-title');
 
-    // Reset dos campos
     nameInput.value = "";
     descInput.value = "";
-    selectedCosmosEmoji = targetType === 'cosmos' ? "💼" : "🔹"; // Emoji padrão por tipo
+    selectedCosmosEmoji = targetType === 'cosmos' ? "💼" : "🔹"; 
 
     title.textContent = targetType === 'cosmos' ? "Novo Tema (Cosmos)" : "Novo Subtema";
-    modal.style.display = 'flex';
+    
+    // Reset da seleção de emojis visual
+    document.querySelectorAll('#cosmos-emoji-grid .emoji-btn').forEach(b => b.classList.remove('selected'));
+
     setTimeout(() => nameInput.focus(), 100);
 
-    // Clonar botão para limpar eventos de cliques anteriores
+    // 3. RECONFIGURAR BOTÃO SALVAR (Clonar para limpar eventos)
+    const saveBtn = document.getElementById('save-cosmos-btn');
     const newSaveBtn = saveBtn.cloneNode(true);
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
 
@@ -24034,18 +24151,16 @@ window.openCosmosCreator = function(targetType, parentId = null) {
                 createdAt: serverTimestamp()
             };
 
-            // Se for subtema, adiciona a referência ao tema pai
-            if (targetType === 'subcosmos') {
-                data.cosmosId = parentId;
-            }
+            if (targetType === 'subcosmos') data.cosmosId = parentId;
 
             await addDoc(collection(db, collectionName), data);
 
             modal.style.display = 'none';
-            renderListCategoryItems('cosmos'); // Recarrega a lista lateral
+            // Recarrega a lista lateral para o novo item aparecer
+            if (typeof renderListCategoryItems === 'function') renderListCategoryItems('cosmos');
+            
         } catch (e) {
             console.error("Erro ao criar item no Cosmos:", e);
-            alert("Erro ao gravar.");
         } finally {
             newSaveBtn.disabled = false;
             newSaveBtn.textContent = "Criar";
@@ -24672,6 +24787,270 @@ window.openGavetaSelection = async (postId) => {
         list.innerHTML = '<li style="padding:10px; color:red;">Erro ao carregar dados.</li>';
     }
 };
+
+// Localiza o botão + dentro do modal de seleção
+const manageBtn = document.getElementById('manage-topics-btn');
+
+if (manageBtn) {
+    // Clonamos para limpar qualquer listener antigo que possa estar a falhar
+    const newManageBtn = manageBtn.cloneNode(true);
+    manageBtn.parentNode.replaceChild(newManageBtn, manageBtn);
+
+    newManageBtn.addEventListener('click', () => {
+        console.log("➕ Abrindo modal de GESTÃO de tópicos...");
+        
+        const manageModal = document.getElementById('manage-topics-modal');
+        if (!manageModal) return console.error("Modal manage-topics-modal não encontrado!");
+
+        // 1. Move para o body para não ficar preso
+        document.body.appendChild(manageModal);
+
+        // 2. Reseta o estado
+        activeTopicIdForManagement = null;
+        
+        // 3. FORÇA VISIBILIDADE (Z-index maior que o anterior)
+        manageModal.style.setProperty('display', 'flex', 'important');
+        manageModal.style.zIndex = "1000000"; // Um nível acima do primeiro modal
+        manageModal.style.visibility = "visible";
+        manageModal.style.opacity = "1";
+
+        // 4. Carrega os dados
+        renderManageTopicsList();
+        
+        // Limpa a coluna da direita do modal de gestão
+        const subBtn = document.getElementById('create-new-subtopic-btn');
+        if(subBtn) subBtn.style.display = 'none';
+        
+        const subList = document.getElementById('subtopics-list-manage');
+        if(subList) subList.innerHTML = '<li style="color:#888; padding:10px;">Selecione um tópico para ver os subtópicos.</li>';
+    });
+}
+
+const closeManageBtn = document.getElementById('close-manage-topics-btn');
+if (closeManageBtn) {
+    closeManageBtn.onclick = () => {
+        document.getElementById('manage-topics-modal').style.display = 'none';
+        // Atualiza a lista do primeiro modal caso tenhamos criado algo novo
+        renderTopicsSelectionList(); 
+    };
+}
+
+
+// A. BOTÃO CRIAR NOVO TÓPICO
+const createTopicBtn = document.getElementById('create-new-topic-btn');
+if (createTopicBtn) {
+    const newBtn = createTopicBtn.cloneNode(true);
+    createTopicBtn.parentNode.replaceChild(newBtn, createTopicBtn);
+
+    newBtn.addEventListener('click', async () => {
+        console.log("🆕 Solicitando input para novo Tópico...");
+        const result = await showCustomInput("Novo Tópico", "Ex: Doutrina, Estudo Pessoal...");
+        
+        if (result && result.name) {
+            try {
+                await addDoc(collection(db, 'topicos'), {
+                    nome: result.name,
+                    descricao: result.description,
+                    userId: auth.currentUser.uid,
+                    createdAt: serverTimestamp()
+                });
+                renderManageTopicsList(); // Atualiza a lista
+            } catch (e) {
+                console.error("Erro ao salvar tópico:", e);
+            }
+        }
+    });
+}
+
+// B. BOTÃO CRIAR NOVO SUBTÓPICO
+const createSubtopicBtn = document.getElementById('create-new-subtopic-btn');
+if (createSubtopicBtn) {
+    const newSubBtn = createSubtopicBtn.cloneNode(true);
+    createSubtopicBtn.parentNode.replaceChild(newSubBtn, createSubtopicBtn);
+
+    newSubBtn.addEventListener('click', async () => {
+        if (!activeTopicIdForManagement) return alert("Selecione um tópico pai primeiro.");
+
+        const result = await showCustomInput("Novo Subtópico", "Ex: Batismo, Oração...");
+        
+        if (result && result.name) {
+            try {
+                await addDoc(collection(db, 'subtopicos'), {
+                    nome: result.name,
+                    descricao: result.description,
+                    topicId: activeTopicIdForManagement,
+                    userId: auth.currentUser.uid,
+                    createdAt: serverTimestamp()
+                });
+                renderManageSubtopicsList(activeTopicIdForManagement); // Atualiza a lista da direita
+            } catch (e) {
+                console.error("Erro ao salvar subtópico:", e);
+            }
+        }
+    });
+}
+
+// No ouvinte de cliques do editor:
+noteContentEditor.addEventListener('click', (e) => {
+    const colorBtn = e.target.closest('button[data-action="highlight-color"]');
+    
+    if (colorBtn) {
+        console.log("🎨 Botão de cores clicado!");
+        e.preventDefault(); 
+        e.stopPropagation(); // Impede o editor de fechar o popup
+        
+        const wrapper = colorBtn.closest('.mini-note-wrapper, details.toggle-section');
+        if (wrapper) {
+            openHighlightPopup(wrapper);
+        }
+        return; // Sai da função para não disparar outros cliques
+    }
+});
+
+// No ouvinte de cliques do editor (ou arquivo):
+noteContentEditor.addEventListener('click', (e) => {
+    const appendBtn = e.target.closest('button[data-action="append-mini-note"]');
+    
+    if (appendBtn) {
+        console.log("🧬 Botão de Clonagem (DNA) clicado!");
+        e.preventDefault(); 
+        e.stopPropagation(); // Essencial para o popup não fechar sozinho
+        
+        const wrapper = appendBtn.closest('.mini-note-wrapper');
+        if (wrapper) {
+            // Captura o HTML da caixa
+            htmlToAppend = wrapper.outerHTML + "<p><br></p>"; 
+            openAppendModal();
+        } else {
+            console.error("❌ Erro: Wrapper .mini-note-wrapper não encontrado.");
+        }
+        return;
+    }
+});
+
+
+const miniNoteShareToggle = document.getElementById('mini-note-share-toggle');
+if (miniNoteShareToggle) {
+    miniNoteShareToggle.onchange = () => {
+        if (activeWrapperForSharing) {
+            const newState = miniNoteShareToggle.checked;
+            
+            // 1. Atualiza o atributo no HTML da caixa
+            activeWrapperForSharing.setAttribute('data-shared', newState);
+            
+            // 2. Atualiza o visual do botão (mudar ícone ou cor)
+            updateSharingButtonState(activeWrapperForSharing);
+            
+            console.log(`✅ Partilha da caixa ${activeWrapperForSharing.id} definida como: ${newState}`);
+            
+            // 3. Grava a nota
+            saveNote(true);
+        }
+    };
+}
+
+const customEmojiBtn = document.getElementById('custom-emoji-btn');
+if (customEmojiBtn) {
+    customEmojiBtn.onclick = () => {
+        const modal = document.getElementById('custom-emoji-modal');
+        if (!modal) return;
+
+        // MOVE PARA O BODY E Z-INDEX MÁXIMO (Para ficar à frente do modal anterior)
+        document.body.appendChild(modal);
+        modal.style.setProperty('display', 'flex', 'important');
+        modal.style.zIndex = "9000000";
+
+        const input = document.getElementById('custom-emoji-input');
+        const confirmBtn = document.getElementById('confirm-custom-emoji-btn');
+
+        input.value = "";
+        setTimeout(() => input.focus(), 100);
+
+        confirmBtn.onclick = () => {
+            const val = input.value.trim();
+            if (val) {
+                selectedCosmosEmoji = val;
+                // Atualiza visualmente o botão do Cosmos para mostrar o emoji escolhido
+                customEmojiBtn.textContent = val;
+                customEmojiBtn.classList.add('selected');
+            }
+            modal.style.display = 'none';
+        };
+    };
+}
+
+
+function openCosmosEditPopup(id, currentName, currentEmoji, type) {
+    console.log("📦 Abrindo Modal de Edição Cosmos para ID:", id);
+    const modal = document.getElementById('custom-emoji-modal');
+    const nameInput = document.getElementById('custom-theme-name-input');
+    const emojiInput = document.getElementById('custom-emoji-input');
+    const confirmBtn = document.getElementById('confirm-custom-emoji-btn');
+
+    if (!modal) {
+        console.error("❌ Erro: Modal 'custom-emoji-modal' não encontrado no HTML!");
+        return;
+    }
+
+    nameInput.value = currentName;
+    emojiInput.value = currentEmoji || "💼";
+
+    document.body.appendChild(modal);
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "9999999";
+
+    setTimeout(() => nameInput.focus(), 150);
+
+    // 3. Gravação
+    confirmBtn.onclick = async () => {
+        const newName = nameInput.value.trim();
+        const newEmoji = emojiInput.value.trim();
+
+        if (!newName) return alert("Nome é obrigatório.");
+
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "...";
+
+        try {
+            const collectionName = type === 'cosmos-parent' ? 'cosmos' : 'subcosmos';
+            const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            
+            await updateDoc(doc(db, collectionName, id), {
+                nome: newName,
+                emoji: newEmoji
+            });
+
+            modal.style.display = 'none';
+            renderListCategoryItems('cosmos'); // Atualiza a lista lateral
+        } catch (e) {
+            console.error(e);
+        } finally {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = "Confirmar";
+        }
+    };
+}
+
+async function checkItemProtection(itemId, itemName) {
+    // 1. Se já desbloqueamos nesta sessão, deixa passar
+    if (sessionUnlockedFolders.has(itemId)) return true;
+
+    // 2. Verifica se o item tem senha (buscando metadados rápidos)
+    const docSnap = await getDoc(doc(db, 'pastas', itemId));
+    if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.passe && data.passe.trim() !== "") {
+            // 3. Pede a senha
+            const authorized = await requestPassword('access', itemId);
+            if (authorized === true) {
+                sessionUnlockedFolders.add(itemId); // Salva o desbloqueio na sessão
+                return true;
+            }
+            return false; // Cancelou ou errou
+        }
+    }
+    return true; // Não tem proteção
+}
 
     </script>
 </body>
