@@ -4918,6 +4918,28 @@ button[data-action="creative-mode"].active {
     color: white !important;
 }
 
+.archive-separator {
+    background-color: rgba(46, 204, 113, 0.05); /* Fundo verde muito subtil */
+    border: 1px dashed #2ecc71;
+    border-left: 5px solid #2ecc71; /* Barra lateral sólida verde */
+    border-radius: 8px;
+    padding: 10px 15px;
+    margin: 10px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    min-height: 50px;
+    position: relative;
+}
+
+.separator-title {
+    font-weight: bold;
+    color: #27ae60; /* Verde escuro para leitura */
+    font-size: 0.95em;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
 </style>
 
 
@@ -5123,6 +5145,7 @@ button[data-action="creative-mode"].active {
                     <button class="archive-tab-btn" data-archive-tab="gavetões">Gavetão</button>
                     <button id="create-post-btn" class="archive-inline-create-btn">+ Post</button>
                     <button id="create-drawer-trigger-btn" class="archive-inline-create-btn" style="display: none;">+ Gavetão</button>
+<button id="create-separator-btn" class="archive-inline-create-btn" style="display: none; background-color: #2ecc71;">+ Separador</button>
                 </div>
 
                 <div id="archive-feed" style="flex: 1; overflow-y: auto; padding: 0 20px 20px 20px; display: flex; flex-direction: column; gap: 20px;">
@@ -20640,18 +20663,30 @@ function displayArchive(id, data, element = null) {
 // 2. Renderizar o Feed
 async function renderArchiveFeed() {
     const feed = document.getElementById('archive-feed');
+    const postBtn = document.getElementById('create-post-btn');
+    const drawerBtn = document.getElementById('create-drawer-trigger-btn');
+    const separatorBtn = document.getElementById('create-separator-btn');
+
     if (!feed) return;
 
-    // --- REGRA DE OURO: SE HOUVER GAVETA ATIVA, PARA TUDO E MOSTRA A GAVETA ---
+    // --- RESET: Esconde todos os botões de ação ---
+    if (postBtn) postBtn.style.display = 'none';
+    if (drawerBtn) drawerBtn.style.display = 'none';
+    if (separatorBtn) separatorBtn.style.display = 'none';
+
+    // --- CASO 1: DENTRO DE UMA GAVETA ---
     if (window.activeGavetaId) {
-        console.log("🚀 [FEED] Encaminhando para renderOpenedGavetaView...");
-        // Passamos o feed e a lista de posts do arquivo atual
+        // Mostra o botão verde de Separador. Post e Gavetão somem.
+        if (separatorBtn) separatorBtn.style.display = 'block';
+        
         renderOpenedGavetaView(feed, currentArchiveData.posts || []);
         return; 
     }
 
-    // Se não houver gaveta ativa, segue a lógica normal que já tinha
+    // --- CASO 2: ABA PRATELEIRA ---
     if (currentArchiveTab === 'prateleira') {
+        if (postBtn) postBtn.style.display = 'block';
+
         feed.innerHTML = '';
         const posts = currentArchiveData?.posts || [];
         if (posts.length === 0) {
@@ -20660,10 +20695,13 @@ async function renderArchiveFeed() {
         }
         posts.forEach(post => feed.appendChild(createPostElement(post)));
     } 
-    else {
-        // MODO GAVETÃO (Onde aparecem os quadrados azuis)
+    // --- CASO 3: ABA GAVETÃO ---
+    else if (currentArchiveTab === 'gavetões') {
+        if (drawerBtn) drawerBtn.style.display = 'block';
+
         feed.innerHTML = '<div style="text-align:center; padding:20px;">A carregar gavetões...</div>';
         try {
+            const { collection, query, where, orderBy, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
             const q = query(collection(db, 'gavetoes'), where('arquivoId', '==', currentArchiveId), orderBy('ordem', 'asc'));
             const drawerSnap = await getDocs(q);
             feed.innerHTML = '';
@@ -20677,7 +20715,6 @@ async function renderArchiveFeed() {
             }
         } catch (e) { console.error(e); }
     }
-    window.renderArchiveFeed = renderArchiveFeed;
 }
 
 
@@ -24604,85 +24641,96 @@ function renderOpenedGavetaView(feed, allPosts) {
     if (!window.activeGavetaData) return;
 
     const viewMode = window.activeGavetaData.viewMode || 'titles';
-    const drawerIDs = window.activeGavetaData.posts || [];
-    const postsInGaveta = allPosts.filter(p => drawerIDs.includes(p.id));
-
+    const orderArray = window.activeGavetaData.posts || [];
+    const sepMetadata = window.activeGavetaData.separatorData || {};
+    const isFullView = (viewMode === 'full'); // 👁️ modo completo
+    
     feed.innerHTML = '';
 
-    // --- CABEÇALHO DA GAVETA ---
+    // --- CABEÇALHO ---
     const header = document.createElement('div');
     header.style.cssText = "display: flex; align-items: center; padding: 15px; background: var(--panel-color); border-radius: 8px; border-left: 5px solid var(--accent-color); margin-bottom: 20px;";
-    
     header.innerHTML = `
         <button class="mini-btn" onclick="window.activeGavetaId=null; window.renderArchiveFeed();" style="margin-right: 15px;"> ← Voltar </button>
         <strong style="color: white; font-size: 1.1em;">📁 ${window.activeGavetaData.nome}</strong>
-        
         <button onclick="window.toggleGavetaViewMode()" title="Alternar visualização" 
-                style="margin-left: auto; background: none; border: none; font-size: 20px; cursor: pointer; opacity: ${viewMode === 'full' ? '1' : '0.4'}; transition: opacity 0.2s;">
-            ${viewMode === 'full' ? '👁️' : '👁️‍🗨️'}
+                style="margin-left: auto; background: none; border: none; font-size: 20px; cursor: pointer; opacity: ${isFullView ? '1' : '0.4'};">
+            ${isFullView ? '👁️' : '👁️‍🗨️'}
         </button>
     `;
     feed.appendChild(header);
 
-    if (postsInGaveta.length === 0) {
-        feed.innerHTML += `<div style="text-align:center; padding:50px; color:#888; font-style:italic;">Esta gaveta está vazia.</div>`;
-    } else {
-        postsInGaveta.forEach(post => {
-            const postEl = createPostElement(post);
-            
-            // ============================================================
-            // LÓGICA DE EXPANSÃO (APENAS PARA MODO TITULOS)
-            // ============================================================
-            if (viewMode === 'titles') {
-                const content = postEl.querySelector('.post-view-content');
-                const footer = postEl.querySelector('.post-footer');
-                const controls = postEl.querySelector('.post-controls');
-
-                // 1. ESTADO INICIAL: Escondido
-                if (content) content.style.display = 'none';
-                if (footer) footer.style.display = 'none';
-                if (controls) controls.style.display = 'none'; // Esconde botões para ficar limpo
-                
-                postEl.style.padding = "10px 15px";
-                postEl.style.marginBottom = "5px";
-                postEl.style.cursor = "pointer";
-                postEl.style.transition = "background-color 0.2s";
-
-                // 2. EVENTO DE CLIQUE PARA EXPANDIR
-                postEl.onclick = (e) => {
-                    // Impede expandir se clicar em algum botão que apareça depois de aberto
-                    if (e.target.closest('button')) return;
-
-                    const isCurrentlyCollapsed = content.style.display === 'none';
-
-                    if (isCurrentlyCollapsed) {
-                        // AÇÃO: EXPANDIR
-                        console.log(`📖 [GAVETA] Expandindo post: ${post.id}`);
-                        if (content) content.style.display = 'block';
-                        if (footer) footer.style.display = 'flex';
-                        if (controls) {
-                            controls.style.display = 'flex';
-                            controls.style.opacity = '1';
-                        }
-                        postEl.style.backgroundColor = "rgba(255,255,255,0.03)";
-                    } else {
-                        // AÇÃO: RECOLHER
-                        console.log(`📘 [GAVETA] Recolhendo post: ${post.id}`);
-                        if (content) content.style.display = 'none';
-                        if (footer) footer.style.display = 'none';
-                        if (controls) controls.style.display = 'none';
-                        postEl.style.backgroundColor = "";
-                    }
-                };
-
-                // Efeito Hover para indicar que é clicável
-                postEl.onmouseenter = () => { if(content.style.display === 'none') postEl.style.backgroundColor = "rgba(255,255,255,0.01)"; };
-                postEl.onmouseleave = () => { if(content.style.display === 'none') postEl.style.backgroundColor = ""; };
-            }
-            
-            feed.appendChild(postEl);
-        });
+    if (orderArray.length === 0) {
+        feed.innerHTML += `<div style="text-align:center; padding:50px; color:#888; font-style:italic;">Gaveta vazia.</div>`;
+        return;
     }
+
+    // --- LISTAGEM ---
+    orderArray.forEach((id) => {
+        if (id.startsWith('sep_')) {
+            // --- RENDERIZAR SEPARADOR VERDE ---
+            const info = sepMetadata[id] || { title: "Separador" };
+            const sepDiv = document.createElement('div');
+            sepDiv.className = 'archive-separator';
+            
+            // Lógica: Só inclui a div 'drawer-controls' se for Full View (👁️)
+            const controlsHTML = isFullView ? `
+                <div class="drawer-controls">
+                    <button class="mini-btn" onclick="window.movePostInGaveta('${id}', -1)">↑</button>
+                    <button class="mini-btn" onclick="window.movePostInGaveta('${id}', 1)">↓</button>
+                    <button class="mini-btn" onclick="window.editSeparator('${id}', '${info.title}')">Editar</button>
+                    <button class="mini-btn" style="color:#e74c3c" onclick="window.deleteSeparator('${id}')">×</button>
+                </div>` : '';
+
+            sepDiv.innerHTML = `
+                <span class="separator-title"># ${info.title}</span>
+                ${controlsHTML}
+            `;
+            feed.appendChild(sepDiv);
+
+        } else {
+            // --- RENDERIZAR POST ---
+            const post = allPosts.find(p => p.id === id);
+            if (post) {
+                const postEl = createPostElement(post);
+                const controls = postEl.querySelector('.post-controls');
+                
+                // Injetar controlos se for Full View, senão limpa-os
+                if (controls) {
+                    if (isFullView) {
+                        controls.innerHTML = `
+                            <button class="mini-btn" onclick="window.movePostInGaveta('${post.id}', -1)">↑</button>
+                            <button class="mini-btn" onclick="window.movePostInGaveta('${post.id}', 1)">↓</button>
+                            <button class="mini-btn" onclick="window.editArchivePost('${post.id}')">Editar</button>
+                            <button class="mini-btn" title="Remover da Gaveta" onclick="window.togglePostInGaveta('${window.activeGavetaId}', true, '${post.id}')">×</button>
+                        `;
+                        controls.style.display = 'flex';
+                        controls.style.opacity = '1';
+                    } else {
+                        controls.style.display = 'none';
+                    }
+                }
+
+                // Modo Títulos (Acordeão)
+                if (!isFullView) {
+                    const content = postEl.querySelector('.post-view-content');
+                    const footer = postEl.querySelector('.post-footer');
+                    if (content) content.style.display = 'none';
+                    if (footer) footer.style.display = 'none';
+                    
+                    postEl.style.cursor = "pointer";
+                    postEl.onclick = (e) => {
+                        if (e.target.closest('button')) return;
+                        const isCollapsed = content.style.display === 'none';
+                        content.style.display = isCollapsed ? 'block' : 'none';
+                        footer.style.display = isCollapsed ? 'flex' : 'none';
+                        postEl.style.backgroundColor = isCollapsed ? "rgba(255,255,255,0.03)" : "";
+                    };
+                }
+                feed.appendChild(postEl);
+            }
+        }
+    });
 }
 
  
@@ -25218,6 +25266,111 @@ async function checkItemProtection(itemId, itemName) {
     }
     return true; // Não tem proteção
 }
+
+window.addSeparatorToGaveta = async () => {
+    if (!window.activeGavetaId) return;
+
+    const result = await showCustomInput("Novo Separador", "Ex: Parte 1, Referências Extras...");
+    if (!result || !result.name) return;
+
+    const sepId = 'sep_' + Date.now();
+    
+    try {
+        const { arrayUnion } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const gavetaRef = doc(db, 'gavetas', window.activeGavetaId);
+
+        // Salvamos o ID no array de posts e o nome num mapa de metadados
+        await updateDoc(gavetaRef, {
+            posts: arrayUnion(sepId),
+            [`separatorData.${sepId}`]: {
+                title: result.name,
+                createdAt: Date.now()
+            }
+        });
+
+        // Atualiza a memória local e renderiza
+        if (!window.activeGavetaData.posts) window.activeGavetaData.posts = [];
+        window.activeGavetaData.posts.push(sepId);
+        if (!window.activeGavetaData.separatorData) window.activeGavetaData.separatorData = {};
+        window.activeGavetaData.separatorData[sepId] = { title: result.name };
+
+        renderArchiveFeed();
+    } catch (e) {
+        console.error("Erro ao criar separador:", e);
+    }
+};
+
+// Ligar o clique do botão
+document.getElementById('create-separator-btn').onclick = window.addSeparatorToGaveta;
+
+
+window.editSeparator = async (id, currentName) => {
+    const result = await showCustomInput("Renomear Separador", "Novo nome...");
+    if (!result || !result.name) return;
+
+    try {
+        const gavetaRef = doc(db, 'gavetas', window.activeGavetaId);
+        await updateDoc(gavetaRef, {
+            [`separatorData.${id}.title`]: result.name
+        });
+        window.activeGavetaData.separatorData[id].title = result.name;
+        renderArchiveFeed();
+    } catch (e) { console.error(e); }
+};
+
+window.deleteSeparator = async (id) => {
+    if (!confirm("Remover este separador?")) return;
+    try {
+        const { arrayRemove } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const gavetaRef = doc(db, 'gavetas', window.activeGavetaId);
+        await updateDoc(gavetaRef, {
+            posts: arrayRemove(id),
+            [`separatorData.${id}`]: deleteField()
+        });
+        window.activeGavetaData.posts = window.activeGavetaData.posts.filter(item => item !== id);
+        renderArchiveFeed();
+    } catch (e) { console.error(e); }
+};
+
+// Função de movimento unificada (funciona para posts e separadores)
+window.movePostInGaveta = async (id, direction) => {
+    const order = [...window.activeGavetaData.posts];
+    const index = order.indexOf(id);
+    const newIndex = index + direction;
+
+    if (newIndex >= 0 && newIndex < order.length) {
+        [order[index], order[newIndex]] = [order[newIndex], order[index]];
+        try {
+            const gavetaRef = doc(db, 'gavetas', window.activeGavetaId);
+            await updateDoc(gavetaRef, { posts: order });
+            window.activeGavetaData.posts = order;
+            renderArchiveFeed();
+        } catch (e) { console.error(e); }
+    }
+};
+
+document.getElementById('create-separator-btn').onclick = async () => {
+    const result = await showCustomInput("Novo Separador", "Ex: Parte 1, Fontes Extra...");
+    if (!result || !result.name) return;
+
+    const sepId = 'sep_' + Date.now();
+    try {
+        const { doc, updateDoc, arrayUnion } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const gavetaRef = doc(db, 'gavetas', window.activeGavetaId);
+
+        await updateDoc(gavetaRef, {
+            posts: arrayUnion(sepId),
+            [`separatorData.${sepId}`]: { title: result.name }
+        });
+
+        // Atualiza cache local para refletir na UI sem refresh
+        window.activeGavetaData.posts.push(sepId);
+        if(!window.activeGavetaData.separatorData) window.activeGavetaData.separatorData = {};
+        window.activeGavetaData.separatorData[sepId] = { title: result.name };
+        
+        renderArchiveFeed();
+    } catch (e) { console.error(e); }
+};
 
     </script>
 </body>
