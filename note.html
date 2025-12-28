@@ -10183,6 +10183,7 @@ function showContextMenu(e) {
     const menu = document.getElementById('context-menu');
     const myUid = auth.currentUser.uid;
     
+    // Captura os dados do item
     activeItemContext = {
         id: item.dataset.id,
         name: item.dataset.name,
@@ -10191,40 +10192,67 @@ function showContextMenu(e) {
         parentId: item.dataset.parentId === "null" ? null : item.dataset.parentId,
         isSuperfolder: item.dataset.superpasta === "true",
         isPinned: item.dataset.pinned === "true",
-        isProtected: item.dataset.protected === "true", // Lê o atributo que criámos
+        isProtected: item.dataset.protected === "true",
         userId: item.dataset.userid || myUid
     };
 
+    // 1. Esconde tudo para começar do zero
     menu.querySelectorAll('button').forEach(b => b.style.display = 'none');
     menu.querySelectorAll('.menu-sep').forEach(d => d.style.display = 'none');
 
+    // 2. REGRAS PARA COSMOS (Temas/Subtemas)
     if (activeItemContext.type === 'cosmos-parent' || activeItemContext.type === 'subcosmos') {
         menu.querySelector('[data-action="rename"]').style.display = 'block';
+        const iconBtn = menu.querySelector('[data-action="change-cosmos-emoji"]');
+        if (iconBtn) iconBtn.style.display = 'block';
+        menu.querySelector('.menu-sep').style.display = 'block';
         menu.querySelector('[data-action="hide"]').style.display = 'block';
-    } else {
+    } 
+    // 3. REGRAS PARA PASTAS, NOTAS E ARQUIVOS
+    else {
+        // Opções Universais
         menu.querySelector('[data-action="rename"]').style.display = 'block';
         menu.querySelector('[data-action="hide"]').style.display = 'block';
 
+        // Opções Exclusivas do MODO LOCAL
         if (currentViewMode === 'local' || currentViewMode === 'pins') {
+            // Grupo 1: Pin e Proteção
             menu.querySelector('[data-action="toggle-pin"]').style.display = 'block';
-            menu.querySelector('[data-action="move-position"]').style.display = 'block';
-            menu.querySelector('[data-action="move-folder"]').style.display = 'block';
+            menu.querySelector('[data-action="toggle-pin"]').textContent = activeItemContext.isPinned ? "Remover Pin" : "Adicionar Pin";
             
-            // --- LÓGICA DE PROTEÇÃO DINÂMICA ---
             const protectBtn = menu.querySelector('[data-action="protect"]');
             const unprotectBtn = menu.querySelector('[data-action="unprotect"]');
+            if (activeItemContext.isProtected) unprotectBtn.style.display = 'block';
+            else protectBtn.style.display = 'block';
 
-            if (activeItemContext.isProtected) {
-                unprotectBtn.style.display = 'block'; // Mostra "Tirar Proteção"
-            } else {
-                protectBtn.style.display = 'block';   // Mostra "Proteger"
+            // Grupo 2: Movimentação
+            menu.querySelector('[data-action="move-position"]').style.display = 'block';
+            menu.querySelector('[data-action="move-folder"]').style.display = 'block';
+
+            // Grupo 3: Tópicos e Superpastas (AQUI ESTAVAM AS QUE FALTAREVM)
+            menu.querySelector('[data-action="manage-topics"]').style.display = 'block';
+            
+            // Só mostra opções de Superpasta se for uma PASTA
+            if (activeItemContext.type === 'pasta') {
+                const superBtn = menu.querySelector('[data-action="toggle-superfolder"]');
+                if (superBtn) {
+                    superBtn.style.display = 'block';
+                    superBtn.textContent = activeItemContext.isSuperfolder ? "Tornar Pasta Normal" : "Tornar Superpasta";
+                }
+                
+                // Se já for superpasta, permite mudar o icon
+                if (activeItemContext.isSuperfolder) {
+                    const iconBtn = menu.querySelector('[data-action="change-icon"]');
+                    if (iconBtn) iconBtn.style.display = 'block';
+                }
             }
-            // -----------------------------------
 
+            // Ativa os separadores visuais
             menu.querySelectorAll('.menu-sep').forEach(sep => sep.style.display = 'block');
         }
     }
 
+    // --- POSICIONAMENTO INTELIGENTE ---
     menu.style.opacity = "0";
     menu.style.display = 'flex';
     menu.style.position = 'fixed';
@@ -15503,44 +15531,73 @@ window.addEventListener('beforeunload', (event) => {
 
 // LISTENER ÚNICO DA COLUNA 2 (Unifica Logs, Navegação e Mobile)
 middlePanelList.addEventListener('click', async (e) => {
+    // 1. Identifica o item da lista (a linha inteira)
     const item = e.target.closest('.list-item');
     if (!item) return;
-     showContextMenu(e); 
 
+    // --- A. DETEÇÃO EXCLUSIVA DO BOTÃO DE MENU (...) ---
+    // Verificamos se o clique foi EXATAMENTE no botão de 3 pontos ou lápis
     const itemMenuBtn = e.target.closest('.item-menu-btn');
     if (itemMenuBtn) { 
+        console.log("🛠️ Abrindo menu de contexto para:", item.dataset.name);
         showContextMenu(e); 
-        return; 
+        return; // IMPORTANTE: Para aqui. Não executa a proteção nem a navegação.
     }
 
+    // --- B. CAPTURA DE DADOS PARA NAVEGAÇÃO ---
     const id = item.getAttribute('data-id');
     const type = item.getAttribute('data-type');
     const name = item.getAttribute('data-name');
 
-    // --- NOVO: VERIFICAÇÃO DE PROTEÇÃO ANTES DE ABRIR ---
+    // --- C. VERIFICAÇÃO DE PROTEÇÃO (SÓ AO TENTAR ABRIR) ---
+    // Se o item tiver senha, o popup abre aqui. Se cancelar, a função para.
     const canAccess = await checkItemProtection(id, name);
     if (!canAccess) return; 
 
+    // --- D. LÓGICA DE NAVEGAÇÃO / ABERTURA ---
     const action = async () => {
+        // Caso 1: Clicou numa Pasta ou Agregação (Navega para dentro)
         if (type === 'pasta' || type === 'agregacao') {
             if (item.dataset.superpasta === "true") {
-                navigateWithUnsavedCheck(() => { window.location.href = `note.html?rootId=${id}`; });
+                navigateWithUnsavedCheck(() => { 
+                    window.location.href = `note.html?rootId=${id}`; 
+                });
                 return;
             }
+            
+            // Navegação normal para pastas
             navigationStack.push({ id, name });
             updateNavigationView(true);
-            if (window.innerWidth <= 768) document.body.classList.add('mobile-view-middle');
+            
+            // Mobile: Garante que mostra a lista
+            if (window.innerWidth <= 768) {
+                document.body.classList.add('mobile-view-middle');
+            }
         }
+        // Caso 2: Clicou numa Nota ou Arquivo (Abre no painel direito)
         else if (type === 'nota' || type === 'arquivo' || type === 'partilhado') {
-            document.querySelectorAll('#file-list .list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
+            // Remove seleções anteriores e marca a nova
+            document.querySelectorAll('#file-list .list-item').forEach(el => {
+                el.classList.remove('selected', 'selected-red');
+            });
+            
             const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
             item.classList.add(selectionClass);
-            if (window.innerWidth <= 768) document.body.classList.add('mobile-view-editor');
+
+            // Mobile: Salta para o Editor
+            if (window.innerWidth <= 768) {
+                document.body.classList.add('mobile-view-editor');
+            }
             
-            if (type === 'nota') displayNote(id, item);
-            else displayArchive(id, { id, nome: name, tipo: type }, item);
+            if (type === 'nota') {
+                displayNote(id, item);
+            } else {
+                displayArchive(id, { id, nome: name, tipo: type }, item);
+            }
         }
     };
+
+    // Executa a ação verificando se há notas não guardadas no editor
     navigateWithUnsavedCheck(action);
 });
 
@@ -24792,32 +24849,31 @@ window.openGavetaSelection = async (postId) => {
 const manageBtn = document.getElementById('manage-topics-btn');
 
 if (manageBtn) {
-    // Clonamos para limpar qualquer listener antigo que possa estar a falhar
+    // Clonamos para limpar qualquer listener antigo e garantir que o clique é único
     const newManageBtn = manageBtn.cloneNode(true);
     manageBtn.parentNode.replaceChild(newManageBtn, manageBtn);
 
     newManageBtn.addEventListener('click', () => {
-        console.log("➕ Abrindo modal de GESTÃO de tópicos...");
+        console.log("➕ Abrindo modal de GESTÃO de tópicos (Camada Superior)...");
         
         const manageModal = document.getElementById('manage-topics-modal');
-        if (!manageModal) return console.error("Modal manage-topics-modal não encontrado!");
+        if (!manageModal) return;
 
-        // 1. Move para o body para não ficar preso
+        // 1. MOVE PARA O BODY (Essencial para não ficar preso atrás de nada)
         document.body.appendChild(manageModal);
 
-        // 2. Reseta o estado
-        activeTopicIdForManagement = null;
-        
-        // 3. FORÇA VISIBILIDADE (Z-index maior que o anterior)
+        // 2. FORÇA HIERARQUIA SUPERIOR
+        // O primeiro modal tem 8.000.000, por isso este precisa de mais.
         manageModal.style.setProperty('display', 'flex', 'important');
-        manageModal.style.zIndex = "1000000"; // Um nível acima do primeiro modal
-        manageModal.style.visibility = "visible";
-        manageModal.style.opacity = "1";
+        manageModal.style.setProperty('z-index', '9000000', 'important'); 
+        manageModal.style.setProperty('visibility', 'visible', 'important');
+        manageModal.style.setProperty('opacity', '1', 'important');
 
-        // 4. Carrega os dados
+        // 3. Reseta o estado e carrega a lista
+        activeTopicIdForManagement = null;
         renderManageTopicsList();
         
-        // Limpa a coluna da direita do modal de gestão
+        // Limpa a coluna da direita do modal de gestão até selecionar um tópico
         const subBtn = document.getElementById('create-new-subtopic-btn');
         if(subBtn) subBtn.style.display = 'none';
         
@@ -24895,7 +24951,6 @@ noteContentEditor.addEventListener('click', (e) => {
     const colorBtn = e.target.closest('button[data-action="highlight-color"]');
     
     if (colorBtn) {
-        console.log("🎨 Botão de cores clicado!");
         e.preventDefault(); 
         e.stopPropagation(); // Impede o editor de fechar o popup
         
@@ -24912,7 +24967,6 @@ noteContentEditor.addEventListener('click', (e) => {
     const appendBtn = e.target.closest('button[data-action="append-mini-note"]');
     
     if (appendBtn) {
-        console.log("🧬 Botão de Clonagem (DNA) clicado!");
         e.preventDefault(); 
         e.stopPropagation(); // Essencial para o popup não fechar sozinho
         
@@ -24981,7 +25035,6 @@ if (customEmojiBtn) {
 
 
 function openCosmosEditPopup(id, currentName, currentEmoji, type) {
-    console.log("📦 Abrindo Modal de Edição Cosmos para ID:", id);
     const modal = document.getElementById('custom-emoji-modal');
     const nameInput = document.getElementById('custom-theme-name-input');
     const emojiInput = document.getElementById('custom-emoji-input');
