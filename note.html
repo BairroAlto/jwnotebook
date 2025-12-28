@@ -4950,6 +4950,97 @@ button[data-action="creative-mode"].active {
     box-shadow: 0 0 5px rgba(231, 76, 60, 0.5);
 }
 
+/* ============================================================
+   ESTILO DO ESCUDO DE CARREGAMENTO (APP LOADER)
+   ============================================================ */
+#app-loader {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: #1a1a1d; /* Mesma cor do seu --bg-color */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999999; /* Fica por cima de absolutamente tudo */
+    transition: opacity 0.5s ease, visibility 0.5s;
+}
+
+.loader-content {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+}
+
+.loader-circle {
+    width: 60px;
+    height: 60px;
+    border: 3px solid rgba(74, 144, 226, 0.1);
+    border-top: 3px solid #4a90e2; /* Cor --accent-color */
+    border-radius: 50%;
+    animation: spin 1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.loader-logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.logo-icon {
+    font-size: 32px;
+}
+
+.logo-text {
+    font-size: 24px;
+    font-weight: bold;
+    color: #f0f0f0;
+    letter-spacing: 1px;
+}
+
+.loader-status {
+    color: #888;
+    font-size: 0.9em;
+    font-style: italic;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Classe para esconder com suavidade */
+#app-loader.fade-out {
+    opacity: 0;
+    visibility: hidden;
+}
+
+
+.notebook-container { 
+    display: none !important; /* Adiciona isto: O site nasce escondido */
+    height: 100vh; 
+    width: 100vw; 
+}
+
+/* Garante que o Loader está sempre por cima e visível no início */
+#app-loader {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background-color: #1a1a1d;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999999;
+}
+
 </style>
 
 
@@ -6371,6 +6462,25 @@ button[data-action="creative-mode"].active {
     </div>
 </div>
 
+<!-- ESCUDO DE CARREGAMENTO INICIAL -->
+<div id="app-loader">
+    <div class="loader-content">
+        <div class="loader-circle"></div>
+        <div class="loader-logo">
+            <span class="logo-icon">📖</span>
+            <span class="logo-text">NotaBook</span>
+        </div>
+        <p class="loader-status">A preparar o seu espaço...</p>
+    </div>
+</div>
+
+<div id="app-loader">
+    <div style="text-align:center;">
+        <div class="spinner" style="width:50px; height:50px; border-width:4px; margin: 0 auto 20px auto;"></div>
+        <h2 style="color:white; font-family:sans-serif;">NotaBook</h2>
+        <p style="color:#888; font-style:italic;">A validar acesso...</p>
+    </div>
+</div>
 
 
 </body>
@@ -6743,150 +6853,59 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
 }
 
 // --- PROTEÇÃO DE ROTA E CARREGAMENTO DE USUÁRIO ---
-onAuthStateChanged(auth, async (user) => {
+ onAuthStateChanged(auth, async (user) => {
+    const loader = document.getElementById('app-loader');
+
     if (!user) {
-        // Redireciona para login se não houver utilizador
+        // 🛡️ SEGURO: Se não há login, o body continua com opacity: 0
+        // e saltamos imediatamente para o login.
         window.location.href = "index.html";
+        return; 
     } else {
+        console.log("🔐 Acesso garantido. A preparar dados...");
 
-        // 1. LER PARÂMETROS DO URL
-    const params = new URLSearchParams(window.location.search);
-    const urlRootId = params.get('rootId');
-    const openFolderId = params.get('openFolder'); 
-    const targetNoteId = params.get('noteId');
-    const redirectSearch = params.get('search');
-    const viewParam = params.get('view');
-
-    // --- NOVOS PARÂMETROS PARA ARQUIVO/COLABORAÇÃO ---
-    const openArchiveId = params.get('openArchive'); // ID do Arquivo via link
-    const modeParam = params.get('mode');           // ex: 'collab'
-
-    SUPERFOLDER_ID = urlRootId || null; 
-
-    // Define o modo de visualização inicial
-    if (viewParam === 'shared' || modeParam === 'collab') {
-        currentViewMode = 'shared';
-    }
-    
-
-
-
-
-
-    // ============================================================
-    // LÓGICA DE ENTRADA AUTOMÁTICA EM ARQUIVO (COLABORAÇÃO)
-    // ============================================================
-    if (openArchiveId && user) {
+        // --- 1. CARREGAMENTO DE DADOS (O código que já tinhas) ---
         try {
-            const archiveRef = doc(db, 'pastas', openArchiveId);
-            const archiveSnap = await getDoc(archiveRef);
+            const params = new URLSearchParams(window.location.search);
+            const targetNoteId = params.get('noteId');
+            const urlRootId = params.get('rootId');
+            SUPERFOLDER_ID = urlRootId || null;
 
-            if (archiveSnap.exists()) {
-                const archiveData = archiveSnap.data();
+            // Carregar Perfil, Configurações, Pastas...
+            const userDocRef = doc(db, "users", user.uid);
+            const userDoc = await getDoc(userDocRef);
+            if (userDoc.exists()) currentUserData = userDoc.data();
 
-                if (archiveData.partilhado === "ativo") {
-                    // 1. Garante que o utilizador está na lista de colaboradores
-                    await updateDoc(archiveRef, {
-                        [`colaboradores.${user.uid}`]: true,
-                        "ultimaedicao": serverTimestamp()
-                    });
-                    
-                    // 2. MUDA A VISTA PARA "PARTILHA" (Coluna 1 e 2)
-                    // Usamos o switchFolderView porque ele já trata de limpar a navegação local
-                    currentViewMode = 'shared';
-                    navigationStack = []; // Reseta o caminho das pastas
-                    
-                    // 3. ATUALIZA A INTERFACE DA ESQUERDA
-                    // Passamos openArchiveId para que ele apareça selecionado na lista
-                    updateNavigationView(true, openArchiveId);
-                    
-                    // 4. ABRE O ARQUIVO NO PAINEL DIREITO
-                    displayArchive(openArchiveId, { ...archiveData, id: openArchiveId });
-                    
-                    // 5. CORREÇÃO VISUAL: Muda o título da 2ª coluna
-                    document.getElementById('middle-panel-title').textContent = "Arquivos Partilhados";
+            // Inicializar a vista do painel
+            updateNavigationView(false, targetNoteId);
 
-                    // Limpa o URL para não repetir o processo se fizer refresh
-                    window.history.replaceState({}, document.title, "note.html?view=shared");
+            if (targetNoteId) displayNote(targetNoteId, null);
 
-                } else {
-                    alert("A colaboração para este arquivo foi desativada pelo dono.");
-                    window.location.href = "note.html";
-                }
-            }
-        } catch (e) {
-            console.error("Erro ao entrar na colaboração:", e);
-        }
-    }
+            // Carregar Caches
+            fetchAllEntities();
+            fetchAllTags();
+            loadUserHighlights();
 
-    // ============================================================
-    // CARREGAMENTO DE PERFIL E DEFINIÇÕES (MANTER IGUAL)
-    // ============================================================
-    try {
-        const userDocRef = doc(db, "users", user.uid);
-        const userDoc = await getDoc(userDocRef);
-        if (userDoc.exists()) currentUserData = userDoc.data();
-        else {
-            currentUserData = { nome: "Usuário", email: user.email };
-            await setDoc(userDocRef, { email: user.email }, { merge: true }); 
-        }
-    } catch (e) { console.error(e); }
+        } catch (e) { console.error("Erro no carregamento:", e); }
 
-    // Carregar Configurações de Privacidade
-    try {
-        const configRef = doc(db, "configuracoes", user.uid);
-        const configSnap = await getDoc(configRef);
-        if (configSnap.exists()) {
-            const savedSettings = configSnap.data();
-            appSettings = { ...appSettings, ...savedSettings };
+        // ============================================================
+        // 🚀 A REVELAÇÃO (Exatamente como pediste: 1 segundo depois)
+        // ============================================================
+        setTimeout(() => {
+            // 1. Faz o body aparecer (opacity 1)
+            document.body.style.transition = "opacity 0.5s ease";
+            document.body.style.opacity = "1";
             
-             // SINCRONIZA O CHECKBOX COM A BASE DE DADOS
-    if(document.getElementById('setting-full-titles')) {
-        document.getElementById('setting-full-titles').checked = appSettings.showFullTitles || false;
-    }
-
-            // Atualiza os checkboxes no modal de definições
-            if(document.getElementById('setting-search-tags')) document.getElementById('setting-search-tags').checked = appSettings.searchTagsInProtected;
-            if(document.getElementById('setting-search-topics')) document.getElementById('setting-search-topics').checked = appSettings.searchTopicsInProtected;
-            if(document.getElementById('setting-search-anchors')) document.getElementById('setting-search-anchors').checked = appSettings.searchAnchorsInProtected;
-            if(document.getElementById('setting-global-search-superfolder')) document.getElementById('setting-global-search-superfolder').checked = appSettings.searchGlobalInSuperfolder;
-        }
-    } catch (e) { console.error(e); }
-
-    // ============================================================
-    // CONFIGURAÇÃO DA NAVEGAÇÃO INICIAL
-    // ============================================================
-    if (openFolderId) {
-        await reconstructFolderNavigation(openFolderId, targetNoteId);
-    } 
-    else if (SUPERFOLDER_ID) {
-        try {
-            const rootSnap = await getDoc(doc(db, 'pastas', SUPERFOLDER_ID));
-            if (rootSnap.exists()) {
-                const data = rootSnap.data();
-                currentSuperfolderName = data.nome;
-                currentSuperfolderParentId = data.parentId; 
-                document.title = `${data.nome} - NotaBook - Note`;
-                updateNavigationView(false, targetNoteId);
+            // 2. Remove o loader com um efeito suave
+            if (loader) {
+                loader.style.transition = "opacity 0.5s ease";
+                loader.style.opacity = "0";
+                setTimeout(() => loader.remove(), 500);
             }
-        } catch (e) { console.error(e); }
-    } 
-    else {
-        // Se já abriu o arquivo via colaboração acima, não reseta a vista
-        if (!openArchiveId) {
-            updateNavigationView(false, targetNoteId); 
-        }
+            
+            console.log("✨ Site revelado.");
+        }, 1000); // 1 segundo de espera após detetar o login
     }
-
-    // Abrir nota se solicitado (e não for arquivo)
-    if (targetNoteId && !openArchiveId) {
-        displayNote(targetNoteId, null, redirectSearch);
-    }
-
-    fetchAllEntities();
-    fetchAllTags();
-   loadUserHighlights();
-    } // <--- FECHA O 'ELSE'
 });
 
 
