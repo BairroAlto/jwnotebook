@@ -5960,12 +5960,18 @@ a.board-link:hover {
 
 <!-- MODAL PARA EMOJI PERSONALIZADO -->
 <div id="custom-emoji-modal" class="modal-overlay" style="z-index: 2700;">
-    <div class="modal-content" style="max-width: 300px; text-align: center;">
-        <h3>Emoji Personalizado</h3>
-        <p style="font-size: 0.85em; color: var(--text-muted-color); margin-bottom: 10px;">Digite ou cole o emoji que deseja usar:</p>
+    <div class="modal-content" style="max-width: 350px; text-align: center;">
+        <h3>Editar Tema</h3>
+        <p style="font-size: 0.85em; color: var(--text-muted-color); margin-bottom: 15px;">Ajuste o nome e o ícone do tema:</p>
         
+        <!-- Campo Nome -->
+        <input type="text" id="custom-theme-name-input" placeholder="Nome do Tema" 
+               style="width: 100%; padding: 10px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 8px; color: white; margin-bottom: 15px; outline: none; transition: border-color 0.2s;">
+
+        <!-- Campo Emoji -->
+        <label style="display:block; margin-bottom:8px; font-size: 0.75em; text-transform: uppercase; color: var(--text-muted-color);">Emoji / Ícone:</label>
         <input type="text" id="custom-emoji-input" maxlength="5" placeholder="😊"
-               style="width: 80px; height: 80px; text-align: center; font-size: 40px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 12px; color: white; margin: 10px 0 20px 0; outline: none;">
+               style="width: 80px; height: 80px; text-align: center; font-size: 40px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 12px; color: white; margin: 0 auto 20px auto; outline: none; display: block;">
         
         <div class="modal-actions" style="justify-content: center; gap: 10px;">
             <button class="modal-btn secondary" onclick="document.getElementById('custom-emoji-modal').style.display='none'">Cancelar</button>
@@ -9868,112 +9874,122 @@ function showContextMenu(e) {
     const item = e.target.closest('.list-item');
     if (!item) return;
 
-    // Caso especial Cosmos (seletor de emoji)
-    if (item.dataset.type === 'cosmos-parent') {
-        const themeId = item.dataset.id;
-        const modal = document.getElementById('custom-emoji-modal');
-        const input = document.getElementById('custom-emoji-input');
-        const confirmBtn = document.getElementById('confirm-custom-emoji-btn');
-        input.value = ""; 
-        modal.style.display = 'flex';
-        setTimeout(() => input.focus(), 100);
-        confirmBtn.onclick = async () => {
-            const newEmoji = input.value.trim();
-            if (newEmoji) {
-                try {
-                    await updateDoc(doc(db, 'cosmos', themeId), { emoji: newEmoji });
-                    modal.style.display = 'none';
-                    renderListCategoryItems('cosmos');
-                } catch (err) { console.error(err); }
-            }
-        };
-        return;
-    }
-
-    const menu = document.getElementById('context-menu');
     const myUid = auth.currentUser.uid;
+    const menu = document.getElementById('context-menu');
     
-    // Captura o contexto completo do item
+    // Captura o contexto do item
     activeItemContext = {
         id: item.dataset.id,
         name: item.dataset.name,
         type: item.dataset.type,
-        userId: item.dataset.userid, // ID do dono do ficheiro
+        userId: item.dataset.userid,
+        emoji: item.dataset.emoji,
         parentId: item.dataset.parentid === 'null' ? null : item.dataset.parentid,
         isProtected: item.hasAttribute('data-protected'),
         isSuperfolder: item.getAttribute('data-superpasta') === "true",
         isPinned: item.getAttribute('data-pinned') === "true"
     };
 
-    // Identifica se é um arquivo de outro utilizador na aba Partilha
+    // ============================================================
+    // CASO ESPECIAL: COSMOS (TEMAS E SUBTEMAS)
+    // ============================================================
+    if (activeItemContext.type === 'cosmos-parent' || activeItemContext.type === 'subcosmos') {
+        const modal = document.getElementById('custom-emoji-modal');
+        const nameInput = document.getElementById('custom-theme-name-input');
+        const emojiInput = document.getElementById('custom-emoji-input');
+        const confirmBtn = document.getElementById('confirm-custom-emoji-btn');
+        
+        // Configura títulos e preenche dados
+        modal.querySelector('h3').textContent = activeItemContext.type === 'cosmos-parent' ? "Editar Tema" : "Editar Subtema";
+        nameInput.value = activeItemContext.name;
+        emojiInput.value = activeItemContext.emoji || (activeItemContext.type === 'cosmos-parent' ? '💼' : '🔹');
+
+        modal.style.display = 'flex';
+        setTimeout(() => nameInput.focus(), 100);
+
+        confirmBtn.onclick = async () => {
+            const newName = nameInput.value.trim();
+            const newEmoji = emojiInput.value.trim();
+            if (!newName) return;
+
+            const collectionName = activeItemContext.type === 'cosmos-parent' ? 'cosmos' : 'subcosmos';
+            try {
+                await updateDoc(doc(db, collectionName, activeItemContext.id), {
+                    nome: newName,
+                    emoji: newEmoji
+                });
+                modal.style.display = 'none';
+                // Recarrega a lista baseando-se no contexto atual
+                const lastNav = navigationStack[navigationStack.length - 1];
+                renderListCategoryItems(lastNav.type === 'list-category' ? lastNav.id : lastNav.id);
+            } catch (err) { console.error(err); }
+        };
+        return; 
+    }
+
+    // ============================================================
+    // CASO NORMAL: PASTAS, NOTAS E ARQUIVOS
+    // ============================================================
+    
+    // Identifica permissões (Modo Partilha vs Conteúdo Próprio)
     const isOwner = activeItemContext.userId === myUid;
     const isSharedNotMine = (currentViewMode === 'shared' && !isOwner);
 
-    // Referências aos botões e separadores
-    const btnRename = menu.querySelector('[data-action="rename"]');
-    const btnPin = menu.querySelector('[data-action="toggle-pin"]');
-    const btnProtect = menu.querySelector('[data-action="protect"]');
-    const btnUnprotect = menu.querySelector('[data-action="unprotect"]');
-    const btnMovePos = menu.querySelector('[data-action="move-position"]');
-    const btnMoveFold = menu.querySelector('[data-action="move-folder"]');
-    const btnTopics = menu.querySelector('[data-action="manage-topics"]');
-    const btnIcon = menu.querySelector('[data-action="change-icon"]');
-    const btnSuper = menu.querySelector('[data-action="toggle-superfolder"]');
-    const btnHide = menu.querySelector('[data-action="hide"]');
+    // Referências aos elementos do menu
+    const buttons = menu.querySelectorAll('button');
     const dividers = menu.querySelectorAll('.menu-sep');
 
-    // 1. Reset visual: Esconde tudo primeiro
-    menu.querySelectorAll('button, hr').forEach(el => el.style.display = 'none');
+    // 1. Reset visual: Esconde tudo
+    buttons.forEach(b => b.style.display = 'none');
+    dividers.forEach(d => d.style.display = 'none');
 
     if (isSharedNotMine) {
-        // ============================================================
-        // MODO: ARQUIVO ALHEIO (Apenas 3 opções, sem separadores)
-        // ============================================================
-        btnRename.style.display = 'block';
-        btnTopics.style.display = 'block';
-        btnHide.style.display = 'block';
+        // --- MODO: ARQUIVO DE OUTRO UTILIZADOR ---
+        menu.querySelector('[data-action="rename"]').style.display = 'block';
+        menu.querySelector('[data-action="manage-topics"]').style.display = 'block';
+        menu.querySelector('[data-action="hide"]').style.display = 'block';
     } 
     else {
-        // ============================================================
-        // MODO: MEU CONTEÚDO (Local ou Partilha Própria)
-        // ============================================================
+        // --- MODO: MEU CONTEÚDO (LOCAL OU PARTILHA PRÓPRIA) ---
         
-        // GRUPO 1
-        btnRename.style.display = 'block';
+        // Grupo 1: Identidade e Segurança
+        menu.querySelector('[data-action="rename"]').style.display = 'block';
+        const btnPin = menu.querySelector('[data-action="toggle-pin"]');
         btnPin.style.display = 'block';
         btnPin.textContent = activeItemContext.isPinned ? "Remover Pin" : "Adicionar Pin";
         
-        if (activeItemContext.isProtected) btnUnprotect.style.display = 'block';
-        else btnProtect.style.display = 'block';
+        if (activeItemContext.isProtected) menu.querySelector('[data-action="unprotect"]').style.display = 'block';
+        else menu.querySelector('[data-action="protect"]').style.display = 'block';
         
-        dividers[0].style.display = 'block'; // Linha 1
+        dividers[0].style.display = 'block';
 
-        // GRUPO 2
-        btnMovePos.style.display = 'block';
-        btnMoveFold.style.display = 'block';
+        // Grupo 2: Organização
+        menu.querySelector('[data-action="move-position"]').style.display = 'block';
+        menu.querySelector('[data-action="move-folder"]').style.display = 'block';
         
-        dividers[1].style.display = 'block'; // Linha 2
+        dividers[1].style.display = 'block';
 
-        // GRUPO 3
-        btnTopics.style.display = 'block';
+        // Grupo 3: Atribuições e Tipo
+        menu.querySelector('[data-action="manage-topics"]').style.display = 'block';
         
         if (activeItemContext.type === 'pasta') {
+            const btnSuper = menu.querySelector('[data-action="toggle-superfolder"]');
             btnSuper.style.display = 'block';
             if (activeItemContext.isSuperfolder) {
                 btnSuper.textContent = "Tornar Pasta";
-                btnIcon.style.display = 'block';
+                menu.querySelector('[data-action="change-icon"]').style.display = 'block';
             } else {
                 btnSuper.textContent = "Tornar Superpasta";
             }
         }
 
-        dividers[2].style.display = 'block'; // Linha 3
+        dividers[2].style.display = 'block';
 
-        // GRUPO 4
-        btnHide.style.display = 'block';
+        // Grupo 4: Eliminação
+        menu.querySelector('[data-action="hide"]').style.display = 'block';
     }
 
-    // Exibir e posicionar menu
+    // Exibir e posicionar
     menu.style.visibility = 'hidden';
     menu.style.display = 'flex';
 
@@ -17249,8 +17265,18 @@ addItemBtn.addEventListener('click', async () => {
             document.getElementById('create-new-subtopic-btn').style.display = 'none';
         } 
         else if (['personagem', 'local', 'data'].includes(rootCategoryId)) {
-            // Chama o popup sem nome e sem seleção
             openEntityModal(rootCategoryId, ""); 
+        }
+        // --- ADICIONADO PARA COSMOS ---
+        else if (rootCategoryId === 'cosmos') {
+            const lastNav = navigationStack[navigationStack.length - 1];
+            if (lastNav.type === 'list-category') {
+                // Estamos na raiz do Cosmos, criar um TEMA
+                openCosmosCreator('cosmos');
+            } else if (lastNav.type === 'cosmos-parent') {
+                // Estamos dentro de um tema, criar um SUBTEMA
+                openCosmosCreator('subcosmos', lastNav.id);
+            }
         }
         return; 
     }
@@ -21997,62 +22023,21 @@ async function renderListCategoryItems(categoryId) {
     const origin = navigationStack[0]?.id || categoryId;
 
     try {
-        // ============================================================
-        // 1. CAMINHO: COSMOS (TEMAS E CONCEITOS)
-        // ============================================================
+        // ==========================================
+        // 1. CAMINHO: COSMOS
+        // ==========================================
         if (origin === 'cosmos') {
-            // NÍVEL 1: Lista de Temas Pai
+            // NÍVEL 1: TEMAS
             if (lastNav.type === 'list-category') {
                 middlePanelTitle.textContent = "💼 Cosmos: Temas";
-                updateAddButtonState(true, true); // Botão + Amarelo ativo
+                updateAddButtonState(true, true);
 
                 const q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('createdAt', 'desc'));
                 const snap = await getDocs(q);
-                
                 listElement.innerHTML = '';
+
                 if (snap.empty) {
-                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum tema criado. Clique no + para começar.</li>';
-                    return;
-                }
-
-            snap.forEach(docSnap => {
-    const item = { id: docSnap.id, ...docSnap.data() };
-    const li = document.createElement('li');
-    li.className = 'list-item';
-    
-    // Essencial para a identificação no clique
-    li.setAttribute('data-id', item.id);
-    li.setAttribute('data-type', 'cosmos-parent'); 
-    li.setAttribute('data-name', item.nome);
-    
-    li.innerHTML = `<span>${item.emoji || '💼'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
-    
-    li.onclick = (e) => {
-        if (e.target.closest('.item-menu-btn')) return; 
-        navigationStack.push({ id: item.id, name: item.nome, type: 'cosmos-parent', emoji: item.emoji || '💼' });
-        updateNavigationView(true);
-    };
-    listElement.appendChild(li);
-});
-                return;
-            }
-
-            // NÍVEL 2: Lista de SubTemas (Dentro de um Tema)
-            if (lastNav.type === 'cosmos-parent') {
-                middlePanelTitle.textContent = `${lastNav.emoji || '💼'} ${lastNav.name}`;
-                updateAddButtonState(true, true); // Botão + Amarelo ativo
-
-                const q = query(
-                    collection(db, 'subcosmos'), 
-                    where('cosmosId', '==', lastNav.id), 
-                    where('userId', '==', myUid), 
-                    orderBy('createdAt', 'desc')
-                );
-                const snap = await getDocs(q);
-
-                listElement.innerHTML = '';
-                if (snap.empty) {
-                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum subtema neste conceito.</li>';
+                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Sem temas.</li>';
                     return;
                 }
 
@@ -22060,29 +22045,61 @@ async function renderListCategoryItems(categoryId) {
                     const item = { id: docSnap.id, ...docSnap.data() };
                     const li = document.createElement('li');
                     li.className = 'list-item';
-                    
-                    // Seleção visual para a 4ª coluna
-                    if (activeReferenceEntity && activeReferenceEntity.id === item.id) {
-                        li.classList.add('selected');
-                    }
+                    li.setAttribute('data-id', item.id);
+                    li.setAttribute('data-type', 'cosmos-parent');
+                    li.setAttribute('data-name', item.nome);
+                    li.setAttribute('data-emoji', item.emoji || '💼');
 
-                    li.innerHTML = `<span>${item.emoji || '🔹'} ${item.nome}</span>`;
-                    li.onclick = () => {
+                    li.innerHTML = `<span>${item.emoji || '💼'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+                    li.onclick = (e) => {
+                        if (e.target.closest('.item-menu-btn')) return;
+                        navigationStack.push({ id: item.id, name: item.nome, type: 'cosmos-parent', emoji: item.emoji || '💼' });
+                        updateNavigationView(true);
+                    };
+                    listElement.appendChild(li);
+                });
+            }
+            // NÍVEL 2: SUBTEMAS
+            else if (lastNav.type === 'cosmos-parent') {
+                middlePanelTitle.textContent = `${lastNav.emoji} ${lastNav.name}`;
+                updateAddButtonState(true, true);
+
+                const q = query(collection(db, 'subcosmos'), where('cosmosId', '==', lastNav.id), where('userId', '==', myUid), orderBy('createdAt', 'desc'));
+                const snap = await getDocs(q);
+                listElement.innerHTML = '';
+
+                if (snap.empty) {
+                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Sem subtemas.</li>';
+                    return;
+                }
+
+                snap.forEach(docSnap => {
+                    const item = { id: docSnap.id, ...docSnap.data() };
+                    const li = document.createElement('li');
+                    li.className = 'list-item';
+                    li.setAttribute('data-id', item.id);
+                    li.setAttribute('data-type', 'subcosmos');
+                    li.setAttribute('data-name', item.nome);
+                    li.setAttribute('data-emoji', item.emoji || '🔹');
+
+                    if (activeReferenceEntity && activeReferenceEntity.id === item.id) li.classList.add('selected');
+
+                    li.innerHTML = `<span>${item.emoji || '🔹'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+                    li.onclick = (e) => {
+                        if (e.target.closest('.item-menu-btn')) return;
                         listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected'));
                         li.classList.add('selected');
-                        
-                        // Abre a 4ª Coluna (Painel de Referências/Puzzle)
                         showReferencesPanel(item.id, item.nome, 'subcosmos');
                     };
                     listElement.appendChild(li);
                 });
-                return;
             }
+            return;
         }
 
-        // ============================================================
-        // 2. CAMINHO: BÍBLIA (EXPLORADOR COMPLETO)
-        // ============================================================
+        // ==========================================
+        // 2. CAMINHO: BÍBLIA
+        // ==========================================
         if (origin === 'biblia-root') {
             if (lastNav.type === 'list-category') {
                 middlePanelTitle.textContent = "Bíblia: Livros";
@@ -22098,9 +22115,7 @@ async function renderListCategoryItems(categoryId) {
                     };
                     listElement.appendChild(li);
                 });
-                return;
-            }
-            if (lastNav.type === 'bible-book') {
+            } else if (lastNav.type === 'bible-book') {
                 middlePanelTitle.textContent = lastNav.name;
                 listElement.innerHTML = '<div class="bible-grid"></div>';
                 const grid = listElement.querySelector('.bible-grid');
@@ -22114,44 +22129,39 @@ async function renderListCategoryItems(categoryId) {
                     };
                     grid.appendChild(btn);
                 }
-                return;
-            }
-            if (lastNav.type === 'bible-chapter') {
+            } else if (lastNav.type === 'bible-chapter') {
                 const bookData = BIBLE_DATA.find(b => b.nome === lastNav.book);
-                let totalVersicles = bookData?.versiculos?.[lastNav.chapter - 1] || 50;
-                const existingVerses = allEntities['textobiblico'] || [];
                 const prefix = `${lastNav.book} ${lastNav.chapter}:`;
-                
-                middlePanelTitle.textContent = `${lastNav.book} ${lastNav.chapter}`;
+                middlePanelTitle.textContent = prefix.replace(':', '');
                 listElement.innerHTML = '<div class="bible-grid"></div>';
                 const grid = listElement.querySelector('.bible-grid');
+                const totalV = bookData?.versiculos?.[lastNav.chapter - 1] || 50;
+                const existingVerses = allEntities['textobiblico'] || [];
 
-                for (let v = 1; v <= totalVersicles; v++) {
-                    const fullVerseName = `${prefix}${v}`;
-                    const alreadyExists = existingVerses.some(e => e.nome === fullVerseName);
-                    const isActive = (fullVerseName === currentlyOpenVerseName);
-                    
+                for (let v = 1; v <= totalV; v++) {
+                    const fullVerse = `${prefix}${v}`;
+                    const exists = existingVerses.some(e => e.nome === fullVerse);
+                    const isActive = fullVerse === currentlyOpenVerseName;
                     const btn = document.createElement('div');
-                    btn.className = `bible-grid-btn ${alreadyExists ? 'exists' : ''} ${isActive ? 'active-verse' : ''}`;
+                    btn.className = `bible-grid-btn ${exists ? 'exists' : ''} ${isActive ? 'active-verse' : ''}`;
                     btn.textContent = v;
                     btn.onclick = () => {
-                        currentlyOpenVerseName = fullVerseName;
+                        currentlyOpenVerseName = fullVerse;
                         grid.querySelectorAll('.bible-grid-btn').forEach(b => b.classList.remove('active-verse'));
                         btn.classList.add('active-verse');
-                        showReferencesPanel(null, fullVerseName, 'textobiblico');
+                        showReferencesPanel(null, fullVerse, 'textobiblico');
                     };
                     grid.appendChild(btn);
                 }
-                return;
             }
+            return;
         }
 
-        // ============================================================
-        // 3. CAMINHO: CATEGORIAS GENÉRICAS (TÓPICOS, TAGS, ENTIDADES)
-        // ============================================================
+        // ==========================================
+        // 3. OUTRAS CATEGORIAS (TOPICOS, TAGS, ETC)
+        // ==========================================
         if (lastNav.type === 'list-category') {
             let items = [];
-            
             if (categoryId === 'topico') {
                 middlePanelTitle.textContent = "Tópicos";
                 updateAddButtonState(true, true);
@@ -22167,17 +22177,8 @@ async function renderListCategoryItems(categoryId) {
                 const tagSet = new Set();
                 snap.forEach(doc => { if (doc.data().tags) doc.data().tags.forEach(t => tagSet.add(t)); });
                 items = Array.from(tagSet).sort().map(t => ({ id: t, nome: t, type: 'tag' }));
-            } 
-            else if (categoryId === 'destaque') {
-                middlePanelTitle.textContent = "Destaques (Cores)";
-                updateAddButtonState(false);
-                DEFAULT_HIGHLIGHTS.forEach(color => {
-                    const customName = userCustomHighlights[color.code] || color.name;
-                    items.push({ id: color.code, nome: customName, type: 'destaque', color: color.code });
-                });
-            } 
+            }
             else {
-                // Personagens, Locais, Datas
                 const config = ENTITY_CONFIG[categoryId];
                 if (config) {
                     middlePanelTitle.textContent = config.displayName;
@@ -22191,7 +22192,7 @@ async function renderListCategoryItems(categoryId) {
         }
 
     } catch (e) {
-        console.error("Erro ao carregar lista:", e);
+        console.error(e);
         listElement.innerHTML = '<li style="color:red; padding:20px;">Erro ao carregar dados.</li>';
     }
 }
@@ -23814,6 +23815,63 @@ function openRenameModal(currentName, onConfirm) {
         if (e.key === 'Escape') closeModal();
     };
 }
+
+// Função para configurar e abrir o modal de criação de Temas/Subtemas
+window.openCosmosCreator = function(targetType, parentId = null) {
+    const modal = document.getElementById('cosmos-modal');
+    const title = document.getElementById('cosmos-modal-title');
+    const nameInput = document.getElementById('cosmos-name-input');
+    const descInput = document.getElementById('cosmos-desc-input');
+    const saveBtn = document.getElementById('save-cosmos-btn');
+
+    // Reset dos campos
+    nameInput.value = "";
+    descInput.value = "";
+    selectedCosmosEmoji = targetType === 'cosmos' ? "💼" : "🔹"; // Emoji padrão por tipo
+
+    title.textContent = targetType === 'cosmos' ? "Novo Tema (Cosmos)" : "Novo Subtema";
+    modal.style.display = 'flex';
+    setTimeout(() => nameInput.focus(), 100);
+
+    // Clonar botão para limpar eventos de cliques anteriores
+    const newSaveBtn = saveBtn.cloneNode(true);
+    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+
+    newSaveBtn.onclick = async () => {
+        const nome = nameInput.value.trim();
+        if (!nome) return alert("O nome é obrigatório.");
+
+        newSaveBtn.disabled = true;
+        newSaveBtn.textContent = "A gravar...";
+
+        try {
+            const collectionName = targetType === 'cosmos' ? 'cosmos' : 'subcosmos';
+            const data = {
+                nome: nome,
+                descricao: descInput.value.trim(),
+                emoji: selectedCosmosEmoji,
+                userId: auth.currentUser.uid,
+                createdAt: serverTimestamp()
+            };
+
+            // Se for subtema, adiciona a referência ao tema pai
+            if (targetType === 'subcosmos') {
+                data.cosmosId = parentId;
+            }
+
+            await addDoc(collection(db, collectionName), data);
+
+            modal.style.display = 'none';
+            renderListCategoryItems('cosmos'); // Recarrega a lista lateral
+        } catch (e) {
+            console.error("Erro ao criar item no Cosmos:", e);
+            alert("Erro ao gravar.");
+        } finally {
+            newSaveBtn.disabled = false;
+            newSaveBtn.textContent = "Criar";
+        }
+    };
+};
 
     </script>
 </body>
