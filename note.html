@@ -12904,7 +12904,7 @@ async function openReferenceSelectionPopup() {
     }
 
     modal.style.display = 'flex';
-    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar notas e ideias...</span></div>';
+    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar notas, arquivos e ideias...</span></div>';
 
     allFoundReferenceBoxes = [];
     currentReferencePageIndex = 0;
@@ -12915,11 +12915,21 @@ async function openReferenceSelectionPopup() {
     const hexToFind = isHighlightSearch ? id.toUpperCase() : null;
 
     try {
+        // --- 1. FILTRO AMPLIADO: Inclui Notas E Arquivos ---
         let q;
         if (isHighlightSearch) {
-            q = query(collection(db, 'pastas'), where('coresUsadas', 'array-contains', hexToFind), where('estado', '==', 'ativa'), where('userId', '==', auth.currentUser.uid), where('tipo', '==', 'nota'));
+            q = query(collection(db, 'pastas'), 
+                where('coresUsadas', 'array-contains', hexToFind), 
+                where('estado', '==', 'ativa'), 
+                where('userId', '==', auth.currentUser.uid),
+                where('tipo', 'in', ['nota', 'arquivo', 'partilhado'])
+            );
         } else {
-            q = query(collection(db, 'pastas'), where('estado', '==', 'ativa'), where('userId', '==', auth.currentUser.uid), where('tipo', '==', 'nota'));
+            q = query(collection(db, 'pastas'), 
+                where('estado', '==', 'ativa'), 
+                where('userId', '==', auth.currentUser.uid),
+                where('tipo', 'in', ['nota', 'arquivo', 'partilhado'])
+            );
         }
         
         const snapshot = await getDocs(q);
@@ -12927,88 +12937,84 @@ async function openReferenceSelectionPopup() {
 
         snapshot.forEach(docSnap => {
             const data = docSnap.data();
-            const content = data.conteudo || "";
             const noteTitle = data.nome || "Sem Título";
             const updatedTime = data.ultimaedicao?.toMillis() || data.createdAt?.toMillis() || 0;
 
+            // Privacidade
             if (data.passe && data.passe.trim() !== "" && !appSettings.searchAnchorsInProtected) return;
 
-            const docHTML = parser.parseFromString(content, 'text/html');
-
-            // --- 1. PROCURAR EM CAIXAS E ESTRUTURAS ---
-            const allWrappers = docHTML.querySelectorAll('.mini-note-wrapper, details.toggle-section');
-            allWrappers.forEach((w) => {
-                let match = false;
-                if (isHighlightSearch) {
-                    const elColor = w.getAttribute('data-highlight');
-                    if (elColor && elColor.toUpperCase() === hexToFind) match = true;
-                } else {
-                    if (w.textContent.toLowerCase().includes(searchTerm)) match = true;
-                }
-
-                if (match) {
-                    let boxType = "Bloco"; let boxIcon = "📦"; let boxTitle = "";
-                    if (w.tagName === 'DETAILS') {
-                        boxType = "Secção"; boxIcon = "☂️";
-                        boxTitle = w.querySelector('h2')?.textContent || "Título da Secção";
-                    } else if (w.classList.contains('question-mode')) {
-                        boxType = "Questão"; boxIcon = "📗";
-                        const t = w.querySelector('.mini-note-title-input');
-                        boxTitle = t ? (t.textContent || t.value || t.getAttribute('value')) : "Questão";
-                    } else if (w.classList.contains('free-mode')) {
-                        boxType = "Contentor"; boxIcon = "📙";
-                        boxTitle = w.querySelector('.mini-note-content')?.textContent.substring(0, 50) + "...";
-                    } else {
-                        boxType = "SubNota"; boxIcon = "📘";
-                        const t = w.querySelector('.mini-note-title-input');
-                        boxTitle = t ? (t.textContent || t.value || t.getAttribute('value')) : "SubNota";
-                    }
-
-                    allFoundReferenceBoxes.push({
-                        id: docSnap.id, name: noteTitle, snippet: w.outerHTML,
-                        displaySnippet: boxTitle || "Conteúdo da caixa",
-                        typeName: boxType, typeIcon: boxIcon, updatedTime: updatedTime
+            // --- 2. PREPARAR CONTEÚDOS PARA SCAN ---
+            // Criamos uma lista de blocos de HTML para analisar. 
+            // Se for nota, tem 1 bloco. Se for arquivo, tem vários (posts).
+            let contentsToScan = [];
+            if (data.tipo === 'nota') {
+                contentsToScan.push({ html: data.conteudo || "", originName: noteTitle });
+            } else {
+                // É Arquivo/Partilhado: percorre os posts
+                const posts = data.posts || [];
+                posts.forEach(post => {
+                    contentsToScan.push({ 
+                        html: post.content || "", 
+                        originName: `${noteTitle} (Post: ${post.title || 'S/T'})`,
+                        postId: post.id
                     });
-                }
-            });
-
-            // --- 2. PROCURAR EM IDEIAS (💡) ---
-            if (!isHighlightSearch) {
-                const allIdeas = docHTML.querySelectorAll('.idea-span');
-                allIdeas.forEach(idea => {
-                    if (idea.textContent.toLowerCase().includes(searchTerm)) {
-                        allFoundReferenceBoxes.push({
-                            id: docSnap.id, name: noteTitle, 
-                            snippet: `<div style="padding:10px; border:1px solid #e74c3c; border-radius:6px; background:rgba(231,76,60,0.05); color:var(--text-color);"><span class="idea-span">${idea.innerHTML}</span></div>`,
-                            displaySnippet: idea.textContent,
-                            typeName: "Ideia", typeIcon: "💡", color: "#e74c3c", 
-                            updatedTime: updatedTime
-                        });
-                    }
                 });
             }
 
-            // --- 3. PROCURAR NO TEXTO SOLTO DA NOTA ---
-            if (!isHighlightSearch && content.toLowerCase().includes(searchTerm)) {
-                const bodyClone = docHTML.body.cloneNode(true);
-                // Remove caixas e ideias da pesquisa de corpo para não duplicar
-                bodyClone.querySelectorAll('.mini-note-wrapper, details, .idea-span').forEach(el => el.remove());
-                
-                if (bodyClone.textContent.toLowerCase().includes(searchTerm)) {
-                    const fullTxt = bodyClone.textContent;
-                    const idx = fullTxt.toLowerCase().indexOf(searchTerm);
-                    const start = Math.max(0, idx - 40);
-                    const end = Math.min(fullTxt.length, idx + searchTerm.length + 40);
-                    const snippetPreview = "..." + fullTxt.substring(start, end).trim() + "...";
+            // --- 3. SCANNER REAL ---
+            contentsToScan.forEach(item => {
+                const docHTML = parser.parseFromString(item.html, 'text/html');
 
-                    allFoundReferenceBoxes.push({
-                        id: docSnap.id, name: noteTitle,
-                        snippet: `<blockquote style="border-left: 3px solid var(--accent-color); padding-left: 10px; font-style: italic;">${snippetPreview}</blockquote>`,
-                        displaySnippet: snippetPreview,
-                        typeName: "Corpo da Nota", typeIcon: "📄", updatedTime: updatedTime
+                // A. Procurar em Caixas e Toggles
+                const allWrappers = docHTML.querySelectorAll('.mini-note-wrapper, details.toggle-section');
+                allWrappers.forEach((w) => {
+                    let match = false;
+                    if (isHighlightSearch) {
+                        const elColor = w.getAttribute('data-highlight');
+                        if (elColor && elColor.toUpperCase() === hexToFind) match = true;
+                    } else {
+                        if (w.textContent.toLowerCase().includes(searchTerm)) match = true;
+                    }
+
+                    if (match) {
+                        let boxType = "Bloco"; let boxIcon = "📦"; let boxTitle = "";
+                        if (w.tagName === 'DETAILS') {
+                            boxType = "Secção"; boxIcon = "☂️";
+                            boxTitle = w.querySelector('h2')?.textContent || "Título da Secção";
+                        } else if (w.classList.contains('question-mode')) {
+                            boxType = "Questão"; boxIcon = "📗";
+                            boxTitle = w.querySelector('.mini-note-title-input')?.value || "Questão";
+                        } else if (w.classList.contains('free-mode')) {
+                            boxType = "Contentor"; boxIcon = "📙";
+                            boxTitle = w.querySelector('.mini-note-content')?.textContent.substring(0, 50) + "...";
+                        } else {
+                            boxType = "SubNota"; boxIcon = "📘";
+                            boxTitle = w.querySelector('.mini-note-title-input')?.value || "SubNota";
+                        }
+
+                        allFoundReferenceBoxes.push({
+                            id: docSnap.id, name: item.originName, snippet: w.outerHTML,
+                            displaySnippet: boxTitle || "Conteúdo encontrado",
+                            typeName: boxType, typeIcon: boxIcon, updatedTime: updatedTime
+                        });
+                    }
+                });
+
+                // B. Procurar em Ideias (💡)
+                if (!isHighlightSearch) {
+                    const allIdeas = docHTML.querySelectorAll('.idea-span');
+                    allIdeas.forEach(idea => {
+                        if (idea.textContent.toLowerCase().includes(searchTerm)) {
+                            allFoundReferenceBoxes.push({
+                                id: docSnap.id, name: item.originName, 
+                                snippet: `<div style="padding:10px; border:1px solid #e74c3c; border-radius:6px; background:rgba(231,76,60,0.05); color:var(--text-color);"><span class="idea-span">${idea.innerHTML}</span></div>`,
+                                displaySnippet: idea.textContent,
+                                typeName: "Ideia", typeIcon: "💡", updatedTime: updatedTime
+                            });
+                        }
                     });
                 }
-            }
+            });
         });
 
         allFoundReferenceBoxes.sort((a, b) => b.updatedTime - a.updatedTime);
@@ -13017,7 +13023,7 @@ async function openReferenceSelectionPopup() {
 
     } catch (e) {
         console.error(e);
-        list.innerHTML = '<li style="color:red; padding:10px;">Erro ao carregar lista.</li>';
+        list.innerHTML = '<li style="color:red; padding:10px;">Erro ao carregar lista unificada.</li>';
     }
 }
 
