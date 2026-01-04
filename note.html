@@ -6712,6 +6712,44 @@ body, .notebook-container {
     padding-bottom: env(safe-area-inset-bottom, 10px) !important; /* Respeita a barra de gestos do tablet */
 }
 
+
+/* ============================================================
+   ANIMAÇÃO "SOFT FLASH SNAP" (Rápida, Impactante, Luz Suave)
+   ============================================================ */
+
+@keyframes redatorFlashSnap {
+    0% {
+        opacity: 0;
+        transform: scale(0.92) translateY(10px);
+        /* Brilho inicial concentrado (Branco Suave) */
+        background-color: rgba(255, 255, 255, 0.4); 
+        box-shadow: 0 0 0 rgba(255, 255, 255, 0);
+    }
+    40% {
+        opacity: 1;
+        /* Ligeiro exagero no tamanho para o impacto (Snap) */
+        transform: scale(1.02) translateY(0);
+        
+        /* A "Onda de Luz": Brilho difuso e elegante */
+        background-color: rgba(255, 255, 255, 0.15); 
+        border-color: rgba(255, 255, 255, 0.6);
+        box-shadow: 0 0 50px rgba(200, 220, 255, 0.25), inset 0 0 20px rgba(255, 255, 255, 0.1);
+    }
+    100% {
+        transform: scale(1);
+        /* Estabiliza no Vidro Escuro Padrão */
+        background-color: rgba(255, 255, 255, 0.02);
+        border-color: rgba(255, 255, 255, 0.1);
+        box-shadow: 0 10px 40px -10px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.02);
+    }
+}
+
+.redator-spawn-effect {
+    /* 0.4s é muito rápido. O bezier faz o movimento "bater" e travar. */
+    animation: redatorFlashSnap 0.4s cubic-bezier(0.17, 0.89, 0.32, 1.2) forwards;
+    will-change: transform, opacity, box-shadow, background-color;
+}
+
 </style>
 
 
@@ -11414,10 +11452,10 @@ function extractTopicsFromEditorHTML() {
 
 // Função que faz a gravação real no Firebase
 async function executeSave() {
-    // 1. Verificação de segurança: se não há ID ou se a nota está a ser fechada, cancela.
+    // 1. Verificação de segurança
     if (!selectedNoteId || isClosingNote) return;
 
-    // 2. MODO ARQUIVO (FEED): Se o painel de arquivo estiver aberto, a lógica de save é diferente.
+    // 2. MODO ARQUIVO (FEED)
     const archiveArea = document.getElementById('archive-area');
     if (archiveArea && archiveArea.style.display !== 'none') {
         if (activeEditingPostId) {
@@ -11428,18 +11466,19 @@ async function executeSave() {
         return true; 
     }
 
-    // 3. SINCRONIZAÇÃO CRÍTICA (O Coração da Correção)
-    // Antes de extrair o .innerHTML, forçamos os valores dos inputs/textareas para dentro do DOM.
-    // Sem isto, o innerHTML ignora o que foi digitado nas caixas e salva-as vazias.
+    // 3. SINCRONIZAÇÃO CRÍTICA (CORRIGIDA)
+    // Antes de extrair o .innerHTML, colamos os valores dos inputs no HTML
     const editor = document.getElementById('note-content-editor');
     if (editor) {
-        const allTitles = editor.querySelectorAll('.mini-note-title-input');
-        allTitles.forEach(t => {
+        // Seleciona TANTO os títulos antigos como os novos Redatores
+        const allInputs = editor.querySelectorAll('.mini-note-title-input, .redator-input');
+        
+        allInputs.forEach(t => {
             if (t.tagName === 'TEXTAREA') {
-                // Sincroniza o valor digitado com o conteúdo interno da tag para o innerHTML ler
+                // Para textareas, o valor fica entre as tags
                 t.textContent = t.value; 
             } else {
-                // Suporte para versões antigas que usam <input>
+                // Para inputs (Redator), o valor fica no atributo value
                 t.setAttribute('value', t.value);
             }
         });
@@ -11448,7 +11487,6 @@ async function executeSave() {
     // 4. Início do processo de gravação no Firebase
     updateSaveStatus('saving');
 
-    // Determina o ID de destino (lida com ponteiros/atalhos se existirem)
     let targetId = selectedNoteId;
     const realId = editor ? editor.getAttribute('data-real-id') : null;
     if (realId) targetId = realId;
@@ -11456,20 +11494,19 @@ async function executeSave() {
     const noteRef = doc(db, 'pastas', targetId);
 
     try {
-        // Captura os dados ATUALIZADOS após a sincronização acima
         const finalTitle = document.getElementById('note-title-input').value;
-        const finalContent = editor.innerHTML;
-const usedColors = extractUsedColorsFromEditor();
+        const finalContent = editor.innerHTML; // Agora já leva os títulos gravados
+        const usedColors = extractUsedColorsFromEditor();
 
-        // 5. Gravação Principal na coleção 'pastas'
+        // 5. Gravação Principal
         await updateDoc(noteRef, { 
             nome: finalTitle, 
             conteudo: finalContent,
-             coresUsadas: usedColors,
+            coresUsadas: usedColors,
             ultimaedicao: serverTimestamp()
         });
 
-        // 6. SINCRONIZAÇÃO COM LINK PÚBLICO (Se a nota estiver partilhada)
+        // 6. Sincronização Pública (Se existir)
         if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
             try {
                 const shareId = currentNoteShareData.shareId;
@@ -11482,13 +11519,9 @@ const usedColors = extractUsedColorsFromEditor();
                     updatedAt: serverTimestamp(),
                     type: 'full_note' 
                 }, { merge: true });
-                
-            } catch (e) {
-                console.warn("⚠️ Falha ao sincronizar com link público:", e);
-            }
+            } catch (e) { console.warn("Erro sync partilha:", e); }
         }
 
-        // Finaliza com sucesso
         updateSaveStatus('saved');
         return true; 
 
@@ -11579,7 +11612,7 @@ function insertMiniNoteAtCursor(type = 'default') {
 
             <!-- CABEÇALHO -->
             <div class="redator-header" id="header-${uniqueId}">
-                <input type="text" class="redator-input" placeholder="Título do Redator..." value="">
+               <input type="text" class="redator-input" placeholder="Título do Redator..." value="" oninput="this.setAttribute('value', this.value)">
                 
                 <!-- MENU DESLIZANTE -->
                 <div class="redator-top-tools">
@@ -11606,9 +11639,10 @@ function insertMiniNoteAtCursor(type = 'default') {
                     <svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
                 </button>
                 <div class="dock-sep"></div>
-                <button class="dock-btn" data-tooltip="Novo Redator Abaixo" onclick="window.addRedatorBelow('${uniqueId}')">
-                    <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-                </button>
+               <button class="dock-btn" data-tooltip="Novo Redator Abaixo" 
+        onclick="event.preventDefault(); event.stopPropagation(); window.addRedatorBelow('${uniqueId}')">
+    <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+</button>
             </div>
 
         </div>
@@ -11644,29 +11678,29 @@ function insertMiniNoteAtCursor(type = 'default') {
     }
 
     // 4. Inserção no DOM
-    document.execCommand('insertHTML', false, finalHTML);
+     document.execCommand('insertHTML', false, finalHTML);
     
-    // 5. Pós-Processamento (Foco)
-    setTimeout(() => {
-        const insertedEl = document.getElementById(uniqueId);
-        if (insertedEl) {
+    // 5. Pós-Processamento (Foco e Animação)
+   setTimeout(() => {
+  const insertedEl = document.getElementById(uniqueId);
+    if (insertedEl) {
+        
+        // EFEITO FLASH
+        if (type === 'redator') {
+            insertedEl.classList.add('redator-spawn-effect');
             
-            if (type === 'redator') {
-                const input = insertedEl.querySelector('.redator-input');
-                if (input) input.focus();
-            } else {
+            const input = insertedEl.querySelector('.redator-input');
+            if (input) input.focus();
+
+            // Remove a classe rapidamente para limpar o DOM
+            setTimeout(() => {
+                insertedEl.classList.remove('redator-spawn-effect');
+            }, 600); 
+        } 
+            else {
+                // ... (lógica de foco normal)
                 const titleArea = insertedEl.querySelector('.mini-note-title-input');
-                if (titleArea) {
-                    titleArea.focus();
-                    if (typeof appSettings !== 'undefined' && appSettings.showFullTitles) {
-                        titleArea.classList.add('wrap-enabled');
-                        titleArea.addEventListener('input', () => autoResizeTitle(titleArea));
-                        autoResizeTitle(titleArea);
-                    }
-                } else {
-                    const contentDiv = insertedEl.querySelector('.mini-note-content');
-                    if (contentDiv) contentDiv.focus();
-                }
+                if (titleArea) titleArea.focus();
             }
             
             insertedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -29242,17 +29276,32 @@ window.addRedatorBelow = function(currentId) {
     const currentWrapper = document.getElementById(currentId);
     if (!currentWrapper) return;
 
-    // Move o cursor para depois do redator atual
+    // 1. Cria um parágrafo temporário DEPOIS do redator atual
+    // Isto é o segredo: cria um "chão" sólido para o cursor aterrar
+    const spacer = document.createElement('p');
+    spacer.innerHTML = '<br>';
+
+    // 2. Insere fisicamente o parágrafo no DOM logo a seguir ao Redator atual
+    currentWrapper.insertAdjacentElement('afterend', spacer);
+
+    // 3. Força o foco no editor principal (caso tenha sido perdido para o botão)
+    const editor = document.getElementById('note-content-editor');
+    editor.focus();
+
+    // 4. Move o cursor EXATAMENTE para dentro desse novo parágrafo
     const range = document.createRange();
-    range.setStartAfter(currentWrapper);
-    range.collapse(true);
-    
+    range.selectNodeContents(spacer);
+    range.collapse(true); // Colapsa para o início do parágrafo
+
     const selection = window.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);
 
-    // Insere um novo
+    // 5. Agora que o cursor está num sítio seguro, chamamos a inserção
+    // A função vai substituir o parágrafo 'spacer' pelo novo Redator
     insertMiniNoteAtCursor('redator');
+
+    // 6. Grava
     saveNote();
 };
 
