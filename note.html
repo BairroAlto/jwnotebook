@@ -29747,60 +29747,66 @@ async function generateNoteTexts() {
     
     if (!editor || !list) return;
 
-    // 1. Extrair texto puro do editor
+    // 1. Extrair texto e encontrar referências
     const textContent = editor.innerText;
-
-    // 2. CRIAÇÃO SEGURA DA REGEX
-    // Importante: Ordena por tamanho (decrescente) para evitar erros (ex: detetar "João" em vez de "1 João")
     const sortedBooks = [...BIBLICAL_BOOKS].sort((a, b) => b.length - a.length);
     const booksPattern = sortedBooks.join('|');
-    
-    // Regex ajustada para capturar "Livro Cap:Vers-Vers"
     const regex = new RegExp(`\\b((?:${booksPattern})\\s+\\d+:\\d+[\\d,;\\- ]*)`, 'gi');
     
-    // Encontra e remove duplicados
-    const foundRefs = [...new Set(textContent.match(regex) || [])];
+    // Encontra referências BRUTAS
+    const rawMatches = textContent.match(regex) || [];
+    
+    // Limpa e remove duplicados (Cria a lista atual de referências LIMPAS)
+    const currentRefs = [...new Set(rawMatches.map(r => r.trim().replace(/[.,;]+$/, '')))];
 
-    // >>> LIMPEZA AUTOMÁTICA <<<
-    // Se não encontrar nada, limpa a lista e mostra o estado vazio
-    if (foundRefs.length === 0) {
+    // >>> LÓGICA DE COMPARAÇÃO (O QUE MUDOU?) <<<
+    
+    // 1. Recupera a lista que estava lá antes (guardada como texto JSON)
+    const prevRefsJSON = list.getAttribute('data-prev-refs') || "[]";
+    const prevRefs = JSON.parse(prevRefsJSON);
+
+    // 2. Descobre qual é a referência NOVA (está na lista atual mas não estava na antiga)
+    // O .find retorna o primeiro elemento que satisfaz a condição
+    const newRefFound = currentRefs.find(ref => !prevRefs.includes(ref));
+
+    if (currentRefs.length === 0) {
         list.innerHTML = `
             <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:#888; text-align:center; padding:20px;">
                 <span style="font-size:30px;">📖</span>
                 <p>Nenhum texto detetado.</p>
                 <small style="opacity:0.5;">Escreva ex: "João 3:16"</small>
             </div>`;
+        list.setAttribute('data-prev-refs', "[]");
         return;
     }
 
-    // Se encontrou, limpa o estado vazio e começa a listar
     list.innerHTML = ''; 
+    
+    // Variável para guardar o elemento HTML para onde vamos fazer scroll
+    let elementToScrollTo = null;
 
     // 3. PROCESSAR CADA REFERÊNCIA
-    for (const refOriginal of foundRefs) {
-        const cleanRef = refOriginal.trim().replace(/[.,;]+$/, ''); // Remove pontuação final
+    for (const cleanRef of currentRefs) {
         
-        // --- CRIAR HTML DO ITEM ---
-     const itemDiv = document.createElement('div');
+        const itemDiv = document.createElement('div');
         itemDiv.style.cssText = "padding: 15px; border-bottom: 1px solid var(--border-color); text-align: left;";
         
-        // Título (A Referência - Azul e Clicável)
+        // Verifica se este é o item novo
+        if (newRefFound && cleanRef === newRefFound) {
+            elementToScrollTo = itemDiv;
+        }
+
         const title = document.createElement('div');
-        // >>>>> LINHA NOVA AQUI: <<<<<
-        title.className = 'bible-ref-title'; 
-        // >>>>> FIM DA LINHA NOVA <<<<<
-        
+        title.className = 'bible-ref-title';
         title.style.cssText = "font-weight: bold; color: var(--accent-color); margin-bottom: 3px; cursor: pointer; font-size: 0.95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;";
         title.textContent = cleanRef;
         
-        // Ao clicar no título (PC), faz scroll
         title.onclick = () => {
             if (typeof scrollToAndHighlightText === 'function') {
                 scrollToAndHighlightText(cleanRef);
             }
         };
 
-        // Texto (O Conteúdo do Versículo)
         const contentDiv = document.createElement('div');
         contentDiv.style.cssText = "font-size: 0.95em; line-height: 1.5; color: var(--text-color); font-style: italic;";
         contentDiv.innerHTML = '<span style="opacity:0.5; font-size:0.8em;">A carregar...</span>';
@@ -29809,26 +29815,33 @@ async function generateNoteTexts() {
         itemDiv.appendChild(contentDiv);
         list.appendChild(itemDiv);
 
-        // 4. LÓGICA DE FETCH (Busca na Base de Dados)
-        // Usa a função auxiliar para expandir intervalos (ex: "1-3" -> [1, 2, 3])
+        // Fetch do texto
         const individualVerses = expandVerseReference(cleanRef);
-        let fullText = "";
-        
-        for (const singleVerse of individualVerses) {
-            // Usa a função "blindada" que criámos antes (que tenta ID e Nome)
-            const text = await fetchPublicBibleText(singleVerse);
-            if (text) {
-                fullText += text + " ";
-            }
-        }
-
-        // Atualiza o texto na interface
-        if (fullText.trim()) {
-            contentDiv.textContent = fullText;
-        } else {
-            contentDiv.innerHTML = '<span style="opacity:0.5; font-size:0.8em;">Texto não disponível na base de dados.</span>';
-        }
+        const textPromises = individualVerses.map(v => fetchPublicBibleText(v));
+        Promise.all(textPromises).then(texts => {
+            const fullText = texts.filter(t => t).join(" ");
+            if (fullText.trim()) contentDiv.textContent = fullText;
+            else contentDiv.innerHTML = '<span style="opacity:0.5; font-size:0.8em;">Texto não disponível.</span>';
+        });
     }
+
+    // >>> SCROLL INTELIGENTE PARA O ITEM ESPECÍFICO <<<
+    if (elementToScrollTo) {
+        setTimeout(() => {
+            elementToScrollTo.scrollIntoView({ 
+                behavior: 'smooth', 
+                block: 'center' // Tenta colocar o item no meio da vista
+            });
+            
+            // Highlight temporário para o utilizador saber qual é
+            elementToScrollTo.style.transition = "background-color 0.5s";
+            elementToScrollTo.style.backgroundColor = "rgba(46, 204, 113, 0.15)"; // Fundo verde suave
+            setTimeout(() => elementToScrollTo.style.backgroundColor = "transparent", 1500);
+        }, 150);
+    }
+
+    // Guarda a lista atual para a próxima comparação
+    list.setAttribute('data-prev-refs', JSON.stringify(currentRefs));
 }
 
 // 3. FUNÇÃO: GERAR FONTES (VISTA 4)
