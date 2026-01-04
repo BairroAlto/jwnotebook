@@ -6332,6 +6332,118 @@ button[data-command="boldBlue"]:hover::after {
     pointer-events: auto;
 }
 
+/* ============================================================
+   JANELAS FLUTUANTES REDATOR (Multitarefa)
+   ============================================================ */
+
+/* A Janela Flutuante */
+.redator-popup-window {
+    position: fixed;
+    top: 100px;
+    left: 100px;
+    width: 500px;
+    height: 400px;
+    
+    /* Vidro Fosco Escuro */
+    background: rgba(30, 30, 35, 0.95);
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+    border-radius: 12px;
+    
+    display: flex;
+    flex-direction: column;
+    z-index: 10000; /* Alto, mas permite sobreposição entre elas */
+    transition: transform 0.1s, opacity 0.2s;
+    resize: both; /* Permite redimensionar */
+    overflow: hidden;
+    min-width: 300px;
+    min-height: 200px;
+}
+
+/* Cabeçalho de Arrasto */
+.redator-popup-header {
+    padding: 10px 15px;
+    background: rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    cursor: grab; /* Mãozinha */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+}
+
+.redator-popup-header:active {
+    cursor: grabbing;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.popup-title-label {
+    font-size: 0.8em;
+    font-weight: bold;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* Botão Fechar (Salvar) */
+.btn-close-popup {
+    background: none;
+    border: none;
+    color: #e74c3c;
+    font-weight: bold;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 0 5px;
+}
+.btn-close-popup:hover { color: #ff6b6b; }
+
+/* Corpo da Janela */
+.redator-popup-body {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+}
+
+/* Ajustes nos inputs clonados dentro da janela */
+.redator-popup-window .redator-input {
+    padding: 15px;
+    font-size: 1.2em;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.redator-popup-window .redator-content {
+    flex-grow: 1;
+    overflow-y: auto; /* Scroll interno */
+    padding: 15px;
+}
+
+/* --- ESTADO DO REDATOR ORIGINAL (Bloqueado) --- */
+.redator-wrapper.in-popup-mode {
+    opacity: 0.3;
+    pointer-events: none; /* Impede cliques no original */
+    filter: grayscale(1);
+    border: 1px dashed rgba(255,255,255,0.3);
+}
+
+/* Aviso visual sobre o original */
+.redator-wrapper.in-popup-mode::after {
+    content: "Aberto em Janela ↗";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-weight: bold;
+    background: rgba(0,0,0,0.8);
+    padding: 5px 10px;
+    border-radius: 4px;
+}
+
 </style>
 
 
@@ -8080,6 +8192,7 @@ const DEFAULT_FILTERS = {
     tags: false,
     fourthColumn: false
 };
+const MAX_POPUPS = 3;
 
 
 
@@ -8180,7 +8293,8 @@ let activeSignBtn = null;
 let activeEditRow = null;
 let activeCardImageElement = null;
 let currentNoteType = null;
-
+let activeRedatorPopups = [];
+let highestZIndex = 10000;
 
 
 // Função: Gravação Silenciosa (Mantém o editor aberto)
@@ -20772,9 +20886,17 @@ noteContentEditor.addEventListener('click', (e) => {
         return; 
     }
 
-// >>> NOVA PROTEÇÃO 10: Se clicou DENTRO do Redator <<<
-    // Bloqueia o menu se clicar no cabeçalho (título) ou no conteúdo do Redator
-    if (e.target.closest('.redator-wrapper')) {
+// >>> NOVA PROTEÇÃO 10: Se clicou DENTRO de um Redator <<<
+    // Bloqueia o menu se clicar no cabeçalho, conteúdo OU num Redator Bloqueado
+    const redator = e.target.closest('.redator-wrapper');
+    if (redator) {
+        // Verifica se é um redator normal OU se está bloqueado
+        if (redator.classList.contains('in-popup-mode')) {
+            document.getElementById('insertion-popup').style.display = 'none';
+            return; 
+        }
+        
+        // Bloqueia também para redatores normais (para não abrir menu ao editar texto)
         document.getElementById('insertion-popup').style.display = 'none';
         return; 
     }
@@ -28763,39 +28885,84 @@ let activeRedatorFocusId = null;
 
 // 2. Abrir Modo Foco (Popup)
 window.openRedatorFocus = function(id) {
+    // 1. Verificações
+    if (activeRedatorPopups.includes(id)) {
+        alert("Este Redator já está aberto numa janela.");
+        return;
+    }
+    
+    if (activeRedatorPopups.length >= MAX_POPUPS) {
+        alert("Máximo de 3 janelas abertas simultaneamente.");
+        return;
+    }
+
     const wrapper = document.getElementById(id);
-    const modal = document.getElementById('redator-focus-modal');
-    const container = document.getElementById('redator-focus-container');
-    
-    if (!wrapper || !modal) return;
+    if (!wrapper) return;
 
-    activeRedatorFocusId = id;
+    // 2. Bloquear o Original
+    wrapper.classList.add('in-popup-mode');
+    activeRedatorPopups.push(id);
 
-    // Clone o elemento para o modal (para não destruir o layout da nota)
-    // Mas vamos trabalhar diretamente nos dados originais ao fechar
-    
-    // 1. Copiar valores atuais
+    // 3. Capturar Dados Atuais
     const titleVal = wrapper.querySelector('.redator-input').value;
     const contentHTML = wrapper.querySelector('.redator-content').innerHTML;
 
-    // 2. Criar uma versão "gigante" para o modal
-    container.innerHTML = '';
-    const clone = wrapper.cloneNode(true);
+    // 4. Criar a Janela Flutuante
+    const popupId = `popup-${id}`;
+    const popup = document.createElement('div');
+    popup.className = 'redator-popup-window';
+    popup.id = popupId;
     
-    // Ajustes visuais para o modo foco
-    clone.style.width = "100%";
-    clone.style.height = "100%";
-    clone.style.margin = "0";
-    clone.querySelector('.redator-dock').style.display = "none"; // Esconde a dock no foco
-    
-    // Restaurar valores no clone
-    clone.querySelector('.redator-input').value = titleVal;
-    
-    container.appendChild(clone);
-    
-    // Mostrar modal
-    document.body.appendChild(modal);
-    modal.style.display = 'flex';
+    // Posição em cascata (para não ficarem umas cima das outras)
+    const offset = activeRedatorPopups.length * 30;
+    popup.style.top = `${100 + offset}px`;
+    popup.style.left = `${100 + offset}px`;
+    popup.style.zIndex = ++highestZIndex;
+
+    // HTML da Janela
+    popup.innerHTML = `
+        <div class="redator-popup-header">
+            <span class="popup-title-label">📓 Redator Flutuante</span>
+            <button class="btn-close-popup" title="Fechar e Salvar" onclick="window.closeRedatorPopup('${id}')">✕</button>
+        </div>
+        <div class="redator-popup-body">
+            <input type="text" class="redator-input" placeholder="Título..." value="${titleVal}">
+            <div class="redator-content" contenteditable="true" spellcheck="false">${contentHTML}</div>
+        </div>
+    `;
+
+    // 5. Injetar no Body e Ativar Arrasto
+    document.body.appendChild(popup);
+    makeElementDraggable(popup);
+
+    // Focar ao abrir
+    popup.onclick = () => { popup.style.zIndex = ++highestZIndex; };
+};
+
+// FECHAR POPUP E SINCRONIZAR
+window.closeRedatorPopup = function(originalId) {
+    const popup = document.getElementById(`popup-${originalId}`);
+    const originalWrapper = document.getElementById(originalId);
+
+    if (popup && originalWrapper) {
+        // 1. Recuperar Dados
+        const newTitle = popup.querySelector('.redator-input').value;
+        const newContent = popup.querySelector('.redator-content').innerHTML;
+
+        // 2. Injetar no Original
+        originalWrapper.querySelector('.redator-input').value = newTitle;
+        originalWrapper.querySelector('.redator-content').innerHTML = newContent;
+
+        // 3. Restaurar Original
+        originalWrapper.classList.remove('in-popup-mode');
+        
+        // 4. Gravar Nota
+        saveNote(true);
+    }
+
+    // 5. Limpeza
+    if (popup) popup.remove();
+    activeRedatorPopups = activeRedatorPopups.filter(id => id !== originalId);
 };
 
 // 3. Fechar e Gravar Modo Foco
@@ -28903,6 +29070,44 @@ function updateRedatorParagraphs() {
         
         console.log(`🔄 Redator atualizado: Posição ${novoParagrafo}`);
     });
+}
+
+// Função de arrastar janelas (Genérica)
+function makeElementDraggable(elmnt) {
+    let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+    const header = elmnt.querySelector(".redator-popup-header");
+    
+    if (header) {
+        header.onmousedown = dragMouseDown;
+    }
+
+    function dragMouseDown(e) {
+        e = e || window.event;
+        e.preventDefault();
+        // Traz a janela para a frente ao clicar
+        elmnt.style.zIndex = ++highestZIndex;
+        
+        pos3 = e.clientX;
+        pos4 = e.clientY;
+        document.onmouseup = closeDragElement;
+        document.onmousemove = elementDrag;
+    }
+
+    function elementDrag(e) {
+        e = e || window.event;
+        e.preventDefault();
+        pos1 = pos3 - e.clientX;
+        pos2 = pos4 - e.clientY;
+        pos3 = e.clientX;
+        pos4 = e.clientY;
+        elmnt.style.top = (elmnt.offsetTop - pos2) + "px";
+        elmnt.style.left = (elmnt.offsetLeft - pos1) + "px";
+    }
+
+    function closeDragElement() {
+        document.onmouseup = null;
+        document.onmousemove = null;
+    }
 }
 
     </script>
