@@ -29756,17 +29756,12 @@ async function generateNoteTexts() {
     // Encontra referências BRUTAS
     const rawMatches = textContent.match(regex) || [];
     
-    // Limpa e remove duplicados (Cria a lista atual de referências LIMPAS)
+    // Limpa e remove duplicados
     const currentRefs = [...new Set(rawMatches.map(r => r.trim().replace(/[.,;]+$/, '')))];
 
-    // >>> LÓGICA DE COMPARAÇÃO (O QUE MUDOU?) <<<
-    
-    // 1. Recupera a lista que estava lá antes (guardada como texto JSON)
+    // Lógica de Comparação para Scroll
     const prevRefsJSON = list.getAttribute('data-prev-refs') || "[]";
     const prevRefs = JSON.parse(prevRefsJSON);
-
-    // 2. Descobre qual é a referência NOVA (está na lista atual mas não estava na antiga)
-    // O .find retorna o primeiro elemento que satisfaz a condição
     const newRefFound = currentRefs.find(ref => !prevRefs.includes(ref));
 
     if (currentRefs.length === 0) {
@@ -29781,17 +29776,15 @@ async function generateNoteTexts() {
     }
 
     list.innerHTML = ''; 
-    
-    // Variável para guardar o elemento HTML para onde vamos fazer scroll
     let elementToScrollTo = null;
 
     // 3. PROCESSAR CADA REFERÊNCIA
+    // Usamos um loop for...of para permitir o uso de 'await' lá dentro
     for (const cleanRef of currentRefs) {
         
         const itemDiv = document.createElement('div');
         itemDiv.style.cssText = "padding: 15px; border-bottom: 1px solid var(--border-color); text-align: left;";
         
-        // Verifica se este é o item novo
         if (newRefFound && cleanRef === newRefFound) {
             elementToScrollTo = itemDiv;
         }
@@ -29815,32 +29808,35 @@ async function generateNoteTexts() {
         itemDiv.appendChild(contentDiv);
         list.appendChild(itemDiv);
 
-        // Fetch do texto
+        // --- A CORREÇÃO ESTÁ AQUI ---
+        // Expandir a referência (ex: "João 1:1-3")
         const individualVerses = expandVerseReference(cleanRef);
+        
+        // Criar promessas de busca
         const textPromises = individualVerses.map(v => fetchPublicBibleText(v));
-        Promise.all(textPromises).then(texts => {
-            const fullText = texts.filter(t => t).join(" ");
-            if (fullText.trim()) contentDiv.textContent = fullText;
-            else contentDiv.innerHTML = '<span style="opacity:0.5; font-size:0.8em;">Texto não disponível.</span>';
-        });
+        
+        // FORÇAR ESPERA (await): O código pára aqui até os textos chegarem da BD
+        const texts = await Promise.all(textPromises);
+        
+        // Só depois de chegarem é que atualizamos o HTML e avançamos
+        const fullText = texts.filter(t => t).join(" ");
+        if (fullText.trim()) {
+            contentDiv.textContent = fullText;
+        } else {
+            contentDiv.innerHTML = '<span style="opacity:0.5; font-size:0.8em;">Texto não disponível.</span>';
+        }
     }
 
-    // >>> SCROLL INTELIGENTE PARA O ITEM ESPECÍFICO <<<
+    // Scroll Inteligente
     if (elementToScrollTo) {
         setTimeout(() => {
-            elementToScrollTo.scrollIntoView({ 
-                behavior: 'smooth', 
-                block: 'center' // Tenta colocar o item no meio da vista
-            });
-            
-            // Highlight temporário para o utilizador saber qual é
+            elementToScrollTo.scrollIntoView({ behavior: 'smooth', block: 'center' });
             elementToScrollTo.style.transition = "background-color 0.5s";
-            elementToScrollTo.style.backgroundColor = "rgba(46, 204, 113, 0.15)"; // Fundo verde suave
+            elementToScrollTo.style.backgroundColor = "rgba(46, 204, 113, 0.15)";
             setTimeout(() => elementToScrollTo.style.backgroundColor = "transparent", 1500);
         }, 150);
     }
 
-    // Guarda a lista atual para a próxima comparação
     list.setAttribute('data-prev-refs', JSON.stringify(currentRefs));
 }
 
