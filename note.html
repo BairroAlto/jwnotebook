@@ -6843,6 +6843,14 @@ body, .notebook-container {
     box-shadow: 0 0 20px rgba(255, 255, 255, 0.1) !important;
 }
 
+/* Destaque do item ativo no Índice */
+.index-item.active-scroll {
+    background-color: rgba(74, 144, 226, 0.15) !important; /* Fundo azul suave */
+    border-left: 4px solid var(--accent-color) !important; /* Borda azul forte */
+    color: var(--text-color) !important;
+    font-weight: bold;
+    transition: all 0.2s ease;
+}
 
 </style>
 
@@ -8772,6 +8780,10 @@ let mDragClone = null;       // O fantasma visual que segue o dedo
 let mDragTarget = null;      // Onde vamos largar
 let mTouchOffsetX = 0;
 let mTouchOffsetY = 0;
+let currentActiveScrollId = null;
+let currentMobileRequestId = 0;
+
+
 
 
 // Função: Gravação Silenciosa (Mantém o editor aberto)
@@ -9511,7 +9523,7 @@ async function toggleBookmark(marcadorId, shouldAdd, liElement) {
 }
 
 // --- FUNÇÃO UTILITÁRIA PARA O PROMPT PERSONALIZADO ---
-function showCustomInput(title, namePlaceholder = "") {
+function showCustomInput(title, namePlaceholder = "", initialValue = "") {
     return new Promise((resolve) => {
         const modal = document.getElementById('custom-input-modal');
         const titleEl = document.getElementById('custom-input-title');
@@ -9523,17 +9535,23 @@ function showCustomInput(title, namePlaceholder = "") {
         if (!modal) return console.error("Modal custom-input-modal não encontrado!");
 
         // 1. MOVE PARA O TOPO ABSOLUTO
-      document.body.appendChild(modal);
+        document.body.appendChild(modal);
         modal.style.setProperty('display', 'flex', 'important');
         modal.style.zIndex = "9000000";
 
         // 2. CONFIGURA INTERFACE
         titleEl.textContent = title;
-        nameInput.value = '';
-        nameInput.placeholder = namePlaceholder;
-        descInput.value = '';
         
-        setTimeout(() => nameInput.focus(), 100);
+        // AQUI ESTÁ A MUDANÇA: Usa o valor inicial se existir
+        nameInput.value = initialValue; 
+        
+        nameInput.placeholder = namePlaceholder;
+        descInput.value = ''; // Descrição começa sempre limpa (opcional)
+        
+        setTimeout(() => {
+            nameInput.focus();
+            if(initialValue) nameInput.select(); // Seleciona o texto para facilitar a edição
+        }, 100);
 
         const cleanup = () => {
             modal.style.display = 'none';
@@ -11320,7 +11338,8 @@ function syncVisualSelection(selectedId) {
 
 
 async function displayNote(noteId, noteElement, searchTerm = null) {
-     document.body.classList.remove('show-fab');
+    document.body.classList.remove('show-fab');
+    
     // 1. Limpeza Imediata e Reset de Scroll
     const noteTitleInput = document.getElementById('note-title-input');
     const noteContentEditor = document.getElementById('note-content-editor');
@@ -11336,6 +11355,7 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
 
     selectedNoteId = noteId;
     isClosingNote = false;
+    currentActiveScrollId = null; // Reset do scrollspy
 
     const placeholder = document.getElementById('editor-placeholder');
     const archiveArea = document.getElementById('archive-area');
@@ -11351,8 +11371,8 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
     }
 
     // Limpeza visual da seleção na lista lateral
- document.querySelectorAll('#file-list .list-item').forEach(el => {
-    el.classList.remove('selected', 'selected-red');
+    document.querySelectorAll('#file-list .list-item').forEach(el => {
+        el.classList.remove('selected', 'selected-red');
     });
 
     if (noteElement) {
@@ -11362,13 +11382,14 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
 
     try {
         // 2. Pedido dos dados ao Firestore
+        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', noteId);
         const noteSnap = await getDoc(noteRef);
 
         if (noteSnap.exists()) {
             let data = noteSnap.data();
             
-              currentNoteType = data.tipo; // Guarda se é 'nota' ou 'jornal'
+            currentNoteType = data.tipo; // Guarda se é 'nota' ou 'jornal'
 
             // Se o tipo for arquivo/feed, redireciona para a função de arquivo
             if (data.tipo === 'partilhado' || data.tipo === 'arquivo') {
@@ -11380,24 +11401,35 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
             noteTitleInput.value = data.nome || '';
             noteContentEditor.innerHTML = data.conteudo || '';
             
-            // === NOVO CÓDIGO AQUI ===
-    // Verifica se é Jornal e ajusta a barra de ferramentas
-    if (data.tipo === 'jornal') {
-        toggleJournalToolbar(true);
-    } else {
-        toggleJournalToolbar(false);
-    }
+            // Verifica se é Jornal e ajusta a barra de ferramentas
+            if (data.tipo === 'jornal') {
+                toggleJournalToolbar(true);
+            } else {
+                toggleJournalToolbar(false);
+            }
+
+            // ==========================================================
+            // >>> NOVO: ATIVAR OUVINTE DE SCROLL (SCROLLSPY) <<<
+            // ==========================================================
+            // Remove listener antigo para evitar duplicados
+            noteContentEditor.removeEventListener('scroll', detectActiveScrollElement);
+            
+            // Adiciona o novo listener com otimização (requestAnimationFrame)
+            let isScrolling;
+            noteContentEditor.addEventListener('scroll', () => {
+                window.cancelAnimationFrame(isScrolling);
+                isScrolling = window.requestAnimationFrame(() => {
+                    detectActiveScrollElement();
+                });
+            }, { passive: true });
+            // ==========================================================
 
             // 3. Pós-processamento: Widgets, Calendários e Notas Antigas
             if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
-             if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
+            if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
             if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
 
-            // ============================================================
-            // 🚀 SINCRONIZAÇÃO DE TÍTULOS (ESTADO DA CONFIGURAÇÃO)
-            // ============================================================
-            // Usamos um setTimeout de 200ms para dar tempo ao browser de 
-            // processar o HTML injetado antes de aplicarmos os estilos dinâmicos.
+            // Sincronização de Títulos (Configuração) e Scroll de Pesquisa
             setTimeout(() => {
                 if (typeof applyTitleWrappingEffect === 'function') {
                     applyTitleWrappingEffect();
@@ -11409,7 +11441,7 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
                 }
             }, 200); 
 
-              // 1. Mostrar a barra de abas
+            // 1. Mostrar a barra de abas
             const tabsBar = document.querySelector('.middle-bottom-tabs');
             if (tabsBar) tabsBar.style.display = 'flex';
 
@@ -11697,16 +11729,12 @@ function insertMiniNoteAtCursor(type = 'default') {
     const uniqueId = type === 'redator' ? `red_${Date.now()}` : `mn_${Date.now()}`;
 
     // --- TIPO: REDATOR (NOVO DESIGN COMPLETO) ---
- if (type === 'redator') {
+    if (type === 'redator') {
         finalHTML = `
         <div class="redator-wrapper" id="${uniqueId}" contenteditable="false" data-shared="false" data-box-links='{}' data-paragraph="0">
-            
             <button class="redator-reopen-btn" title="Mostrar Título" onclick="window.toggleRedatorHeader('${uniqueId}', true)">T</button>
-
             <div class="redator-header" id="header-${uniqueId}">
-               <!-- INPUT COM PROTEÇÃO DE GRAVAÇÃO -->
                <input type="text" class="redator-input" placeholder="Título do Redator..." value="" oninput="this.setAttribute('value', this.value)">
-                
                 <div class="redator-top-tools">
                     <button class="redator-menu-trigger" onclick="window.toggleRedatorMenu(this)">⋮</button>
                     <div class="redator-slide-menu">
@@ -11721,33 +11749,24 @@ function insertMiniNoteAtCursor(type = 'default') {
                     </div>
                 </div>
             </div>
-
             <div class="redator-content" contenteditable="true" data-placeholder="Escreva aqui..." oninput="window.checkRedatorFocus(this, '${uniqueId}')"><p><br></p></div>
-
             <div class="redator-dock">
-                <!-- BOTÃO POPUP (Protegido) -->
-                <button class="dock-btn" data-tooltip="Abrir em Popup" 
-                        onclick="event.preventDefault(); event.stopPropagation(); window.openRedatorFocus('${uniqueId}')">
+                <button class="dock-btn" data-tooltip="Abrir em Popup" onclick="event.preventDefault(); event.stopPropagation(); window.openRedatorFocus('${uniqueId}')">
                     <svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
                 </button>
-                
                 <div class="dock-sep"></div>
-                
-                <!-- BOTÃO ADICIONAR (Protegido) -->
-                <button class="dock-btn" data-tooltip="Novo Redator Abaixo" 
-                        onclick="event.preventDefault(); event.stopPropagation(); window.addRedatorBelow('${uniqueId}')">
+                <button class="dock-btn" data-tooltip="Novo Redator Abaixo" onclick="event.preventDefault(); event.stopPropagation(); window.addRedatorBelow('${uniqueId}')">
                     <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
                 </button>
             </div>
-
         </div>
         <p><br></p>`;
     }
-    
-    // --- OUTROS TIPOS (Lógica Antiga) ---
+    // --- OUTROS TIPOS ---
     else {
         let wrapperClass = 'mini-note-wrapper';
-        let titleHTML = '';
+        // Aqui usamos TEXTAREA por padrão para garantir compatibilidade
+        let titleHTML = `<textarea class="mini-note-title-input" placeholder="Título..." rows="1"></textarea>`;
 
         if (type === 'question') {
             wrapperClass += ' question-mode';
@@ -11755,8 +11774,6 @@ function insertMiniNoteAtCursor(type = 'default') {
         } else if (type === 'free') {
             wrapperClass += ' free-mode';
             titleHTML = ''; 
-        } else {
-            titleHTML = `<textarea class="mini-note-title-input" placeholder="Título da Sub-Nota..." rows="1"></textarea>`;
         }
 
         finalHTML = `
@@ -11773,37 +11790,44 @@ function insertMiniNoteAtCursor(type = 'default') {
     }
 
     // 4. Inserção no DOM
-     document.execCommand('insertHTML', false, finalHTML);
+    document.execCommand('insertHTML', false, finalHTML);
     
- // 5. Pós-Processamento (Foco e Animação)
- setTimeout(() => {
+    // 5. Pós-Processamento (Foco, Animação e CORREÇÃO DO TÍTULO COMPLETO)
+    setTimeout(() => {
         const insertedEl = document.getElementById(uniqueId);
         if (insertedEl) {
             
-            // EFEITO FLASH (Para o Redator)
+            // >>> CORREÇÃO PARA O TÍTULO COMPLETO (AQUI) <<<
+            // Se a configuração estiver ativa, aplicamos a lógica ao novo elemento
+            if (typeof appSettings !== 'undefined' && appSettings.showFullTitles) {
+                const titleArea = insertedEl.querySelector('.mini-note-title-input');
+                if (titleArea) {
+                    titleArea.classList.add('wrap-enabled');
+                    titleArea.style.whiteSpace = "pre-wrap";
+                    titleArea.style.overflow = "hidden";
+                    titleArea.style.height = 'auto';
+                    
+                    // Adiciona o ouvinte para crescer enquanto escreve
+                    titleArea.oninput = function() {
+                        this.style.height = 'auto';
+                        this.style.height = this.scrollHeight + 'px';
+                        this.textContent = this.value; 
+                    };
+                }
+            }
+            // >>> FIM DA CORREÇÃO <<<
+
             if (type === 'redator') {
                 insertedEl.classList.add('redator-spawn-effect');
-                
-                // --- ALTERAÇÃO AQUI: Focar no CONTEÚDO em vez do TÍTULO ---
                 const content = insertedEl.querySelector('.redator-content');
                 if (content) content.focus();
-
-                setTimeout(() => {
-                    insertedEl.classList.remove('redator-spawn-effect');
-                }, 600); 
+                setTimeout(() => insertedEl.classList.remove('redator-spawn-effect'), 600); 
             } 
             else {
-                // --- LÓGICA PARA OS OUTROS (Laranja, Verde, Azul) ---
                 const titleArea = insertedEl.querySelector('.mini-note-title-input');
                 const contentArea = insertedEl.querySelector('.mini-note-content');
-
-                if (titleArea) {
-                    // Questão ou Subnota -> Foca no Título
-                    titleArea.focus();
-                } else if (contentArea) {
-                    // Contentor Laranja (sem título) -> Foca no Conteúdo
-                    contentArea.focus();
-                }
+                if (titleArea) titleArea.focus();
+                else if (contentArea) contentArea.focus();
             }
             
             insertedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -13052,25 +13076,57 @@ async function showHiddenItemsModal() {
     const modal = document.getElementById('hidden-items-modal');
     const list = document.getElementById('hidden-items-list');
     list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar itens ocultos...</span></div>';
-    modal.style.display = 'flex';
+    
+    // Força visibilidade máxima
+    document.body.appendChild(modal);
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "9000000";
 
     try {
-        const q = query(
+        const myUid = auth.currentUser.uid;
+        let allHiddenItems = [];
+
+        // 1. BUSCAR PASTAS E NOTAS (Padrão)
+        const qPastas = query(
             collection(db, 'pastas'), 
             where('estado', '==', 'desativa'), 
-            where('userId', '==', auth.currentUser.uid) 
+            where('userId', '==', myUid) 
         );
-        const snapshot = await getDocs(q);
-        
+        const snapPastas = await getDocs(qPastas);
+        snapPastas.forEach(doc => {
+            allHiddenItems.push({ id: doc.id, ...doc.data(), collectionName: 'pastas', isEntity: false });
+        });
+
+        // 2. BUSCAR ENTIDADES (Personagens, Locais, etc.)
+        // Itera sobre a tua configuração de entidades para buscar em todas as coleções
+        for (const key in ENTITY_CONFIG) {
+            const config = ENTITY_CONFIG[key];
+            const qEnt = query(
+                collection(db, config.collection),
+                where('estado', '==', 'desativa'),
+                where('userId', '==', myUid)
+            );
+            const snapEnt = await getDocs(qEnt);
+            snapEnt.forEach(doc => {
+                allHiddenItems.push({ 
+                    id: doc.id, 
+                    ...doc.data(), 
+                    collectionName: config.collection, 
+                    tipo: key, // ex: personagem
+                    isEntity: true 
+                });
+            });
+        }
+
+        // Renderização
         list.innerHTML = '';
         
-        if (snapshot.empty) {
+        if (allHiddenItems.length === 0) {
             list.innerHTML = '<li style="padding:15px; color:#888; text-align:center;">A reciclagem está vazia.</li>';
             return;
         }
 
-        snapshot.forEach(doc => {
-            const item = { id: doc.id, ...doc.data() };
+        allHiddenItems.forEach(item => {
             const li = document.createElement('li');
             li.style.display = 'flex';
             li.style.justifyContent = 'space-between';
@@ -13078,17 +13134,40 @@ async function showHiddenItemsModal() {
             li.style.padding = '10px';
             li.style.borderBottom = '1px solid var(--border-color)';
 
-            const icon = item.tipo === 'pasta' ? '📁' : '📄';
+            // Ícone base
+            let icon = '📄';
+            if (item.collectionName === 'pastas') {
+                icon = item.tipo === 'pasta' ? '📁' : '📄';
+            } else {
+                // Ícone para entidades
+                if (item.tipo === 'personagem') icon = '👤';
+                else if (item.tipo === 'local') icon = '📍';
+                else if (item.tipo === 'data') icon = '📅';
+                else icon = '🔹';
+            }
 
             li.innerHTML = `
-                <span class="item-name" style="font-weight:500;">${icon} ${item.nome}</span> 
+                <div style="display:flex; flex-direction:column;">
+                    <span style="font-weight:500;">${icon} ${item.nome}</span>
+                    ${item.isEntity ? '<small style="color:#888; font-size:0.75em;">Entidade / Lista</small>' : ''}
+                </div>
                 <div style="display:flex; gap:10px;">
-                    <button class="modal-btn primary" data-action="restore" data-id="${item.id}" style="font-size:0.8em; padding:5px 10px;">Restaurar</button>
-                    <button class="modal-btn" data-action="delete" data-id="${item.id}" style="background-color:#c0392b; color:white; font-size:0.8em; padding:5px 10px; border:none; border-radius:5px; cursor:pointer;">Eliminar</button>
+                    <button class="modal-btn primary" 
+                            data-action="restore-universal" 
+                            data-id="${item.id}" 
+                            data-collection="${item.collectionName}"
+                            style="font-size:0.8em; padding:5px 10px;">Restaurar</button>
+                    
+                    <button class="modal-btn" 
+                            data-action="delete-universal" 
+                            data-id="${item.id}" 
+                            data-collection="${item.collectionName}"
+                            style="background-color:#c0392b; color:white; font-size:0.8em; padding:5px 10px; border:none; border-radius:5px; cursor:pointer;">Eliminar</button>
                 </div>
             `;
             list.appendChild(li);
         });
+
     } catch (e) {
         console.error(e);
         list.innerHTML = '<li>Erro ao carregar itens.</li>';
@@ -14802,51 +14881,141 @@ function renderEntityTab(container, type, onPageNames) {
 
 async function openEditEntityModal(entityId, entityType) {
     const modal = document.getElementById('edit-entity-modal');
+    const modalContent = modal.querySelector('.modal-content'); 
     const title = document.getElementById('edit-entity-title');
     const nameInput = document.getElementById('edit-entity-name-input');
     const descriptionInput = document.getElementById('edit-entity-description-input');
     const saveBtn = document.getElementById('edit-entity-save-btn');
-    
-    // Referências do novo input de emoji
     const emojiContainer = document.getElementById('edit-emoji-container');
     const emojiInput = document.getElementById('edit-emoji-input');
 
-    modal.style.display = 'flex';
+    if (!modal) return;
+
+    // Configuração Visual (Nível 20 Milhões)
+    document.body.appendChild(modal);
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.setProperty('z-index', '20000000', 'important');
+    modal.style.setProperty('visibility', 'visible', 'important');
+    modal.style.setProperty('opacity', '1', 'important');
+    
+    if (modalContent) modalContent.style.position = 'relative';
+
     nameInput.value = 'A carregar...';
     descriptionInput.value = 'A carregar...';
     
-    // 1. Mostrar seletor de emoji APENAS para subcosmos
     if (entityType === 'subcosmos') {
         emojiContainer.style.display = 'block';
     } else {
         emojiContainer.style.display = 'none';
     }
 
+    // --- 1. BOTÃO OCULTAR (CANTO SUPERIOR DIREITO) ---
+    const oldBtn = document.getElementById('btn-hide-entity-corner');
+    if (oldBtn) oldBtn.remove();
+    const oldActionBtn = document.getElementById('btn-hide-entity-dynamic');
+    if (oldActionBtn) oldActionBtn.remove();
+
+    const hideBtn = document.createElement('button');
+    hideBtn.id = 'btn-hide-entity-corner';
+    hideBtn.textContent = "👁️ Ocultar";
+    hideBtn.title = "Mover para Itens Ocultos";
+    
+    hideBtn.style.cssText = `
+        position: absolute;
+        top: 15px;
+        right: 15px;
+        background: none;
+        border: 1px solid transparent;
+        color: var(--text-muted-color);
+        font-size: 0.75em;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: all 0.2s;
+        opacity: 0.7;
+    `;
+    
+    hideBtn.onmouseover = () => { 
+        hideBtn.style.color = "#e74c3c"; 
+        hideBtn.style.opacity = "1"; 
+        hideBtn.style.backgroundColor = "rgba(231, 76, 60, 0.1)";
+    };
+    hideBtn.onmouseout = () => { 
+        hideBtn.style.color = "var(--text-muted-color)"; 
+        hideBtn.style.opacity = "0.7"; 
+        hideBtn.style.backgroundColor = "transparent";
+    };
+
+    modalContent.appendChild(hideBtn);
+
     const collectionName = getCollectionFromType(entityType);
     
     try {
+        if (!collectionName) throw new Error("Tipo inválido: " + entityType);
+
+        const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const entityRef = doc(db, collectionName, entityId);
         const entitySnap = await getDoc(entityRef);
 
-        if (!entitySnap.exists()) return;
+        if (!entitySnap.exists()) {
+            modal.style.display = 'none';
+            alert("Erro: Item não encontrado.");
+            return;
+        }
 
         const entityData = entitySnap.data();
         title.textContent = `Editar "${entityData.nome}"`;
         nameInput.value = entityData.nome;
         descriptionInput.value = entityData.descricao || '';
         
-        // 2. Preencher o input com o emoji atual se for subtema
         if (entityType === 'subcosmos') {
             emojiInput.value = entityData.emoji || "💼";
         }
 
+        // --- 2. LÓGICA DO BOTÃO OCULTAR (COM CORREÇÃO DE Z-INDEX) ---
+        hideBtn.onclick = async () => {
+            // A. Iniciar a promessa do popup de confirmação
+            const confirmationPromise = showConfirmation(
+                "Ocultar Item?",
+                `Deseja ocultar "${entityData.nome}"?\n\nEle sairá das listas mas pode ser recuperado em Configurações > Itens Ocultos.`
+            );
+
+            // B. TRUQUE: Forçar o z-index do popup de confirmação para 21 Milhões
+            // Fazemos isto imediatamente após chamar a função, antes de esperar a resposta
+            const confirmModal = document.getElementById('confirm-modal');
+            if (confirmModal) {
+                confirmModal.style.setProperty('z-index', '21000000', 'important');
+            }
+
+            // C. Agora esperamos a resposta do utilizador
+            const confirmed = await confirmationPromise;
+
+            // D. Restaurar z-index original (limpeza)
+            if (confirmModal) confirmModal.style.zIndex = '';
+
+            if (confirmed) {
+                modal.style.display = 'none';
+                await updateDoc(entityRef, { estado: 'desativa' });
+                
+                if (typeof hideReferencesPanel === 'function') hideReferencesPanel();
+                
+                if (currentTab === 'lists' && typeof renderListCategoryItems === 'function') {
+                    const activeCat = navigationStack.length > 0 ? navigationStack[0].id : entityType;
+                    renderListCategoryItems(activeCat);
+                }
+                
+                if (typeof fetchAllEntities === 'function') fetchAllEntities();
+            }
+        };
+
+        // --- LÓGICA DO BOTÃO GRAVAR ---
         const newSaveBtn = saveBtn.cloneNode(true);
         saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
 
         newSaveBtn.onclick = async () => {
             const newName = nameInput.value.trim();
             const newDescription = descriptionInput.value.trim();
-            const newEmoji = emojiInput.value.trim(); // Pega o que o user colou
+            const newEmoji = emojiInput.value.trim();
 
             if (!newName) return alert('O nome é obrigatório.');
 
@@ -14855,24 +15024,24 @@ async function openEditEntityModal(entityId, entityType) {
                 descricao: newDescription
             };
 
-            // 3. Se for subtema, inclui o novo emoji no update
-            if (entityType === 'subcosmos') {
-                updateData.emoji = newEmoji || "💼"; // Fallback se ficar vazio
-            }
+            if (entityType === 'subcosmos') updateData.emoji = newEmoji || "💼"; 
 
             await updateDoc(entityRef, updateData);
 
             modal.style.display = 'none';
             
-            // Atualizar cache e interface
-            await fetchAllEntities();
-            if (activeReferenceEntity.id === entityId) {
+            if (typeof fetchAllEntities === 'function') await fetchAllEntities();
+            
+            if (activeReferenceEntity && activeReferenceEntity.id === entityId) {
                 activeReferenceEntity.name = newName;
-                document.getElementById('references-panel-title').textContent = `Referências: ${newName}`;
-                document.getElementById('references-panel-description').textContent = newDescription;
+                const titleEl = document.getElementById('references-panel-title');
+                const descEl = document.getElementById('references-panel-description');
+                if (titleEl) titleEl.textContent = `Referências: ${newName}`;
+                if (descEl) descEl.textContent = newDescription;
             }
             
-            if (currentTab === 'lists') renderListCategoryItems('cosmos');
+            const activeCat = navigationStack.length > 0 ? navigationStack[0].id : entityType;
+            if (currentTab === 'lists') renderListCategoryItems(activeCat);
         };
 
     } catch (error) {
@@ -19985,7 +20154,28 @@ document.querySelectorAll('.modal-overlay [data-action="cancel"]').forEach(btn =
     });
 });
 
+// Listener para abrir o Modal de Configurações
 document.getElementById('settings-btn').addEventListener('click', () => {
+    
+    // --- CORREÇÃO: Sincronizar interruptores com as variáveis guardadas ---
+    // Isto garante que, se estiver True na memória, o botão aparece Ligado
+    if (document.getElementById('setting-search-tags')) 
+        document.getElementById('setting-search-tags').checked = appSettings.searchTagsInProtected;
+    
+    if (document.getElementById('setting-search-topics')) 
+        document.getElementById('setting-search-topics').checked = appSettings.searchTopicsInProtected;
+    
+    if (document.getElementById('setting-search-anchors')) 
+        document.getElementById('setting-search-anchors').checked = appSettings.searchAnchorsInProtected;
+    
+    if (document.getElementById('setting-global-search-superfolder')) 
+        document.getElementById('setting-global-search-superfolder').checked = appSettings.searchGlobalInSuperfolder;
+
+    // >>> A CORREÇÃO PRINCIPAL PARA O SEU PROBLEMA <<<
+    if (document.getElementById('setting-full-titles')) 
+        document.getElementById('setting-full-titles').checked = appSettings.showFullTitles;
+
+    // Mostrar o modal
     document.getElementById('settings-modal').style.display = 'flex';
 });
 
@@ -20003,48 +20193,42 @@ document.getElementById('hidden-items-list').addEventListener('click', async (e)
 
     const action = btn.dataset.action;
     const id = btn.dataset.id;
+    const collectionName = btn.dataset.collection; // Novo atributo que diz qual a tabela (pastas, personagens, etc)
     const listItem = btn.closest('li');
 
-    // ============================================================
-    // AÇÃO: RESTAURAR (Traz de volta, atualiza colunas e abre)
-    // ============================================================
-    if (action === 'restore') {
-        
-        // 1. TRUQUE Z-INDEX
-        const confirmModal = document.getElementById('confirm-modal');
-        confirmModal.style.zIndex = '9999';
-
-        // 2. Confirmação
-        const confirmed = await showConfirmation(
-            "Restaurar Item?",
-            "O item voltará para a sua pasta original e será aberto imediatamente."
-        );
-
-        confirmModal.style.zIndex = ''; // Limpeza
-
-        if (!confirmed) return;
+    // --- RESTAURAR ---
+    if (action === 'restore-universal') {
+        if (!confirm("Restaurar este item?")) return;
 
         try {
-            // A. Atualizar na Base de Dados (Espera terminar!)
-            await updateDoc(doc(db, 'pastas', id), { 
-                estado: 'ativa',
-                ultimaedicao: serverTimestamp()
-            });
-            
-            // B. Fechar o Modal de Itens Ocultos visualmente
-            document.getElementById('hidden-items-modal').style.display = 'none';
+            // Remove o estado 'desativa' (apaga o campo ou muda para ativa)
+            // Para entidades usamos deleteField() para limpar o campo estado, 
+            // para pastas mudamos para 'ativa'
+            const updatePayload = collectionName === 'pastas' 
+                ? { estado: 'ativa', ultimaedicao: serverTimestamp() } 
+                : { estado: deleteField() }; // Remove o campo 'estado' para voltar ao normal
 
-            // C. NAVEGAÇÃO INTELIGENTE (Atualiza Colunas e Abre Nota)
-            // Esta função vai:
-            // 1. Descobrir a pasta pai da nota.
-            // 2. Atualizar a coluna da esquerda (Pastas).
-            // 3. Atualizar a coluna do meio (Lista de ficheiros).
-            // 4. Abrir a nota no editor.
-            if (typeof navigateToNoteSmart === 'function') {
-                await navigateToNoteSmart(id);
+            await updateDoc(doc(db, collectionName, id), updatePayload);
+            
+            // Remove da lista visual
+            listItem.remove();
+            if (document.getElementById('hidden-items-list').children.length === 0) {
+                document.getElementById('hidden-items-list').innerHTML = '<li style="padding:15px; color:#888;">Reciclagem vazia.</li>';
+            }
+
+            // Atualiza caches globais se for entidade
+            if (collectionName !== 'pastas') {
+                if (typeof fetchAllEntities === 'function') fetchAllEntities();
+                // Se estivermos a ver a lista dessa categoria, atualiza
+                if (currentTab === 'lists') {
+                    // Tenta adivinhar a categoria pelo nome da coleção (ex: personagens -> personagem)
+                    // Mas o ideal é recarregar a navegação atual
+                    const currentNavId = navigationStack.length > 0 ? navigationStack[0].id : null;
+                    if (currentNavId) renderListCategoryItems(currentNavId);
+                }
             } else {
-                // Fallback de segurança
-                displayNote(id, null); 
+                // Se for nota, tenta abrir
+                if (typeof navigateToNoteSmart === 'function') navigateToNoteSmart(id);
             }
 
         } catch (err) {
@@ -20053,64 +20237,20 @@ document.getElementById('hidden-items-list').addEventListener('click', async (e)
         }
     }
 
-    // ============================================================
-    // AÇÃO: ELIMINAR (Mover para Blackbox) - MANTÉM-SE IGUAL
-    // ============================================================
-    else if (action === 'delete') {
-        const confirmModal = document.getElementById('confirm-modal');
-        confirmModal.style.zIndex = '9999';
-
-        const confirmed = await showConfirmation(
-            "Eliminar Permanentemente?", 
-            "Esta ação é irreversível. O item será apagado do sistema."
-        );
-
-        confirmModal.style.zIndex = ''; 
-
-        if (!confirmed) return;
-
-        btn.textContent = "A apagar...";
-        btn.disabled = true;
+    // --- ELIMINAR PERMANENTE ---
+    else if (action === 'delete-universal') {
+        if (!confirm("Eliminar permanentemente? Esta ação é irreversível.")) return;
 
         try {
-            const docRef = doc(db, 'pastas', id);
-            const docSnap = await getDoc(docRef);
-            
-            if (docSnap.exists()) {
-                const data = docSnap.data();
-
-                // COPIAR PARA BLACKBOX
-                await addDoc(collection(db, 'blackbox'), {
-                    originalId: id,
-                    nome: data.nome,
-                    conteudo: data.conteudo || "",
-                    tipo: data.tipo,
-                    userId: auth.currentUser.uid,
-                    deletedAt: serverTimestamp(),
-                    reason: "Manual Delete from Hidden Menu",
-                    fullSnapshot: data
-                });
-
-                // APAGAR DA COLEÇÃO ORIGINAL
-                await deleteDoc(docRef);
-
-                // Remover da lista visualmente
-                listItem.style.opacity = '0';
-                setTimeout(() => listItem.remove(), 300);
-                
-                const list = document.getElementById('hidden-items-list');
-                if (list.children.length <= 1) {
-                    list.innerHTML = '<li style="padding:15px; color:#888; text-align:center;">A reciclagem está vazia.</li>';
-                }
-            }
-        } catch (error) {
-            console.error("Erro ao eliminar:", error);
-            alert("Ocorreu um erro ao tentar eliminar.");
-            btn.textContent = "Eliminar";
-            btn.disabled = false;
+            await deleteDoc(doc(db, collectionName, id));
+            listItem.remove();
+        } catch (err) {
+            console.error(err);
+            alert("Erro ao eliminar.");
         }
     }
 });
+
 
 
 // ====================================================================
@@ -24615,10 +24755,9 @@ async function renderListCategoryItems(categoryId) {
         // 1. CAMINHO: COSMOS (TEMAS E SUBTEMAS)
         // ==========================================
         if (origin === 'cosmos') {
-            // NÍVEL 1: LISTA DE TEMAS PRINCIPAIS
             if (lastNav.type === 'list-category') {
                 middlePanelTitle.textContent = "💼 Cosmos: Temas";
-                updateAddButtonState(true, true); // Botão + amarelo ativo
+                updateAddButtonState(true, true);
 
                 const q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('nome'));
                 const snap = await getDocs(q);
@@ -24631,31 +24770,27 @@ async function renderListCategoryItems(categoryId) {
 
                 snap.forEach(docSnap => {
                     const item = { id: docSnap.id, ...docSnap.data() };
+                    
+                    // --- FILTRO DE OCULTOS ---
+                    if (item.estado === 'desativa') return;
+
                     const li = document.createElement('li');
                     li.className = 'list-item';
-                    
-                    // ATRIBUTOS PARA O POPUP DE EDIÇÃO
                     li.setAttribute('data-id', item.id);
                     li.setAttribute('data-type', 'cosmos-parent'); 
                     li.setAttribute('data-name', item.nome);
                     li.setAttribute('data-emoji', item.emoji || '💼');
 
-                    // SUBSTITUÍDO: "…" por "✏"
-                   li.innerHTML = `<span>${item.emoji || '💼'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
-
+                    li.innerHTML = `<span>${item.emoji || '💼'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
                     
                     li.onclick = (e) => {
-                        // IMPORTANTE: Se clicar no lápis, para a execução aqui para o listener global abrir o editor
                         if (e.target.closest('.item-menu-btn')) return;
-
-                        // Navega para dentro do Tema para ver os Subtemas
                         navigationStack.push({ id: item.id, name: item.nome, type: 'cosmos-parent', emoji: item.emoji || '💼' });
                         updateNavigationView(true);
                     };
                     listElement.appendChild(li);
                 });
             }
-            // NÍVEL 2: LISTA DE SUBTEMAS DENTRO DE UM TEMA
             else if (lastNav.type === 'cosmos-parent') {
                 middlePanelTitle.textContent = `${lastNav.emoji} ${lastNav.name}`;
                 updateAddButtonState(true, true);
@@ -24671,28 +24806,25 @@ async function renderListCategoryItems(categoryId) {
 
                 snap.forEach(docSnap => {
                     const item = { id: docSnap.id, ...docSnap.data() };
+
+                    // --- FILTRO DE OCULTOS ---
+                    if (item.estado === 'desativa') return;
+
                     const li = document.createElement('li');
                     li.className = 'list-item';
-                    
-                    // ATRIBUTOS PARA O POPUP DE EDIÇÃO
                     li.setAttribute('data-id', item.id);
                     li.setAttribute('data-type', 'subcosmos');
                     li.setAttribute('data-name', item.nome);
                     li.setAttribute('data-emoji', item.emoji || '🔹');
 
-                    // Destaque visual se estiver aberto na 4ª coluna
                     if (activeReferenceEntity && activeReferenceEntity.id === item.id) {
                         li.classList.add('selected');
                     }
 
-                    // SUBSTITUÍDO: "…" por "✏"
                     li.innerHTML = `<span>${item.emoji || '🔹'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
                     
                     li.onclick = (e) => {
-                        // IMPORTANTE: Se clicar no lápis, para a execução aqui para o listener global abrir o editor
                         if (e.target.closest('.item-menu-btn')) return;
-
-                        // Limpa seleção anterior e abre o painel de referências (Citações)
                         listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected'));
                         li.classList.add('selected');
                         showReferencesPanel(item.id, item.nome, 'subcosmos');
@@ -24704,10 +24836,11 @@ async function renderListCategoryItems(categoryId) {
         }
 
         // ==========================================
-        // 2. CAMINHO: BÍBLIA (LIVROS > CAPS > VERS)
+        // 2. CAMINHO: BÍBLIA (Sem alterações)
         // ==========================================
         if (origin === 'biblia-root') {
-            // Nível 1: Lista de Livros
+            // ... (O código da bíblia mantém-se igual, pois não se ocultam livros) ...
+            // Copia o bloco original da bíblia aqui se precisares, mas vou focar nas Entidades abaixo
             if (lastNav.type === 'list-category') {
                 middlePanelTitle.textContent = "Bíblia: Livros";
                 updateAddButtonState(false);
@@ -24722,9 +24855,7 @@ async function renderListCategoryItems(categoryId) {
                     };
                     listElement.appendChild(li);
                 });
-            } 
-            // Nível 2: Grade de Capítulos
-            else if (lastNav.type === 'bible-book') {
+            } else if (lastNav.type === 'bible-book') {
                 middlePanelTitle.textContent = lastNav.name;
                 listElement.innerHTML = '<div class="bible-grid"></div>';
                 const grid = listElement.querySelector('.bible-grid');
@@ -24738,23 +24869,18 @@ async function renderListCategoryItems(categoryId) {
                     };
                     grid.appendChild(btn);
                 }
-            } 
-            // Nível 3: Grade de Versículos
-            else if (lastNav.type === 'bible-chapter') {
+            } else if (lastNav.type === 'bible-chapter') {
                 const bookData = BIBLE_DATA.find(b => b.nome === lastNav.book);
                 const prefix = `${lastNav.book} ${lastNav.chapter}:`;
                 middlePanelTitle.textContent = prefix.replace(':', '');
                 listElement.innerHTML = '<div class="bible-grid"></div>';
                 const grid = listElement.querySelector('.bible-grid');
-                
                 const totalV = bookData?.versiculos?.[lastNav.chapter - 1] || 50;
                 const existingVerses = allEntities['textobiblico'] || [];
-
                 for (let v = 1; v <= totalV; v++) {
                     const fullVerse = `${prefix}${v}`;
                     const exists = existingVerses.some(e => e.nome === fullVerse);
                     const isActive = fullVerse === currentlyOpenVerseName;
-                    
                     const btn = document.createElement('div');
                     btn.className = `bible-grid-btn ${exists ? 'exists' : ''} ${isActive ? 'active-verse' : ''}`;
                     btn.textContent = v;
@@ -24771,7 +24897,7 @@ async function renderListCategoryItems(categoryId) {
         }
 
         // ==========================================
-        // 3. OUTRAS CATEGORIAS (TÓPICOS, TAGS, ENTIDADES)
+        // 3. OUTRAS CATEGORIAS (PERSONAGENS, LOCAIS, ETC)
         // ==========================================
         if (lastNav.type === 'list-category') {
             let items = [];
@@ -24781,11 +24907,18 @@ async function renderListCategoryItems(categoryId) {
                 updateAddButtonState(true, true);
                 const q = query(collection(db, 'topicos'), where('userId', '==', myUid), orderBy('nome'));
                 const snap = await getDocs(q);
-                snap.forEach(doc => items.push({ id: doc.id, nome: doc.data().nome, type: 'topico', desc: doc.data().descricao }));
+                snap.forEach(doc => {
+                    const data = doc.data();
+                    // --- FILTRO DE OCULTOS ---
+                    if (data.estado !== 'desativa') {
+                        items.push({ id: doc.id, nome: data.nome, type: 'topico', desc: data.descricao });
+                    }
+                });
             } 
             else if (categoryId === 'tag') {
                 middlePanelTitle.textContent = "Tags (#)";
                 updateAddButtonState(false);
+                // Tags não têm estado 'desativa' na coleção de pastas, é diferente
                 const q = query(collection(db, 'pastas'), where('tipo', '==', 'nota'), where('userId', '==', myUid));
                 const snap = await getDocs(q);
                 const tagSet = new Set();
@@ -24793,13 +24926,22 @@ async function renderListCategoryItems(categoryId) {
                 items = Array.from(tagSet).sort().map(t => ({ id: t, nome: t, type: 'tag' }));
             }
             else {
+                // ENTIDADES GENÉRICAS (Personagens, Locais, Datas, etc)
                 const config = ENTITY_CONFIG[categoryId];
                 if (config) {
                     middlePanelTitle.textContent = config.displayName;
                     updateAddButtonState(true, true);
                     const q = query(collection(db, config.collection), where('userId', '==', myUid), orderBy('nome'));
                     const snap = await getDocs(q);
-                    snap.forEach(doc => items.push({ id: doc.id, nome: doc.data().nome, type: categoryId }));
+                    
+                    snap.forEach(doc => {
+                        const data = doc.data();
+                        
+                        // --- FILTRO CRÍTICO DE OCULTOS ---
+                        if (data.estado !== 'desativa') {
+                            items.push({ id: doc.id, nome: data.nome, type: categoryId });
+                        }
+                    });
                 }
             }
             
@@ -24811,6 +24953,7 @@ async function renderListCategoryItems(categoryId) {
         listElement.innerHTML = '<li style="color:red; padding:20px; text-align:center;">Erro ao ligar à base de dados.</li>';
     }
 }
+
 
 // Função auxiliar para não repetir código de renderização
 function renderStandardList(items) {
@@ -27480,15 +27623,24 @@ document.getElementById('create-separator-btn').onclick = window.addSeparatorToG
 
 
 window.editSeparator = async (id, currentName) => {
-    const result = await showCustomInput("Renomear Separador", "Novo nome...");
+    // Passamos 'currentName' como 3º argumento
+    const result = await showCustomInput("Renomear Separador", "Novo nome...", currentName);
+    
     if (!result || !result.name) return;
 
     try {
+        const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const gavetaRef = doc(db, 'gavetas', window.activeGavetaId);
+        
         await updateDoc(gavetaRef, {
             [`separatorData.${id}.title`]: result.name
         });
-        window.activeGavetaData.separatorData[id].title = result.name;
+        
+        // Atualiza memória local
+        if (window.activeGavetaData && window.activeGavetaData.separatorData && window.activeGavetaData.separatorData[id]) {
+            window.activeGavetaData.separatorData[id].title = result.name;
+        }
+        
         renderArchiveFeed();
     } catch (e) { console.error(e); }
 };
@@ -29763,8 +29915,7 @@ function generateNoteIndex() {
         const li = document.createElement('li');
         li.className = `index-item ${typeClass}`;
         
-        // >>> AQUI ESTÁ A CORREÇÃO CRÍTICA <<<
-        // Guardamos o ID do elemento no item da lista
+        // Guardamos o ID do elemento no item da lista para o Scrollspy funcionar
         li.setAttribute('data-target-id', el.id); 
         
         if (!title || title.trim() === "") title = `(${typeLabel} sem título)`;
@@ -29777,11 +29928,15 @@ function generateNoteIndex() {
             </div>
         `;
 
-        // Clique no PC (Original)
+        // Clique no PC (Scroll suave)
         li.onclick = () => {
             el.scrollIntoView({ behavior: 'smooth', block: 'center' });
             el.style.outline = "2px solid var(--accent-color)";
             setTimeout(() => el.style.outline = "none", 1500);
+            
+            // Atualiza manualmente a variável global para feedback imediato
+            currentActiveScrollId = el.id;
+            updateIndexVisuals();
         };
 
         list.appendChild(li);
@@ -29790,6 +29945,9 @@ function generateNoteIndex() {
     if (!hasItems) {
         list.innerHTML = '<li class="empty-msg">Esta nota não tem caixas nem estrutura especial.</li>';
     }
+
+    // >>> NOVO: Pinta a lista imediatamente ao abrir, baseado na posição atual <<<
+    updateIndexVisuals();
 }
 
 // 4. ATUALIZADOR AUTOMÁTICO
@@ -30158,55 +30316,102 @@ document.getElementById('mobile-views-btn').addEventListener('click', (e) => {
 });
 
 // 2. Gerir Cliques nas Abas do Modal Mobile
-document.querySelector('#mobile-views-modal .middle-bottom-tabs').addEventListener('click', async (e) => {
+ document.querySelector('#mobile-views-modal .middle-bottom-tabs').addEventListener('click', async (e) => {
     const btn = e.target.closest('button');
     if (!btn) return;
 
+    // 1. GERAR SENHA ÚNICA PARA ESTE CLIQUE
+    const myRequestId = ++currentMobileRequestId;
+    console.log(`🎫 Clique ID: ${myRequestId} (Aba: ${btn.dataset.mobTab})`);
+
     // Atualiza classes ativas
-    document.querySelectorAll('#mobile-views-modal .middle-bottom-tabs button').forEach(b => b.classList.remove('active'));
+    e.currentTarget.querySelectorAll('button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
 
     const viewType = btn.dataset.mobTab;
     const titleEl = document.getElementById('mobile-views-title');
     const contentEl = document.getElementById('mobile-views-content');
     
-    contentEl.innerHTML = '<div class="spinner-container"><div class="spinner"></div></div>';
+    // Limpa e põe o spinner IMEDIATAMENTE
+    contentEl.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar...</span></div>';
 
-    // --- ESTRATÉGIA DE PONTE (Reutiliza a lógica do PC) ---
-    // Executa a função original (que renderiza na coluna escondida do meio)
-    // E depois copia o HTML para o modal mobile.
+    // --- FUNÇÃO DE SEGURANÇA SUPREMA ---
+    // Se o ID global mudou, significa que houve outro clique depois deste.
+    const isObsolete = () => {
+        return myRequestId !== currentMobileRequestId;
+    };
 
     if (viewType === 'files') {
         titleEl.textContent = "Ficheiros na Pasta";
-        // Copia a lista de ficheiros atual
         const fileList = document.getElementById('file-list');
-        if (fileList) {
-            contentEl.innerHTML = fileList.innerHTML;
-        }
+        
+        // Verifica se ainda é válido antes de escrever
+        if (!isObsolete() && fileList) contentEl.innerHTML = fileList.innerHTML;
     } 
     else if (viewType === 'index') {
         titleEl.textContent = "Índice da Nota";
-        generateNoteIndex(); // Gera na coluna oculta
+        
+        // Processos síncronos
+        detectActiveScrollElement();
+        generateNoteIndex(); 
+        
         setTimeout(() => {
+            // SEGURANÇA
+            if (isObsolete()) return;
+
             const source = document.getElementById('note-index-list');
-            contentEl.innerHTML = source ? source.innerHTML : "Erro.";
-        }, 50);
+            if (source && source.innerHTML.trim()) {
+                contentEl.innerHTML = source.innerHTML;
+
+                // Scroll Matemático
+                if (currentActiveScrollId) {
+                    const activeMobileItem = contentEl.querySelector(`.index-item[data-target-id="${currentActiveScrollId}"]`);
+                    if (activeMobileItem) {
+                        activeMobileItem.classList.add('active-scroll');
+                        activeMobileItem.style.backgroundColor = "rgba(74, 144, 226, 0.3)";
+                        activeMobileItem.style.borderLeft = "4px solid #4a90e2";
+                        
+                        setTimeout(() => {
+                            if (!isObsolete()) activeMobileItem.scrollIntoView({ behavior: 'auto', block: 'center' });
+                        }, 50);
+                    } 
+                }
+            } else {
+                contentEl.innerHTML = "<p style='color:#888; text-align:center; padding:30px;'>Sem estrutura.</p>";
+            }
+        }, 100);
     } 
     else if (viewType === 'texts') {
         titleEl.textContent = "Textos Bíblicos";
-        await generateNoteTexts(); // Gera na coluna oculta (com await para esperar pela BD)
+        
+        // Esta função demora tempo (await)
+        await generateNoteTexts(); 
+        
+        // 🛡️ BLOQUEIO FINAL (O SEGREDO) 🛡️
+        if (isObsolete()) {
+            console.log(`🛑 Pedido ${myRequestId} (Textos) cancelado. O utilizador já está no pedido ${currentMobileRequestId}.`);
+            return; // Sai da função sem tocar no HTML
+        }
+
         const source = document.getElementById('note-texts-view');
-        contentEl.innerHTML = source ? source.innerHTML : "Erro.";
+        contentEl.innerHTML = source ? source.innerHTML : "Vazio.";
     } 
     else if (viewType === 'sources') {
         titleEl.textContent = "Fontes e Links";
-        generateNoteSources(); // Gera na coluna oculta
+        
+        // Gera as fontes (pode ter micro-atraso)
+        generateNoteSources(); 
+        
         setTimeout(() => {
+            // SEGURANÇA
+            if (isObsolete()) return;
+
             const source = document.getElementById('note-sources-list');
-            contentEl.innerHTML = source ? source.innerHTML : "Erro.";
+            contentEl.innerHTML = source ? source.innerHTML : "Vazio.";
         }, 50);
     }
 });
+
 
 // 3. Delegar Cliques dentro do Conteúdo Mobile (Para fechar o modal ao clicar)
 document.getElementById('mobile-views-content').addEventListener('click', (e) => {
@@ -30242,7 +30447,6 @@ document.getElementById('mobile-views-content').addEventListener('click', (e) =>
 const mobileViewsBtn = document.getElementById('mobile-views-btn');
 
 if (mobileViewsBtn) {
-    // Remover listener antigo para não duplicar (truque do clone)
     const newBtn = mobileViewsBtn.cloneNode(true);
     mobileViewsBtn.parentNode.replaceChild(newBtn, mobileViewsBtn);
 
@@ -30250,18 +30454,13 @@ if (mobileViewsBtn) {
         e.preventDefault();
         e.stopPropagation();
         
-        console.group("🔍 DIAGNÓSTICO DO MODAL MOBILE");
-        console.log("1. Botão clicado.");
-        
+        // 1. Força uma deteção de scroll de última hora para garantir que a variável está atualizada
+        detectActiveScrollElement();
+
         const modal = document.getElementById('mobile-views-modal');
-        console.log("2. Elemento do modal:", modal);
-
         if (modal) {
-            // FORÇA BRUTA DE ESTILOS (Ignora o ficheiro CSS e força visualização)
-            // Movemos para o body para garantir que não está preso dentro de uma div escondida
+            // Força visibilidade
             document.body.appendChild(modal);
-            console.log("3. Modal movido para o fim do <body>.");
-
             modal.style.cssText = `
                 display: flex !important;
                 position: fixed !important;
@@ -30270,88 +30469,107 @@ if (mobileViewsBtn) {
                 width: 100vw !important;
                 height: 100vh !important;
                 background-color: rgba(0, 0, 0, 0.85) !important;
-                z-index: 2147483647 !important; /* Valor máximo permitido */
+                z-index: 2147483647 !important;
                 align-items: center !important;
                 justify-content: center !important;
                 visibility: visible !important;
                 opacity: 1 !important;
             `;
-            
-            console.log("4. Estilos de visibilidade forçados.");
 
-            // Lógica das abas
-            const activeBtn = modal.querySelector('.middle-bottom-tabs button.active') || modal.querySelector('[data-mob-tab="index"]');
-            if (activeBtn) {
-                console.log("5. Simulando clique na aba:", activeBtn.textContent);
-                activeBtn.click();
+            // 2. Simula o clique na aba "Índice" para carregar o conteúdo e ativar o scroll
+            // (Se já estiver ativa, o listener da aba abaixo trata de recarregar)
+            const indexBtn = modal.querySelector('[data-mob-tab="index"]');
+            if (indexBtn) {
+                indexBtn.click();
             }
-        } else {
-            console.error("❌ ERRO CRÍTICO: O elemento #mobile-views-modal NÃO existe no HTML. Copie o bloco HTML novamente.");
-            alert("Erro: O HTML do modal não foi encontrado.");
         }
-        console.groupEnd();
     });
 }
 
 // 2. Gerir Cliques nas Abas
 const mobileTabsContainer = document.querySelector('#mobile-views-modal .middle-bottom-tabs');
-
 if (mobileTabsContainer) {
-    // Remove listeners antigos clonando o elemento (truque de limpeza)
-    const newTabsContainer = mobileTabsContainer.cloneNode(true);
-    mobileTabsContainer.parentNode.replaceChild(newTabsContainer, mobileTabsContainer);
+    const newTabs = mobileTabsContainer.cloneNode(true);
+    mobileTabsContainer.parentNode.replaceChild(newTabs, mobileTabsContainer);
 
-    newTabsContainer.addEventListener('click', async (e) => {
+    newTabs.addEventListener('click', async (e) => {
         const btn = e.target.closest('button');
         if (!btn) return;
 
-        // Atualiza visual dos botões
-        newTabsContainer.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        // Visual das abas
+        newTabs.querySelectorAll('button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
 
         const viewType = btn.dataset.mobTab;
         const titleEl = document.getElementById('mobile-views-title');
         const contentEl = document.getElementById('mobile-views-content');
         
-        // Limpa e mostra spinner
-        contentEl.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar...</span></div>';
+        console.log("📱 Aba Mobile Clicada:", viewType);
 
-        // --- ESTRATÉGIA: Usar as funções principais do PC e copiar o HTML ---
-        
-        if (viewType === 'files') {
-            titleEl.textContent = "Ficheiros na Pasta";
-            // Copia a lista de ficheiros que está no painel do meio
-            const fileList = document.getElementById('file-list');
-            contentEl.innerHTML = (fileList && fileList.innerHTML.trim()) ? fileList.innerHTML : "<p style='color:#888; text-align:center; padding:20px;'>Pasta vazia.</p>";
-        } 
-        else if (viewType === 'index') {
+        contentEl.innerHTML = '<div class="spinner-container"><div class="spinner"></div></div>';
+
+        // --- LÓGICA DO ÍNDICE ---
+        if (viewType === 'index') {
             titleEl.textContent = "Índice da Nota";
-            generateNoteIndex(); // Gera na coluna oculta
             
-            // Pequeno delay para garantir que o DOM atualizou
+            // 1. Gera a lista na memória oculta (PC)
+            if (typeof generateNoteIndex === 'function') generateNoteIndex();
+            
+            // 2. Transfere para o Mobile
             setTimeout(() => {
-                const source = document.getElementById('note-index-list');
-                if (source && source.innerHTML.trim()) {
-                    contentEl.innerHTML = source.innerHTML;
+                const sourceList = document.getElementById('note-index-list');
+                
+                if (sourceList && sourceList.innerHTML.trim()) {
+                    contentEl.innerHTML = sourceList.innerHTML;
+                    
+                    // >>> AQUI ACONTECE A MAGIA DO SCROLL <<<
+                    if (currentActiveScrollId) {
+                        console.log("🎯 Tentando focar no item:", currentActiveScrollId);
+                        
+                        // Procura pelo ID de dados
+                        const activeItem = contentEl.querySelector(`.index-item[data-target-id="${currentActiveScrollId}"]`);
+                        
+                        if (activeItem) {
+                            // 1. Aplica estilo visual forçado
+                            activeItem.style.backgroundColor = "rgba(74, 144, 226, 0.3)";
+                            activeItem.style.borderLeft = "4px solid #4a90e2";
+                            activeItem.style.fontWeight = "bold";
+                            activeItem.classList.add('active-scroll');
+
+                            // 2. Rola a lista para o centro
+                            activeItem.scrollIntoView({ behavior: 'auto', block: 'center' });
+                            console.log("✅ Scroll realizado com sucesso.");
+                        } else {
+                            console.warn("⚠️ Item ativo não encontrado na lista gerada.");
+                        }
+                    } else {
+                        console.log("ℹ️ Nenhum item ativo detetado.");
+                    }
+
                 } else {
-                    contentEl.innerHTML = "<p style='color:#888; text-align:center; padding:30px;'>Sem estrutura detetada.</p>";
+                    contentEl.innerHTML = "<p style='color:#888; text-align:center; padding:30px;'>Sem estrutura.</p>";
                 }
             }, 50);
-        } 
+        }
+        
+        // --- OUTRAS ABAS (Mantêm-se iguais) ---
+        else if (viewType === 'files') {
+            titleEl.textContent = "Ficheiros";
+            const fileList = document.getElementById('file-list');
+            if (fileList) contentEl.innerHTML = fileList.innerHTML;
+        }
         else if (viewType === 'texts') {
             titleEl.textContent = "Textos Bíblicos";
-            await generateNoteTexts(); // Gera na coluna oculta (com await)
-            
+            if (typeof generateNoteTexts === 'function') await generateNoteTexts();
             const source = document.getElementById('note-texts-view');
-            contentEl.innerHTML = (source && source.innerHTML.trim()) ? source.innerHTML : "<p style='color:#888; text-align:center; padding:30px;'>📖 Nenhum texto bíblico detetado.</p>";
-        } 
+            contentEl.innerHTML = source ? source.innerHTML : "Vazio.";
+        }
         else if (viewType === 'sources') {
-            titleEl.textContent = "Fontes e Links";
-            generateNoteSources(); // Gera na coluna oculta
-            
+            titleEl.textContent = "Fontes";
+            if (typeof generateNoteSources === 'function') generateNoteSources();
             setTimeout(() => {
                 const source = document.getElementById('note-sources-list');
-                contentEl.innerHTML = (source && source.innerHTML.trim()) ? source.innerHTML : "<p style='color:#888; text-align:center; padding:30px;'>⚡ Nenhuma fonte vinculada.</p>";
+                contentEl.innerHTML = source ? source.innerHTML : "Vazio.";
             }, 50);
         }
     });
@@ -30462,8 +30680,7 @@ if (closeMobBtn && mobileModal) {
     closeMobBtn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        
-        console.log("❌ A fechar modal mobile...");
+    
         
         // Força o fecho sobrepondo qualquer !important anterior
         mobileModal.style.setProperty('display', 'none', 'important');
@@ -30646,6 +30863,138 @@ if (editorForGlow) {
             }
         }
     });
+}
+
+// Função para detetar qual elemento está visível no topo
+function detectActiveScrollElement() {
+    const editor = document.getElementById('note-content-editor');
+    if (!editor) return;
+
+    // Seleciona todos os itens que aparecem no índice
+    const targets = editor.querySelectorAll('.mini-note-wrapper, .redator-wrapper, details.toggle-section, .jwn-table-wrapper, .jwn-timeline-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, .post-it-note');
+    
+    if (targets.length === 0) return;
+
+    const scrollPosition = editor.scrollTop;
+    // O ponto de ativação é 150px abaixo do topo do editor (zona de leitura)
+    const triggerPoint = scrollPosition + 150; 
+    
+    let activeId = null;
+
+    // --- 1. VERIFICAÇÃO DE FUNDO DE PÁGINA ---
+    // Se o utilizador fez scroll até ao fim, seleciona OBRIGATORIAMENTE o último item
+    // (Margem de erro de 20px)
+    if (Math.ceil(editor.scrollTop + editor.clientHeight) >= editor.scrollHeight - 20) {
+        const lastItem = targets[targets.length - 1];
+        activeId = lastItem.id;
+        console.log("⬇️ [SCROLL] Fundo atingido. Forçando último item:", activeId);
+    } 
+    // --- 2. VERIFICAÇÃO NORMAL (Loop) ---
+    else {
+        // Percorre todos os itens para encontrar qual é o que estamos a ler
+        for (let i = 0; i < targets.length; i++) {
+            const el = targets[i];
+            
+            // offsetTop: A distância física do item ao topo do documento (fixo)
+            // Se a posição do item for menor que o nosso ponto de leitura, ele é o candidato atual
+            if (el.offsetTop < triggerPoint) {
+                activeId = el.id; // Atualiza o candidato (vai ganhando o que estiver mais abaixo, mas acima do trigger)
+            } else {
+                // Se este item já está abaixo da linha de leitura, paramos.
+                // O candidato anterior era o correto.
+                break; 
+            }
+        }
+    }
+
+    // --- 3. ATUALIZAÇÃO ---
+    // Se não encontrou nada (estamos no topo absoluto), usa o primeiro
+    if (!activeId && targets.length > 0) {
+        activeId = targets[0].id;
+    }
+
+    if (activeId && currentActiveScrollId !== activeId) {
+        currentActiveScrollId = activeId;
+        
+        // Se a lista estiver aberta no PC, atualiza visualmente
+        // (No mobile isto só atualiza a variável para ser usada quando abrir o popup)
+        if (window.innerWidth > 768) {
+            updateIndexVisuals();
+        }
+    }
+}
+
+// ====================================================================
+// LÓGICA DO MENU MOBILE (BOTÃO ⛶ E ABAS)
+// ====================================================================
+
+// 1. Configuração do Botão de Abrir
+const btnOpenMobile = document.getElementById('mobile-views-btn');
+if (btnOpenMobile) {
+    // Removemos clones antigos para garantir limpeza
+    const newBtn = btnOpenMobile.cloneNode(true);
+    btnOpenMobile.parentNode.replaceChild(newBtn, btnOpenMobile);
+
+    newBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        
+        console.log("🔘 Botão Menu Mobile clicado.");
+
+        // A. Força a deteção da posição ATUAL (caso o user tenha parado de fazer scroll)
+        detectActiveScrollElement();
+
+        // B. Prepara e mostra o modal
+        const modal = document.getElementById('mobile-views-modal');
+        if (modal) {
+            document.body.appendChild(modal); // Garante que está no topo do DOM
+            modal.style.cssText = `
+                display: flex !important;
+                position: fixed !important;
+                top: 0 !important;
+                left: 0 !important;
+                width: 100vw !important;
+                height: 100vh !important;
+                background-color: rgba(0, 0, 0, 0.85) !important;
+                z-index: 2147483647 !important;
+                align-items: center !important;
+                justify-content: center !important;
+                visibility: visible !important;
+                opacity: 1 !important;
+            `;
+
+            // C. Simula clique na aba "Índice" para carregar e focar
+            // Pequeno delay para garantir que o modal está renderizado
+            setTimeout(() => {
+                const indexTabBtn = modal.querySelector('[data-mob-tab="index"]');
+                if (indexTabBtn) indexTabBtn.click();
+            }, 50);
+        }
+    });
+}
+
+
+
+// Função para pintar a lista do índice
+function updateIndexVisuals() {
+    const list = document.getElementById('note-index-list');
+    
+    // Só atualiza se a lista existir e estiver visível
+    if (!list || list.style.display === 'none') return;
+
+    // Remove a classe de todos
+    list.querySelectorAll('.index-item').forEach(li => li.classList.remove('active-scroll'));
+
+    // Adiciona ao atual
+    if (currentActiveScrollId) {
+        const activeLi = list.querySelector(`.index-item[data-target-id="${currentActiveScrollId}"]`);
+        if (activeLi) {
+            activeLi.classList.add('active-scroll');
+            
+            // >>> AQUI ESTÁ A MUDANÇA <<<
+            // 'center' força o item a ficar no meio da lista visível
+            activeLi.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
 }
 
     </script>
