@@ -30862,6 +30862,7 @@ if (mobileViewsBtn) {
 
 // 2. Gerir Cliques nas Abas
 const mobileTabsContainer = document.querySelector('#mobile-views-modal .middle-bottom-tabs');
+
 if (mobileTabsContainer) {
     const newTabs = mobileTabsContainer.cloneNode(true);
     mobileTabsContainer.parentNode.replaceChild(newTabs, mobileTabsContainer);
@@ -30870,7 +30871,10 @@ if (mobileTabsContainer) {
         const btn = e.target.closest('button');
         if (!btn) return;
 
-        // Visual das abas
+        // 1. GERAR SENHA ÚNICA PARA ESTE CLIQUE (Evita conflitos de rapidez)
+        const myRequestId = ++currentMobileRequestId;
+
+        // Atualiza visual
         newTabs.querySelectorAll('button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
 
@@ -30878,70 +30882,82 @@ if (mobileTabsContainer) {
         const titleEl = document.getElementById('mobile-views-title');
         const contentEl = document.getElementById('mobile-views-content');
         
-        console.log("📱 Aba Mobile Clicada:", viewType);
+        // Limpa e põe o spinner
+        contentEl.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar...</span></div>';
 
-        contentEl.innerHTML = '<div class="spinner-container"><div class="spinner"></div></div>';
+        // Função de segurança
+        const isObsolete = () => myRequestId !== currentMobileRequestId;
 
         // --- LÓGICA DO ÍNDICE ---
         if (viewType === 'index') {
             titleEl.textContent = "Índice da Nota";
+            detectActiveScrollElement();
+            generateNoteIndex(); 
             
-            // 1. Gera a lista na memória oculta (PC)
-            if (typeof generateNoteIndex === 'function') generateNoteIndex();
-            
-            // 2. Transfere para o Mobile
             setTimeout(() => {
-                const sourceList = document.getElementById('note-index-list');
+                if (isObsolete()) return;
+                const source = document.getElementById('note-index-list');
                 
-                if (sourceList && sourceList.innerHTML.trim()) {
-                    contentEl.innerHTML = sourceList.innerHTML;
-                    
-                    // >>> AQUI ACONTECE A MAGIA DO SCROLL <<<
+                if (source && source.innerHTML.trim()) {
+                    contentEl.innerHTML = source.innerHTML;
+                    // Lógica de Scroll (Scrollspy)
                     if (currentActiveScrollId) {
-                        console.log("🎯 Tentando focar no item:", currentActiveScrollId);
-                        
-                        // Procura pelo ID de dados
                         const activeItem = contentEl.querySelector(`.index-item[data-target-id="${currentActiveScrollId}"]`);
-                        
                         if (activeItem) {
-                            // 1. Aplica estilo visual forçado
+                            activeItem.classList.add('active-scroll');
                             activeItem.style.backgroundColor = "rgba(74, 144, 226, 0.3)";
                             activeItem.style.borderLeft = "4px solid #4a90e2";
-                            activeItem.style.fontWeight = "bold";
-                            activeItem.classList.add('active-scroll');
-
-                            // 2. Rola a lista para o centro
                             activeItem.scrollIntoView({ behavior: 'auto', block: 'center' });
-                            console.log("✅ Scroll realizado com sucesso.");
-                        } else {
-                            console.warn("⚠️ Item ativo não encontrado na lista gerada.");
-                        }
-                    } else {
-                        console.log("ℹ️ Nenhum item ativo detetado.");
+                        } 
                     }
-
                 } else {
                     contentEl.innerHTML = "<p style='color:#888; text-align:center; padding:30px;'>Sem estrutura.</p>";
                 }
             }, 50);
         }
         
-        // --- OUTRAS ABAS (Mantêm-se iguais) ---
+        // --- LÓGICA DE TEXTOS / NAVEGA (CORRIGIDA) ---
+        else if (viewType === 'texts') {
+            
+            // Verifica se há âncoras ativas na nota
+            const hasAnchors = activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0;
+
+            if (hasAnchors) {
+                // MODO: NAVEGAÇÃO POR ÂNCORAS
+                titleEl.textContent = "Navegação por Âncoras";
+                
+                // Gera a lista de navegação
+                generateAnchorNavigation();
+                
+                // Copia do contentor PC para o Mobile
+                setTimeout(() => {
+                    if (isObsolete()) return;
+                    const source = document.getElementById('note-texts-view');
+                    contentEl.innerHTML = source ? source.innerHTML : '<div style="padding:20px;text-align:center;color:#888">Sem resultados.</div>';
+                }, 50);
+
+            } else {
+                // MODO: TEXTOS BÍBLICOS
+                titleEl.textContent = "Textos Bíblicos";
+                await generateNoteTexts(); // Esta função é lenta (async)
+                
+                if (isObsolete()) return;
+                const source = document.getElementById('note-texts-view');
+                contentEl.innerHTML = source ? source.innerHTML : "Vazio.";
+            }
+        } 
+        
+        // --- OUTRAS ABAS ---
         else if (viewType === 'files') {
             titleEl.textContent = "Ficheiros";
             const fileList = document.getElementById('file-list');
             if (fileList) contentEl.innerHTML = fileList.innerHTML;
         }
-        else if (viewType === 'texts') {
-            titleEl.textContent = "Textos Bíblicos";
-            if (typeof generateNoteTexts === 'function') await generateNoteTexts();
-            const source = document.getElementById('note-texts-view');
-            contentEl.innerHTML = source ? source.innerHTML : "Vazio.";
-        }
         else if (viewType === 'sources') {
             titleEl.textContent = "Fontes";
-            if (typeof generateNoteSources === 'function') generateNoteSources();
+            generateNoteSources();
             setTimeout(() => {
+                if (isObsolete()) return;
                 const source = document.getElementById('note-sources-list');
                 contentEl.innerHTML = source ? source.innerHTML : "Vazio.";
             }, 50);
@@ -31304,23 +31320,23 @@ function detectActiveScrollElement() {
 
 // 1. Configuração do Botão de Abrir
 const btnOpenMobile = document.getElementById('mobile-views-btn');
+
 if (btnOpenMobile) {
-    // Removemos clones antigos para garantir limpeza
+    // Clonamos para limpar eventos antigos
     const newBtn = btnOpenMobile.cloneNode(true);
     btnOpenMobile.parentNode.replaceChild(newBtn, btnOpenMobile);
 
     newBtn.addEventListener('click', (e) => {
         e.preventDefault();
+        e.stopPropagation();
         
-        console.log("🔘 Botão Menu Mobile clicado.");
-
-        // A. Força a deteção da posição ATUAL (caso o user tenha parado de fazer scroll)
+        // 1. Deteção de posição de scroll
         detectActiveScrollElement();
 
-        // B. Prepara e mostra o modal
         const modal = document.getElementById('mobile-views-modal');
         if (modal) {
-            document.body.appendChild(modal); // Garante que está no topo do DOM
+            // A. Força visibilidade
+            document.body.appendChild(modal); 
             modal.style.cssText = `
                 display: flex !important;
                 position: fixed !important;
@@ -31336,8 +31352,24 @@ if (btnOpenMobile) {
                 opacity: 1 !important;
             `;
 
-            // C. Simula clique na aba "Índice" para carregar e focar
-            // Pequeno delay para garantir que o modal está renderizado
+            // ============================================================
+            // B. LÓGICA DO ÍCONE (AQUI ESTÁ A CORREÇÃO)
+            // ============================================================
+            const textBtn = modal.querySelector('button[data-mob-tab="texts"]');
+            
+            if (textBtn) {
+                // Verifica a variável global que contém as âncoras da nota
+                if (activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0) {
+                    // SE TEM ÂNCORAS -> Mostra Âncora
+                    textBtn.innerHTML = '<span>⚓</span> Navega';
+                } else {
+                    // SE NÃO TEM -> Mostra Bíblia (Padrão)
+                    textBtn.innerHTML = '<span>📖</span> Textos';
+                }
+            }
+            // ============================================================
+
+            // C. Abre na aba "Índice" por defeito
             setTimeout(() => {
                 const indexTabBtn = modal.querySelector('[data-mob-tab="index"]');
                 if (indexTabBtn) indexTabBtn.click();
