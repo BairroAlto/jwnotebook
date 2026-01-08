@@ -9011,6 +9011,7 @@ let currentNoteAnchors = {}; // Guarda o estado: { anchorId: true }
 let anchorLastDoc = null;    // Cursor para paginação
 let currentAnchorSearch = ""; 
 let activeNoteAnchorsIds = []; 
+let unsubscribeCurrentNote = null;
 
 
 
@@ -10208,35 +10209,31 @@ async function fetchAllEntities() {
 }
 
 function resetEditor() {
-     leaveArchivePresence(); 
-      toggleJournalToolbar(false);
-    selectedNoteId = null;
-    currentArchiveId = null; // Limpa ID do arquivo
-    activeEditingPostId = null; // Limpa edição ativa
+    // --- NOVO: Desliga o ouvinte da nota em tempo real ---
+    if (unsubscribeCurrentNote) {
+        unsubscribeCurrentNote();
+        unsubscribeCurrentNote = null;
+    }
+    // -----------------------------------------------------
 
-     if (document.getElementById('insertion-popup')) document.getElementById('insertion-popup').style.display = 'none';
+    leaveArchivePresence(); 
+    toggleJournalToolbar(false);
+    selectedNoteId = null;
+    currentArchiveId = null; 
+    activeEditingPostId = null; 
+
+    if (document.getElementById('insertion-popup')) document.getElementById('insertion-popup').style.display = 'none';
 
     editorArea.style.display = 'none';
     document.getElementById('archive-area').style.display = 'none';
     editorPlaceholder.style.display = 'flex';
 
-     // 1. Esconder a barra de abas
     const tabsBar = document.querySelector('.middle-bottom-tabs');
     if (tabsBar) tabsBar.style.display = 'none';
 
-    // 2. Forçar a vista a voltar para "Pastas" (Ficheiros)
-    // Isto garante que quando navegar, vê a lista e não o índice vazio
     const filesTabBtn = document.querySelector('button[data-mid-tab="files"]');
     if (filesTabBtn) filesTabBtn.click();
 
-    // 1. Esconde TODAS as áreas de conteúdo
-    editorArea.style.display = 'none'; // Editor de Nota
-    document.getElementById('archive-area').style.display = 'none'; // Editor de Arquivo
-
-    // 2. Mostra o Placeholder (O ícone do livro)
-    editorPlaceholder.style.display = 'flex';
-
-    // 3. Limpa seleção visual da lista
     document.querySelectorAll('#middle-panel-list .list-item.selected').forEach(el => el.classList.remove('selected'));
     document.querySelectorAll('#file-list .list-item.selected').forEach(el => el.classList.remove('selected', 'selected-red'));
     
@@ -11594,13 +11591,20 @@ function syncVisualSelection(selectedId) {
 async function displayNote(noteId, noteElement, searchTerm = null) {
     document.body.classList.remove('show-fab');
     
-    // 1. Limpeza Imediata e Reset de Scroll
+    // 1. Limpeza de ouvintes anteriores (CRÍTICO)
+    if (unsubscribeCurrentNote) {
+        unsubscribeCurrentNote();
+        unsubscribeCurrentNote = null;
+    }
+
+    // Limpeza Imediata e Reset de Scroll
     const noteTitleInput = document.getElementById('note-title-input');
     const noteContentEditor = document.getElementById('note-content-editor');
     const editorArea = document.getElementById('editor-area');
     const rightPanel = document.getElementById('right-panel');
 
-    if (noteTitleInput) noteTitleInput.value = ""; 
+    // Limpa visualmente antes de carregar
+    if (noteTitleInput) noteTitleInput.value = "A carregar..."; 
     if (noteContentEditor) noteContentEditor.innerHTML = ""; 
     
     if (editorArea) editorArea.scrollTop = 0;
@@ -11609,12 +11613,11 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
 
     selectedNoteId = noteId;
     isClosingNote = false;
-    currentActiveScrollId = null; // Reset do scrollspy
+    currentActiveScrollId = null; 
 
     const placeholder = document.getElementById('editor-placeholder');
     const archiveArea = document.getElementById('archive-area');
 
-    // Gerir visibilidade dos painéis (esconde placeholder e arquivo, mostra editor)
     if (placeholder) placeholder.style.setProperty('display', 'none', 'important');
     if (archiveArea) archiveArea.style.setProperty('display', 'none', 'important');
     
@@ -11624,7 +11627,7 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
         editorArea.style.opacity = '1';
     }
 
-    // Limpeza visual da seleção na lista lateral
+    // Seleção visual na lista
     document.querySelectorAll('#file-list .list-item').forEach(el => {
         el.classList.remove('selected', 'selected-red');
     });
@@ -11635,103 +11638,144 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
     }
 
     try {
-        // 2. Pedido dos dados ao Firestore
-        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { doc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', noteId);
-        const noteSnap = await getDoc(noteRef);
 
-        if (noteSnap.exists()) {
-            let data = noteSnap.data();
+        // --- MUDANÇA PRINCIPAL: OUVINTE EM TEMPO REAL ---
+        unsubscribeCurrentNote = onSnapshot(noteRef, (noteSnap) => {
+            // Se a nota foi apagada noutro lado, fecha o editor
+            if (!noteSnap.exists()) {
+                alert("Esta nota foi eliminada.");
+                resetEditor();
+                return;
+            }
+
+            const data = noteSnap.data();
             
-              const anchorsMap = data.ancorasSelecionadas || {};
-    activeNoteAnchorsIds = Object.keys(anchorsMap); // Guarda IDs globais
-    const hasAnchors = activeNoteAnchorsIds.length > 0;
+            // Se a alteração é LOCAL (minha, que ainda não foi ao servidor), ignoro para não resetar o cursor
+            if (noteSnap.metadata.hasPendingWrites) {
+                return;
+            }
 
-    const tabBtn = document.querySelector('button[data-mid-tab="texts"]');
-    if (tabBtn) {
-        if (hasAnchors) {
-            // MODO NAVEGA
-            tabBtn.innerHTML = '<span>⚓</span> Navega';
-            tabBtn.dataset.mode = 'navega'; // Marca o modo
-            tabBtn.title = "Navegação por Âncoras";
-        } else {
-            // MODO TEXTOS (Padrão)
-            tabBtn.innerHTML = '<span>📜</span> Textos';
-            tabBtn.dataset.mode = 'textos';
-            tabBtn.title = "Textos Bíblicos";
-        }
-    }
+            // SEGURANÇA: Se eu estiver a escrever (estado 'unsaved'), 
+            // e chegar uma alteração de fora, NÃO atualizo automaticamente para não apagar o que estou a escrever.
+            // Mostramos um aviso visual (pode ser no botão de status).
+            if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
+                const remoteContent = data.conteudo || '';
+                const localContent = noteContentEditor.innerHTML;
+                
+                // Se o conteúdo for diferente, aviso de conflito
+                if (remoteContent !== localContent) {
+                    const statusEl = document.getElementById('save-status-indicator');
+                    if (statusEl) {
+                        statusEl.textContent = "⚠️ Conflito: Edição externa detetada!";
+                        statusEl.style.color = "#e74c3c";
+                        // Opcional: Adicionar lógica para resolver conflito
+                    }
+                    console.warn("Edição externa recebida mas ignorada porque há alterações locais não guardadas.");
+                    return; 
+                }
+            }
 
-            currentNoteType = data.tipo; // Guarda se é 'nota' ou 'jornal'
-
-            // Se o tipo for arquivo/feed, redireciona para a função de arquivo
+            // --- ATUALIZAÇÃO DO ECRÃ (Só acontece se estivermos 'Guardado') ---
+            
+            // 1. Configurar tipo e redirecionar se for Arquivo
+            currentNoteType = data.tipo;
             if (data.tipo === 'partilhado' || data.tipo === 'arquivo') {
+                unsubscribeCurrentNote(); // Desliga este ouvinte
                 displayArchive(noteId, data);
                 return;
             }
 
-            // Injetar dados no editor
-            noteTitleInput.value = data.nome || '';
-            noteContentEditor.innerHTML = data.conteudo || '';
+            // 2. Configurar Botões da Aba (Texto vs Navega)
+            const anchorsMap = data.ancorasSelecionadas || {};
+            activeNoteAnchorsIds = Object.keys(anchorsMap);
+            const hasAnchors = activeNoteAnchorsIds.length > 0;
+            const tabBtn = document.querySelector('button[data-mid-tab="texts"]');
+            if (tabBtn) {
+                if (hasAnchors) {
+                    tabBtn.innerHTML = '<span>⚓</span> Navega';
+                    tabBtn.dataset.mode = 'navega';
+                    tabBtn.title = "Navegação por Âncoras";
+                } else {
+                    tabBtn.innerHTML = '<span>📜</span> Textos';
+                    tabBtn.dataset.mode = 'textos';
+                    tabBtn.title = "Textos Bíblicos";
+                }
+            }
+
+            // 3. ATUALIZAR O CONTEÚDO VISUAL
+            // Só atualiza o HTML se for realmente diferente para evitar "piscar" ou perder seleção
+            if (noteTitleInput.value !== (data.nome || '')) {
+                noteTitleInput.value = data.nome || '';
+            }
             
-            // Verifica se é Jornal e ajusta a barra de ferramentas
+            // Verifica diferença de conteúdo HTML
+            if (noteContentEditor.innerHTML !== (data.conteudo || '')) {
+                // Guarda posição do scroll
+                const oldScroll = noteContentEditor.scrollTop;
+                
+                noteContentEditor.innerHTML = data.conteudo || '';
+                
+                // Restaura scroll
+                noteContentEditor.scrollTop = oldScroll;
+                
+                // Pós-processamento de widgets
+                if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
+                if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
+                if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
+                
+                // Sincronização de Títulos
+                setTimeout(() => {
+                    if (typeof applyTitleWrappingEffect === 'function') applyTitleWrappingEffect();
+                }, 50);
+            }
+
+            // Verifica se é Jornal
             if (data.tipo === 'jornal') {
                 toggleJournalToolbar(true);
             } else {
                 toggleJournalToolbar(false);
             }
 
-            // ==========================================================
-            // >>> NOVO: ATIVAR OUVINTE DE SCROLL (SCROLLSPY) <<<
-            // ==========================================================
-            // Remove listener antigo para evitar duplicados
-            noteContentEditor.removeEventListener('scroll', detectActiveScrollElement);
-            
-            // Adiciona o novo listener com otimização (requestAnimationFrame)
-            let isScrolling;
-            noteContentEditor.addEventListener('scroll', () => {
-                window.cancelAnimationFrame(isScrolling);
-                isScrolling = window.requestAnimationFrame(() => {
-                    detectActiveScrollElement();
-                });
-            }, { passive: true });
-            // ==========================================================
+            // 4. Se foi a primeira abertura (com termo de pesquisa)
+            if (searchTerm) {
+                setTimeout(() => scrollToAndHighlightText(searchTerm), 300);
+                // Limpa o termo para não fazer scroll sempre que alguém edita
+                searchTerm = null; 
+            }
 
-            // 3. Pós-processamento: Widgets, Calendários e Notas Antigas
-            if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
-            if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
-            if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
-
-            // Sincronização de Títulos (Configuração) e Scroll de Pesquisa
-            setTimeout(() => {
-                if (typeof applyTitleWrappingEffect === 'function') {
-                    applyTitleWrappingEffect();
-                }
-
-                // Se a nota foi aberta via Pesquisa Global, faz scroll até ao termo
-                if (searchTerm) {
-                    scrollToAndHighlightText(searchTerm);
-                }
-            }, 200); 
-
-            // 1. Mostrar a barra de abas
+            // 5. Atualizar painéis laterais
             const tabsBar = document.querySelector('.middle-bottom-tabs');
             if (tabsBar) tabsBar.style.display = 'flex';
-
-            // 2. Gerar o Índice e Fontes imediatamente
             updateMiddlePanelViews(); 
-
+            
             updateSaveStatus('saved');
 
-        } else {
-            alert("Nota não encontrada.");
-            resetEditor();
-        }
+        }, (error) => {
+            console.error("Erro no ouvinte da nota:", error);
+            if (error.code === 'permission-denied') {
+                alert("Acesso negado ou a nota foi removida.");
+                resetEditor();
+            }
+        });
+
+        // ==========================================================
+        // SCROLLSPY (Mantém-se igual)
+        // ==========================================================
+        noteContentEditor.removeEventListener('scroll', detectActiveScrollElement);
+        let isScrolling;
+        noteContentEditor.addEventListener('scroll', () => {
+            window.cancelAnimationFrame(isScrolling);
+            isScrolling = window.requestAnimationFrame(() => {
+                detectActiveScrollElement();
+            });
+        }, { passive: true });
+
     } catch (error) {
         console.error("Erro no displayNote:", error);
     }
     
-    // Ajuste de Navegação para Mobile (Sistema de Pilha)
     if (window.innerWidth <= 768) {
         document.body.classList.remove('mobile-view-middle');
         document.body.classList.add('mobile-view-editor');
