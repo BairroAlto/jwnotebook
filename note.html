@@ -6987,6 +6987,41 @@ body, .notebook-container {
     flex-direction: column;
 }
 
+
+/* Painel de Sincronização (Overlay sobre o Editor) */
+#editor-sync-overlay {
+    display: none; /* Escondido por defeito */
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(26, 26, 29, 0.85); /* Fundo escuro semi-transparente */
+    z-index: 5000; /* Acima do texto */
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    backdrop-filter: blur(2px);
+    transition: opacity 0.3s ease;
+}
+
+#editor-sync-overlay.visible {
+    display: flex;
+}
+
+.sync-message {
+    background-color: var(--panel-color);
+    padding: 15px 25px;
+    border-radius: 8px;
+    border: 1px solid var(--accent-color);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    color: var(--text-color);
+    font-weight: 500;
+}
+
 </style>
 
 
@@ -11591,47 +11626,45 @@ function syncVisualSelection(selectedId) {
 async function displayNote(noteId, noteElement, searchTerm = null) {
     document.body.classList.remove('show-fab');
     
-    // 1. Limpeza de ouvintes anteriores (CRÍTICO)
+    // 1. Limpeza de ouvintes anteriores
     if (unsubscribeCurrentNote) {
         unsubscribeCurrentNote();
         unsubscribeCurrentNote = null;
     }
 
-    // Limpeza Imediata e Reset de Scroll
+    // Referências DOM
     const noteTitleInput = document.getElementById('note-title-input');
     const noteContentEditor = document.getElementById('note-content-editor');
     const editorArea = document.getElementById('editor-area');
     const rightPanel = document.getElementById('right-panel');
+    const syncOverlay = document.getElementById('editor-sync-overlay'); // NOVO
 
-    // Limpa visualmente antes de carregar
-    if (noteTitleInput) noteTitleInput.value = "A carregar..."; 
+    // Limpa visualmente antes de carregar (para parecer rápido)
+    if (noteTitleInput) noteTitleInput.value = ""; 
+    // Nota: Não limpamos o innerHTML imediatamente aqui se quisermos evitar "piscar" branco, 
+    // mas para garantir limpeza entre notas, limpamos:
     if (noteContentEditor) noteContentEditor.innerHTML = ""; 
-    
-    if (editorArea) editorArea.scrollTop = 0;
-    if (noteContentEditor) noteContentEditor.scrollTop = 0;
-    if (rightPanel) rightPanel.scrollTop = 0;
+    if (syncOverlay) syncOverlay.style.display = 'none'; // Garante que começa escondido
 
+    if (editorArea) editorArea.scrollTop = 0;
+    
     selectedNoteId = noteId;
     isClosingNote = false;
     currentActiveScrollId = null; 
 
-    const placeholder = document.getElementById('editor-placeholder');
-    const archiveArea = document.getElementById('archive-area');
-
-    if (placeholder) placeholder.style.setProperty('display', 'none', 'important');
-    if (archiveArea) archiveArea.style.setProperty('display', 'none', 'important');
-    
+    // Gestão de Paineis
+    document.getElementById('editor-placeholder').style.setProperty('display', 'none', 'important');
+    document.getElementById('archive-area').style.setProperty('display', 'none', 'important');
     if (editorArea) {
         editorArea.style.setProperty('display', 'flex', 'important');
         editorArea.style.visibility = 'visible';
         editorArea.style.opacity = '1';
     }
 
-    // Seleção visual na lista
+    // Seleção Visual na Lista
     document.querySelectorAll('#file-list .list-item').forEach(el => {
         el.classList.remove('selected', 'selected-red');
     });
-
     if (noteElement) {
         const isSharedTab = (currentViewMode === 'shared');
         noteElement.classList.add(isSharedTab ? 'selected-red' : 'selected');
@@ -11641,128 +11674,111 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
         const { doc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', noteId);
 
-        // --- MUDANÇA PRINCIPAL: OUVINTE EM TEMPO REAL ---
+        // --- ATIVA OUVINTE EM TEMPO REAL ---
         unsubscribeCurrentNote = onSnapshot(noteRef, (noteSnap) => {
-            // Se a nota foi apagada noutro lado, fecha o editor
+            // Se a nota foi apagada
             if (!noteSnap.exists()) {
                 alert("Esta nota foi eliminada.");
                 resetEditor();
                 return;
             }
 
-            const data = noteSnap.data();
-            
-            // Se a alteração é LOCAL (minha, que ainda não foi ao servidor), ignoro para não resetar o cursor
+            // Ignora se a alteração for local (enquanto escreves)
+            // Isto impede que o loader apareça a cada letra que TU escreves
             if (noteSnap.metadata.hasPendingWrites) {
                 return;
             }
 
-            // SEGURANÇA: Se eu estiver a escrever (estado 'unsaved'), 
-            // e chegar uma alteração de fora, NÃO atualizo automaticamente para não apagar o que estou a escrever.
-            // Mostramos um aviso visual (pode ser no botão de status).
-            if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
-                const remoteContent = data.conteudo || '';
-                const localContent = noteContentEditor.innerHTML;
-                
-                // Se o conteúdo for diferente, aviso de conflito
-                if (remoteContent !== localContent) {
-                    const statusEl = document.getElementById('save-status-indicator');
-                    if (statusEl) {
-                        statusEl.textContent = "⚠️ Conflito: Edição externa detetada!";
-                        statusEl.style.color = "#e74c3c";
-                        // Opcional: Adicionar lógica para resolver conflito
-                    }
-                    console.warn("Edição externa recebida mas ignorada porque há alterações locais não guardadas.");
-                    return; 
-                }
-            }
-
-            // --- ATUALIZAÇÃO DO ECRÃ (Só acontece se estivermos 'Guardado') ---
+            const data = noteSnap.data();
             
-            // 1. Configurar tipo e redirecionar se for Arquivo
+            // 1. Verificar Redirecionamentos (Arquivo/Jornal)
             currentNoteType = data.tipo;
             if (data.tipo === 'partilhado' || data.tipo === 'arquivo') {
-                unsubscribeCurrentNote(); // Desliga este ouvinte
+                unsubscribeCurrentNote(); 
                 displayArchive(noteId, data);
                 return;
             }
 
-            // 2. Configurar Botões da Aba (Texto vs Navega)
-            const anchorsMap = data.ancorasSelecionadas || {};
-            activeNoteAnchorsIds = Object.keys(anchorsMap);
-            const hasAnchors = activeNoteAnchorsIds.length > 0;
-            const tabBtn = document.querySelector('button[data-mid-tab="texts"]');
-            if (tabBtn) {
-                if (hasAnchors) {
-                    tabBtn.innerHTML = '<span>⚓</span> Navega';
-                    tabBtn.dataset.mode = 'navega';
-                    tabBtn.title = "Navegação por Âncoras";
-                } else {
-                    tabBtn.innerHTML = '<span>📜</span> Textos';
-                    tabBtn.dataset.mode = 'textos';
-                    tabBtn.title = "Textos Bíblicos";
+            // --- LÓGICA DE COMPARAÇÃO DE CONTEÚDO ---
+            const currentTitle = noteTitleInput.value;
+            const currentContent = noteContentEditor.innerHTML;
+            const serverTitle = data.nome || '';
+            const serverContent = data.conteudo || '';
+
+            // Verifica se há DIFERENÇAS REAIS
+            const hasChanges = (currentTitle !== serverTitle) || (currentContent !== serverContent);
+
+            // Apenas se houver mudanças, mostramos o loader e atualizamos
+            if (hasChanges) {
+                
+                // A. Mostrar Painel de Loading (apenas se a nota já tiver conteúdo visível)
+                // Se for a primeira carga (editor vazio), não precisa de loader, carrega direto.
+                const isFirstLoad = (currentContent === "");
+                
+                if (!isFirstLoad && syncOverlay) {
+                    syncOverlay.classList.add('visible');
                 }
-            }
 
-            // 3. ATUALIZAR O CONTEÚDO VISUAL
-            // Só atualiza o HTML se for realmente diferente para evitar "piscar" ou perder seleção
-            if (noteTitleInput.value !== (data.nome || '')) {
-                noteTitleInput.value = data.nome || '';
-            }
-            
-            // Verifica diferença de conteúdo HTML
-            if (noteContentEditor.innerHTML !== (data.conteudo || '')) {
-                // Guarda posição do scroll
-                const oldScroll = noteContentEditor.scrollTop;
-                
-                noteContentEditor.innerHTML = data.conteudo || '';
-                
-                // Restaura scroll
-                noteContentEditor.scrollTop = oldScroll;
-                
-                // Pós-processamento de widgets
-                if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
-                if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
-                if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
-                
-                // Sincronização de Títulos
+                // Pequeno delay (50ms) para o browser renderizar o painel antes de travar processando HTML
                 setTimeout(() => {
+                    // B. Atualizar Conteúdo
+                    noteTitleInput.value = serverTitle;
+                    noteContentEditor.innerHTML = serverContent;
+
+                    // C. Pós-processamento
+                    if (data.tipo === 'jornal') toggleJournalToolbar(true);
+                    else toggleJournalToolbar(false);
+
+                    if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
+                    if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
+                    if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
                     if (typeof applyTitleWrappingEffect === 'function') applyTitleWrappingEffect();
-                }, 50);
-            }
 
-            // Verifica se é Jornal
-            if (data.tipo === 'jornal') {
-                toggleJournalToolbar(true);
-            } else {
-                toggleJournalToolbar(false);
-            }
+                    // Configurar botões da aba (Texto vs Navega)
+                    const anchorsMap = data.ancorasSelecionadas || {};
+                    activeNoteAnchorsIds = Object.keys(anchorsMap);
+                    const hasAnchors = activeNoteAnchorsIds.length > 0;
+                    const tabBtn = document.querySelector('button[data-mid-tab="texts"]');
+                    if (tabBtn) {
+                        if (hasAnchors) {
+                            tabBtn.innerHTML = '<span>⚓</span> Navega';
+                            tabBtn.dataset.mode = 'navega';
+                        } else {
+                            tabBtn.innerHTML = '<span>📜</span> Textos';
+                            tabBtn.dataset.mode = 'textos';
+                        }
+                    }
 
-            // 4. Se foi a primeira abertura (com termo de pesquisa)
-            if (searchTerm) {
-                setTimeout(() => scrollToAndHighlightText(searchTerm), 300);
-                // Limpa o termo para não fazer scroll sempre que alguém edita
-                searchTerm = null; 
-            }
+                    // D. Esconder Painel de Loading (após processar)
+                    if (syncOverlay) {
+                        // Mantém o loader por mais 300ms para o utilizador perceber que atualizou
+                        setTimeout(() => {
+                            syncOverlay.classList.remove('visible');
+                        }, 300);
+                    }
 
-            // 5. Atualizar painéis laterais
-            const tabsBar = document.querySelector('.middle-bottom-tabs');
-            if (tabsBar) tabsBar.style.display = 'flex';
-            updateMiddlePanelViews(); 
-            
-            updateSaveStatus('saved');
+                    // Se foi abertura por pesquisa
+                    if (searchTerm) {
+                        setTimeout(() => scrollToAndHighlightText(searchTerm), 300);
+                        searchTerm = null; 
+                    }
+
+                    // Atualizar painéis laterais
+                    const tabsBar = document.querySelector('.middle-bottom-tabs');
+                    if (tabsBar) tabsBar.style.display = 'flex';
+                    if (typeof updateMiddlePanelViews === 'function') updateMiddlePanelViews(); 
+                    
+                    updateSaveStatus('saved');
+
+                }, isFirstLoad ? 0 : 50); // Se for primeira carga, executa imediatamente
+            } 
+            // Se não houver mudanças, não faz nada (silencioso).
 
         }, (error) => {
-            console.error("Erro no ouvinte da nota:", error);
-            if (error.code === 'permission-denied') {
-                alert("Acesso negado ou a nota foi removida.");
-                resetEditor();
-            }
+            console.error("Erro no ouvinte:", error);
         });
 
-        // ==========================================================
-        // SCROLLSPY (Mantém-se igual)
-        // ==========================================================
+        // Scrollspy
         noteContentEditor.removeEventListener('scroll', detectActiveScrollElement);
         let isScrolling;
         noteContentEditor.addEventListener('scroll', () => {
