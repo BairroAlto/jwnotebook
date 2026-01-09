@@ -9355,6 +9355,7 @@ let anchorLastDoc = null;    // Cursor para paginação
 let currentAnchorSearch = ""; 
 let activeNoteAnchorsIds = []; 
 let unsubscribeCurrentNote = null;
+window.currentNoteHybridMode = false;
 
 
 
@@ -9708,14 +9709,18 @@ async function openTopicsModal(targetId, type) {
     document.getElementById('tm-content-topics').style.display = 'flex';
     document.getElementById('tm-content-anchors').style.display = 'none';
 
+    // --- NOVO: Resetar o botão Híbrido ---
+    // Como a aba inicial é Tópicos, o botão híbrido deve começar escondido
+    const hybridContainer = document.getElementById('hybrid-toggle-container');
+    if (hybridContainer) hybridContainer.style.display = 'none';
+
     // 4. CARREGAR DADOS ATUAIS (TÓPICOS E ÂNCORAS)
     try {
         let data = {};
         
         // Se for caixa (subnota)
         if (targetId instanceof HTMLElement || (typeof targetId === 'object' && targetId.dataset)) {
-             // Lógica para caixa (mantém a sua lógica antiga se usar elemento direto)
-             // Mas como a função recebe ID, assumimos Nota ou Pasta
+             // Lógica para caixa
         } else {
             // Nota ou Pasta
             const docSnap = await getDoc(doc(db, 'pastas', targetId));
@@ -9725,8 +9730,15 @@ async function openTopicsModal(targetId, type) {
         // Carrega Tópicos
         currentNoteTopics = data.topicosSelecionados || {};
         
-        // Carrega Âncoras (NOVO)
+        // Carrega Âncoras
         currentNoteAnchors = data.ancorasSelecionadas || {};
+
+        // --- NOVO: CARREGAR ESTADO HÍBRIDO ---
+        const isHybrid = data.isHybridMode || false;
+        const hybridToggle = document.getElementById('hybrid-mode-toggle');
+        if (hybridToggle) {
+            hybridToggle.checked = isHybrid;
+        }
 
         // Renderiza a lista de Tópicos (Aba 1)
         activeTopicIdForSelection = null;
@@ -10270,10 +10282,15 @@ document.getElementById('save-topics-btn').onclick = async () => {
     btn.textContent = "A gravar...";
 
     try {
+        // --- NOVO: LER O ESTADO DO TOGGLE HÍBRIDO ---
+        const hybridToggle = document.getElementById('hybrid-mode-toggle');
+        const isHybridActive = hybridToggle ? hybridToggle.checked : false;
+
         // Objeto de atualização unificado
         const updateData = {
             topicosSelecionados: currentNoteTopics,
-            ancorasSelecionadas: currentNoteAnchors, 
+            ancorasSelecionadas: currentNoteAnchors,
+            isHybridMode: isHybridActive, // <--- Grava no Firebase
             ultimaedicao: serverTimestamp()
         };
 
@@ -10283,7 +10300,7 @@ document.getElementById('save-topics-btn').onclick = async () => {
             // (Logica de caixa...)
         } 
         
-        // CENÁRIO B: Nota ou Pasta Principal (O SEU CASO ATUAL)
+        // CENÁRIO B: Nota ou Pasta Principal
         if (topicTargetId) {
             console.log("💾 Gravando Tópicos e Âncoras na Nota:", topicTargetId);
             const itemRef = doc(db, 'pastas', topicTargetId);
@@ -10294,21 +10311,29 @@ document.getElementById('save-topics-btn').onclick = async () => {
             // >>> ATUALIZAÇÃO IMEDIATA DA INTERFACE <<<
             // ============================================================
             
-            // 1. Sincroniza a variável global da nota ativa com o que acabámos de escolher
+            // 1. Sincroniza as variáveis globais da nota ativa
             activeNoteAnchorsIds = Object.keys(currentNoteAnchors);
+            window.currentNoteHybridMode = isHybridActive; // <--- Atualiza memória global
 
-            // 2. Atualiza o ícone da aba (📜 -> ⚓)
+            // 2. Atualiza o ícone da aba (📜 -> ⚓ -> 🛳️)
             refreshMiddlePanelTabIcon();
 
-            // 3. Se a aba "Textos/Navega" estiver aberta neste momento, recarrega o conteúdo
+            // 3. Se a aba "Textos/Navega" estiver aberta neste momento, recarrega o conteúdo com a lógica certa
             const activeTab = document.querySelector('.middle-bottom-tabs button.active');
-            if (activeTab && activeTab.dataset.midTab === 'texts') {
-                if (activeNoteAnchorsIds.length > 0) {
-                    generateAnchorNavigation(); // Mostra as âncoras
-                } else {
-                    generateNoteTexts(); // Volta a mostrar versículos
-                }
-            }
+          if (activeTab && activeTab.dataset.midTab === 'texts') {
+    clearTimeout(window.textScanTimeout);
+    
+    window.textScanTimeout = setTimeout(() => {
+        // Lógica Tripla Corrigida
+        if (window.currentNoteHybridMode) {
+             generateHybridView();
+        } else if (activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0) {
+             generateAnchorNavigation();
+        } else {
+             generateNoteTexts();
+        }
+    }, 1000); 
+}
             // ============================================================
 
             document.getElementById('topics-modal').style.display = 'none';
@@ -11933,172 +11958,81 @@ function syncVisualSelection(selectedId) {
 
 async function displayNote(noteId, noteElement, searchTerm = null) {
     document.body.classList.remove('show-fab');
+    if (unsubscribeCurrentNote) { unsubscribeCurrentNote(); unsubscribeCurrentNote = null; }
+
+    console.group("🚀 [DEBUG START] Abrindo Nota...");
     
-    // 1. Limpeza de ouvintes anteriores
-    if (unsubscribeCurrentNote) {
-        unsubscribeCurrentNote();
-        unsubscribeCurrentNote = null;
-    }
+    // 1. Reset
+    window.currentNoteHybridMode = false;
+    activeNoteAnchorsIds = [];
+    console.log("1. Estado Global Resetado. Híbrido = false.");
 
     // Referências DOM
     const noteTitleInput = document.getElementById('note-title-input');
     const noteContentEditor = document.getElementById('note-content-editor');
     const editorArea = document.getElementById('editor-area');
-    const rightPanel = document.getElementById('right-panel');
-    const syncOverlay = document.getElementById('editor-sync-overlay'); // NOVO
-
-    // Limpa visualmente antes de carregar (para parecer rápido)
+    
+    // Limpeza
     if (noteTitleInput) noteTitleInput.value = ""; 
-    // Nota: Não limpamos o innerHTML imediatamente aqui se quisermos evitar "piscar" branco, 
-    // mas para garantir limpeza entre notas, limpamos:
     if (noteContentEditor) noteContentEditor.innerHTML = ""; 
-    if (syncOverlay) syncOverlay.style.display = 'none'; // Garante que começa escondido
-
-    if (editorArea) editorArea.scrollTop = 0;
     
     selectedNoteId = noteId;
     isClosingNote = false;
-    currentActiveScrollId = null; 
 
-    // Gestão de Paineis
+    // UI Visível
     document.getElementById('editor-placeholder').style.setProperty('display', 'none', 'important');
     document.getElementById('archive-area').style.setProperty('display', 'none', 'important');
-    if (editorArea) {
-        editorArea.style.setProperty('display', 'flex', 'important');
-        editorArea.style.visibility = 'visible';
-        editorArea.style.opacity = '1';
-    }
-
-    // Seleção Visual na Lista
-    document.querySelectorAll('#file-list .list-item').forEach(el => {
-        el.classList.remove('selected', 'selected-red');
-    });
-    if (noteElement) {
-        const isSharedTab = (currentViewMode === 'shared');
-        noteElement.classList.add(isSharedTab ? 'selected-red' : 'selected');
-    }
+    if (editorArea) editorArea.style.setProperty('display', 'flex', 'important');
 
     try {
         const { doc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', noteId);
 
-        // --- ATIVA OUVINTE EM TEMPO REAL ---
         unsubscribeCurrentNote = onSnapshot(noteRef, (noteSnap) => {
-            // Se a nota foi apagada
-            if (!noteSnap.exists()) {
-                alert("Esta nota foi eliminada.");
-                resetEditor();
-                return;
-            }
-
-            // Ignora se a alteração for local (enquanto escreves)
-            // Isto impede que o loader apareça a cada letra que TU escreves
-            if (noteSnap.metadata.hasPendingWrites) {
-                return;
-            }
-
+            if (!noteSnap.exists()) return;
             const data = noteSnap.data();
-            
-            // 1. Verificar Redirecionamentos (Arquivo/Jornal)
-            currentNoteType = data.tipo;
-            if (data.tipo === 'partilhado' || data.tipo === 'arquivo') {
-                unsubscribeCurrentNote(); 
-                displayArchive(noteId, data);
-                return;
-            }
 
-            // --- LÓGICA DE COMPARAÇÃO DE CONTEÚDO ---
-            const currentTitle = noteTitleInput.value;
-            const currentContent = noteContentEditor.innerHTML;
+            // 2. Definir Variáveis Críticas
+            window.currentNoteHybridMode = (data.isHybridMode === true);
+            activeNoteAnchorsIds = Object.keys(data.ancorasSelecionadas || {});
+            
+            console.log(`2. 🔥 Firebase Recebido. isHybridMode=${data.isHybridMode} -> Variável Global=${window.currentNoteHybridMode}`);
+
+            // Atualizar HTML
             const serverTitle = data.nome || '';
             const serverContent = data.conteudo || '';
+            
+            noteTitleInput.value = serverTitle;
+            noteContentEditor.innerHTML = serverContent;
 
-            // Verifica se há DIFERENÇAS REAIS
-            const hasChanges = (currentTitle !== serverTitle) || (currentContent !== serverContent);
+            // Scripts de ajuste
+            if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
+            if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
 
-            // Apenas se houver mudanças, mostramos o loader e atualizamos
-            if (hasChanges) {
+            // 3. Forçar Router
+            setTimeout(() => {
+                console.log("3. ⏰ Timeout executado. Chamando Router...");
                 
-                // A. Mostrar Painel de Loading (apenas se a nota já tiver conteúdo visível)
-                // Se for a primeira carga (editor vazio), não precisa de loader, carrega direto.
-                const isFirstLoad = (currentContent === "");
-                
-                if (!isFirstLoad && syncOverlay) {
-                    syncOverlay.classList.add('visible');
+                // Atualiza Ícones
+                if (typeof refreshMiddlePanelTabIcon === 'function') refreshMiddlePanelTabIcon();
+
+                // Mostra Abas
+                const tabsBar = document.querySelector('.middle-bottom-tabs');
+                if (tabsBar) tabsBar.style.display = 'flex';
+
+                // Dispara o Router
+                if (typeof updateMiddlePanelViews === 'function') {
+                    updateMiddlePanelViews(); 
+                } else {
+                    console.error("❌ Função updateMiddlePanelViews não encontrada!");
                 }
+                
+                updateSaveStatus('saved');
+                console.groupEnd(); // Fim do grupo de logs
+            }, 100); // Aumentei para 100ms para garantir que as variáveis assentam
 
-                // Pequeno delay (50ms) para o browser renderizar o painel antes de travar processando HTML
-                setTimeout(() => {
-                    // B. Atualizar Conteúdo
-                    noteTitleInput.value = serverTitle;
-                    noteContentEditor.innerHTML = serverContent;
-
-                    // C. Pós-processamento
-                    if (data.tipo === 'jornal') toggleJournalToolbar(true);
-                    else toggleJournalToolbar(false);
-
-                    if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
-                    if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
-                    if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
-                    if (typeof applyTitleWrappingEffect === 'function') applyTitleWrappingEffect();
-
-                    // Configurar botões da aba (Texto vs Navega)
-                    const anchorsMap = data.ancorasSelecionadas || {};
-                    activeNoteAnchorsIds = Object.keys(anchorsMap);
-                    const hasAnchors = activeNoteAnchorsIds.length > 0;
-                    const tabBtn = document.querySelector('button[data-mid-tab="texts"]');
-                    if (tabBtn) {
-                        if (hasAnchors) {
-                            tabBtn.innerHTML = '<span>⚓</span> Navega';
-                            tabBtn.dataset.mode = 'navega';
-                        } else {
-                            tabBtn.innerHTML = '<span>📜</span> Textos';
-                            tabBtn.dataset.mode = 'textos';
-                        }
-                    }
-
-                    // D. Esconder Painel de Loading (após processar)
-                    if (syncOverlay) {
-                        // Mantém o loader por mais 300ms para o utilizador perceber que atualizou
-                        setTimeout(() => {
-                            syncOverlay.classList.remove('visible');
-                        }, 300);
-                    }
-
-                    // Se foi abertura por pesquisa
-                    if (searchTerm) {
-                        setTimeout(() => scrollToAndHighlightText(searchTerm), 300);
-                        searchTerm = null; 
-                    }
-
-                    // Atualizar painéis laterais
-                    const tabsBar = document.querySelector('.middle-bottom-tabs');
-                    if (tabsBar) tabsBar.style.display = 'flex';
-                    if (typeof updateMiddlePanelViews === 'function') updateMiddlePanelViews(); 
-                    
-                    updateSaveStatus('saved');
-
-                }, isFirstLoad ? 0 : 50); // Se for primeira carga, executa imediatamente
-            } 
-            // Se não houver mudanças, não faz nada (silencioso).
-
-        }, (error) => {
-            console.error("Erro no ouvinte:", error);
         });
-
-        // Scrollspy
-        noteContentEditor.removeEventListener('scroll', detectActiveScrollElement);
-        let isScrolling;
-        noteContentEditor.addEventListener('scroll', () => {
-            window.cancelAnimationFrame(isScrolling);
-            isScrolling = window.requestAnimationFrame(() => {
-                detectActiveScrollElement();
-            });
-        }, { passive: true });
-
-    } catch (error) {
-        console.error("Erro no displayNote:", error);
-    }
+    } catch (error) { console.error("Erro:", error); }
     
     if (window.innerWidth <= 768) {
         document.body.classList.remove('mobile-view-middle');
@@ -15689,6 +15623,17 @@ async function openEditEntityModal(entityId, entityType) {
 
             await updateDoc(entityRef, updateData);
 
+            const type = entityType; // (vem dos argumentos)
+if (allEntities[type]) {
+    const cachedEntity = allEntities[type].find(e => e.id === entityId);
+    if (cachedEntity) {
+        cachedEntity.nome = newName;
+        cachedEntity.descricao = newDescription; // <--- Isto corrige o "Jó 1:1" fantasma
+        cachedEntity.emoji = newEmoji;
+    }
+}
+// >>> FIM DA CORREÇÃO <<<
+
             modal.style.display = 'none';
             
             if (typeof fetchAllEntities === 'function') await fetchAllEntities();
@@ -18828,25 +18773,29 @@ noteContentEditor.addEventListener('input', () => {
     updateSaveStatus('unsaved');
     saveNote();
 
-     // --- ATUALIZAÇÃO ---
+    // 2. ATUALIZAÇÃO DA 3ª ABA EM TEMPO REAL
     const activeTab = document.querySelector('.middle-bottom-tabs button.active');
     
-    // Verifica se estamos na aba de textos/navega
+    // Só faz o scan se estivermos na aba de textos/navega/híbrido
     if (activeTab && activeTab.dataset.midTab === 'texts') {
         clearTimeout(window.textScanTimeout);
         
         window.textScanTimeout = setTimeout(() => {
-            // Verifica o modo atual
-            if (activeTab.dataset.mode === 'navega') {
-                console.log("⚓ Atualizando navegação por âncora...");
-                generateAnchorNavigation();
+            // --- CORREÇÃO AQUI: Respeitar a hierarquia de modos ---
+            if (window.currentNoteHybridMode) {
+                 console.log("🛳️ [INPUT] Atualizando Modo Híbrido...");
+                 generateHybridView();
+            } else if (activeTab.dataset.mode === 'navega') {
+                 console.log("⚓ [INPUT] Atualizando Navegação...");
+                 generateAnchorNavigation();
             } else {
-                console.log("📜 Atualizando textos bíblicos...");
-                generateNoteTexts();
+                 console.log("📜 [INPUT] Atualizando Textos Bíblicos...");
+                 generateNoteTexts();
             }
-        }, 1000); 
+        }, 1000); // Espera 1 segundo após parar de escrever
     }
 });
+
 document.addEventListener('selectionchange', handleTextSelection);
 
 noteContentEditor.addEventListener('keydown', (e) => {
@@ -30757,18 +30706,44 @@ function generateNoteIndex() {
 // 4. ATUALIZADOR AUTOMÁTICO
 // Chame esta função sempre que gravar a nota ou abrir uma nova
 function updateMiddlePanelViews() {
-    // Verifica qual a aba ativa e regenera o conteúdo
+    console.log("4. 🚦 [ROUTER] Iniciado.");
+    
     const activeTab = document.querySelector('.middle-bottom-tabs button.active');
-    if (activeTab) {
-        const view = activeTab.dataset.midTab;
-        
-        if (view === 'index') generateNoteIndex();
-        if (view === 'sources') generateNoteSources();
-        
-        // >>> ADICIONA ESTA LINHA: <<<
-        if (view === 'texts') generateNoteTexts();
+    
+    if (!activeTab) {
+        console.warn("⚠️ [ROUTER] Nenhuma aba ativa encontrada. Abortando.");
+        return;
+    }
+
+    const view = activeTab.dataset.midTab;
+    console.log(`   -> Aba Ativa: ${view}`);
+
+    if (view === 'texts') {
+        console.log(`   -> Analisando Lógica: Híbrido=${window.currentNoteHybridMode} | Âncoras=${activeNoteAnchorsIds ? activeNoteAnchorsIds.length : 0}`);
+
+        if (window.currentNoteHybridMode === true) {
+            console.log("   -> ✅ CONDIÇÃO 1 VÁLIDA: Modo Misto. Chamando generateHybridView().");
+            activeTab.innerHTML = '<span>🛳️</span> Misto';
+            activeTab.dataset.mode = 'hybrid';
+            generateHybridView();
+        } 
+        else if (activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0) {
+            console.log("   -> ✅ CONDIÇÃO 2 VÁLIDA: Modo Navegação.");
+            activeTab.innerHTML = '<span>⚓</span> Navega';
+            activeTab.dataset.mode = 'navega';
+            generateAnchorNavigation();
+        } 
+        else {
+            console.log("   -> ⬇️ FALLBACK: Modo Padrão (Bíblia).");
+            activeTab.innerHTML = '<span>📜</span> Textos';
+            activeTab.dataset.mode = 'textos';
+            generateNoteTexts();
+        }
+    } else {
+        console.log("   -> Não estamos na aba Textos. Ignorando lógica híbrida.");
     }
 }
+
 
 // 5. HOOKS: Onde injetar esta lógica no seu código existente?
 
@@ -30873,20 +30848,23 @@ async function generateNoteTexts() {
     
     if (!editor || !list) return;
 
-    // 1. Obtém o texto do corpo e dos inputs (Títulos)
+    // 1. Obtém o texto do corpo e dos inputs (Títulos) para analisar
     let textContent = editor.innerText;
     const titles = editor.querySelectorAll('.redator-input, .mini-note-title-input, .card-title-input, .sign-title-input');
     titles.forEach(input => {
         if (input.value) textContent += " " + input.value;
     });
 
+    // 2. Prepara a Regex para encontrar livros da Bíblia
     const sortedBooks = [...BIBLICAL_BOOKS].sort((a, b) => b.length - a.length);
     const booksPattern = sortedBooks.join('|');
     const regex = new RegExp(`\\b((?:${booksPattern})\\s+\\d+:\\d+[\\d,;\\- ]*)`, 'gi');
     
     const rawMatches = textContent.match(regex) || [];
+    // Remove duplicados e limpa pontuação final
     const currentRefs = [...new Set(rawMatches.map(r => r.trim().replace(/[.,;]+$/, '')))];
 
+    // Lógica para detetar se apareceu uma referência nova para fazer scroll automático
     const prevRefsJSON = list.getAttribute('data-prev-refs') || "[]";
     const prevRefs = JSON.parse(prevRefsJSON);
     const newRefFound = currentRefs.find(ref => !prevRefs.includes(ref));
@@ -30905,13 +30883,13 @@ async function generateNoteTexts() {
     list.innerHTML = ''; 
     let elementToScrollTo = null;
 
-    // 3. PROCESSAR CADA REFERÊNCIA
+    // 3. PROCESSAR CADA REFERÊNCIA ENCONTRADA
     for (const cleanRef of currentRefs) {
         
         const itemDiv = document.createElement('div');
-        // Adicionamos position: relative para o contexto
         itemDiv.style.cssText = "padding: 0 15px 15px 15px; border-bottom: 1px solid var(--border-color); text-align: left; position: relative;";
         
+        // Se este for o novo versículo, guarda a referência para o scroll
         if (newRefFound && cleanRef === newRefFound) {
             elementToScrollTo = itemDiv;
         }
@@ -30919,9 +30897,7 @@ async function generateNoteTexts() {
         const title = document.createElement('div');
         title.className = 'bible-ref-title';
         
-        // --- ALTERAÇÃO CSS AQUI (STICKY HEADER) ---
-        // Adicionámos 'position: sticky', 'top: 0' e background opaco.
-        // Isto faz com que o título fique preso no topo enquanto se lê o texto longo.
+        // Estilo Sticky: O título fica preso no topo enquanto se lê o texto
         title.style.cssText = `
             font-weight: bold; 
             color: var(--accent-color); 
@@ -30930,21 +30906,17 @@ async function generateNoteTexts() {
             white-space: nowrap; 
             overflow: hidden; 
             text-overflow: ellipsis;
-            
-            /* Lógica de Colar no Topo */
             position: sticky;
             top: 0;
             background-color: var(--panel-color); 
             z-index: 5;
-            padding: 12px 0 8px 0; /* Padding ajustado para o sticky */
+            padding: 12px 0 8px 0;
             border-bottom: 1px solid transparent; 
         `;
         
-        // Pequeno efeito visual: quando o título cola no topo, ganha uma borda subtil
-        // (Opcional, mas ajuda a separar do texto anterior)
-        
         title.textContent = cleanRef;
         
+        // Clique no título faz scroll no editor até à referência
         title.onclick = () => {
             if (typeof scrollToAndHighlightText === 'function') {
                 scrollToAndHighlightText(cleanRef);
@@ -30952,14 +30924,15 @@ async function generateNoteTexts() {
         };
 
         const contentDiv = document.createElement('div');
-        contentDiv.style.cssText = "font-size: 0.95em; line-height: 1.5; color: var(--text-color); margin-top: 5px;"; // Removi font-style: italic conforme pedido anterior
+        contentDiv.style.cssText = "font-size: 0.95em; line-height: 1.5; color: var(--text-color); margin-top: 5px;";
         contentDiv.innerHTML = '<span style="opacity:0.5; font-size:0.8em;">A carregar...</span>';
 
         itemDiv.appendChild(title);
         itemDiv.appendChild(contentDiv);
         list.appendChild(itemDiv);
 
-        // Expandir e Buscar Texto
+        // 4. Expandir e Buscar Texto na API/Firebase
+        // (Lida com intervalos como "João 3:1-5")
         const individualVerses = expandVerseReference(cleanRef);
         const textPromises = individualVerses.map(v => fetchPublicBibleText(v));
         const texts = await Promise.all(textPromises);
@@ -30972,13 +30945,10 @@ async function generateNoteTexts() {
         }
     }
 
-    // --- CORREÇÃO DO SCROLL AUTOMÁTICO ---
+    // 5. Scroll Automático se houver novidade
     if (elementToScrollTo) {
         setTimeout(() => {
-            // MUDANÇA: De 'center' para 'start'
-            // Isto garante que o topo do elemento (o título) fica alinhado com o topo do painel
             elementToScrollTo.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            
             elementToScrollTo.style.transition = "background-color 0.5s";
             elementToScrollTo.style.backgroundColor = "rgba(46, 204, 113, 0.15)";
             setTimeout(() => elementToScrollTo.style.backgroundColor = "transparent", 1500);
@@ -31760,13 +31730,20 @@ if (btnOpenMobile) {
         e.preventDefault();
         e.stopPropagation();
         
-        // 1. Deteção de posição de scroll
+        // 1. Deteção de posição de scroll (Scrollspy)
         detectActiveScrollElement();
+
+        // ============================================================
+        // 2. ATUALIZAR ÍCONES (GARANTIA DE SYNC)
+        // ============================================================
+        // Garante que o botão dentro do modal tem o ícone certo (🛳️/⚓/📜) antes de aparecer
+        refreshMiddlePanelTabIcon();
+        // ============================================================
 
         const modal = document.getElementById('mobile-views-modal');
         if (modal) {
-            // A. Força visibilidade
-            document.body.appendChild(modal); 
+            // A. Força visibilidade e move para o topo
+            document.body.appendChild(modal);
             modal.style.cssText = `
                 display: flex !important;
                 position: fixed !important;
@@ -31782,32 +31759,16 @@ if (btnOpenMobile) {
                 opacity: 1 !important;
             `;
 
-            // ============================================================
-            // B. LÓGICA DO ÍCONE (AQUI ESTÁ A CORREÇÃO)
-            // ============================================================
-            const textBtn = modal.querySelector('button[data-mob-tab="texts"]');
-            
-            if (textBtn) {
-                // Verifica a variável global que contém as âncoras da nota
-                if (activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0) {
-                    // SE TEM ÂNCORAS -> Mostra Âncora
-                    textBtn.innerHTML = '<span>⚓</span> Navega';
-                } else {
-                    // SE NÃO TEM -> Mostra Bíblia (Padrão)
-                    textBtn.innerHTML = '<span>📖</span> Textos';
-                }
-            }
-            // ============================================================
-
-            // C. Abre na aba "Índice" por defeito
+            // B. Abre por defeito na aba "Índice" (ou simula clique)
             setTimeout(() => {
                 const indexTabBtn = modal.querySelector('[data-mob-tab="index"]');
-                if (indexTabBtn) indexTabBtn.click();
+                if (indexTabBtn) {
+                    indexTabBtn.click();
+                }
             }, 50);
         }
     });
 }
-
 
 
 // Função para pintar a lista do índice
@@ -31942,31 +31903,64 @@ async function openAnchorManagerModal() {
 async function toggleAnchorOnEntity(anchorId, shouldAdd, liElement) {
     if (!activeReferenceEntity.id) return;
 
-    // Atualiza visualmente logo
+    // 1. Atualização Visual Imediata (No botão do check)
     if (shouldAdd) liElement.classList.add('selected');
     else liElement.classList.remove('selected');
 
-    // Atualiza listener para inverter a ação no próximo clique
+    // Atualiza listener para o próximo clique
     liElement.onclick = () => toggleAnchorOnEntity(anchorId, !shouldAdd, liElement);
 
     try {
         const collectionName = getCollectionFromType(activeReferenceEntity.type);
         const entityRef = doc(db, collectionName, activeReferenceEntity.id);
-        
-        // Importação dinâmica para garantir acesso às funções
         const { updateDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
+        // 2. Gravação no Firebase
         if (shouldAdd) {
-            // Adiciona ao mapa
             await updateDoc(entityRef, { [`ancorasAssociadas.${anchorId}`]: true });
         } else {
-            // Remove do mapa
             await updateDoc(entityRef, { [`ancorasAssociadas.${anchorId}`]: deleteField() });
         }
+
+        // 3. ATUALIZAR CACHE LOCAL (Memória)
+        const type = activeReferenceEntity.type;
+        const id = activeReferenceEntity.id;
+
+        if (allEntities[type]) {
+            const entityInCache = allEntities[type].find(e => e.id === id);
+            if (entityInCache) {
+                if (!entityInCache.ancorasAssociadas) entityInCache.ancorasAssociadas = {};
+                if (shouldAdd) entityInCache.ancorasAssociadas[anchorId] = true;
+                else delete entityInCache.ancorasAssociadas[anchorId];
+            }
+        }
+
+        // ============================================================
+        // 4. >>> CORREÇÃO MOBILE E DESKTOP <<<
+        // ============================================================
+        
+        // A. Gera a lista com os novos dados (Escreve no contentor do PC)
+        generateAnchorNavigation(); 
+
+        // B. Se o Modal Mobile estiver aberto na aba "Navega", copia o conteúdo para lá
+        const mobileModal = document.getElementById('mobile-views-modal');
+        if (mobileModal && mobileModal.style.display !== 'none') {
+            const activeMobTab = mobileModal.querySelector('.middle-bottom-tabs button.active');
+            
+            // Só atualiza se estivermos na aba de textos/navega
+            if (activeMobTab && activeMobTab.dataset.mobTab === 'texts') {
+                console.log("📱 [MOBILE] Sincronizando lista de navegação...");
+                const source = document.getElementById('note-texts-view');
+                const destination = document.getElementById('mobile-views-content');
+                if (source && destination) {
+                    destination.innerHTML = source.innerHTML;
+                }
+            }
+        }
+        // ============================================================
         
     } catch (error) {
         console.error("Erro ao gravar âncora:", error);
-        // Reverte visual em caso de erro
         if (shouldAdd) liElement.classList.remove('selected');
         else liElement.classList.add('selected');
         alert("Erro ao salvar alteração.");
@@ -32206,6 +32200,7 @@ function generateAnchorNavigation() {
     // 1. Limpeza Inicial
     list.innerHTML = '';
     
+    // Verifica se existem âncoras selecionadas na nota
     if (!activeNoteAnchorsIds || activeNoteAnchorsIds.length === 0) {
         list.innerHTML = '<div style="padding:20px; color:#888; text-align:center;">Sem âncoras definidas na nota.</div>';
         return;
@@ -32213,7 +32208,7 @@ function generateAnchorNavigation() {
 
     const textContent = editor.innerText.toLowerCase();
     
-    // 2. Juntar todas as entidades
+    // 2. Juntar todas as entidades conhecidas (Personagens, Locais, Cosmos...)
     const allCandidates = [];
     Object.keys(allEntities).forEach(type => {
         allEntities[type].forEach(entity => {
@@ -32223,16 +32218,16 @@ function generateAnchorNavigation() {
 
     let foundCount = 0;
 
-    // 3. Loop de Cruzamento
+    // 3. Loop de Cruzamento (Entidades vs Âncoras vs Texto)
     allCandidates.forEach(entity => {
         
-        // A. Verificar Âncora
+        // A. Verificar se a entidade tem a Âncora certa
         const entityAnchors = entity.ancorasAssociadas || {};
         const hasMatchingAnchor = activeNoteAnchorsIds.some(noteAnchorId => entityAnchors[noteAnchorId]);
 
         if (!hasMatchingAnchor) return;
 
-        // B. Verificar Texto
+        // B. Verificar se o nome da entidade está escrito no Texto da nota
         if (textContent.includes(entity.nome.toLowerCase())) {
             foundCount++;
             
@@ -32240,10 +32235,8 @@ function generateAnchorNavigation() {
             const itemDiv = document.createElement('div');
             itemDiv.style.cssText = "padding: 12px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px;";
             
-            // --- LÓGICA DE ÍCONE INTELIGENTE ---
-            // Se a entidade tiver emoji (ex: Cosmos/Subcosmos), usa-o. Senão, usa ícone padrão.
+            // --- LÓGICA DE ÍCONE ---
             let icon = entity.emoji || "🔹"; 
-            
             if (!entity.emoji) {
                 if (entity.tipo === 'personagem') icon = "👤";
                 else if (entity.tipo === 'local') icon = "📍";
@@ -32251,13 +32244,12 @@ function generateAnchorNavigation() {
                 else if (entity.tipo === 'subcosmos') icon = "🧬";
             }
             
-            // --- C. ÁREA DO TÍTULO (SCROLL) ---
+            // --- C. TÍTULO (Clique = Scroll no Editor) ---
             const titleDiv = document.createElement('div');
             titleDiv.style.cssText = "font-weight: bold; color: var(--accent-color); cursor: pointer; font-size: 0.95em; display: flex; align-items: center; gap: 6px; width: fit-content;";
             titleDiv.innerHTML = `${icon} ${entity.nome}`;
             titleDiv.title = "Ir para o texto na nota";
             
-            // Ação: Scroll
             titleDiv.onclick = (e) => {
                 e.stopPropagation();
                 if (typeof scrollToAndHighlightText === 'function') {
@@ -32265,7 +32257,7 @@ function generateAnchorNavigation() {
                 }
             };
 
-            // --- D. ÁREA DA DESCRIÇÃO (4ª COLUNA) ---
+            // --- D. DESCRIÇÃO (Clique = Abrir 4ª Coluna) ---
             const descDiv = document.createElement('div');
             descDiv.style.cssText = "font-size: 0.85em; color: var(--text-muted-color); line-height: 1.4; cursor: pointer; padding: 4px; border-radius: 4px; transition: background 0.2s;";
             
@@ -32273,7 +32265,6 @@ function generateAnchorNavigation() {
             descDiv.textContent = descText;
             descDiv.title = "Abrir painel de referências";
 
-            // Efeito Hover
             descDiv.onmouseover = () => {
                 descDiv.style.backgroundColor = "var(--hover-color)";
                 descDiv.style.color = "var(--text-color)";
@@ -32283,14 +32274,12 @@ function generateAnchorNavigation() {
                 descDiv.style.color = "var(--text-muted-color)";
             };
 
-            // Ação: Abrir Painel
             descDiv.onclick = (e) => {
                 e.stopPropagation();
-                // Se for subcosmos, o sistema já sabe lidar com isso na 4ª coluna
+                // Abre o painel lateral com os detalhes
                 showReferencesPanel(entity.id, entity.nome, entity.tipo);
             };
 
-            // Montar
             itemDiv.appendChild(titleDiv);
             itemDiv.appendChild(descDiv);
             list.appendChild(itemDiv);
@@ -32302,29 +32291,33 @@ function generateAnchorNavigation() {
             <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:#888; text-align:center; padding:20px;">
                 <span style="font-size:30px;">⚓</span>
                 <p>Modo Navegação</p>
-                <small style="opacity:0.6; line-height:1.5;">Escreva o nome de entidades ancoradas para as ver aqui.</small>
+                <small style="opacity:0.6; line-height:1.5;">Nenhuma entidade encontrada no texto com estas âncoras.</small>
             </div>`;
     }
 }
 
 function refreshMiddlePanelTabIcon() {
-    const tabBtn = document.querySelector('button[data-mid-tab="texts"]');
-    if (!tabBtn) return;
+    // Seleciona os botões do PC e do Mobile
+    const allTabBtns = document.querySelectorAll('button[data-mid-tab="texts"], button[data-mob-tab="texts"]');
 
-    // Verifica se há âncoras na variável global atualizada
-    const hasAnchors = activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0;
-
-    if (hasAnchors) {
-        // MODO NAVEGA (⚓)
-        tabBtn.innerHTML = '<span>⚓</span> Navega';
-        tabBtn.dataset.mode = 'navega';
-        tabBtn.title = "Navegação por Âncoras";
-    } else {
-        // MODO TEXTOS (📜)
-        tabBtn.innerHTML = '<span>📜</span> Textos';
-        tabBtn.dataset.mode = 'textos';
-        tabBtn.title = "Textos Bíblicos";
-    }
+    allTabBtns.forEach(btn => {
+        // Verifica a variável global diretamente
+        if (window.currentNoteHybridMode === true) {
+            btn.innerHTML = '<span>🛳️</span> Misto';
+            btn.dataset.mode = 'hybrid';
+            btn.title = "Modo Híbrido: Entidades + Bíblia";
+        } 
+        else if (activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0) {
+            btn.innerHTML = '<span>⚓</span> Navega';
+            btn.dataset.mode = 'navega';
+            btn.title = "Navegação por Âncoras";
+        } 
+        else {
+            btn.innerHTML = '<span>📜</span> Textos';
+            btn.dataset.mode = 'textos';
+            btn.title = "Textos Bíblicos";
+        }
+    });
 }
 
 // 5. Abrir Modal de Edição de Âncora
@@ -32462,12 +32455,14 @@ document.querySelector('button[data-action="insert-ref-depot"]').addEventListene
                 <!-- Ícone fixo + Título editável -->
                 <div style="display:flex; align-items:center; flex-grow:1;">
                     <span style="font-size:1.4em; margin-right:8px;">🏗️</span>
-                    <!-- MUDANÇA AQUI: Valor padrão alterado para GRUA DE REFERÊNCIAS -->
                     <input type="text" class="depot-title" value="GRUA DE REFERÊNCIAS" placeholder="TÍTULO DA GRUA..." oninput="this.setAttribute('value', this.value)">
                 </div>
                 
+                <!-- NOVO BOTÃO: Expandir/Recolher Tudo -->
+                <button class="depot-btn" title="Expandir/Recolher Tudo" onclick="window.toggleAllDepotNodes(this)">↕️</button>
+                
                 <button class="depot-btn" onclick="window.addDepotCategory('${uniqueId}')">+ 📂 Categoria</button>
-               <button class="depot-btn btn-del-node" title="Apagar Grua" onclick="window.debugDeleteDepot(this)">🗑️</button>
+                <button class="depot-btn btn-del-node" title="Apagar Grua" onclick="window.debugDeleteDepot(this)">🗑️</button>
             </div>
             
             <div class="depot-content-area">
@@ -32498,6 +32493,7 @@ window.addDepotCategory = function(depotId) {
     const catDiv = document.createElement('div');
     catDiv.className = 'depot-category';
     
+    // MUDANÇA: Removi o botão "+ Link" do cabeçalho e adicionei-o dentro da 'depot-tree-line'
     catDiv.innerHTML = `
         <div style="display:flex; align-items:center; margin-bottom:5px;">
             <span class="depot-toggle-icon" onclick="window.toggleDepotNode(this)" title="Clique para fechar/abrir" style="cursor:pointer; margin-right:5px; font-size:1.2em; user-select:none;">📂</span>
@@ -32508,14 +32504,16 @@ window.addDepotCategory = function(depotId) {
             <button class="depot-btn btn-add-sub" title="Adicionar Subtítulo" 
                     onclick="window.addDepotSubtitle(this.closest('.depot-category'))">+ Sub</button>
             
-            <button class="depot-btn btn-add-link" title="Adicionar Link Direto" 
-                    onclick="window.addDepotLink(this.closest('.depot-category'))">+ Link</button>
-            
-            <!-- AQUI ESTÁ A MUDANÇA: Chama a função com confirmação -->
-           <button class="depot-btn btn-del-node" title="Remover Subtítulo" 
-        onclick="window.deleteDepotNode(this)">×</button>
+            <button class="depot-btn btn-del-node" title="Remover Categoria" 
+                    onclick="window.deleteDepotNode(this)">×</button>
         </div>
-        <div class="depot-tree-line"></div>
+        
+        <div class="depot-tree-line">
+            <!-- O botão de adicionar link fica aqui em baixo -->
+            <button class="depot-btn btn-add-link-bottom" style="width:100%; margin-top:5px; border-style:dashed; opacity:0.7;" 
+                    title="Adicionar Link no fundo" 
+                    onclick="window.addDepotLink(this.closest('.depot-category'))">+ Adicionar Link</button>
+        </div>
     `;
     
     container.appendChild(catDiv);
@@ -32526,34 +32524,61 @@ window.addDepotCategory = function(depotId) {
 window.addDepotSubtitle = function(categoryEl) {
     if (!categoryEl) return;
     
-    // Verifica se a categoria está fechada antes de adicionar
+    // Abre a pasta se estiver fechada
     if (categoryEl.classList.contains('is-collapsed')) {
         const toggle = categoryEl.querySelector('.depot-toggle-icon');
         if(toggle) window.toggleDepotNode(toggle);
     }
 
+    // 1. Encontrar o contentor correto
     const container = categoryEl.querySelector('.depot-tree-line');
+    if (!container) return;
     
+    // 2. CORREÇÃO DO ERRO: Encontrar o botão que é FILHO DIRETO
+    // Não usamos querySelector aqui para evitar apanhar botões de outros subtítulos aninhados
+    let parentAddBtn = null;
+    for (let i = 0; i < container.children.length; i++) {
+        if (container.children[i].classList.contains('btn-add-link-bottom')) {
+            parentAddBtn = container.children[i];
+            break; 
+        }
+    }
+
+    // 3. Criar o HTML do Subtítulo
     const div = document.createElement('div');
     div.className = 'depot-subtitle';
+    
     div.innerHTML = `
         <div style="display:flex; align-items:center; margin-bottom:5px;">
             <span class="depot-toggle-icon" onclick="window.toggleDepotNode(this)" style="cursor:pointer; margin-right:5px;">🔹</span>
             <input type="text" class="depot-input-title" placeholder="Subtítulo..." oninput="this.setAttribute('value', this.value)" style="font-size:0.95em; color: #aab7c4;">
-            <button class="depot-btn btn-add-link" onclick="window.addDepotLink(this.closest('.depot-subtitle'))">+ Link</button>
             
-            <!-- O COMANDO CORRETO É ESTE: -->
             <button class="depot-btn btn-del-node" onclick="window.deleteDepotNode(this)">×</button>
         </div>
-        <div class="depot-tree-line" style="border-left: 2px solid rgba(52, 152, 219, 0.3);"></div>
+        
+        <!-- O Subtítulo também precisa da sua própria linha e botão no fundo -->
+        <div class="depot-tree-line" style="border-left: 2px solid rgba(52, 152, 219, 0.3);">
+             <button class="depot-btn btn-add-link-bottom" style="width:100%; margin-top:5px; border-style:dashed; opacity:0.7;" 
+                    onclick="window.addDepotLink(this.closest('.depot-subtitle'))">+ Adicionar Link</button>
+        </div>
     `;
     
-    container.appendChild(div);
+    // 4. Inserção Segura
+    if (parentAddBtn) {
+        // Insere ANTES do botão "+ Adicionar Link" desta categoria
+        container.insertBefore(div, parentAddBtn);
+    } else {
+        // Se por algum motivo o botão não existir, adiciona no fim
+        container.appendChild(div);
+    }
     
     // Foca no input
     setTimeout(() => {
         const input = div.querySelector('input');
-        if(input) input.focus();
+        if(input) {
+            input.focus();
+            input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
     }, 50);
     
     if (typeof saveNote === 'function') saveNote();
@@ -32597,32 +32622,35 @@ window.toggleDepotNode = function(iconElement) {
     const treeLine = containerElement.querySelector('.depot-tree-line');
     if (!treeLine) return;
 
+    // Encontra o botão de adicionar que está no fundo desta lista
+    // Usamos :scope > button para garantir que pegamos o botão direto desta lista e não de sublistas
+    let addButton = treeLine.querySelector(':scope > .btn-add-link-bottom');
+
+    // Fallback de segurança se a estrutura for antiga
+    if (!addButton) {
+        // Se não encontrar o botão (nota antiga), cria-o agora
+        addButton = document.createElement('button');
+        addButton.className = 'depot-btn btn-add-link-bottom';
+        addButton.style.cssText = "width:100%; margin-top:5px; border-style:dashed; opacity:0.7;";
+        addButton.textContent = "+ Adicionar Link";
+        addButton.onclick = function() { window.addDepotLink(containerElement); };
+        treeLine.appendChild(addButton);
+    }
+
     const card = document.createElement('div');
     card.className = 'depot-link-card';
     
-    // HTML Limpo: Sem ícones, Descrição em cima, URL em baixo
     card.innerHTML = `
         <button class="depot-del-card" onclick="window.deleteDepotLink(this)" title="Remover Link">×</button>
-
-        <!-- LINHA 1: DESCRIÇÃO -->
-        <input type="text" class="depot-link-input depot-desc" 
-               placeholder="Descrição (ex: Artigo Principal)..." 
-               value="" 
-               oninput="this.setAttribute('value', this.value)">
-
-        <!-- LINHA 2: URL + BOTÃO IR -->
+        <input type="text" class="depot-link-input depot-desc" placeholder="Descrição..." value="" oninput="this.setAttribute('value', this.value)">
         <div class="depot-url-row">
-            <input type="text" class="depot-link-input depot-url" 
-                   placeholder="website.com" 
-                   value="" 
-                   oninput="this.setAttribute('value', this.value)">
-            
-            <button class="depot-visit-btn" onclick="window.visitDepotLink(this)" title="Visitar">↗</button>
+            <input type="text" class="depot-link-input depot-url" placeholder="website.com" value="" oninput="this.setAttribute('value', this.value)">
+            <button class="depot-visit-btn" onclick="window.visitDepotLink(this)">↗</button>
         </div>
     `;
 
-    if (treeLine.firstChild) treeLine.insertBefore(card, treeLine.firstChild);
-    else treeLine.appendChild(card);
+    // MUDANÇA CRÍTICA: Insere o cartão ANTES do botão de adicionar
+    treeLine.insertBefore(card, addButton);
 
     setTimeout(() => { const i = card.querySelector('.depot-desc'); if(i) i.focus(); }, 50);
     if (typeof saveNote === 'function') saveNote();
@@ -32911,6 +32939,235 @@ async function handleAutoBackupLogic(noteId, noteData) {
         }
     }
 }
+
+// NOVA FUNÇÃO: EXPANDIR/RECOLHER TUDO NA GRUA
+window.toggleAllDepotNodes = function(btn) {
+    // 1. Encontra a Grua (Wrapper)
+    const wrapper = btn.closest('.ref-depot-wrapper');
+    if (!wrapper) return;
+
+    // 2. Encontra todas as pastas (Categorias e Subtítulos)
+    const allNodes = wrapper.querySelectorAll('.depot-category, .depot-subtitle');
+    if (allNodes.length === 0) return;
+
+    // 3. Decide a ação: 
+    // Se existir pelo menos UMA pasta fechada, vamos ABRIR tudo.
+    // Se estiverem todas abertas, vamos FECHAR tudo.
+    const shouldExpand = Array.from(allNodes).some(node => node.classList.contains('is-collapsed'));
+
+    // 4. Aplica a todos os nós
+    allNodes.forEach(node => {
+        if (shouldExpand) {
+            node.classList.remove('is-collapsed'); // Abre
+        } else {
+            node.classList.add('is-collapsed'); // Fecha
+        }
+    });
+};
+
+// --- INJEÇÃO DO BOTÃO HÍBRIDO NO MODAL DE TÓPICOS/ÂNCORAS ---
+(function setupHybridToggle() {
+    const modalFooter = document.querySelector('#topics-modal .modal-actions');
+    if (!modalFooter) return;
+
+    // Cria o contentor do Toggle
+    const hybridContainer = document.createElement('div');
+    hybridContainer.id = 'hybrid-toggle-container';
+    hybridContainer.style.cssText = "display: none; align-items: center; margin-right: auto;"; // Escondido por padrão (só aparece na aba Âncoras)
+    
+    hybridContainer.innerHTML = `
+        <label class="setting-switch" style="margin-right: 10px;">
+            <input type="checkbox" id="hybrid-mode-toggle">
+            <span class="slider round"></span>
+        </label>
+        <span style="font-weight:bold; color:var(--text-muted-color); font-size:0.9em;">⚓ + 📜</span>
+    `;
+
+    // Insere no início do rodapé (antes do Cancelar)
+    modalFooter.insertBefore(hybridContainer, modalFooter.firstChild);
+
+    // Lógica para mostrar/esconder dependendo da aba
+    document.getElementById('topics-modal-tabs').addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        const tab = btn.dataset.tab;
+        
+        // Só mostra o botão se estiver na aba Âncoras
+        hybridContainer.style.display = (tab === 'anchors') ? 'flex' : 'none';
+    });
+})();
+
+
+async function generateHybridView() {
+    const list = document.getElementById('note-texts-view');
+    const editor = document.getElementById('note-content-editor');
+    
+    if (!editor || !list) return;
+
+    // 1. Indicador de Carregamento
+    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar Misto...</span></div>';
+
+    // 2. PREPARAÇÃO DO TEXTO
+    // Junta o texto do corpo da nota com o texto dos títulos (inputs) para garantir que nada escapa
+    let textContent = editor.innerText;
+    editor.querySelectorAll('input, textarea').forEach(el => {
+        if (el.value) textContent += " " + el.value;
+    });
+    const textContentLower = textContent.toLowerCase();
+
+    // --- DEBUG: PARA VERIFICAR SE O DAVID É DETETADO ---
+    console.group("🕵️ DEBUG MISTO: Análise de Conteúdo");
+    console.log("1. Âncoras Ativas:", activeNoteAnchorsIds);
+    // ---------------------------------------------------
+
+    // ============================================================
+    // FASE A: DETEÇÃO DE ÂNCORAS (ENTIDADES / DAVID)
+    // ============================================================
+    let anchorItems = [];
+    
+    if (activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0) {
+        // Junta todas as entidades (Personagens, Locais, etc.) numa lista única
+        const allCandidates = Object.values(allEntities).flat();
+        
+        allCandidates.forEach(entity => {
+            // A. Verifica se a entidade tem uma das âncoras ativas da nota
+            const entityAnchors = entity.ancorasAssociadas || {};
+            const hasMatchingAnchor = activeNoteAnchorsIds.some(id => entityAnchors[id]);
+
+            if (!hasMatchingAnchor) return;
+
+            // B. Verifica se o nome da entidade está escrito no texto
+            if (textContentLower.includes(entity.nome.toLowerCase())) {
+                
+                // Debug específico para confirmar o David
+                if (entity.nome === 'David') console.log("✅ David encontrado no texto e validado!");
+
+                // Define o Ícone
+                let icon = entity.emoji || "🔹"; 
+                if (!entity.emoji) {
+                    if (entity.tipo === 'personagem') icon = "👤";
+                    else if (entity.tipo === 'local') icon = "📍";
+                    else if (entity.tipo === 'cosmos') icon = "🪐";
+                    else if (entity.tipo === 'subcosmos') icon = "🧬";
+                }
+
+                anchorItems.push({
+                    type: 'anchor',
+                    name: entity.nome,
+                    icon: icon,
+                    desc: entity.descricao,
+                    id: entity.id,
+                    entityType: entity.tipo
+                });
+            }
+        });
+    } else {
+        console.warn("⚠️ Lista de âncoras vazia. O David não aparecerá sem âncoras.");
+    }
+    console.groupEnd();
+
+    // ============================================================
+    // FASE B: DETEÇÃO BÍBLICA
+    // ============================================================
+    let bibleItems = [];
+    // Ordena livros pelo tamanho do nome para evitar falsos positivos
+    const sortedBooks = [...BIBLICAL_BOOKS].sort((a, b) => b.length - a.length);
+    // Regex para encontrar "Livro Cap:Vers"
+    const regex = new RegExp(`\\b((?:${sortedBooks.join('|')})\\s+\\d+:\\d+[\\d,;\\- ]*)`, 'gi');
+    
+    const rawMatches = textContent.match(regex) || [];
+    const uniqueRefs = [...new Set(rawMatches.map(r => r.trim().replace(/[.,;]+$/, '')))];
+
+    uniqueRefs.forEach(ref => {
+        bibleItems.push({ 
+            type: 'bible', 
+            name: ref, 
+            icon: "📜", 
+            desc: "A carregar..." 
+        });
+    });
+
+    // ============================================================
+    // FASE C: RENDERIZAÇÃO FINAL (HTML)
+    // ============================================================
+    list.innerHTML = '';
+
+    if (anchorItems.length === 0 && bibleItems.length === 0) {
+        list.innerHTML = '<div style="padding:20px; color:#888; text-align:center;">Nada encontrado.</div>';
+        return;
+    }
+
+    // Função Auxiliar para criar a linha visual
+    const createRow = (item) => {
+        const div = document.createElement('div');
+        div.style.cssText = "padding: 12px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px; position: relative;";
+        
+        // Borda Azul para Âncoras, Laranja para Bíblia
+        const borderSide = item.type === 'anchor' ? '4px solid var(--accent-color)' : '4px solid #e67e22';
+        div.style.borderLeft = borderSide;
+        div.style.paddingLeft = "10px";
+
+        // Título (Clique faz Scroll no Editor)
+        const titleDiv = document.createElement('div');
+        titleDiv.style.cssText = "font-weight: bold; color: var(--text-color); cursor: pointer; font-size: 0.95em;";
+        titleDiv.innerHTML = `${item.icon} ${item.name}`;
+        
+        titleDiv.onclick = (e) => {
+            e.stopPropagation();
+            if (typeof scrollToAndHighlightText === 'function') scrollToAndHighlightText(item.name);
+        };
+
+        // Descrição (Clique abre a 4ª Coluna)
+        const descDiv = document.createElement('div');
+        descDiv.style.cssText = "font-size: 0.85em; color: var(--text-muted-color); cursor: pointer; line-height: 1.4;";
+        descDiv.innerHTML = item.desc || '<span style="opacity:0.5; font-style:italic;">Sem descrição.</span>';
+        
+        // Se for Bíblia, dá um ID para carregarmos o texto depois
+        if (item.type === 'bible') descDiv.id = `preview-${item.name.replace(/[^a-zA-Z0-9]/g, '')}`; 
+
+        descDiv.onclick = (e) => {
+            e.stopPropagation();
+            const targetType = item.type === 'bible' ? 'textobiblico' : item.entityType;
+            const targetId = item.type === 'bible' ? null : item.id;
+            showReferencesPanel(targetId, item.name, targetType);
+        };
+
+        div.appendChild(titleDiv);
+        div.appendChild(descDiv);
+        return div;
+    };
+
+    // 1. Renderiza Âncoras (David aparece aqui)
+    if (anchorItems.length > 0) {
+        const header = document.createElement('div');
+        header.innerHTML = "ANCHORS";
+        header.style.cssText = "font-size:0.7em; font-weight:bold; color:var(--text-muted-color); padding:5px 10px; background:rgba(0,0,0,0.2); letter-spacing:1px;";
+        list.appendChild(header);
+        anchorItems.forEach(item => list.appendChild(createRow(item)));
+    }
+
+    // 2. Renderiza Bíblia
+    if (bibleItems.length > 0) {
+        const header = document.createElement('div');
+        header.innerHTML = "BIBLE";
+        header.style.cssText = "font-size:0.7em; font-weight:bold; color:var(--text-muted-color); padding:5px 10px; background:rgba(0,0,0,0.2); margin-top:10px; letter-spacing:1px;";
+        list.appendChild(header);
+        bibleItems.forEach(item => list.appendChild(createRow(item)));
+
+        // Carrega os textos bíblicos em background
+        for (const item of bibleItems) {
+            const verses = expandVerseReference(item.name);
+            const textPromises = verses.map(v => fetchPublicBibleText(v));
+            Promise.all(textPromises).then(texts => {
+                const fullText = texts.filter(t => t).join(" ");
+                const el = document.getElementById(`preview-${item.name.replace(/[^a-zA-Z0-9]/g, '')}`);
+                if (el) el.textContent = fullText || "Texto não disponível.";
+            });
+        }
+    }
+}
+
+
 
     </script>
 </body>
