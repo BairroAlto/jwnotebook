@@ -5259,6 +5259,12 @@ button[data-action="creative-mode"].active {
     z-index: 20 !important;
     box-shadow: 0 0 4px rgba(0,0,0,0.5) !important;
     border: 2px solid var(--panel-color) !important; /* Borda da cor do fundo para "recortar" */
+    transition: opacity 0.6s ease, transform 0.6s ease;
+}
+
+.post-status-dot.dot-vanish {
+    opacity: 0 !important;
+    transform: scale(0) !important;
 }
 
 /* O QUE FALTAVA: As cores */
@@ -12779,7 +12785,7 @@ function cleanupInvisibleCharacters() {
     console.group('%cFASE 1: Ligação de Formato Padrão (Livro C:V)', logStyles.phase);
     
     const biblicalBooksPattern = BIBLICAL_BOOKS.join('|');
-    const standardBiblicalRegex = new RegExp(`\\b((?:${biblicalBooksPattern})\\s+\\d+:\\d[\\d,;\\- ]*)\\b`, 'giu');
+    const standardBiblicalRegex = new RegExp(`\\b((?:${biblicalBooksPattern})\\s+\\d+:\\d+(?:\\s*[-–,;]\\s*\\d+)*)\\b`, 'giu');
     
 
     let domModified = false;
@@ -13294,7 +13300,7 @@ async function openMoveModal(itemContext) {
         if (items.length === 0) {
             list.innerHTML = '<li style="padding:10px; color:#888;">Nenhum item encontrado nesta localização.</li>';
         } else {
-            renderMoveList(items);
+            renderMoveList(items, itemContext.id); 
         }
 
     } catch (error) {
@@ -13573,7 +13579,7 @@ function handleMoveSelection(liElement, folderId) {
     selectedDestFolderId = folderId;
 }
 
-function renderMoveList(items) {
+function renderMoveList(items, activeItemId = null) {
     const list = document.getElementById('move-list');
     list.innerHTML = '';
 
@@ -13591,10 +13597,19 @@ function renderMoveList(items) {
                 <button data-action="down" ${index === items.length - 1 ? 'disabled' : ''}>↓</button>
             </div>
         `;
+
+        // === NOVO: Se este é o item que clicou ===
+        if (activeItemId && item.id === activeItemId) {
+            // 1. Destaca visualmente (fundo azulado e borda)
+            li.style.backgroundColor = "var(--selected-color)";
+            li.style.border = "1px solid var(--accent-color)";
+            li.classList.add('active-move-target'); // Classe para encontrar depois
+        }
+
         list.appendChild(li);
     });
 
-    // Delegar cliques nas setas
+    // Delegar cliques nas setas (Lógica original)
     list.onclick = (e) => {
         const btn = e.target.closest('button');
         if (!btn) return;
@@ -13603,29 +13618,43 @@ function renderMoveList(items) {
         const currentIndex = Array.from(list.children).indexOf(currentLi);
         const action = btn.dataset.action;
 
+        // Precisamos manter o ID do item que está a ser movido para o re-focar
+        const movingItemId = items[currentIndex].id;
+
         if (action === 'up' && currentIndex > 0) {
-            // Troca no array
             [items[currentIndex], items[currentIndex - 1]] = [items[currentIndex - 1], items[currentIndex]];
         } else if (action === 'down' && currentIndex < items.length - 1) {
-            // Troca no array
             [items[currentIndex], items[currentIndex + 1]] = [items[currentIndex + 1], items[currentIndex]];
         }
         
-        // Re-renderiza a lista localmente
-        renderMoveList(items);
+        // Re-renderiza mantendo o foco no item que estamos a mover
+        renderMoveList(items, movingItemId);
     };
 
-    // Configurar o botão "Salvar Ordem"
-    const saveBtn = document.querySelector('#move-item-modal [data-action="save-order"]');
-    saveBtn.onclick = async () => {
-        saveBtn.disabled = true;
-        saveBtn.textContent = "A guardar...";
+    // === NOVO: SCROLL AUTOMÁTICO ===
+    setTimeout(() => {
+        const activeItem = list.querySelector('.active-move-target');
+        if (activeItem) {
+            // center = coloca o item no meio do modal
+            activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, 100); // Pequeno delay para garantir que o modal já abriu visualmente
 
+    // Configurar o botão "Salvar Ordem" (Mantém a lógica original)
+    const saveBtn = document.querySelector('#move-item-modal [data-action="save-order"]');
+    // Removemos ouvintes antigos para evitar duplicação (boa prática)
+    const newSaveBtn = saveBtn.cloneNode(true);
+    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+
+    newSaveBtn.onclick = async () => {
+        newSaveBtn.disabled = true;
+        newSaveBtn.textContent = "A guardar...";
+
+        const { writeBatch, doc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const batch = writeBatch(db);
         
         items.forEach((item, index) => {
             const docRef = doc(db, 'pastas', item.id);
-            // Atualiza o campo 'ordem' baseado no novo índice do array
             batch.update(docRef, { 
                 ordem: index,
                 ultimaedicao: serverTimestamp()
@@ -13635,13 +13664,12 @@ function renderMoveList(items) {
         try {
             await batch.commit();
             document.getElementById('move-item-modal').style.display = 'none';
-            // O onSnapshot automático da lista principal tratará de atualizar a vista
         } catch (err) {
             console.error("Erro ao salvar ordem:", err);
             alert("Erro ao salvar nova ordem.");
         } finally {
-            saveBtn.disabled = false;
-            saveBtn.textContent = "Salvar Ordem";
+            newSaveBtn.disabled = false;
+            newSaveBtn.textContent = "Salvar Ordem";
         }
     };
 }
@@ -24141,7 +24169,7 @@ window.execCmdOnPost = (command) => {
 // J. Gravação Geral no Firestore
 async function saveFullArchive() {
     const statusEl = document.getElementById('archive-save-status');
-    statusEl.textContent = "A guardar...";
+    if (statusEl) statusEl.textContent = "A guardar...";
     
     try {
         const docRef = doc(db, 'pastas', currentArchiveId);
@@ -24149,18 +24177,33 @@ async function saveFullArchive() {
         const updateData = {
             posts: currentArchiveData.posts || [],
             deletedPosts: currentArchiveData.deletedPosts || [], 
-            ultimaedicao: serverTimestamp()
+            ultimaedicao: serverTimestamp(),
+            
+            // === CORREÇÃO AQUI ===
+            // Grava o SEU ID na pasta principal.
+            // Assim, a lista sabe que foi você e não mostra a bola vermelha.
+            lastEditorId: auth.currentUser.uid 
+            // =====================
         };
 
         await updateDoc(docRef, updateData);
         
-        statusEl.textContent = "Guardado";
-        statusEl.classList.add('status-saved');
-        setTimeout(() => statusEl.classList.remove('status-saved'), 2000);
+        // Atualiza a memória local para o snapshot não nos enganar
+        if (currentArchiveData) {
+            currentArchiveData.lastEditorId = auth.currentUser.uid;
+        }
+
+        if (statusEl) {
+            statusEl.textContent = "Guardado";
+            statusEl.classList.add('status-saved');
+            setTimeout(() => statusEl.classList.remove('status-saved'), 2000);
+        }
     } catch (e) {
         console.error("Erro ao gravar arquivo:", e);
-        statusEl.textContent = "Erro ao guardar";
-        statusEl.classList.add('status-error');
+        if (statusEl) {
+            statusEl.textContent = "Erro ao guardar";
+            statusEl.classList.add('status-error');
+        }
     }
 };
 
@@ -29338,32 +29381,34 @@ window.displayArchive = async function(id, data, element = null) {
 function renderPostViewMode(container, post) {
     const getMs = (val) => val && val.toMillis ? val.toMillis() : Number(val || 0);
 
-    const lastSeen = Number(sessionStartTimeForArchive);
+    // Usa a hora congelada da entrada na sessão
+    const lastSeen = Number(sessionStartTimeForArchive || 0);
     const postCreated = getMs(post.createdAt);
     const postUpdated = getMs(post.updatedAt);
     const myUid = auth.currentUser.uid;
     
-    // VERIFICAÇÃO DE PROPRIEDADE
-    // Se o post tiver o meu ID, nunca mostrarei pontos para mim mesmo
-    const isMyPost = (post.userId === myUid);
-
     let statusDotHTML = "";
     
-    // Se NÃO é meu post...
-    if (!isMyPost) {
+    // --- LÓGICA DE NOTIFICAÇÃO ---
+
+    // 1. É NOVO? (Vermelho)
+    // Condição: Criado depois da minha visita E não fui eu que criei
+    if (postCreated > lastSeen && post.userId !== myUid) {
+        statusDotHTML = `<div class="post-status-dot dot-new" title="Novo Post de ${post.createdBy}"></div>`;
+    } 
+    
+    // 2. FOI EDITADO? (Laranja)
+    // Condição:
+    // a) Atualizado depois da minha visita
+    // b) Não é um post acabado de criar (margem de 2s)
+    // c) O último a editar NÃO FUI EU (lastEditorId !== myUid) -> AQUI ESTAVA O ERRO
+    else if (postUpdated > lastSeen && postUpdated > (postCreated + 2000)) { 
         
-        // 1. É NOVO? (Vermelho)
-        if (postCreated > lastSeen) {
-            statusDotHTML = `<div class="post-status-dot dot-new" title="Novo Post de ${post.createdBy}"></div>`;
-        } 
+        // Verifica quem foi o último a mexer (se não existir lastEditorId, assume que foi outro)
+        const lastEditor = post.lastEditorId || "unknown";
         
-        // 2. FOI EDITADO? (Laranja)
-        // Só mostra se foi atualizado recentemente E se o último editor não fui eu
-        else if (postUpdated > lastSeen && postUpdated > (postCreated + 2000)) { 
-            const lastEditorWasMe = (post.lastEditorId === myUid);
-            if (!lastEditorWasMe) {
-                statusDotHTML = `<div class="post-status-dot dot-edited" title="Editado recentemente"></div>`;
-            }
+        if (lastEditor !== myUid) {
+            statusDotHTML = `<div class="post-status-dot dot-edited" title="Editado recentemente"></div>`;
         }
     }
 
@@ -29392,6 +29437,12 @@ function renderPostViewMode(container, post) {
             <span>${createdDate}</span>
         </div>
     `;
+
+    // === ATIVAÇÃO DO OLHO DIGITAL ===
+    // Se desenhámos uma bola, ligamos o observador para ela desaparecer ao ler
+    if (statusDotHTML !== "") {
+        postObserver.observe(container);
+    }
 }
 
 
@@ -29448,24 +29499,16 @@ async function updateSharedListWithNotifs(resultsMap) {
     let resultsMap = new Map();
 
     try {
-        // Carregar histórico de leitura (ISTO É O QUE DEMORA TEMPO)
+        // Carregar histórico de leitura
         const readsSnap = await getDocs(collection(db, 'users', myUid, 'archive_reads'));
         
-        // --- CORREÇÃO CRÍTICA AQUI ---
-        // Se, enquanto carregava, o utilizador mudou de ideia e saiu do modo 'shared',
-        // paramos a função imediatamente antes de criar os ouvintes.
-        if (currentViewMode !== 'shared') {
-            console.log("🛑 [SISTEMA] Carregamento da partilha abortado (Mudança de vista detetada).");
-            return;
-        }
-        // -----------------------------
+        if (currentViewMode !== 'shared') return;
 
         readsSnap.forEach(d => userLastSeenArchives[d.id] = d.data().lastSeen || 0);
     } catch(e) { console.warn("Aviso: Histórico de leitura inacessível."); }
 
-    // Função de desenho da lista
+    // --- FUNÇÃO DE DESENHO INTELIGENTE ---
     const renderUnifiedList = () => {
-        // Proteção extra: se renderizar e já não estivermos no modo partilha, aborta
         if (currentViewMode !== 'shared') return;
 
         middlePanelList.innerHTML = '';
@@ -29479,19 +29522,52 @@ async function updateSharedListWithNotifs(resultsMap) {
                 li.setAttribute('data-id', item.id);
                 li.setAttribute('data-type', item.tipo || 'partilhado');
                 li.setAttribute('data-name', item.nome);
-                
-                li.style.borderLeft = "4px solid #e74c3c";
                 li.style.position = "relative"; 
 
+                // Seleção visual
                 if (item.id === selectedNoteId) li.classList.add('selected-red');
+                else li.style.borderLeft = "4px solid #e74c3c";
+
+                // --- LÓGICA DE DETEÇÃO DE NOTIFICAÇÃO (CRÍTICA) ---
+                const lastSeen = userLastSeenArchives[item.id] || 0;
+                const posts = item.posts || [];
+                
+                let hasNew = false;
+                let hasEdit = false;
+
+                // Percorre os posts para ver se há novidades
+                for (const post of posts) {
+                    const created = post.createdAt?.toMillis ? post.createdAt.toMillis() : (post.createdAt || 0);
+                    const updated = post.updatedAt?.toMillis ? post.updatedAt.toMillis() : (post.updatedAt || 0);
+                    
+                    // 1. Verificar se é NOVO (Criado por outro depois da visita)
+                    if (created > lastSeen && post.userId !== myUid) {
+                        hasNew = true;
+                        break; // Se há novo, ganha prioridade máxima (Vermelho), paramos de procurar.
+                    }
+
+                    // 2. Verificar se foi EDITADO (Atualizado por outro depois da visita)
+                    // Ignora se foi acabado de criar (margem 2s)
+                    if (updated > lastSeen && updated > (created + 2000)) {
+                        const lastEditor = post.lastEditorId || "unknown";
+                        if (lastEditor !== myUid) {
+                            hasEdit = true;
+                        }
+                    }
+                }
+
+                // Decide a cor da bola
+                let notifHTML = "";
+                if (hasNew) {
+                    // Bola Vermelha com Animação
+                    notifHTML = `<span class="notif-badge" style="background-color: #e74c3c; animation: pulse-dot 2s infinite;" title="Novos Posts">!</span>`;
+                } else if (hasEdit) {
+                    // Bola Laranja (Sem animação ou mais calma)
+                    notifHTML = `<span class="notif-badge" style="background-color: #f39c12;" title="Edições Recentes">!</span>`;
+                }
 
                 const isOwner = item.userId === myUid;
-                const lastSeen = userLastSeenArchives[item.id] || 0;
-                const lastEdit = item.ultimaedicao?.toMillis ? item.ultimaedicao.toMillis() : (item.ultimaedicao || 0);
                 
-                // Badge de notificação (!)
-                let notifHTML = (lastEdit > lastSeen && item.lastEditorId !== myUid) ? `<span class="notif-badge">!</span>` : "";
-
                 li.innerHTML = `
                     <span>${isOwner ? '👑' : '🤝'} ${item.nome}</span>
                     ${notifHTML}
@@ -29501,23 +29577,28 @@ async function updateSharedListWithNotifs(resultsMap) {
                 if (isOwner && item.partilhado !== "ativo") li.style.opacity = "0.7";
                 
                 middlePanelList.appendChild(li);
+                
+                // Configurar clique
+                li.onclick = (e) => {
+                    if (e.target.closest('.item-menu-btn')) return;
+                    window.displayArchive(item.id, item, li);
+                };
             });
-            console.log("✅ Lista de Partilha desenhada no ecrã.");
+            console.log("✅ Lista de Partilha atualizada com estados precisos.");
     };
 
-    // Queries
+    // Queries (Mantêm-se iguais)
     const q1 = query(foldersRef, where('userId', '==', myUid), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
     const q2 = query(foldersRef, where(`colaboradores.${myUid}`, '==', true), where('partilhado', '==', 'ativo'), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
 
-    // Iniciar Ouvintes
     unsubscribeShared1 = onSnapshot(q1, (snap) => {
-        if (currentViewMode !== 'shared') return; // Proteção dentro do ouvinte
+        if (currentViewMode !== 'shared') return;
         snap.docChanges().forEach(c => resultsMap.set(c.doc.id, { ...c.doc.data(), id: c.doc.id }));
         renderUnifiedList();
     });
 
     unsubscribeShared2 = onSnapshot(q2, (snap) => {
-        if (currentViewMode !== 'shared') return; // Proteção dentro do ouvinte
+        if (currentViewMode !== 'shared') return;
         snap.docChanges().forEach(c => resultsMap.set(c.doc.id, { ...c.doc.data(), id: c.doc.id }));
         renderUnifiedList();
     });
@@ -30846,11 +30927,14 @@ async function generateNoteTexts() {
     // 2. Prepara a Regex para encontrar livros da Bíblia
     const sortedBooks = [...BIBLICAL_BOOKS].sort((a, b) => b.length - a.length);
     const booksPattern = sortedBooks.join('|');
-    const regex = new RegExp(`\\b((?:${booksPattern})\\s+\\d+:\\d+[\\d,;\\- ]*)`, 'gi');
+
+    // === CORREÇÃO AQUI ===
+    // Explicação: \d+:\d+ (Cap:Verso) ... seguido de (hífen/vírgula + digito) repetidas vezes
+    const regex = new RegExp(`\\b((?:${booksPattern})\\s+\\d+:\\d+(?:\\s*[-–,;]\\s*\\d+)*)`, 'gi');
+    // =====================
     
     const rawMatches = textContent.match(regex) || [];
-    // Remove duplicados e limpa pontuação final
-    const currentRefs = [...new Set(rawMatches.map(r => r.trim().replace(/[.,;]+$/, '')))];
+    const currentRefs = [...new Set(rawMatches.map(r => r.trim()))]; // .trim() limpa espaços nas pontas
 
     // Lógica para detetar se apareceu uma referência nova para fazer scroll automático
     const prevRefsJSON = list.getAttribute('data-prev-refs') || "[]";
@@ -33061,7 +33145,7 @@ async function generateHybridView() {
     // Ordena livros pelo tamanho do nome para evitar falsos positivos
     const sortedBooks = [...BIBLICAL_BOOKS].sort((a, b) => b.length - a.length);
     // Regex para encontrar "Livro Cap:Vers"
-    const regex = new RegExp(`\\b((?:${sortedBooks.join('|')})\\s+\\d+:\\d+[\\d,;\\- ]*)`, 'gi');
+    const regex = new RegExp(`\\b((?:${sortedBooks.join('|')})\\s+\\d+:\\d+(?:\\s*[-–,;]\\s*\\d+)*)`, 'gi');
     
     const rawMatches = textContent.match(regex) || [];
     const uniqueRefs = [...new Set(rawMatches.map(r => r.trim().replace(/[.,;]+$/, '')))];
@@ -33155,7 +33239,36 @@ async function generateHybridView() {
     }
 }
 
+// --- OBSERVADOR DE LEITURA (REMOVE PONTOS AO LER) ---
+const postObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+        // Se o post está mais de 60% visível no ecrã
+        if (entry.isIntersecting) {
+            const postDiv = entry.target;
+            const dot = postDiv.querySelector('.post-status-dot');
 
+            // Se tiver um ponto, agendamos o desaparecimento
+            if (dot) {
+                // Espera 1.5 segundos (Tempo de leitura)
+                setTimeout(() => {
+                    // Verifica se o ponto ainda lá está e se o post ainda existe
+                    if (dot && document.contains(dot)) {
+                        // Adiciona classe CSS que faz desaparecer (opacity: 0)
+                        dot.classList.add('dot-vanish');
+                        
+                        // Remove fisicamente do HTML depois da animação acabar
+                        setTimeout(() => dot.remove(), 600);
+                    }
+                }, 1500); 
+            }
+
+            // Para de observar este post (já foi processado)
+            postObserver.unobserve(postDiv);
+        }
+    });
+}, {
+    threshold: 0.6 // O post tem de estar 60% visível para contar como "visto"
+});
 
     </script>
 </body>
