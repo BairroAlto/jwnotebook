@@ -26467,20 +26467,70 @@ if (archiveFeed) {
         
         // --- 6. ELIMINAR ENTIDADE (🗑️) -> IGUAL A ELIMINAR POST ---
         if (btn && btn.dataset.action === 'delete-mini-note') {
-            e.preventDefault(); e.stopPropagation();
+            // 1. Pára tudo imediatamente
+            e.preventDefault(); 
+            e.stopImmediatePropagation(); // Impede que o clique suba para o editor pai
             
-            // Identifica o Post Pai
-            const postDiv = btn.closest('.archive-post');
-            const postId = postDiv ? postDiv.dataset.id : null;
+            // 2. LIMPA SELEÇÕES FANTASMAS (O Segredo para Mobile)
+            // Isto impede que o telemóvel ache que selecionou 3 caixas ao clicar no botão
+            const selection = window.getSelection();
+            if (selection) selection.removeAllRanges();
+
+            // 3. Identifica EXCLUSIVAMENTE a caixa pai deste botão
+            // Adicionámos todas as classes possíveis para garantir que encontra o pai certo
+            const wrapper = btn.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
             
-            if (postId) {
-                // Chama a função principal de eliminar.
-                // Isto faz tudo automaticamente: 
-                // 1. Pede confirmação
-                // 2. Move para a Reciclagem (🕒)
-                // 3. Remove o post do ecrã
-                // 4. Grava na base de dados
-                deleteArchivePost(postId);
+            if (!wrapper) {
+                console.error("❌ ERRO: Wrapper da caixa não encontrado.");
+                return;
+            }
+
+            const wrapperId = wrapper.id; 
+            
+            // Identificar tipo para a mensagem
+            let label = "Item";
+            if (wrapper.classList.contains('redator-wrapper')) label = "Redator";
+            else if (wrapper.classList.contains('question-mode')) label = "Questão";
+            else label = "SubNota";
+
+            // 4. Confirmação (Z-Index alto para mobile)
+            const confirmModal = document.getElementById('confirm-modal');
+            if(confirmModal) confirmModal.style.zIndex = "9999999";
+
+            const confirmed = await showConfirmation("Mover para a Lixeira?", `Deseja ocultar este ${label}?`);
+            
+            if(confirmModal) confirmModal.style.zIndex = ""; // Reset Z-Index
+
+            if (!confirmed) return;
+
+            // 5. Esconde visualmente logo (Feedback rápido)
+            wrapper.style.display = 'none';
+
+            try {
+                // Arquivar na Base de Dados
+                const success = await archiveMiniNote(wrapper, true); // true = modo silencioso (já confirmámos)
+
+                if (success) {
+                    // Substitui por marcador
+                    const marker = document.createElement('span');
+                    marker.id = `marker_${wrapperId}`;
+                    marker.className = 'hidden-note-marker';
+                    marker.style.display = 'none';
+                    
+                    // Garante que removemos o elemento certo do DOM
+                    const elementToRemove = document.getElementById(wrapperId) || wrapper;
+                    if (elementToRemove && elementToRemove.parentNode) {
+                        elementToRemove.replaceWith(marker);
+                    }
+                    
+                    await saveNote(true);
+                } else {
+                    wrapper.style.display = 'block'; // Mostra de volta se falhar
+                    alert("Erro ao arquivar. Tente novamente.");
+                }
+            } catch (err) {
+                console.error("Erro:", err);
+                wrapper.style.display = 'block'; 
             }
             return;
         }
