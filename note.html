@@ -8779,6 +8779,62 @@ div#aquarium-content-canvas .ghost-block:not([data-semantic]) {
     font-weight: 500;
 }
 
+/* --- CORREÇÃO DE INPUTS EM MOBILE --- */
+.mini-note-title-input, 
+.redator-input, 
+.sign-title-input, 
+.card-title-input,
+.mini-note-content,
+.post-editor-content {
+    /* Permite selecionar texto e colar */
+    -webkit-user-select: text !important;
+    user-select: text !important;
+    
+    /* Garante que o toque funciona */
+    pointer-events: auto !important;
+    
+    /* Remove sombras de toque do iOS */
+    -webkit-appearance: none;
+    
+    /* Garante z-index para não ficar atrás de overlays invisíveis */
+    position: relative;
+    z-index: 5;
+}
+
+
+@media (max-width: 768px) {
+
+    /* 1. Forçar o grupo de ferramentas do Jornal a aparecer no scroll horizontal */
+    #group-journal-extras {
+        display: flex !important; /* Força flex para alinhar os ícones */
+        align-items: center;
+    }
+
+    /* 2. Garante que os botões do Jornal têm tamanho fixo no mobile */
+    #group-journal-extras button {
+        display: flex !important;
+        min-width: 34px !important;
+        height: 34px !important;
+    }
+
+    /* 3. BOTÃO DO REDATOR (📓) NA BARRA INFERIOR */
+    /* Ele estava escondido ou colapsado. Vamos forçá-lo. */
+    #btn-insert-redator {
+        display: flex !important; /* Garante que é flex */
+        visibility: visible !important;
+        opacity: 1 !important;
+        
+        /* Destaque visual para ter a certeza que aparece */
+        min-width: 30px; 
+        font-size: 20px !important;
+    }
+    
+    /* Se o botão estiver dentro de um container com display:none, força o container */
+    .toolbar-history-group > div {
+        display: flex !important;
+    }
+}
+
 </style>
 
 
@@ -13680,31 +13736,42 @@ function syncVisualSelection(selectedId) {
 
 
 async function displayNote(noteId, noteElement, searchTerm = null) {
+    // 1. LIMPEZA DE ESTADO
     window.nextSelectedId = null; 
-    document.body.classList.remove('show-fab');
-    if (unsubscribeCurrentNote) { unsubscribeCurrentNote(); unsubscribeCurrentNote = null; }
-
+    document.body.classList.remove('show-fab'); // Esconde botões flutuantes da lista
     
-    // 1. Reset
+    // Desliga ouvinte anterior para não haver sobreposição
+    if (unsubscribeCurrentNote) { 
+        unsubscribeCurrentNote(); 
+        unsubscribeCurrentNote = null; 
+    }
+
+    // Reset de variáveis globais
     window.currentNoteHybridMode = false;
     activeNoteAnchorsIds = [];
-    console.log("1. Estado Global Resetado. Híbrido = false.");
+    selectedNoteId = noteId;
+    isClosingNote = false;
+    
+    console.log("📄 [DISPLAY] A abrir nota:", noteId);
 
     // Referências DOM
     const noteTitleInput = document.getElementById('note-title-input');
     const noteContentEditor = document.getElementById('note-content-editor');
     const editorArea = document.getElementById('editor-area');
+    const placeholder = document.getElementById('editor-placeholder');
+    const archiveArea = document.getElementById('archive-area');
     
-    // Limpeza
+    // Botões Específicos do Jornal
+    const redatorBtn = document.getElementById('btn-insert-redator');
+    const journalExtras = document.getElementById('group-journal-extras');
+
+    // Limpeza visual imediata
     if (noteTitleInput) noteTitleInput.value = ""; 
     if (noteContentEditor) noteContentEditor.innerHTML = ""; 
     
-    selectedNoteId = noteId;
-    isClosingNote = false;
-
-    // UI Visível
-    document.getElementById('editor-placeholder').style.setProperty('display', 'none', 'important');
-    document.getElementById('archive-area').style.setProperty('display', 'none', 'important');
+    // Gestão de Paineis
+    if (placeholder) placeholder.style.setProperty('display', 'none', 'important');
+    if (archiveArea) archiveArea.style.setProperty('display', 'none', 'important');
     if (editorArea) editorArea.style.setProperty('display', 'flex', 'important');
 
     try {
@@ -13713,14 +13780,33 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
 
         unsubscribeCurrentNote = onSnapshot(noteRef, (noteSnap) => {
             if (!noteSnap.exists()) return;
+            
             const data = noteSnap.data();
 
-            // 2. Definir Variáveis Críticas
+            // 2. DETETAR TIPO DE NOTA E CONFIGURAR TOOLBAR
+            const noteType = data.tipo || 'nota';
+            window.currentNoteType = noteType; // Variável global importante para outros scripts
+
+            // === LÓGICA DE EXIBIÇÃO DAS FERRAMENTAS ===
+            if (noteType === 'jornal') {
+                // Se for Jornal, FORÇA a exibição dos botões, mesmo em mobile
+                if (redatorBtn) redatorBtn.style.setProperty('display', 'flex', 'important');
+                if (journalExtras) journalExtras.style.setProperty('display', 'flex', 'important');
+                
+                // Ativa modo Jornal no menu de 3 pontos
+                if (typeof toggleJournalToolbar === 'function') toggleJournalToolbar(true);
+            } else {
+                // Se for Nota Normal, esconde
+                if (redatorBtn) redatorBtn.style.setProperty('display', 'none', 'important');
+                if (journalExtras) journalExtras.style.setProperty('display', 'none', 'important');
+                
+                if (typeof toggleJournalToolbar === 'function') toggleJournalToolbar(false);
+            }
+
+            // 3. CARREGAR DADOS
             window.currentNoteHybridMode = (data.isHybridMode === true);
             activeNoteAnchorsIds = Object.keys(data.ancorasSelecionadas || {});
             
-    
-
             // Atualizar HTML
             const serverTitle = data.nome || '';
             const serverContent = data.conteudo || '';
@@ -13728,35 +13814,41 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
             noteTitleInput.value = serverTitle;
             noteContentEditor.innerHTML = serverContent;
 
-            // Scripts de ajuste
+            // 4. SCRIPTS DE CORREÇÃO PÓS-LOAD
+            // Corrige botões e inputs dentro do conteúdo carregado
             if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
             if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
+            if (typeof applyTitleWrappingEffect === 'function') applyTitleWrappingEffect();
 
-            // 3. Forçar Router
+            // 5. ATUALIZAÇÃO DA UI (Abas e Ícones)
             setTimeout(() => {
-                console.log("3. ⏰ Timeout executado. Chamando Router...");
-                
-                // Atualiza Ícones
+                // Atualiza Ícones das abas
                 if (typeof refreshMiddlePanelTabIcon === 'function') refreshMiddlePanelTabIcon();
 
-                // Mostra Abas
+                // Mostra a barra de abas no fundo do painel do meio
                 const tabsBar = document.querySelector('.middle-bottom-tabs');
                 if (tabsBar) tabsBar.style.display = 'flex';
 
-                // Dispara o Router
+                // Dispara o Router para atualizar a lista lateral (Índice/Textos/Etc)
                 if (typeof updateMiddlePanelViews === 'function') {
                     updateMiddlePanelViews(); 
-                } else {
-                    console.error("❌ Função updateMiddlePanelViews não encontrada!");
                 }
                 
+                // Se houver termo de pesquisa (vindo da busca global), faz scroll
+                if (searchTerm && typeof scrollToAndHighlightText === 'function') {
+                    scrollToAndHighlightText(searchTerm);
+                }
+
                 updateSaveStatus('saved');
-                console.groupEnd(); // Fim do grupo de logs
-            }, 100); // Aumentei para 100ms para garantir que as variáveis assentam
+            }, 100); 
 
         });
-    } catch (error) { console.error("Erro:", error); }
+    } catch (error) { 
+        console.error("Erro ao carregar nota:", error); 
+    }
     
+    // 6. TRANSIÇÃO MOBILE (IMPORTANTE)
+    // Força a troca de ecrã para o editor
     if (window.innerWidth <= 768) {
         document.body.classList.remove('mobile-view-middle');
         document.body.classList.add('mobile-view-editor');
@@ -22491,27 +22583,28 @@ addItemBtn.addEventListener('click', async () => {
 // ====================================================================
 // FORÇAR COLAGEM COMO TEXTO SIMPLES (PLAIN TEXT)
 // ====================================================================
- document.addEventListener('paste', (e) => {
-    // 1. Verifica se estamos num campo editável
+document.addEventListener('paste', (e) => {
     const target = e.target;
-    const isEditable = target.isContentEditable || 
-                       (target.tagName === 'INPUT' && target.type === 'text') ||
-                       target.tagName === 'TEXTAREA';
+    
+    // 1. SE FOR UM INPUT OU TEXTAREA (Títulos das caixas, Redator, etc.)
+    // Deixamos o navegador tratar da colagem nativamente (permite colar no mobile)
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        return; // Sai da função e deixa o sistema operativo colar
+    }
 
+    // 2. Se for no corpo do editor (contenteditable div)
+    const isEditable = target.isContentEditable;
     if (!isEditable) return;
 
-    // 2. Impede o comportamento padrão
+    // 3. Impede o comportamento padrão (que traria formatação rica indesejada)
     e.preventDefault();
 
-    // 3. Obtém apenas o texto limpo
+    // 4. Obtém apenas o texto limpo
     let text = (e.clipboardData || window.clipboardData).getData('text/plain');
-
-    // >>> CORREÇÃO AQUI: Remove espaços vazios antes e depois <<<
     text = text.trim(); 
 
-    // 4. Se estiver dentro de Toggle ou Mini-Nota, usa <br>
+    // 5. Se estiver dentro de Toggle ou Mini-Nota (Corpo), usa <br> em vez de parágrafos
     if (target.closest('.toggle-content') || target.closest('.mini-note-content')) {
-        // Substitui quebras de linha por <br>
         const htmlContent = text.replace(/\r\n|\r|\n/g, '<br>');
         document.execCommand('insertHTML', false, htmlContent);
     } else {
@@ -22519,14 +22612,13 @@ addItemBtn.addEventListener('click', async () => {
         document.execCommand('insertText', false, text);
     }
     
-    // 5. Grava
+    // 6. Grava
     if (typeof saveNote === 'function') {
         if (target.id === 'note-content-editor' || target.closest('#note-content-editor')) {
             saveNote(); 
         }
     }
 });
-
 
 let itemTypeToAdd = '';
 document.getElementById('add-item-options').addEventListener('click', (e) => {
