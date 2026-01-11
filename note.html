@@ -8818,26 +8818,38 @@ div#aquarium-content-canvas .ghost-block:not([data-semantic]) {
 /* --- CORREÇÃO DE SELEÇÃO DE TEXTO EM TÍTULOS (MOBILE) --- */
 /* Adicione isto ao seu CSS */
 @media (max-width: 768px) {
-    /* Garante que o corpo da nota aceita toque e seleção */
+    
+    /* Obriga todas as áreas de conteúdo a serem selecionáveis */
     .mini-note-content,
     .redator-content,
     .cube-content,
+    .sign-content,
+    .card-desc-content,
     .toggle-content {
         user-select: text !important;
-        -webkit-user-select: text !important;
+        -webkit-user-select: text !important; /* Essencial para iPhone */
         cursor: text !important;
         pointer-events: auto !important;
         
-        /* Aumenta a área de toque mínima para ser fácil acertar */
-        min-height: 40px !important; 
+        /* Garante que o toque é interpretado como interação e não scroll */
+        touch-action: pan-y !important; 
+        
+        /* Remove qualquer highlight de clique cinzento */
+        -webkit-tap-highlight-color: transparent;
+        
+        /* Garante altura mínima para o dedo acertar */
+        min-height: 50px !important;
+        
+        /* Z-index ligeiramente maior para ficar "acima" do fundo da caixa */
+        position: relative !important;
+        z-index: 10 !important;
     }
 
-    /* Impede que os botões selecionem texto ou abram teclado */
-    .mini-note-toolbar button,
-    .redator-dock button {
-        user-select: none !important;
-        -webkit-user-select: none !important;
-        touch-action: manipulation;
+    /* Garante que os inputs de título também funcionam */
+    .mini-note-title-input, 
+    .redator-input {
+        pointer-events: auto !important;
+        z-index: 10 !important;
     }
 }
 
@@ -14108,7 +14120,6 @@ function insertMiniNoteAtCursor(type = 'default') {
     const uniqueId = type === 'redator' ? `red_${Date.now()}` : `mn_${Date.now()}`;
 
     // --- ESTILOS DE PROTEÇÃO PARA MOBILE (INLINE) ---
-    // Isto garante que funciona mal é criado, sem esperar pelo CSS global
     const inputStyle = "user-select: text; -webkit-user-select: text; pointer-events: auto; touch-action: manipulation;";
 
     // --- TIPO: REDATOR ---
@@ -14117,7 +14128,6 @@ function insertMiniNoteAtCursor(type = 'default') {
         <div class="redator-wrapper" id="${uniqueId}" contenteditable="false" data-shared="false" data-box-links='{}' data-paragraph="0">
             <button class="redator-reopen-btn" title="Mostrar Título" onclick="window.toggleRedatorHeader('${uniqueId}', true)">T</button>
             <div class="redator-header" id="header-${uniqueId}">
-               <!-- ADICIONADO ontouchstart E STYLE INLINE -->
                <input type="text" class="redator-input" placeholder="Título do Redator..." value="" 
                       oninput="this.setAttribute('value', this.value)" 
                       ontouchstart="event.stopPropagation();"
@@ -14153,7 +14163,6 @@ function insertMiniNoteAtCursor(type = 'default') {
     else {
         let wrapperClass = 'mini-note-wrapper';
         
-        // ADICIONADO ontouchstart E STYLE INLINE AQUI TAMBÉM
         let titleHTML = `<textarea class="mini-note-title-input" placeholder="Título..." rows="1" ontouchstart="event.stopPropagation();" style="${inputStyle}"></textarea>`;
 
         if (type === 'question') {
@@ -14181,12 +14190,11 @@ function insertMiniNoteAtCursor(type = 'default') {
     document.execCommand('insertHTML', false, finalHTML);
     
     // 5. Pós-Processamento (Foco e Ajuste)
-    // Aumentei o timeout para 150ms para dar tempo ao Mobile processar o DOM
     setTimeout(() => {
         const insertedEl = document.getElementById(uniqueId);
         if (insertedEl) {
             
-            // Lógica de Título Completo (Ajuste de altura)
+            // Lógica de Título Completo
             if (typeof appSettings !== 'undefined' && appSettings.showFullTitles) {
                 const titleArea = insertedEl.querySelector('.mini-note-title-input');
                 if (titleArea) {
@@ -14227,7 +14235,9 @@ function insertMiniNoteAtCursor(type = 'default') {
         }
     }, 150);
     
-    saveNote();
+    // >>> ALTERAÇÃO IMPORTANTE AQUI <<<
+    // Mudei de saveNote() para saveNote(true) para forçar gravação imediata
+    saveNote(true); 
 }
 
 
@@ -38957,40 +38967,53 @@ if (editorTouchHandler) {
     editorTouchHandler.addEventListener('touchstart', (e) => {
         const target = e.target;
 
-        // CASO 1: TOQUE EM BOTÕES DA TOOLBAR (🔐, 🔺, 🗑️, etc)
-        // Queremos a ação, mas NÃO queremos o teclado.
+        // 1. SE TOCOU NA ÁREA DE TEXTO (Conteúdo)
+        if (target.classList.contains('mini-note-content') || 
+            target.classList.contains('redator-content') ||
+            target.classList.contains('toggle-content') ||
+            target.closest('.mini-note-content') ||
+            target.closest('.redator-content')) {
+            
+            // A. Pára a propagação.
+            // Isto impede que a caixa pai (o wrapper) receba o toque e tente arrastar/selecionar tudo.
+            e.stopPropagation(); 
+            
+            // B. Identifica o elemento exato
+            const editableDiv = target.classList.contains('mini-note-content') || target.classList.contains('redator-content') 
+                                ? target 
+                                : target.closest('[contenteditable="true"]');
+
+            if (editableDiv) {
+                // C. Força o foco imediatamente
+                editableDiv.focus();
+                
+                // D. Truque para abrir o teclado em alguns Androids teimosos
+                // Se o elemento estiver vazio, simulamos uma seleção
+                if (editableDiv.innerText.trim() === "") {
+                    const range = document.createRange();
+                    range.selectNodeContents(editableDiv);
+                    range.collapse(false);
+                    const sel = window.getSelection();
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                }
+            }
+            // NOTA: Não usamos e.preventDefault() aqui para permitir que o teclado nativo abra
+            return;
+        }
+
+        // 2. SE TOCOU EM BOTÕES (Ação sem teclado)
         if (target.closest('button')) {
             const btn = target.closest('button');
-            
-            // Se o botão estiver dentro de uma toolbar de caixa
+            // Se for botão de ferramentas, aí sim prevenimos o foco
             if (btn.closest('.mini-note-toolbar') || btn.closest('.redator-dock')) {
-                e.preventDefault(); // Impede o foco (e o teclado)
-                e.stopPropagation(); // Impede que o editor pai receba o toque
-                
-                // Dispara o clique manualmente para a ação acontecer
+                e.preventDefault(); 
+                e.stopPropagation(); 
                 btn.click(); 
-                return;
             }
         }
-
-        // CASO 2: TOQUE NA ÁREA DE TEXTO (Conteúdo da Subnota/Questão)
-        // Queremos forçar o teclado a aparecer.
-        if (target.classList.contains('mini-note-content') || 
-            target.closest('.mini-note-content')) {
-            
-            // Não usamos preventDefault aqui para deixar o cursor posicionar-se,
-            // mas forçamos o foco explicitamente.
-            const contentDiv = target.classList.contains('mini-note-content') ? target : target.closest('.mini-note-content');
-            
-            // Pequeno timeout para garantir que o OS processa o toque
-            setTimeout(() => {
-                contentDiv.focus();
-            }, 10);
-        }
-
-    }, { passive: false }); // 'passive: false' permite usar preventDefault
+    }, { passive: false });
 }
-
     </script>
 </body>
 </html>
