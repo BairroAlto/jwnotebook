@@ -8328,6 +8328,15 @@ div#aquarium-content-canvas .ghost-block:not([data-semantic]) {
     text-decoration-color: var(--accent-color);
 }
 
+/* ESTADO ATIVO DO BOTÃO MEDUSA */
+#aquarium-sidebar-toggle.active {
+    background-color: var(--accent-color) !important; /* Fica Azul */
+    color: white !important;
+    border-color: var(--accent-color) !important;
+    box-shadow: 0 0 15px rgba(74, 144, 226, 0.3); /* Brilho suave */
+    transform: scale(1.1); /* Ligeiro aumento */
+}
+
 </style>
 
 
@@ -34789,11 +34798,7 @@ window.openAquariumEnvironment = async function(id, data) {
 // FUNÇÃO DE GRAVAÇÃO DO AQUÁRIO
 // ============================================================
 window.saveAquariumState = async function() {
-    // 1. Verificações de segurança
-    if (!selectedNoteId) {
-        console.warn("⚠️ [GRAVAR] Nenhum ID selecionado. Abortando.");
-        return;
-    }
+    if (!selectedNoteId) return;
     
     const canvas = document.getElementById('aquarium-content-canvas');
     if (!canvas) return;
@@ -34802,54 +34807,54 @@ window.saveAquariumState = async function() {
     // Clona o canvas para limpar o lixo sem afetar o que o utilizador está a ver agora
     const cleanCanvas = canvas.cloneNode(true);
 
-    // A. Remove a interface (Botões de ação, Popups flutuantes)
+    // A. Remove interface
     cleanCanvas.querySelectorAll('.ghost-actions').forEach(el => el.remove());
     cleanCanvas.querySelectorAll('.aq-popup-window').forEach(el => el.remove());
 
-    // B. Reseta estados dos blocos (Remove bloqueios e restaura edição)
+    // B. Reseta estados dos blocos
     cleanCanvas.querySelectorAll('.ghost-block').forEach(block => {
-        block.classList.remove('locked-popup', 'active-selection'); // Remove classes de estado
-        block.setAttribute('contenteditable', 'true'); // Garante que volta como editável
-        block.style.outline = ''; // Remove bordas visuais de seleção
+        // Remove bloqueios de popup e seleção de cursor
+        block.classList.remove('locked-popup', 'active-selection'); 
         
-        // Remove atributos temporários se existirem
+        // --- CORREÇÃO AQUI: REMOVE O EFEITO AZUL (ARMAZÉM) DO CLONE ---
+        // Isto garante que nunca é gravado na base de dados
+        block.classList.remove('active-store-target');
+        block.style.border = '';
+        block.style.backgroundColor = '';
+        block.style.boxShadow = '';
+        block.style.outline = '';
+        // -------------------------------------------------------------
+
+        block.setAttribute('contenteditable', 'true');
         block.removeAttribute('data-temp-id');
     });
 
     // 2. Captura o HTML limpo
     const content = cleanCanvas.innerHTML;
     
-    // Procura o título no ecrã
     const titleEl = document.getElementById('aquarium-title-display');
     const currentTitle = titleEl ? titleEl.innerText : null;
 
-    console.group("💾 [GRAVAÇÃO BLINDADA AQUÁRIO]");
-    console.log("ID:", selectedNoteId);
-    console.log("Tamanho do conteúdo limpo:", content.length);
+    console.log("💾 [GRAVAÇÃO LIMPA] Guardando sem efeitos visuais.");
 
     try {
         const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', selectedNoteId);
 
-        // 3. Montar objeto de atualização
         const updatePayload = {
             conteudo: content,
             ultimaedicao: serverTimestamp()
         };
 
-        // Só atualiza o nome se ele for válido
-        if (currentTitle && currentTitle !== "ERRO_SEM_TITULO" && currentTitle !== "Sem Título (Recuperado)") {
+        if (currentTitle && currentTitle !== "Sem Título") {
             updatePayload.nome = currentTitle;
         }
 
-        // 4. Executar Gravação
         await updateDoc(noteRef, updatePayload);
-        console.log("🔥 Sucesso! Base de dados atualizada sem lixo.");
 
     } catch (e) {
-        console.error("❌ Erro fatal ao gravar Aquário:", e);
+        console.error("❌ Erro ao gravar Aquário:", e);
     }
-    console.groupEnd();
 };
 
 // ============================================================
@@ -35116,24 +35121,40 @@ window.activeGhost = null;
 window.setActiveGhost = function(ghost) {
     window.activeGhost = ghost;
     
+    // --- CORREÇÃO AQUI: LIMPEZA DE DESTAQUE DO ARMAZÉM ---
+    // Se clicou numa caixa diferente daquela que está aberta no Armazém (🐚),
+    // removemos o efeito visual azul da antiga.
+    if (window.activeStoreGhostId && ghost.id !== window.activeStoreGhostId) {
+        const oldTarget = document.getElementById(window.activeStoreGhostId);
+        if (oldTarget) {
+            oldTarget.classList.remove('active-store-target');
+            // Limpeza de estilos inline de segurança
+            oldTarget.style.border = '';
+            oldTarget.style.backgroundColor = '';
+            oldTarget.style.boxShadow = '';
+        }
+        // Opcional: Se quiser que o painel feche ou limpe a variável ao mudar de caixa:
+        // window.activeStoreGhostId = null; 
+    }
+    // -----------------------------------------------------
+
     const contextTools = document.getElementById('aq-context-tools');
     
     if (contextTools) {
         contextTools.style.setProperty('display', 'flex', 'important');
         
-        // 1. Limpa a classe de seleção de TODOS os blocos
+        // 1. Limpa a classe de seleção de cursor de TODOS os blocos
         document.querySelectorAll('.ghost-block').forEach(g => {
             g.classList.remove('active-selection');
-            // REMOVE TODOS OS ESTILOS INLINE DE BORDA QUE POSSAM TER FICADO
             g.style.borderTop = '';
             g.style.border = '';
             g.style.outline = '';
         });
         
-        // 2. Adiciona a classe de seleção
+        // 2. Adiciona a classe de seleção de cursor ao atual
         ghost.classList.add('active-selection');
         
-        // 3. SEGURANÇA MÁXIMA: Força remoção de borda inline no elemento ativo
+        // 3. SEGURANÇA MÁXIMA
         ghost.style.removeProperty('border-top');
         ghost.style.removeProperty('border');
         ghost.style.removeProperty('outline');
@@ -35242,36 +35263,46 @@ function createNewGhost() {
             });
 
             // B. DETETAR CLIQUE NO VAZIO (Criar Novo) - >> CORREÇÃO APLICADA AQUI <<
-          if (scrollArea) {
+        if (scrollArea) {
                 scrollArea.addEventListener('click', (e) => {
                     
-                    // 1. Proteção: Se tem texto selecionado, não cria caixa
+                    // 1. Proteções Básicas
                     const selection = window.getSelection();
                     if (selection && selection.toString().length > 0) return;
-
-                    // 2. Proteção: Se clicou num bloco bloqueado, sai
                     if (e.target.closest('.locked-popup')) return;
 
-                    // 3. Verifica se clicou no "papel" ou no fundo cinzento
+                    // 2. Verifica se clicou na estrutura base
                     if (e.target === scrollArea || e.target === canvas) {
                         
-                        e.preventDefault(); // Impede perder o foco
+                        // --- NOVA LÓGICA GEOMÉTRICA ---
+                        const lastBlock = canvas.lastElementChild;
+
+                        // Se o canvas tiver conteúdo, verificamos a posição do clique
+                        if (lastBlock) {
+                            const rect = lastBlock.getBoundingClientRect();
+                            const clickY = e.clientY;
+
+                            // Se o clique foi ACIMA da linha inferior do último bloco,
+                            // significa que foi numa margem lateral. IGNORAMOS.
+                            if (clickY < rect.bottom) {
+                                return; 
+                            }
+                        }
+                        // -----------------------------
+
+                        e.preventDefault(); 
                         
-                        // Limpa seleção visual de outros blocos
+                        // Limpa seleção visual
                         document.querySelectorAll('.ghost-block').forEach(g => {
                             g.classList.remove('active-selection');
                             g.style.outline = '';
                         });
 
-                        // LÓGICA DE CRIAÇÃO
-                        const lastBlock = canvas.lastElementChild;
-
-                        // Se o último bloco já estiver vazio, usa esse em vez de criar lixo
+                        // LÓGICA DE CRIAÇÃO (Manteve-se igual)
                         if (lastBlock && lastBlock.classList.contains('ghost-block') && lastBlock.textContent.trim() === '') {
                             lastBlock.focus();
                             window.setActiveGhost(lastBlock);
                             
-                            // Força o cursor novamente (caso tenha perdido)
                             const range = document.createRange();
                             range.selectNodeContents(lastBlock);
                             range.collapse(false);
@@ -35280,7 +35311,6 @@ function createNewGhost() {
                             sel.addRange(range);
                         } 
                         else {
-                            // Cria um novo e foca imediatamente
                             createNewGhost();
                         }
                     }
@@ -35818,14 +35848,32 @@ window.loadAquariumNotesList = async function(filterText = "") {
 // 1. Toggle Sidebar (Abrir/Fechar)
 const aqSidebarBtn = document.getElementById('aquarium-sidebar-toggle');
 if (aqSidebarBtn) {
-    aqSidebarBtn.addEventListener('click', () => {
+    const newBtn = aqSidebarBtn.cloneNode(true);
+    aqSidebarBtn.parentNode.replaceChild(newBtn, aqSidebarBtn);
+
+    newBtn.addEventListener('click', () => {
         const env = document.getElementById('aquarium-environment');
-        env.classList.toggle('sidebar-open');
         
-        // Se abriu, carrega a aba ativa
+        // Alterna o estado do painel e do botão
+        env.classList.toggle('sidebar-open');
+        newBtn.classList.toggle('active');
+        
+        // LÓGICA DE ESTADO
         if (env.classList.contains('sidebar-open')) {
+            // Se abriu, carrega a aba ativa
             const activeTab = document.querySelector('.aq-tab.active');
             if (activeTab) loadAquariumTab(activeTab.dataset.tab);
+        } else {
+            // --- CORREÇÃO AQUI: SE FECHOU, LIMPA O DESTAQUE AZUL ---
+            document.querySelectorAll('.ghost-block.active-store-target').forEach(g => {
+                g.classList.remove('active-store-target');
+                // Remove estilos inline forçados se houver
+                g.style.border = '';
+                g.style.backgroundColor = '';
+                g.style.boxShadow = '';
+            });
+            // Reseta a variável para sabermos que nada está selecionado
+            window.activeStoreGhostId = null;
         }
     });
 }
@@ -36836,28 +36884,43 @@ window.resetAquariumState = function() {
     // 1. Fechar Sidebar e Resetar Abas
     const env = document.getElementById('aquarium-environment');
     if (env) env.classList.remove('sidebar-open');
+    
+    // Reset do botão da Medusa
+    const sideBtn = document.getElementById('aquarium-sidebar-toggle');
+    if (sideBtn) sideBtn.classList.remove('active');
+
     const listTab = document.querySelector('.aq-tab[data-tab="listas"]');
     if (listTab) listTab.click();
 
-    // 2. DESTRUIR TODOS OS POPUPS (⇱)
+    // 2. DESTRUIR TODOS OS POPUPS
     document.querySelectorAll('.aq-popup-window').forEach(popup => popup.remove());
     
+    // --- CORREÇÃO AQUI: LIMPEZA TOTAL DOS EFEITOS VISUAIS AZUIS ---
+    document.querySelectorAll('.ghost-block.active-store-target').forEach(g => {
+        g.classList.remove('active-store-target');
+        // Remove estilos inline forçados para garantir limpeza
+        g.style.border = '';
+        g.style.backgroundColor = '';
+        g.style.boxShadow = '';
+    });
+    // Zera a variável de controlo
+    window.activeStoreGhostId = null;
+    // -------------------------------------------------------------
+
     // 3. DESBLOQUEAR BLOCOS ORIGINAIS
-    // Remove a classe 'locked-popup' de qualquer bloco que tenha ficado preso
     document.querySelectorAll('.ghost-block.locked-popup').forEach(block => {
         block.classList.remove('locked-popup');
     });
 
     // 4. RESETAR VARIÁVEIS GLOBAIS
-    activeAquariumPopups = []; // Zera o contador de janelas
-    aqListStack = [];          // Zera a navegação da sidebar
-    window.activeGhost = null; // Zera o bloco ativo
+    activeAquariumPopups = []; 
+    aqListStack = [];          
+    window.activeGhost = null; 
 
-    // 5. Esconder Barras de Ferramentas
+    // 5. Esconder Barras e Modais
     const contextTools = document.getElementById('aq-context-tools');
     if (contextTools) contextTools.style.setProperty('display', 'none', 'important');
 
-    // 6. Fechar Modais de Sistema
     const systemModals = [
         'aquarium-jump-popup', 'share-settings-popup', 'link-modal', 
         'black-hole-modal', 'semantic-type-popup', 'universal-scan-modal'
@@ -36867,7 +36930,6 @@ window.resetAquariumState = function() {
         if (el) el.style.display = 'none';
     });
 
-    // 7. Reset do Painel da Direita (4ª Coluna)
     if (typeof hideReferencesPanel === 'function') hideReferencesPanel();
 };
 
@@ -36900,6 +36962,10 @@ window.openGhostStore = function(btn) {
     const env = document.getElementById('aquarium-environment');
     if (env && !env.classList.contains('sidebar-open')) {
         env.classList.add('sidebar-open');
+        
+        // --- CORREÇÃO AQUI: Acender o botão da Medusa ---
+        const sideBtn = document.getElementById('aquarium-sidebar-toggle');
+        if (sideBtn) sideBtn.classList.add('active');
     }
     
     // 4. Simular clique na Aba "Armazém"
@@ -36907,7 +36973,7 @@ window.openGhostStore = function(btn) {
     if (storeTabBtn) {
         storeTabBtn.click();
     } else {
-        // Fallback se o clique não funcionar: chama a renderização direta
+        // Fallback
         document.querySelectorAll('.aq-view').forEach(v => v.style.display = 'none');
         document.getElementById('aq-store-view').style.display = 'block';
         if(typeof renderAquariumStore === 'function') renderAquariumStore();
