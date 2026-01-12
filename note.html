@@ -23615,12 +23615,12 @@ document.getElementById('right-panel').addEventListener('click', (event) => {
 // ====================================================================
 // FUNÇÃO: ARQUIVAR MINI-NOTA (Mover para Reciclagem no Firebase)
 // ====================================================================
-window.archiveMiniNote = async function(element, silentMode = false) {
+window.archiveMiniNote = async function(element) {
     if (!element) return false;
 
     console.group("📦 [ARCHIVE] Processando Item para Reciclagem");
     
-    // 1. VERIFICAÇÃO DE ID
+    // 1. VERIFICAÇÃO DE ID DA NOTA
     let targetId = selectedNoteId;
     if (!targetId) {
         const urlParams = new URLSearchParams(window.location.search);
@@ -23634,22 +23634,21 @@ window.archiveMiniNote = async function(element, silentMode = false) {
         return false;
     }
 
-    // --- CÁLCULO DA POSIÇÃO ORIGINAL (NOVO) ---
-    // Descobre em que posição (0, 1, 2...) o elemento está dentro do pai
+    // --- CÁLCULO DA POSIÇÃO ORIGINAL ---
     let originalIndex = -1;
     if (element.parentNode) {
-        // Cria um array com os filhos e descobre o índice deste elemento
         originalIndex = Array.from(element.parentNode.children).indexOf(element);
     }
-    // ------------------------------------------
 
+    // --- EXTRAÇÃO DE DADOS DO ELEMENTO ---
+    // [CORREÇÃO PONTO 1] Usamos o 'element' passado, sem buscar por ID de novo
     const itemId = element.id || `temp_${Date.now()}`;
     let title = "Sem Título";
     let content = "";
     let type = "default";
     let topicsJSON = '{}';
 
-    // --- DETEÇÃO DO TIPO (Mantém-se igual ao seu código) ---
+    // Lógica de deteção de tipo (Mantida do original para preservar metadados)
     if (element.classList.contains('ghost-block')) {
         type = 'ghost';
         const semantic = element.dataset.semantic;
@@ -23697,6 +23696,7 @@ window.archiveMiniNote = async function(element, silentMode = false) {
         content = element.innerHTML;
     }
     else {
+        // Subnotas, Questões, Contentores
         const inp = element.querySelector('.mini-note-title-input');
         const inner = element.querySelector('.mini-note-content');
         
@@ -23713,18 +23713,7 @@ window.archiveMiniNote = async function(element, silentMode = false) {
         topicsJSON = element.getAttribute('data-topics') || '{}';
     }
 
-    // --- CONFIRMAÇÃO ---
-    if (!silentMode) {
-        let label = "Item";
-        if (type === 'ghost') label = "Bloco de Texto";
-        const confirmed = await showConfirmation("Mover para a Lixeira?", `Deseja ocultar este ${label} ("${title}")?`);
-        if (!confirmed) {
-            console.groupEnd();
-            return false;
-        }
-    }
-
-    // --- GRAVAÇÃO ---
+    // --- EXECUÇÃO DE GRAVAÇÃO E REMOÇÃO (Atomicidade Lógica) ---
     try {
         const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', targetId);
@@ -23735,41 +23724,47 @@ window.archiveMiniNote = async function(element, silentMode = false) {
             conteudo: content, 
             tipo: type,
             topicsJSON: topicsJSON,
-            originalIndex: originalIndex, // <--- CAMPO NOVO IMPORTANTE
+            originalIndex: originalIndex,
             deletedAt: serverTimestamp()
         };
 
-        console.log("   -> A enviar para Firebase:", trashItem);
-
+        // 1. PRIMEIRO: Gravar na Lixeira do Firebase
+        // Se isto falhar, o código pára no 'catch' e o elemento não é removido da tela.
         await updateDoc(noteRef, {
             [`subnotasocultas.${itemId}`]: trashItem,
             ultimaedicao: serverTimestamp()
         });
         
-        // --- REMOÇÃO DO ECRÃ (CRIA O MARCADOR) ---
-        if (!silentMode) {
-            // Criamos um marcador invisível no lugar do elemento
-            // Isto ajuda a restaurar na posição EXATA se a página não for recarregada
-            const marker = document.createElement('span');
-            marker.id = `marker_${itemId}`;
-            marker.className = 'hidden-note-marker';
-            marker.style.display = 'none'; // Invisível
-            marker.setAttribute('data-original-index', originalIndex); // Guarda backup no DOM
-            
+        // [CORREÇÃO PONTO 2 e 3]
+        // Só removemos visualmente SE a gravação na lixeira tiver sucesso.
+        
+        // 2. SEGUNDO: Manipulação do DOM
+        // Criamos o marcador invisível para manter a posição
+        const marker = document.createElement('span');
+        marker.id = `marker_${itemId}`;
+        marker.className = 'hidden-note-marker';
+        marker.style.display = 'none';
+        marker.setAttribute('data-original-index', originalIndex);
+        
+        // Substituição direta usando a referência 'element'
+        if (element.parentNode) {
             element.replaceWith(marker);
-            
-            // Grava a nota para o marcador ficar salvo no HTML (se possível)
-            if (typeof saveNote === 'function') saveNote();
-            if (type === 'ghost' && typeof window.saveAquariumState === 'function') window.saveAquariumState();
         }
         
-        console.log("✅ Sucesso!");
+        // 3. TERCEIRO: Gravar a Nota (Sem a caixa)
+        // Isto sincroniza o HTML limpo com a base de dados
+        if (typeof saveNote === 'function') await saveNote(true);
+        if (type === 'ghost' && typeof window.saveAquariumState === 'function') await window.saveAquariumState();
+        
+        console.log("✅ Item arquivado com segurança.");
         console.groupEnd();
         return true;
 
     } catch (error) {
         console.error("❌ Erro ao arquivar:", error);
-        alert("Erro de permissão ou conexão ao arquivar.");
+        alert("Erro de conexão. O item não foi apagado para evitar perda de dados.");
+        // Se houve erro, garantimos que o elemento continua visível
+        element.style.display = 'block'; 
         console.groupEnd();
         return false;
     }
@@ -26614,73 +26609,52 @@ if (archiveFeed) {
         
         // --- 6. ELIMINAR ENTIDADE (🗑️) -> IGUAL A ELIMINAR POST ---
         if (btn && btn.dataset.action === 'delete-mini-note') {
-            // 1. Pára tudo imediatamente
-            e.preventDefault(); 
-            e.stopImmediatePropagation(); // Impede que o clique suba para o editor pai
-            
-            // 2. LIMPA SELEÇÕES FANTASMAS (O Segredo para Mobile)
-            // Isto impede que o telemóvel ache que selecionou 3 caixas ao clicar no botão
-            const selection = window.getSelection();
-            if (selection) selection.removeAllRanges();
+    // 1. Pára tudo imediatamente
+    e.preventDefault(); 
+    e.stopImmediatePropagation(); 
+    
+    // 2. Limpa seleções fantasmas (Correção Mobile)
+    const selection = window.getSelection();
+    if (selection) selection.removeAllRanges();
 
-            // 3. Identifica EXCLUSIVAMENTE a caixa pai deste botão
-            // Adicionámos todas as classes possíveis para garantir que encontra o pai certo
-            const wrapper = btn.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
-            
-            if (!wrapper) {
-                console.error("❌ ERRO: Wrapper da caixa não encontrado.");
-                return;
-            }
+    // 3. Identifica EXCLUSIVAMENTE a caixa pai
+    const wrapper = btn.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
+    
+    if (!wrapper) {
+        console.error("❌ ERRO: Wrapper da caixa não encontrado.");
+        return;
+    }
 
-            const wrapperId = wrapper.id; 
-            
-            // Identificar tipo para a mensagem
-            let label = "Item";
-            if (wrapper.classList.contains('redator-wrapper')) label = "Redator";
-            else if (wrapper.classList.contains('question-mode')) label = "Questão";
-            else label = "SubNota";
+    // [CORREÇÃO PONTO 4] - Proteção contra Edição Bloqueada
+    // Se o editor estiver bloqueado (ex: partilha) ou a própria caixa for contenteditable="false" (sem ser wrapper), aborta.
+    // Nota: Os wrappers são contenteditable="false", mas verificamos o contexto geral ou se é um card bloqueado do armazém.
+    if (noteContentEditor.contentEditable === "false" || wrapper.classList.contains('locked-card')) {
+        alert("Não tem permissão para apagar este item.");
+        return;
+    }
 
-            // 4. Confirmação (Z-Index alto para mobile)
-            const confirmModal = document.getElementById('confirm-modal');
-            if(confirmModal) confirmModal.style.zIndex = "9999999";
+    // Identificar tipo para a mensagem do popup
+    let label = "Item";
+    if (wrapper.classList.contains('redator-wrapper')) label = "Redator";
+    else if (wrapper.classList.contains('question-mode')) label = "Questão";
+    else label = "SubNota";
 
-            const confirmed = await showConfirmation("Mover para a Lixeira?", `Deseja ocultar este ${label}?`);
-            
-            if(confirmModal) confirmModal.style.zIndex = ""; // Reset Z-Index
+    // 4. Confirmação (Z-Index alto para mobile)
+    const confirmModal = document.getElementById('confirm-modal');
+    if(confirmModal) confirmModal.style.zIndex = "9999999";
 
-            if (!confirmed) return;
+    const confirmed = await showConfirmation("Mover para a Lixeira?", `Deseja ocultar este ${label}?`);
+    
+    if(confirmModal) confirmModal.style.zIndex = ""; // Reset Z-Index
 
-            // 5. Esconde visualmente logo (Feedback rápido)
-            wrapper.style.display = 'none';
+    if (!confirmed) return;
 
-            try {
-                // Arquivar na Base de Dados
-                const success = await archiveMiniNote(wrapper, true); // true = modo silencioso (já confirmámos)
-
-                if (success) {
-                    // Substitui por marcador
-                    const marker = document.createElement('span');
-                    marker.id = `marker_${wrapperId}`;
-                    marker.className = 'hidden-note-marker';
-                    marker.style.display = 'none';
-                    
-                    // Garante que removemos o elemento certo do DOM
-                    const elementToRemove = document.getElementById(wrapperId) || wrapper;
-                    if (elementToRemove && elementToRemove.parentNode) {
-                        elementToRemove.replaceWith(marker);
-                    }
-                    
-                    await saveNote(true);
-                } else {
-                    wrapper.style.display = 'block'; // Mostra de volta se falhar
-                    alert("Erro ao arquivar. Tente novamente.");
-                }
-            } catch (err) {
-                console.error("Erro:", err);
-                wrapper.style.display = 'block'; 
-            }
-            return;
-        }
+    // 5. CHAMA A FUNÇÃO CENTRALIZADA (Sem argumentos de 'silentMode')
+    // A função agora trata de tudo: Firebase + DOM + Gravação Final
+    await archiveMiniNote(wrapper);
+    
+    return;
+}
     });
 }
 
@@ -31385,26 +31359,32 @@ window.restoreBackup = async function(backupId) {
 };
 
 // ============================================================
-// FUNÇÃO PARA RESTAURAR CAIXAS DA RECICLAGEM
+// FUNÇÃO: RESTAURAR CAIXAS DA RECICLAGEM (CORREÇÃO ATÓMICA)
 // ============================================================
 window.restoreHiddenMiniNote = async function(miniNoteId) {
     if (!selectedNoteId) return;
 
-    // --- Z-INDEX FIX (Para aparecer sobre o Aquário) ---
-    setTimeout(() => {
-        const confirmModal = document.getElementById('confirm-modal');
-        const historyModal = document.getElementById('history-modal');
-        if (historyModal) historyModal.style.setProperty('z-index', '2100000000', 'important');
-        if (confirmModal) confirmModal.style.setProperty('z-index', '2147483647', 'important'); 
-    }, 10);
-
-    const confirmed = await showConfirmation("Restaurar Item?", "A caixa será devolvida à sua posição original (ou aproximada).");
+    // 1. AJUSTE DE Z-INDEX (Para o popup de confirmação aparecer acima do Histórico)
+    const historyModal = document.getElementById('history-modal');
+    const confirmModal = document.getElementById('confirm-modal');
     
-    // Limpeza Z-Index
-    const cm = document.getElementById('confirm-modal');
-    if (cm) cm.style.zIndex = '';
+    if (confirmModal) confirmModal.style.setProperty('z-index', '2147483647', 'important');
+
+    const confirmed = await showConfirmation(
+        "Restaurar Item?", 
+        "O item será retirado da reciclagem e colocado de volta na nota."
+    );
+    
+    if (confirmModal) confirmModal.style.zIndex = "";
 
     if (!confirmed) return;
+
+    // Feedback Visual no botão
+    const restoreBtn = document.querySelector(`button[onclick*="${miniNoteId}"]`);
+    if (restoreBtn) {
+        restoreBtn.textContent = "A restaurar...";
+        restoreBtn.disabled = true;
+    }
 
     try {
         const { doc, getDoc, updateDoc, serverTimestamp, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
@@ -31418,132 +31398,174 @@ window.restoreHiddenMiniNote = async function(miniNoteId) {
         const item = hiddenItems[miniNoteId];
 
         if (!item) {
-            alert("Erro: Item não encontrado.");
+            alert("Erro: Item não encontrado (pode já ter sido restaurado).");
+            if(restoreBtn) restoreBtn.closest('li').remove();
             return;
         }
 
-        // --- RECONSTRUÇÃO DO HTML (Mantém a lógica de tipos) ---
-        let restoredHTML = "";
-        // ... (Aqui usa-se a mesma lógica de switch/if que já tinhas para gerar o HTML do Toggle, Card, Redator, etc.) ...
-        // ... (Para poupar espaço, assumo que mantém os teus templates de HTML aqui) ...
+        // ============================================================
+        // A. RECONSTRUÇÃO DO HTML
+        // ============================================================
         
-        // Exemplo genérico (substitua pelos seus templates completos):
-        const commonToolbar = `<div class="mini-note-toolbar" contenteditable="false">...</div>`; // Use o seu toolbar completo
+        let restoredHTML = "";
+        
+        // Toolbar Padrão (Cópia exata da criação)
+        const commonToolbar = `
+            <div class="mini-note-toolbar" contenteditable="false">
+                <button type="button" data-action="sharing-settings" title="Partilha">🔐</button>
+                <div class="toolbar-btn-group">
+                    <button type="button" data-action="move-up">🔺</button>
+                    <button type="button" data-action="move-down">🔻</button>
+                </div>
+                <button type="button" data-action="manage-box-links">⚡</button>
+                <button type="button" data-action="append-mini-note">🧬</button>
+                <button type="button" data-action="highlight-color">🎨</button>
+                <button type="button" data-action="manage-mini-note-topics">📋</button>
+                <button type="button" data-action="delete-mini-note">🗑️</button>
+            </div>`;
 
+        const safeTopics = (item.topicsJSON || "{}").replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+        const safeId = item.id || `restored_${Date.now()}`;
+        const attrs = `id="${safeId}" data-topics='${safeTopics}' data-shared="false" data-box-links='{}'`;
+        const contentVal = item.conteudo || "<p><br></p>";
+        const titleVal = item.titulo || "";
+
+        // Switch de Tipos
         if (item.tipo === 'toggle') {
-            restoredHTML = `<details class="toggle-section" open id="${item.id}"><summary><h2>${item.titulo}</h2><button class="toggle-move-btn" data-action="move-up">🔺</button><button class="toggle-move-btn" data-action="move-down">🔻</button><button class="toggle-color-btn">🖌️</button><button class="toggle-delete-btn">🗑️</button></summary><div class="toggle-content" contenteditable="true">${item.conteudo}</div></details><p><br></p>`;
+            restoredHTML = `
+            <details class="toggle-section" open ${attrs}>
+                <summary>
+                    <h2>${titleVal}</h2>
+                    <button class="toggle-move-btn" data-action="move-up">🔺</button>
+                    <button class="toggle-move-btn" data-action="move-down">🔻</button>
+                    <button class="toggle-color-btn" contenteditable="false">🖌️</button>
+                    <button class="toggle-delete-btn" contenteditable="false">🗑️</button>
+                </summary>
+                <div class="toggle-content" contenteditable="true">${contentVal}</div>
+            </details><p><br></p>`;
         } 
-        else if (item.tipo === 'ghost') {
-             // O "ghost" precisa de ser reconstruído como div simples ou com atributos
-             const topicsAttr = item.topicsJSON ? `data-topics='${item.topicsJSON}'` : "";
-             restoredHTML = `<div class="ghost-block" id="${item.id}" contenteditable="true" ${topicsAttr} data-semantic="${item.titulo?.replace('Bloco ', '').toLowerCase() || 'p'}">${item.conteudo}</div>`;
-        }
         else if (item.tipo === 'redator') {
-             // ... template do redator ...
-             restoredHTML = `<div class="redator-wrapper" id="${item.id}" ...>${item.conteudo}</div><p><br></p>`; // Use o seu template completo
+            restoredHTML = `
+            <div class="redator-wrapper" ${attrs} contenteditable="false">
+                <button class="redator-reopen-btn" onclick="window.toggleRedatorHeader('${safeId}', true)">T</button>
+                <div class="redator-header" id="header-${safeId}">
+                    <input type="text" class="redator-input" value="${titleVal}" oninput="this.setAttribute('value', this.value)">
+                    <div class="redator-top-tools">
+                        <button class="redator-menu-trigger" onclick="window.toggleRedatorMenu(this)">⋮</button>
+                         <div class="redator-slide-menu">
+                            <button class="tool-icon-btn" data-action="move-up">🔺</button>
+                            <button class="tool-icon-btn" data-action="move-down">🔻</button>
+                            <button class="tool-icon-btn" data-action="delete-mini-note" style="color:#e74c3c;">🗑️</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="redator-content" contenteditable="true">${contentVal}</div>
+                <div class="redator-dock">
+                     <button class="dock-btn" onclick="event.preventDefault(); window.openRedatorFocus('${safeId}')"><svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg></button>
+                </div>
+            </div><p><br></p>`;
+        }
+        else if (item.tipo === 'card') {
+            restoredHTML = `<div class="journal-id-card" ${attrs} contenteditable="false">${contentVal}</div><p><br></p>`;
+        }
+        else if (item.tipo === 'sign') {
+            restoredHTML = `<div class="journal-sign-wrapper" ${attrs} contenteditable="false">${contentVal}</div><p><br></p>`;
         }
         else {
-             // Default Subnota
-             restoredHTML = `<div class="mini-note-wrapper" id="${item.id}" ...>${item.conteudo}</div><p><br></p>`; // Use o seu template completo
-        }
-        
-        // NOTA: Certifique-se que copia os templates HTML completos da sua versão anterior para aqui!
-        // Estou a usar versões curtas apenas para ilustrar a lógica de inserção.
+            // Subnota / Questão / Contentor
+            let modeClass = "mini-note-wrapper";
+            let titleHTML = `<textarea class="mini-note-title-input" rows="1">${titleVal}</textarea>`;
+            
+            if (item.tipo === 'question') modeClass += " question-mode";
+            else if (item.tipo === 'free') {
+                modeClass += " free-mode";
+                titleHTML = ""; 
+            }
 
-        // ============================================================
-        // LÓGICA DE INSERÇÃO INTELIGENTE (POSIÇÃO)
-        // ============================================================
-        
-        // 1. Determinar o Contentor (Aquário vs Editor Normal)
-        let container;
-        let isAquarium = false;
-
-        const aquariumCanvas = document.getElementById('aquarium-content-canvas');
-        if (aquariumCanvas && document.getElementById('aquarium-environment').style.display !== 'none') {
-            container = aquariumCanvas;
-            isAquarium = true;
-        } else {
-            container = document.getElementById('note-content-editor');
+            restoredHTML = `
+            <div class="${modeClass}" ${attrs} contenteditable="false">
+                ${titleHTML}
+                ${commonToolbar}
+                <div class="mini-note-content" contenteditable="true">${contentVal}</div>
+            </div><p><br></p>`;
         }
 
-        if (!container) return;
+        // ============================================================
+        // B. INSERÇÃO NO DOM (VISUAL)
+        // ============================================================
+        
+        let container = document.getElementById('note-content-editor');
+        if (!container) throw new Error("Editor não encontrado.");
 
-        // 2. Tentar encontrar o MARCADOR (Prioridade 1)
+        // 1. Tentar encontrar o MARCADOR (Prioridade 1)
         const marker = document.getElementById(`marker_${miniNoteId}`);
         
         if (marker) {
-            console.log("📍 Marcador encontrado! Substituindo...");
             marker.outerHTML = restoredHTML;
         } 
         else {
-            // 3. Tentar usar o ÍNDICE ORIGINAL (Prioridade 2)
-            const targetIndex = item.originalIndex;
-            
-            if (typeof targetIndex === 'number' && targetIndex >= 0) {
-                console.log(`📍 Tentando restaurar na posição ${targetIndex}...`);
-                
-                const children = container.children;
-                
-                if (targetIndex < children.length) {
-                    // Insere ANTES do elemento que está atualmente nessa posição
-                    const referenceNode = children[targetIndex];
-                    
-                    // Cria um template temporário para converter string em nó DOM
-                    const tempDiv = document.createElement('div');
-                    tempDiv.innerHTML = restoredHTML;
-                    
-                    // Move os filhos do tempDiv para o container real
-                    while (tempDiv.firstChild) {
-                        container.insertBefore(tempDiv.firstChild, referenceNode);
-                    }
-                } else {
-                    // Se o índice for maior que o total, adiciona no fim
-                    console.log("📍 Índice maior que o conteúdo. Adicionando ao fim.");
-                    container.insertAdjacentHTML('beforeend', restoredHTML);
-                }
-            } else {
-                // 4. Fallback (Adicionar ao fim)
-                console.log("📍 Posição desconhecida. Adicionando ao fim.");
-                container.insertAdjacentHTML('beforeend', restoredHTML);
-            }
+            // 2. Se não há marcador, inserir no FIM
+            container.insertAdjacentHTML('beforeend', restoredHTML);
         }
+        
+        // --- TRUQUE: Sincronizar inputs antes de capturar o HTML ---
+        // Garante que o título que acabámos de inserir (e outros) estão no 'value'
+        container.querySelectorAll('.mini-note-title-input, .redator-input').forEach(t => {
+            if (t.tagName === 'INPUT') t.setAttribute('value', t.value);
+            else t.textContent = t.value;
+        });
 
         // ============================================================
-        
-        // 4. Limpar do Firebase e Gravar
-        // (Nota: Se for Aquário, grava o estado do Aquário. Se for Nota, grava a Nota)
-        
-        // Remove da lixeira primeiro
+        // C. CAPTURA E GRAVAÇÃO ATÓMICA (O SEGREDO DA CORREÇÃO)
+        // ============================================================
+
+        // 1. Captura o HTML FINAL completo do editor (já com a caixa lá dentro)
+        const finalHTML = container.innerHTML;
+
+        // 2. Envia TUDO num único pacote para o Firebase:
+        //    - Atualiza o 'conteudo' da nota com a caixa nova.
+        //    - Remove o item de 'subnotasocultas'.
+        //    Isto impede que o listener "sobreponha" a versão antiga.
         await updateDoc(noteRef, {
+            conteudo: finalHTML,
             [`subnotasocultas.${miniNoteId}`]: deleteField(),
             ultimaedicao: serverTimestamp()
         });
 
-        // Grava o conteúdo atualizado
-        if (isAquarium) {
-            // Re-hidratar botões do fantasma (apenas se for ghost)
-            if (item.tipo === 'ghost') {
-                const newGhost = document.getElementById(item.id);
-                if(newGhost && typeof ensureGhostActions === 'function') ensureGhostActions(newGhost);
-                setTimeout(() => newGhost.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
-            }
-            if (typeof window.saveAquariumState === 'function') window.saveAquariumState();
-        } else {
-            // Nota Normal
-            await updateDoc(noteRef, {
-                conteudo: container.innerHTML
-            });
-            if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes();
-            if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
-            saveNote(true);
-        }
+        // ============================================================
+        // D. LIMPEZA FINAL
+        // ============================================================
 
-        // 5. Fechar Modal
-        document.getElementById('history-modal').style.display = 'none';
+        // 1. FECHAR O POPUP DE GESTÃO
+        if (historyModal) historyModal.style.display = 'none';
+
+        // 2. ATIVAÇÃO DE SCRIPTS (Para os botões da caixa funcionarem logo)
+        if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes();
+        if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
+        
+        // 3. SCROLL E FLASH (Efeito Visual)
+        setTimeout(() => {
+            const el = document.getElementById(safeId);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // Flash visual azul para destacar
+                el.style.transition = "box-shadow 0.5s, outline 0.5s";
+                el.style.boxShadow = "0 0 30px var(--accent-color)";
+                el.style.outline = "2px solid var(--accent-color)";
+                setTimeout(() => {
+                    el.style.boxShadow = "";
+                    el.style.outline = "";
+                }, 2000);
+            }
+        }, 300);
 
     } catch (error) {
-        console.error("Erro ao restaurar:", error);
-        alert("Erro ao restaurar item.");
+        console.error("❌ Erro ao restaurar:", error);
+        alert("Erro ao restaurar item. Tente novamente.");
+        if (restoreBtn) {
+            restoreBtn.textContent = "Restaurar";
+            restoreBtn.disabled = false;
+        }
     }
 };
 
@@ -38262,6 +38284,17 @@ async function loadStoreContent() {
     }
 }
     
+
+
+
+
+
+
+
+
+
+
+
 
 
 // 4. CRIAR ITEM NO FIREBASE
