@@ -14106,13 +14106,24 @@ function extractTopicsFromEditorHTML() {
 
 // Função que faz a gravação real no Firebase
 async function executeSave() {
+    console.log("💾 [EXECUTE-SAVE] A iniciar processo de gravação...");
+
     // 1. Verificação de segurança
-    if (!selectedNoteId || isClosingNote) return;
+    if (!selectedNoteId && !activeEditingPostId) {
+        console.warn("⚠️ Nada para gravar (nenhuma nota ou post selecionado).");
+        return;
+    }
+    
+    if (isClosingNote) {
+        console.log("⚠️ Nota a fechar, ignorando gravação automática.");
+        return;
+    }
 
     // 2. MODO ARQUIVO (FEED)
     const archiveArea = document.getElementById('archive-area');
     if (archiveArea && archiveArea.style.display !== 'none') {
         if (activeEditingPostId) {
+            console.log(`📱 [ARQUIVO] A gravar post ${activeEditingPostId}...`);
             await saveArchivePost(activeEditingPostId);
             updateSaveStatus('saved');
             return true;
@@ -14120,37 +14131,41 @@ async function executeSave() {
         return true; 
     }
 
-    // 3. SINCRONIZAÇÃO CRÍTICA (CORRIGIDA)
-    // Antes de extrair o .innerHTML, colamos os valores dos inputs no HTML
+    // 3. SINCRONIZAÇÃO CRÍTICA (Inputs -> HTML)
+    // Antes de extrair o .innerHTML, temos de garantir que o que o user escreveu nos inputs
+    // (títulos das caixas) fica gravado no atributo 'value' ou no texto do textarea.
     const editor = document.getElementById('note-content-editor');
     if (editor) {
-        // Seleciona TANTO os títulos antigos como os novos Redatores
-        const allInputs = editor.querySelectorAll('.mini-note-title-input, .redator-input');
+        const allInputs = editor.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
         
         allInputs.forEach(t => {
             if (t.tagName === 'TEXTAREA') {
-                // Para textareas, o valor fica entre as tags
+                // Para textareas, o valor tem de ser o texto interno
                 t.textContent = t.value; 
             } else {
-                // Para inputs (Redator), o valor fica no atributo value
+                // Para inputs, o valor fica no atributo value
                 t.setAttribute('value', t.value);
             }
         });
     }
 
-    // 4. Início do processo de gravação no Firebase
+    // 4. Início do envio para o Firebase
     updateSaveStatus('saving');
 
+    // Determina o ID correto (Nota Real ou ID Temporário)
     let targetId = selectedNoteId;
     const realId = editor ? editor.getAttribute('data-real-id') : null;
     if (realId) targetId = realId;
 
+    // Importações necessárias (caso não estejam no topo)
+    const { doc, updateDoc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
     const noteRef = doc(db, 'pastas', targetId);
 
     try {
-        const finalTitle = document.getElementById('note-title-input').value;
-        const finalContent = editor.innerHTML; // Agora já leva os títulos gravados
-        const usedColors = extractUsedColorsFromEditor();
+        const titleInput = document.getElementById('note-title-input');
+        const finalTitle = titleInput ? titleInput.value : "Sem Título";
+        const finalContent = editor ? editor.innerHTML : "";
+        const usedColors = typeof extractUsedColorsFromEditor === 'function' ? extractUsedColorsFromEditor() : [];
 
         // 5. Gravação Principal
         await updateDoc(noteRef, { 
@@ -14160,20 +14175,24 @@ async function executeSave() {
             ultimaedicao: serverTimestamp()
         });
 
-        // 6. Sincronização Pública (Se existir)
+        console.log("✅ [FIREBASE] Nota atualizada com sucesso.");
+
+        // 6. Sincronização Pública (Se a nota estiver partilhada)
         if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
             try {
                 const shareId = currentNoteShareData.shareId;
                 const publicNoteRef = doc(db, 'shared_notes', shareId);
                 
-                await setDoc(publicNoteRef, {
+                // Grava sem await para não bloquear a UI (Fire-and-forget)
+                setDoc(publicNoteRef, {
                     nome: finalTitle,
                     conteudo: finalContent,
                     authorName: currentUserData?.nome || "Anónimo",
                     updatedAt: serverTimestamp(),
                     type: 'full_note' 
-                }, { merge: true });
-            } catch (e) { console.warn("Erro sync partilha:", e); }
+                }, { merge: true }).catch(err => console.warn("Erro sync partilha:", err));
+                
+            } catch (e) { console.warn("Erro ao preparar partilha:", e); }
         }
 
         updateSaveStatus('saved');
@@ -14182,6 +14201,7 @@ async function executeSave() {
     } catch (error) {
         console.error("❌ ERRO CRÍTICO AO GUARDAR:", error);
         updateSaveStatus('error');
+        alert("Erro ao gravar. Verifique a sua ligação.");
         return false;
     }
 }
@@ -23672,24 +23692,30 @@ document.getElementById('right-panel').addEventListener('click', (event) => {
 // ====================================================================
 // FUNÇÃO: ARQUIVAR MINI-NOTA (Mover para Reciclagem no Firebase)
 // ====================================================================
-window.archiveMiniNote = async function(element) {
+window.archiveMiniNote = async function(element, skipConfirmation = false) {
     if (!element) return false;
 
-    console.group("📦 [ARCHIVE] Processando Item para Reciclagem");
+    console.group("📦 [ARCHIVE] Processando Eliminação Atómica");
     
     // 1. VERIFICAÇÃO DE ID DA NOTA
     let targetId = selectedNoteId;
     if (!targetId) {
+        // Tenta recuperar do URL se estivermos numa vista isolada
         const urlParams = new URLSearchParams(window.location.search);
         targetId = urlParams.get('rootId') || urlParams.get('noteId');
     }
     
     if (!targetId) {
-        console.error("❌ ERRO CRÍTICO: ID da Nota não encontrado.");
+        console.error("❌ ERRO: ID da Nota não encontrado.");
         alert("Erro: Não foi possível identificar a nota atual.");
         console.groupEnd();
         return false;
     }
+
+    // 2. PARAR TEMPORIZADORES DE GRAVAÇÃO (CRÍTICO)
+    // Isto impede que o 'saveNote' automático atropele o nosso processo
+    if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
+    if (typeof archiveAutoSaveTimer !== 'undefined') clearTimeout(archiveAutoSaveTimer);
 
     // --- CÁLCULO DA POSIÇÃO ORIGINAL ---
     let originalIndex = -1;
@@ -23698,14 +23724,13 @@ window.archiveMiniNote = async function(element) {
     }
 
     // --- EXTRAÇÃO DE DADOS DO ELEMENTO ---
-    // [CORREÇÃO PONTO 1] Usamos o 'element' passado, sem buscar por ID de novo
     const itemId = element.id || `temp_${Date.now()}`;
     let title = "Sem Título";
     let content = "";
     let type = "default";
     let topicsJSON = '{}';
 
-    // Lógica de deteção de tipo (Mantida do original para preservar metadados)
+    // (Lógica de deteção de tipo mantém-se igual)
     if (element.classList.contains('ghost-block')) {
         type = 'ghost';
         const semantic = element.dataset.semantic;
@@ -23770,7 +23795,6 @@ window.archiveMiniNote = async function(element) {
         topicsJSON = element.getAttribute('data-topics') || '{}';
     }
 
-    // --- EXECUÇÃO DE GRAVAÇÃO E REMOÇÃO (Atomicidade Lógica) ---
     try {
         const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', targetId);
@@ -23785,43 +23809,69 @@ window.archiveMiniNote = async function(element) {
             deletedAt: serverTimestamp()
         };
 
-        // 1. PRIMEIRO: Gravar na Lixeira do Firebase
-        // Se isto falhar, o código pára no 'catch' e o elemento não é removido da tela.
-        await updateDoc(noteRef, {
-            [`subnotasocultas.${itemId}`]: trashItem,
-            ultimaedicao: serverTimestamp()
-        });
-        
-        // [CORREÇÃO PONTO 2 e 3]
-        // Só removemos visualmente SE a gravação na lixeira tiver sucesso.
-        
-        // 2. SEGUNDO: Manipulação do DOM
-        // Criamos o marcador invisível para manter a posição
+        // 3. PREPARAÇÃO DO HTML (SYNC MANUAL)
+        // Antes de apagar, garantimos que todos os inputs das OUTRAS caixas estão gravados no HTML
+        const editor = document.getElementById('note-content-editor');
+        if (editor) {
+            editor.querySelectorAll('input, textarea').forEach(t => {
+                if (t.tagName === 'INPUT') t.setAttribute('value', t.value);
+                else t.textContent = t.value;
+            });
+        }
+
+        // 4. REMOÇÃO DO DOM
+        // Removemos o elemento e substituímos pelo marcador ANTES de enviar para o servidor
         const marker = document.createElement('span');
         marker.id = `marker_${itemId}`;
         marker.className = 'hidden-note-marker';
         marker.style.display = 'none';
         marker.setAttribute('data-original-index', originalIndex);
         
-        // Substituição direta usando a referência 'element'
         if (element.parentNode) {
             element.replaceWith(marker);
         }
+
+        // 5. CAPTURA DO HTML FINAL
+        // Agora temos o HTML perfeito: com as outras caixas atualizadas e sem a caixa apagada
+        const finalHTML = editor ? editor.innerHTML : "";
+
+        // 6. ENVIO ATÓMICO (A SOLUÇÃO)
+        // Enviamos o conteúdo atualizado E o item para a lixeira no MESMO pedido.
+        // Isto impede que o servidor devolva uma versão antiga da nota.
+        await updateDoc(noteRef, {
+            conteudo: finalHTML, // Grava o texto (já sem a caixa)
+            [`subnotasocultas.${itemId}`]: trashItem, // Grava na lixeira
+            ultimaedicao: serverTimestamp()
+        });
         
-        // 3. TERCEIRO: Gravar a Nota (Sem a caixa)
-        // Isto sincroniza o HTML limpo com a base de dados
-        if (typeof saveNote === 'function') await saveNote(true);
-        if (type === 'ghost' && typeof window.saveAquariumState === 'function') await window.saveAquariumState();
+        // Se for aquário, também precisamos garantir o estado global
+        if (type === 'ghost' && typeof window.saveAquariumState === 'function') {
+             // O updateDoc acima já tratou da nota, mas o saveAquariumState limpa lixo visual
+             // Vamos chamá-lo apenas para garantir consistência visual se necessário,
+             // mas tecnicamente o updateDoc já fez o trabalho pesado.
+        }
         
-        console.log("✅ Item arquivado com segurança.");
+        console.log("✅ Item removido e nota gravada num único passo.");
+        
+        // Atualiza estado visual do botão "Guardado"
+        if (typeof updateSaveStatus === 'function') updateSaveStatus('saved');
+        
         console.groupEnd();
         return true;
 
     } catch (error) {
         console.error("❌ Erro ao arquivar:", error);
         alert("Erro de conexão. O item não foi apagado para evitar perda de dados.");
-        // Se houve erro, garantimos que o elemento continua visível
-        element.style.display = 'block'; 
+        
+        // Se houve erro, tentamos restaurar o elemento visualmente
+        const markerToCheck = document.getElementById(`marker_${itemId}`);
+        if (markerToCheck) {
+            markerToCheck.replaceWith(element);
+            element.style.display = 'block';
+        } else {
+            element.style.display = 'block';
+        }
+        
         console.groupEnd();
         return false;
     }
@@ -26666,52 +26716,60 @@ if (archiveFeed) {
         
         // --- 6. ELIMINAR ENTIDADE (🗑️) -> IGUAL A ELIMINAR POST ---
         if (btn && btn.dataset.action === 'delete-mini-note') {
-    // 1. Pára tudo imediatamente
-    e.preventDefault(); 
-    e.stopImmediatePropagation(); 
-    
-    // 2. Limpa seleções fantasmas (Correção Mobile)
-    const selection = window.getSelection();
-    if (selection) selection.removeAllRanges();
+            e.preventDefault(); 
+            e.stopImmediatePropagation(); 
+            
+            // 1. LIMPEZA DE CONFLITOS (CRÍTICO)
+            // Cancela imediatamente qualquer temporizador de gravação pendente.
+            // Isto impede que uma gravação automática atropele a eliminação.
+            if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
+            if (typeof archiveAutoSaveTimer !== 'undefined') clearTimeout(archiveAutoSaveTimer);
+            
+            const selection = window.getSelection();
+            if (selection) selection.removeAllRanges();
 
-    // 3. Identifica EXCLUSIVAMENTE a caixa pai
-    const wrapper = btn.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
-    
-    if (!wrapper) {
-        console.error("❌ ERRO: Wrapper da caixa não encontrado.");
-        return;
-    }
+            const wrapper = btn.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
+            if (!wrapper) return;
 
-    // [CORREÇÃO PONTO 4] - Proteção contra Edição Bloqueada
-    // Se o editor estiver bloqueado (ex: partilha) ou a própria caixa for contenteditable="false" (sem ser wrapper), aborta.
-    // Nota: Os wrappers são contenteditable="false", mas verificamos o contexto geral ou se é um card bloqueado do armazém.
-    if (noteContentEditor.contentEditable === "false" || wrapper.classList.contains('locked-card')) {
-        alert("Não tem permissão para apagar este item.");
-        return;
-    }
+            if (noteContentEditor.contentEditable === "false" || wrapper.classList.contains('locked-card')) {
+                alert("Não tem permissão para apagar este item.");
+                return;
+            }
 
-    // Identificar tipo para a mensagem do popup
-    let label = "Item";
-    if (wrapper.classList.contains('redator-wrapper')) label = "Redator";
-    else if (wrapper.classList.contains('question-mode')) label = "Questão";
-    else label = "SubNota";
+            let label = "Item";
+            if (wrapper.classList.contains('redator-wrapper')) label = "Redator";
+            else if (wrapper.classList.contains('question-mode')) label = "Questão";
+            else label = "SubNota";
 
-    // 4. Confirmação (Z-Index alto para mobile)
-    const confirmModal = document.getElementById('confirm-modal');
-    if(confirmModal) confirmModal.style.zIndex = "9999999";
+            // 2. FEEDBACK VISUAL IMEDIATO (Sem chamar o save real)
+            // Dizemos ao utilizador "A guardar..." para ele saber que o processo começou,
+            // mas a gravação real só acontece DENTRO do archiveMiniNote, atomicamente.
+            if (typeof updateSaveStatus === 'function') updateSaveStatus('saving');
+            const statusEl = document.getElementById('save-status-indicator');
+            if (statusEl) {
+                statusEl.textContent = "A processar...";
+                statusEl.classList.remove('status-saved', 'status-error');
+            }
 
-    const confirmed = await showConfirmation("Mover para a Lixeira?", `Deseja ocultar este ${label}?`);
-    
-    if(confirmModal) confirmModal.style.zIndex = ""; // Reset Z-Index
+            // 3. POPUP DE CONFIRMAÇÃO
+            const confirmModal = document.getElementById('confirm-modal');
+            if(confirmModal) confirmModal.style.zIndex = "9999999";
 
-    if (!confirmed) return;
+            const confirmed = await showConfirmation("Mover para a Lixeira?", `Deseja ocultar este ${label}?`);
+            
+            if(confirmModal) confirmModal.style.zIndex = ""; 
 
-    // 5. CHAMA A FUNÇÃO CENTRALIZADA (Sem argumentos de 'silentMode')
-    // A função agora trata de tudo: Firebase + DOM + Gravação Final
-    await archiveMiniNote(wrapper);
-    
-    return;
-}
+            if (!confirmed) {
+                // Se cancelou, volta a agendar a gravação normal para não perder dados pendentes
+                if (typeof saveNote === 'function') saveNote();
+                return;
+            }
+
+            // 4. EXECUÇÃO SEGURA
+            // Esta função já trata de gravar a nota ATUALIZADA e o backup ao mesmo tempo.
+            await archiveMiniNote(wrapper);
+            return;
+        }
     });
 }
 
