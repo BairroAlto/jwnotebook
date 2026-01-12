@@ -11228,7 +11228,6 @@ let mDragClone = null;       // O fantasma visual que segue o dedo
 let mDragTarget = null;      // Onde vamos largar
 let mTouchOffsetX = 0;
 let mTouchOffsetY = 0;
-let currentActiveScrollId = null;
 let currentMobileRequestId = 0;
 let currentNoteAnchors = {}; // Guarda o estado: { anchorId: true }
 let anchorLastDoc = null;    // Cursor para paginação
@@ -33164,7 +33163,7 @@ function generateNoteIndex() {
             
             // Atualiza manualmente a variável global para feedback imediato
             currentActiveScrollId = el.id;
-            updateIndexVisuals();
+       
         };
 
         list.appendChild(li);
@@ -33174,8 +33173,7 @@ function generateNoteIndex() {
         list.innerHTML = '<li class="empty-msg">Esta nota não tem caixas nem estrutura especial.</li>';
     }
 
-    // >>> NOVO: Pinta a lista imediatamente ao abrir, baseado na posição atual <<<
-    updateIndexVisuals();
+
 }
 
 // 4. ATUALIZADOR AUTOMÁTICO
@@ -34119,64 +34117,7 @@ if (editorForGlow) {
     });
 }
 
-// Função para detetar qual elemento está visível no topo
-function detectActiveScrollElement() {
-    const editor = document.getElementById('note-content-editor');
-    if (!editor) return;
 
-    // Seleciona todos os itens que aparecem no índice
-    const targets = editor.querySelectorAll('.mini-note-wrapper, .redator-wrapper, details.toggle-section, .jwn-table-wrapper, .jwn-timeline-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, .post-it-note');
-    
-    if (targets.length === 0) return;
-
-    const scrollPosition = editor.scrollTop;
-    // O ponto de ativação é 150px abaixo do topo do editor (zona de leitura)
-    const triggerPoint = scrollPosition + 150; 
-    
-    let activeId = null;
-
-    // --- 1. VERIFICAÇÃO DE FUNDO DE PÁGINA ---
-    // Se o utilizador fez scroll até ao fim, seleciona OBRIGATORIAMENTE o último item
-    // (Margem de erro de 20px)
-    if (Math.ceil(editor.scrollTop + editor.clientHeight) >= editor.scrollHeight - 20) {
-        const lastItem = targets[targets.length - 1];
-        activeId = lastItem.id;
-        console.log("⬇️ [SCROLL] Fundo atingido. Forçando último item:", activeId);
-    } 
-    // --- 2. VERIFICAÇÃO NORMAL (Loop) ---
-    else {
-        // Percorre todos os itens para encontrar qual é o que estamos a ler
-        for (let i = 0; i < targets.length; i++) {
-            const el = targets[i];
-            
-            // offsetTop: A distância física do item ao topo do documento (fixo)
-            // Se a posição do item for menor que o nosso ponto de leitura, ele é o candidato atual
-            if (el.offsetTop < triggerPoint) {
-                activeId = el.id; // Atualiza o candidato (vai ganhando o que estiver mais abaixo, mas acima do trigger)
-            } else {
-                // Se este item já está abaixo da linha de leitura, paramos.
-                // O candidato anterior era o correto.
-                break; 
-            }
-        }
-    }
-
-    // --- 3. ATUALIZAÇÃO ---
-    // Se não encontrou nada (estamos no topo absoluto), usa o primeiro
-    if (!activeId && targets.length > 0) {
-        activeId = targets[0].id;
-    }
-
-    if (activeId && currentActiveScrollId !== activeId) {
-        currentActiveScrollId = activeId;
-        
-        // Se a lista estiver aberta no PC, atualiza visualmente
-        // (No mobile isto só atualiza a variável para ser usada quando abrir o popup)
-        if (window.innerWidth > 768) {
-            updateIndexVisuals();
-        }
-    }
-}
 
 // ====================================================================
 // LÓGICA DO MENU MOBILE (BOTÃO ⛶ E ABAS)
@@ -34234,29 +34175,6 @@ if (btnOpenMobile) {
     });
 }
 
-
-// Função para pintar a lista do índice
-function updateIndexVisuals() {
-    const list = document.getElementById('note-index-list');
-    
-    // Só atualiza se a lista existir e estiver visível
-    if (!list || list.style.display === 'none') return;
-
-    // Remove a classe de todos
-    list.querySelectorAll('.index-item').forEach(li => li.classList.remove('active-scroll'));
-
-    // Adiciona ao atual
-    if (currentActiveScrollId) {
-        const activeLi = list.querySelector(`.index-item[data-target-id="${currentActiveScrollId}"]`);
-        if (activeLi) {
-            activeLi.classList.add('active-scroll');
-            
-            // >>> AQUI ESTÁ A MUDANÇA <<<
-            // 'center' força o item a ficar no meio da lista visível
-            activeLi.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-    }
-}
 
 // ============================================================
 // GESTÃO DE ÂNCORAS (⚓)
@@ -39443,6 +39361,119 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('focus', () => {
     setTimeout(restoreCursorFromGPS, 150);
 });
+
+// ============================================================
+// MOTOR DE SCROLLSPY (ÍNDICE AUTOMÁTICO) - VERSÃO ÚNICA
+// ============================================================
+
+// Variável de controlo (só pode haver uma destas no código todo)
+// Se já tiver "let currentActiveScrollId" lá em cima nas variáveis globais, apague esta linha.
+// Se não tiver, deixe estar.
+var currentActiveScrollId = null; 
+
+// 1. OUVINTE DE SCROLL NO EDITOR
+const spyEditor = document.getElementById('note-content-editor');
+
+if (spyEditor) {
+    // Removemos listener antigo para garantir que não duplica
+    spyEditor.onscroll = null; 
+    
+    spyEditor.addEventListener('scroll', () => {
+        // Usa requestAnimationFrame para ser suave e não travar o browser
+        requestAnimationFrame(detectActiveScrollElement);
+    });
+}
+
+// 2. FUNÇÃO DE CÁLCULO
+function detectActiveScrollElement() {
+    const editor = document.getElementById('note-content-editor');
+    const list = document.getElementById('note-index-list');
+    
+    // Só executa se a lista do índice estiver visível no ecrã
+    // (Ou se estivermos no mobile com o modal aberto)
+    const isMobileModalOpen = document.getElementById('mobile-views-modal')?.style.display === 'flex';
+    if (!editor || (!isMobileModalOpen && (!list || list.style.display === 'none'))) return;
+
+    // Seleciona todos os itens que aparecem no índice
+    const targets = editor.querySelectorAll('.mini-note-wrapper, .redator-wrapper, details.toggle-section, .jwn-table-wrapper, .jwn-timeline-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, .post-it-note');
+    
+    if (targets.length === 0) return;
+
+    // Ponto de gatilho: 150px abaixo do topo do editor (zona de leitura)
+    const triggerPoint = editor.scrollTop + 150; 
+    
+    let activeId = null;
+
+    // A. Verifica se chegou ao fundo da página (Seleciona o último obrigatoriamente)
+    // Margem de 50px para garantir
+    if (Math.ceil(editor.scrollTop + editor.clientHeight) >= editor.scrollHeight - 50) {
+        const lastItem = targets[targets.length - 1];
+        activeId = lastItem.id;
+    } 
+    // B. Cálculo normal
+    else {
+        for (let i = 0; i < targets.length; i++) {
+            const el = targets[i];
+            // Se a posição do elemento for menor que a linha de leitura, é o candidato atual
+            if (el.offsetTop < triggerPoint) {
+                activeId = el.id; 
+            } else {
+                // Se já passou, paramos. O anterior era o correto.
+                break; 
+            }
+        }
+    }
+
+    // Se estamos no topo e nada passou a linha, ativa o primeiro
+    if (!activeId && targets.length > 0) {
+        activeId = targets[0].id;
+    }
+
+    // Só atualiza o visual se o ID mudou (Performance)
+    if (activeId && currentActiveScrollId !== activeId) {
+        currentActiveScrollId = activeId;
+        updateIndexVisuals();
+    }
+}
+
+// 3. ATUALIZAÇÃO VISUAL (Pinta de Azul e Mexe a Lista)
+function updateIndexVisuals() {
+    // Tenta atualizar a lista do PC
+    const pcList = document.getElementById('note-index-list');
+    applyVisualsToList(pcList);
+
+    // Tenta atualizar a lista do Mobile (se o modal estiver aberto)
+    const mobileList = document.getElementById('mobile-views-content');
+    if (mobileList) {
+        applyVisualsToList(mobileList);
+    }
+}
+
+// Função auxiliar para aplicar o estilo em qualquer lista
+function applyVisualsToList(listContainer) {
+    if (!listContainer || listContainer.style.display === 'none') return;
+
+    // 1. Limpa estilos antigos
+    listContainer.querySelectorAll('.index-item').forEach(li => {
+        li.classList.remove('active-scroll');
+        li.style.backgroundColor = ""; 
+        li.style.borderLeft = "";      
+    });
+
+    // 2. Aplica novo estilo
+    if (currentActiveScrollId) {
+        const activeLi = listContainer.querySelector(`.index-item[data-target-id="${currentActiveScrollId}"]`);
+        
+        if (activeLi) {
+            activeLi.classList.add('active-scroll');
+            activeLi.style.backgroundColor = "rgba(74, 144, 226, 0.15)"; // Azul suave
+            activeLi.style.borderLeft = "4px solid var(--accent-color)"; // Barra azul
+            
+            // --- A MÁGICA: OBRIGA A LISTA A RODAR ---
+            activeLi.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+}
 
     </script>
 </body>
