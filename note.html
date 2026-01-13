@@ -11985,35 +11985,80 @@ async function openBookmarksModal() {
 }
 
 async function toggleBookmark(marcadorId, shouldAdd, liElement) {
-    if (!activeReferenceEntity.id) return;
-
-    const textoRef = doc(db, 'textosbiblicos', activeReferenceEntity.id);
-
+    // Atualização Visual Imediata (Feedback Rápido)
     if (shouldAdd) liElement.classList.add('active');
     else liElement.classList.remove('active');
 
+    // Atualiza o listener para o próximo clique (toggle inverso)
     liElement.onclick = () => toggleBookmark(marcadorId, !shouldAdd, liElement);
 
-    // Atualizar Título em Tempo Real
+    // Atualiza Título em Tempo Real
     const activeCount = document.querySelectorAll('#bookmarks-list .bookmark-item.active').length;
     const titleElement = document.getElementById('references-panel-title');
     const entityName = activeReferenceEntity.name;
 
-    if (activeCount > 0) {
-        titleElement.textContent = `Referências para 🔖"${entityName}"`;
-    } else {
-        titleElement.textContent = `Referências para "${entityName}"`;
+    if (titleElement) {
+        titleElement.textContent = activeCount > 0 
+            ? `Referências para 🔖"${entityName}"` 
+            : `Referências para "${entityName}"`;
     }
 
     try {
-        if (shouldAdd) {
-            await updateDoc(textoRef, { [`marcadoresAssociados.${marcadorId}`]: true });
+        const { collection, query, where, getDocs, addDoc, updateDoc, doc, serverTimestamp, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        let targetId = activeReferenceEntity.id;
+        let docRef;
+
+        // 1. VERIFICAÇÃO DE EXISTÊNCIA (O Segredo da Correção)
+        // Se o ID for igual ao Nome (indicando que ainda não tem ID real) ou se sabemos que é novo
+        const q = query(
+            collection(db, 'textosbiblicos'), 
+            where('nome', '==', entityName),
+            where('userId', '==', auth.currentUser.uid)
+        );
+        
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            // --- CENÁRIO A: NÃO EXISTE -> CRIAR NOVO ---
+            console.log("🆕 Criando registo para o versículo na BD...");
+            
+            const newDoc = await addDoc(collection(db, 'textosbiblicos'), {
+                nome: entityName,
+                descricao: "", // Descrição vazia por defeito
+                userId: auth.currentUser.uid,
+                createdAt: serverTimestamp(),
+                // Se estamos a adicionar, já cria com o marcador. Se for remover (raro num novo), cria vazio.
+                marcadoresAssociados: shouldAdd ? { [marcadorId]: true } : {},
+                referencias: {} 
+            });
+
+            // Atualiza o ID globalmente para próximos cliques não criarem duplicados
+            targetId = newDoc.id;
+            activeReferenceEntity.id = newDoc.id;
+            
+            console.log("✅ Versículo criado com ID:", targetId);
+            return; // Sai, pois o addDoc já gravou o marcador
         } else {
-            await updateDoc(textoRef, { [`marcadoresAssociados.${marcadorId}`]: deleteField() });
+            // --- CENÁRIO B: JÁ EXISTE -> PEGAR ID REAL ---
+            targetId = snapshot.docs[0].id;
+            activeReferenceEntity.id = targetId; // Atualiza referência para garantir
         }
+
+        // 2. ATUALIZAÇÃO (UPDATE)
+        docRef = doc(db, 'textosbiblicos', targetId);
+
+        if (shouldAdd) {
+            await updateDoc(docRef, { [`marcadoresAssociados.${marcadorId}`]: true });
+        } else {
+            await updateDoc(docRef, { [`marcadoresAssociados.${marcadorId}`]: deleteField() });
+        }
+
     } catch (error) {
-        console.error("Erro ao atualizar marcador:", error);
-        alert("Erro ao guardar. A reverter...");
+        console.error("❌ Erro ao atualizar marcador:", error);
+        alert("Erro de conexão ao gravar marcador.");
+        
+        // Reverter visual em caso de erro
         if (shouldAdd) liElement.classList.remove('active');
         else liElement.classList.add('active');
     }
@@ -14343,66 +14388,43 @@ async function executeSave() {
     // 1. INSERIR HTML
     document.execCommand('insertHTML', false, finalHTML);
     
-    // 2. MARCAR COMO "POR GUARDAR" (Sem gravar logo)
-    updateSaveStatus('unsaved');
-    // Reinicia o contador de 2 minutos
+    // 2. MARCAR COMO "POR GUARDAR"
+    if (typeof updateSaveStatus === 'function') updateSaveStatus('unsaved');
     if (typeof saveNote === 'function') saveNote(false); 
 
-    // 3. APLICAR FOCO
+    // 3. APLICAR FOCO (LÓGICA ALTERADA AQUI)
     setTimeout(() => {
         const insertedEl = document.getElementById(uniqueId);
         if (insertedEl) {
             
-            // Configura título expansível se necessário
-            if (typeof appSettings !== 'undefined' && appSettings.showFullTitles) {
-                const titleArea = insertedEl.querySelector('.mini-note-title-input');
-                if (titleArea) {
-                    titleArea.classList.add('wrap-enabled');
-                    titleArea.style.whiteSpace = "pre-wrap";
-                    titleArea.style.overflow = "hidden";
-                    titleArea.style.height = 'auto';
-                    titleArea.oninput = function() {
-                        this.style.height = 'auto';
-                        this.style.height = this.scrollHeight + 'px';
-                        this.textContent = this.value; 
-                    };
-                }
-            }
-
-            // --- SELEÇÃO DE ALVO ---
+            // --- DECISÃO DE ALVO DO CURSOR ---
             let targetToFocus = null;
 
             if (type === 'redator') {
+                // REDATOR: VAI PARA O CORPO DO TEXTO
                 targetToFocus = insertedEl.querySelector('.redator-content');
             } 
             else if (type === 'free') {
+                // CONTENTOR: VAI PARA O CORPO
                 targetToFocus = insertedEl.querySelector('.mini-note-content');
             } 
             else {
-                // SubNota e Questão -> TÍTULO
+                // SUBNOTA E QUESTÃO: VAI PARA O TÍTULO (INPUT)
                 targetToFocus = insertedEl.querySelector('.mini-note-title-input');
             }
 
-            // --- EXECUÇÃO DE FOCO ---
+            // --- EXECUÇÃO DO FOCO ---
             if (targetToFocus) {
-                // Tira foco do editor principal
+                // Remove foco do editor principal
                 editor.blur(); 
                 
-                // Foca no alvo
                 targetToFocus.focus();
-                targetToFocus.click(); // Mobile keyboard trigger
-
-                // Seleciona o conteúdo (ou cursor)
-                if (targetToFocus.tagName === 'TEXTAREA' || targetToFocus.tagName === 'INPUT') {
-                    // Pequeno hack para garantir cursor no fim se tiver texto, ou início se vazio
-                    const val = targetToFocus.value;
-                    targetToFocus.value = '';
-                    targetToFocus.value = val;
-                }
-                else if (targetToFocus.getAttribute('contenteditable') === 'true') {
+                
+                // Se for área de texto (div contenteditable)
+                if (targetToFocus.getAttribute('contenteditable') === 'true') {
                     const range = document.createRange();
                     range.selectNodeContents(targetToFocus);
-                    range.collapse(false); 
+                    range.collapse(false); // Colapsa para o fim (para começar a escrever)
                     const sel = window.getSelection();
                     sel.removeAllRanges();
                     sel.addRange(range);
@@ -14412,7 +14434,7 @@ async function executeSave() {
             // Scroll suave para mostrar o item
             insertedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
-    }, 50); // Delay curto é suficiente agora que não há gravação concorrente
+    }, 50); 
 }
 
 // Função auxiliar para aplicar o foco (Reutilizável)
@@ -27837,8 +27859,60 @@ async function renderListCategoryItems(categoryId) {
     const origin = navigationStack[0]?.id || categoryId;
 
     try {
+        // Importações necessárias
+        const { collection, query, where, orderBy, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+
         // ==========================================
-        // 1. CAMINHO: COSMOS (TEMAS E SUBTEMAS)
+        // 1. NÍVEL PROFUNDO: DENTRO DE UM MARCADOR (Listar Versículos)
+        // ==========================================
+        if (lastNav.type === 'marcadores') {
+            middlePanelTitle.textContent = `🔖 ${lastNav.name}`;
+            updateAddButtonState(false); // Esconde botão + (não criamos versículos aqui)
+
+            // Procura textos bíblicos que tenham este marcador ID associado
+            const q = query(
+                collection(db, 'textosbiblicos'),
+                where(`marcadoresAssociados.${lastNav.id}`, '==', true),
+                where('userId', '==', myUid)
+            );
+
+            const snap = await getDocs(q);
+            listElement.innerHTML = '';
+
+            if (snap.empty) {
+                listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum texto com este marcador.</li>';
+                return;
+            }
+
+            snap.forEach(docSnap => {
+                const item = { id: docSnap.id, ...docSnap.data() };
+                const li = document.createElement('li');
+                li.className = 'list-item';
+                
+                // Se o versículo estiver aberto na 4ª coluna, destaca-o
+                if (activeReferenceEntity && activeReferenceEntity.id === item.id) {
+                    li.classList.add(currentViewMode === 'shared' ? 'selected-red' : 'selected');
+                }
+
+                li.innerHTML = `<span>📜 ${item.nome}</span>`;
+
+                // CLIQUE: Abre a 4ª Coluna (Comportamento final)
+                li.onclick = () => {
+                    // Limpa seleções visuais
+                    listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
+                    
+                    const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+                    li.classList.add(selectionClass);
+                    
+                    showReferencesPanel(item.id, item.nome, 'textobiblico');
+                };
+                listElement.appendChild(li);
+            });
+            return; // Sai da função aqui
+        }
+
+        // ==========================================
+        // 2. CAMINHO: COSMOS (TEMAS E SUBTEMAS)
         // ==========================================
         if (origin === 'cosmos') {
             if (lastNav.type === 'list-category') {
@@ -27856,17 +27930,10 @@ async function renderListCategoryItems(categoryId) {
 
                 snap.forEach(docSnap => {
                     const item = { id: docSnap.id, ...docSnap.data() };
-                    
-                    // --- FILTRO DE OCULTOS ---
                     if (item.estado === 'desativa') return;
 
                     const li = document.createElement('li');
                     li.className = 'list-item';
-                    li.setAttribute('data-id', item.id);
-                    li.setAttribute('data-type', 'cosmos-parent'); 
-                    li.setAttribute('data-name', item.nome);
-                    li.setAttribute('data-emoji', item.emoji || '💼');
-
                     li.innerHTML = `<span>${item.emoji || '💼'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
                     
                     li.onclick = (e) => {
@@ -27892,20 +27959,11 @@ async function renderListCategoryItems(categoryId) {
 
                 snap.forEach(docSnap => {
                     const item = { id: docSnap.id, ...docSnap.data() };
-
-                    // --- FILTRO DE OCULTOS ---
                     if (item.estado === 'desativa') return;
 
                     const li = document.createElement('li');
                     li.className = 'list-item';
-                    li.setAttribute('data-id', item.id);
-                    li.setAttribute('data-type', 'subcosmos');
-                    li.setAttribute('data-name', item.nome);
-                    li.setAttribute('data-emoji', item.emoji || '🔹');
-
-                    if (activeReferenceEntity && activeReferenceEntity.id === item.id) {
-                        li.classList.add('selected');
-                    }
+                    if (activeReferenceEntity && activeReferenceEntity.id === item.id) li.classList.add('selected');
 
                     li.innerHTML = `<span>${item.emoji || '🔹'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
                     
@@ -27922,11 +27980,9 @@ async function renderListCategoryItems(categoryId) {
         }
 
         // ==========================================
-        // 2. CAMINHO: BÍBLIA (Sem alterações)
+        // 3. CAMINHO: BÍBLIA (LIVROS -> CAPÍTULOS -> VERSÍCULOS)
         // ==========================================
         if (origin === 'biblia-root') {
-            // ... (O código da bíblia mantém-se igual, pois não se ocultam livros) ...
-            // Copia o bloco original da bíblia aqui se precisares, mas vou focar nas Entidades abaixo
             if (lastNav.type === 'list-category') {
                 middlePanelTitle.textContent = "Bíblia: Livros";
                 updateAddButtonState(false);
@@ -27983,36 +28039,73 @@ async function renderListCategoryItems(categoryId) {
         }
 
         // ==========================================
-        // 3. OUTRAS CATEGORIAS (PERSONAGENS, LOCAIS, ETC)
+        // 4. LISTAS PRINCIPAIS (Tópicos, Marcadores, etc.)
         // ==========================================
         if (lastNav.type === 'list-category') {
             let items = [];
             
-            if (categoryId === 'topico') {
+            // --- CASO MARCADORES (NOVO COMPORTAMENTO) ---
+            if (categoryId === 'marcadores') {
+                middlePanelTitle.textContent = "Marcadores";
+                // Mostra botão + (para criar novos géneros de marcador)
+                updateAddButtonState(true, true); 
+                
+                const q = query(collection(db, 'marcadores'), where('userId', '==', myUid), orderBy('nome'));
+                const snap = await getDocs(q);
+                
+                listElement.innerHTML = ''; // Limpa antes de preencher
+
+                if (snap.empty) {
+                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum marcador criado.</li>';
+                    return;
+                }
+
+                snap.forEach(docSnap => {
+                    const data = docSnap.data();
+                    const li = document.createElement('li');
+                    li.className = 'list-item';
+                    li.innerHTML = `<span>🔖 ${data.nome}</span>`;
+                    
+                    // CLIQUE: NAVEGA PARA DENTRO (Push Stack)
+                    li.onclick = () => {
+                        navigationStack.push({ 
+                            id: docSnap.id, 
+                            name: data.nome, 
+                            type: 'marcadores' // Isto ativa o "Nível Profundo" acima
+                        });
+                        updateNavigationView(true);
+                    };
+                    
+                    listElement.appendChild(li);
+                });
+                return; // Sai porque já renderizámos manualmente
+            }
+
+            // --- CASO TÓPICOS ---
+            else if (categoryId === 'topico') {
                 middlePanelTitle.textContent = "Tópicos";
                 updateAddButtonState(true, true);
                 const q = query(collection(db, 'topicos'), where('userId', '==', myUid), orderBy('nome'));
                 const snap = await getDocs(q);
                 snap.forEach(doc => {
                     const data = doc.data();
-                    // --- FILTRO DE OCULTOS ---
-                    if (data.estado !== 'desativa') {
-                        items.push({ id: doc.id, nome: data.nome, type: 'topico', desc: data.descricao });
-                    }
+                    if (data.estado !== 'desativa') items.push({ id: doc.id, nome: data.nome, type: 'topico', desc: data.descricao });
                 });
             } 
+            
+            // --- CASO TAGS ---
             else if (categoryId === 'tag') {
                 middlePanelTitle.textContent = "Tags (#)";
                 updateAddButtonState(false);
-                // Tags não têm estado 'desativa' na coleção de pastas, é diferente
                 const q = query(collection(db, 'pastas'), where('tipo', '==', 'nota'), where('userId', '==', myUid));
                 const snap = await getDocs(q);
                 const tagSet = new Set();
-                snap.forEach(doc => { if (doc.data().tags) doc.data().tags.forEach(t => tagSet.add(t)); });
+                snap.forEach(doc => { if(doc.data().tags) doc.data().tags.forEach(t => tagSet.add(t)); });
                 items = Array.from(tagSet).sort().map(t => ({ id: t, nome: t, type: 'tag' }));
             }
+            
+            // --- ENTIDADES GENÉRICAS (Personagens, Locais, etc.) ---
             else {
-                // ENTIDADES GENÉRICAS (Personagens, Locais, Datas, etc)
                 const config = ENTITY_CONFIG[categoryId];
                 if (config) {
                     middlePanelTitle.textContent = config.displayName;
@@ -28022,8 +28115,6 @@ async function renderListCategoryItems(categoryId) {
                     
                     snap.forEach(doc => {
                         const data = doc.data();
-                        
-                        // --- FILTRO CRÍTICO DE OCULTOS ---
                         if (data.estado !== 'desativa') {
                             items.push({ id: doc.id, nome: data.nome, type: categoryId });
                         }
@@ -28031,6 +28122,7 @@ async function renderListCategoryItems(categoryId) {
                 }
             }
             
+            // Renderiza para os casos padrão
             renderStandardList(items);
         }
 
