@@ -39203,16 +39203,20 @@ if (editorContainer) {
 // SISTEMA DE GPS DE CURSOR (POSIÇÃO EM TEMPO REAL)
 // ============================================================
 
-// Variável global que sabe SEMPRE onde o cursor esteve pela última vez
+// ============================================================
+// SISTEMA DE GPS DE CURSOR (DOM PATH) - CORREÇÃO PROFISSIONAL
+// ============================================================
+
 window.lastCursorGPS = {
     active: false,
     containerId: null,      // ID da caixa (wrapper)
-    inputType: null,        // 'content' (div) ou 'title' (input)
-    caretOffset: 0,         // Posição do cursor (número de caracteres)
+    editableClass: null,    // Classe da área editável específica
+    path: [],               // Caminho exato na árvore HTML (ex: Parágrafo 2 > Nó de Texto 1)
+    offset: 0,              // Posição do cursor dentro do nó
     timestamp: 0
 };
 
-// 1. FUNÇÃO DE RASTREIO (Executa a cada tecla ou clique)
+// 1. FUNÇÃO DE RASTREIO (Memoriza a estrutura exata)
 function trackCursorPosition() {
     const selection = window.getSelection();
     if (!selection.rangeCount) return;
@@ -39222,14 +39226,16 @@ function trackCursorPosition() {
     const element = anchorNode.nodeType === 3 ? anchorNode.parentElement : anchorNode;
 
     // --- A. ESTÁ NUM TÍTULO (Input/Textarea)? ---
+    // (A lógica de inputs mantém-se simples pois eles não suportam HTML complexo)
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
         const wrapper = element.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card');
         if (wrapper && wrapper.id) {
             window.lastCursorGPS = {
                 active: true,
+                type: 'input',
                 containerId: wrapper.id,
-                inputType: 'title',
-                caretOffset: 0, // Inputs não precisam de offset complexo, o focus() resolve
+                path: [], 
+                offset: 0,
                 timestamp: Date.now()
             };
             return;
@@ -39237,100 +39243,131 @@ function trackCursorPosition() {
     }
 
     // --- B. ESTÁ NO CONTEÚDO (Div Editável)? ---
-    const editableDiv = element.closest('[contenteditable="true"]');
+    // Encontra a área editável exata (ex: .mini-note-content)
+    const contentDiv = element.closest('[contenteditable="true"]');
     const wrapper = element.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, details.toggle-section');
 
-    if (editableDiv && wrapper && wrapper.id) {
-        // Calcula a posição absoluta do cursor dentro da div editável
-        const range = selection.getRangeAt(0);
-        const preCaretRange = range.cloneRange();
-        preCaretRange.selectNodeContents(editableDiv);
-        preCaretRange.setEnd(range.endContainer, range.endOffset);
+    if (contentDiv && wrapper && wrapper.id) {
         
-        const caretOffset = preCaretRange.toString().length;
+        // 1. CALCULA O CAMINHO NA ÁRVORE DOM
+        // Em vez de contar letras, memorizamos: "Filho 2 > Neto 0"
+        const path = [];
+        let currentNode = anchorNode;
+
+        while (currentNode && currentNode !== contentDiv) {
+            const parent = currentNode.parentNode;
+            if (!parent) break;
+            
+            // Descobre qual o índice deste nó entre os irmãos
+            const index = Array.prototype.indexOf.call(parent.childNodes, currentNode);
+            path.unshift(index); // Adiciona ao início da lista
+            
+            currentNode = parent;
+        }
+
+        // Guarda a classe para sabermos exatamente qual div focar (content vs title)
+        let targetClass = "";
+        if (contentDiv.classList.contains('mini-note-content')) targetClass = '.mini-note-content';
+        else if (contentDiv.classList.contains('redator-content')) targetClass = '.redator-content';
+        else if (contentDiv.classList.contains('toggle-content')) targetClass = '.toggle-content';
+        else if (contentDiv.classList.contains('sign-content')) targetClass = '.sign-content';
+        else if (contentDiv.classList.contains('cube-content')) targetClass = '.cube-content';
+        else if (contentDiv.classList.contains('card-desc-content')) targetClass = '.card-desc-content';
 
         window.lastCursorGPS = {
             active: true,
+            type: 'content',
             containerId: wrapper.id,
-            inputType: 'content',
-            caretOffset: caretOffset,
+            editableClass: targetClass, // Guarda qual a div específica
+            path: path,                 // O caminho do nó (ex: [2, 0])
+            offset: selection.anchorOffset, // A posição do cursor nesse nó
             timestamp: Date.now()
         };
     }
 }
 
-// 2. FUNÇÃO DE RESTAURO (Usa o GPS para voltar ao sítio)
+// 2. FUNÇÃO DE RESTAURO (Navega pelo HTML para achar o sítio)
 function restoreCursorFromGPS() {
-    // Se o GPS estiver vazio ou for muito antigo (> 30 min), ignora
     if (!window.lastCursorGPS.active) return;
     
     const gps = window.lastCursorGPS;
     const wrapper = document.getElementById(gps.containerId);
 
-    if (!wrapper) return; // A caixa foi apagada entretanto
+    if (!wrapper) return; 
 
-    // --- RESTAURAR TÍTULO ---
-    if (gps.inputType === 'title') {
+    // --- RESTAURAR INPUT (TÍTULO) ---
+    if (gps.type === 'input') {
         const input = wrapper.querySelector('input, textarea');
         if (input) {
             input.focus();
-            // Tenta colocar no fim por segurança
+            // Põe no fim por segurança
             const len = input.value.length;
             input.setSelectionRange(len, len);
         }
-    } 
-    // --- RESTAURAR CONTEÚDO ---
-    else if (gps.inputType === 'content') {
-        // Encontra a div editável correta dentro do wrapper
-        let contentDiv = wrapper.querySelector('.mini-note-content, .redator-content, .toggle-content, .sign-content, .card-desc-content, .cube-content');
-        
-        // Fallback genérico se não encontrar pela classe
+        return;
+    }
+
+    // --- RESTAURAR CONTEÚDO (HTML COMPLEXO) ---
+    if (gps.type === 'content') {
+        // Tenta encontrar a div editável exata
+        let contentDiv = null;
+        if (gps.editableClass) {
+            contentDiv = wrapper.querySelector(gps.editableClass);
+        }
+        // Fallback se a classe falhar
         if (!contentDiv) contentDiv = wrapper.querySelector('[contenteditable="true"]');
 
         if (contentDiv) {
-            contentDiv.focus();
-            
-            // Tenta restaurar a posição exata do caractere
-            const range = document.createRange();
-            const sel = window.getSelection();
-            let charCount = 0;
-            let found = false;
+            contentDiv.focus(); // Foca primeiro a div geral
 
-            // Função recursiva para encontrar o nó de texto correto
-            function traverseNodes(node) {
-                if (found) return;
-                
-                if (node.nodeType === 3) { // Nó de texto
-                    const nextCharCount = charCount + node.length;
-                    if (!found && gps.caretOffset >= charCount && gps.caretOffset <= nextCharCount) {
-                        range.setStart(node, gps.caretOffset - charCount);
-                        range.collapse(true);
-                        found = true;
-                    }
-                    charCount = nextCharCount;
+            // NAVEGA PELO CAMINHO GRAVADO
+            let targetNode = contentDiv;
+            let pathValid = true;
+
+            for (const index of gps.path) {
+                if (targetNode.childNodes && targetNode.childNodes[index]) {
+                    targetNode = targetNode.childNodes[index];
                 } else {
-                    for (let i = 0; i < node.childNodes.length; i++) {
-                        traverseNodes(node.childNodes[i]);
-                    }
+                    pathValid = false;
+                    break;
                 }
             }
 
-            traverseNodes(contentDiv);
+            const sel = window.getSelection();
+            const range = document.createRange();
 
-            // Se encontrou a posição exata, aplica
-            if (found) {
-                sel.removeAllRanges();
-                sel.addRange(range);
+            if (pathValid) {
+                // Se encontrou o nó exato (mesmo que seja uma linha vazia ou texto)
+                try {
+                    // Proteção: garante que o offset não ultrapassa o tamanho
+                    const maxOffset = targetNode.length || targetNode.childNodes.length || 0;
+                    const safeOffset = Math.min(gps.offset, maxOffset);
+                    
+                    range.setStart(targetNode, safeOffset);
+                    range.collapse(true);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                } catch (e) {
+                    console.warn("Erro offset GPS, usando fallback fim.");
+                    placeCaretAtEnd(contentDiv);
+                }
             } else {
-                // Se falhou (texto mudou), põe no fim
-                const endRange = document.createRange();
-                endRange.selectNodeContents(contentDiv);
-                endRange.collapse(false);
-                sel.removeAllRanges();
-                sel.addRange(endRange);
+                // Se o HTML mudou entretanto, põe no fim da caixa (segurança)
+                placeCaretAtEnd(contentDiv);
             }
         }
     }
+}
+
+// Auxiliar para colocar cursor no fim
+function placeCaretAtEnd(el) {
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
 }
 
 // 3. LISTENERS CONSTANTES (Para manter o GPS atualizado)
@@ -39340,7 +39377,7 @@ if (editorForGPS) {
     // Atualiza o GPS sempre que clica ou escreve
     editorForGPS.addEventListener('keyup', trackCursorPosition);
     editorForGPS.addEventListener('mouseup', trackCursorPosition);
-    editorForGPS.addEventListener('input', trackCursorPosition); // Para inputs de título
+    editorForGPS.addEventListener('input', trackCursorPosition);
     
     // Suporte para toque em mobile
     editorForGPS.addEventListener('touchend', () => setTimeout(trackCursorPosition, 100));
@@ -39349,9 +39386,8 @@ if (editorForGPS) {
 // 4. GATILHO DE REGRESSO (Quando volta à aba)
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-        // Pequeno delay para dar tempo ao browser de renderizar a aba
         setTimeout(() => {
-            console.log("👁️ Aba visível. A restaurar foco...");
+            console.log("👁️ Aba visível. GPS restaurando posição exata...");
             restoreCursorFromGPS();
         }, 150);
     }
@@ -39361,7 +39397,6 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('focus', () => {
     setTimeout(restoreCursorFromGPS, 150);
 });
-
 // ============================================================
 // MOTOR DE SCROLLSPY (ÍNDICE AUTOMÁTICO) - VERSÃO ÚNICA
 // ============================================================
