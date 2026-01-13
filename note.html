@@ -18733,24 +18733,20 @@ async function showReferencesPanel(entityId, entityName, entityType, anexoId = n
     await forceSaveAndClosePuzzleMode();
     resetReferencesPanelUI(); 
 
-    // --- BLOCO NOVO: DETETAR MODO AQUÁRIO ---
+    // --- MODO AQUÁRIO ---
     const aquariumEnv = document.getElementById('aquarium-environment');
     const refPanel = document.getElementById('references-panel');
 
-    // Se o aquário estiver visível (display !== none)
     if (aquariumEnv && aquariumEnv.style.display !== 'none') {
         refPanel.classList.add('aquarium-overlay-mode');
-        // Move o painel para dentro do aquário para garantir o Z-Index correto
         aquariumEnv.appendChild(refPanel);
     } else {
         refPanel.classList.remove('aquarium-overlay-mode');
-        // Devolve ao container original se tiver saído
         const mainContainer = document.querySelector('.notebook-container');
         if (mainContainer && refPanel.parentElement !== mainContainer) {
             mainContainer.appendChild(refPanel);
         }
     }
-    // ----------------------------------------
 
     // 3. Definir Entidade Ativa
     activeReferenceEntity = { 
@@ -18773,24 +18769,61 @@ async function showReferencesPanel(entityId, entityName, entityType, anexoId = n
     if (contentPuzzle) contentPuzzle.style.display = 'flex';
     if (contentRefs) contentRefs.style.display = 'none';
 
-    // 6. Configurar Título e Botões
+    // 6. CONFIGURAR TÍTULO E DESCRIÇÃO
     const titleEl = document.getElementById('references-panel-title');
+    const descElement = document.getElementById('references-panel-description');
+    
+    // Define título inicial padrão
     if (titleEl) titleEl.textContent = `Referências: ${entityName}`;
     
-    const descElement = document.getElementById('references-panel-description');
+    // --- LÓGICA DO ÍCONE DE MARCADOR (🔖) ---
+    // Se for texto bíblico, verifica se tem marcadores para adicionar o ícone
+    if (entityType === 'textobiblico') {
+        // Tenta obter ID real se não tiver
+        let realId = entityId;
+        if (!realId) {
+            // Se veio sem ID (ex: clique no texto da nota), tenta encontrar no cache ou BD
+            const cached = allEntities['textobiblico']?.find(e => e.nome === entityName);
+            realId = cached ? cached.id : null;
+        }
+
+        if (realId) {
+            // Importação dinâmica para garantir acesso
+            const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            
+            // Busca o documento para ver os marcadores
+            try {
+                const docRef = doc(db, 'textosbiblicos', realId);
+                const snap = await getDoc(docRef);
+                
+                if (snap.exists()) {
+                    const data = snap.data();
+                    const marcadores = data.marcadoresAssociados || {};
+                    const hasBookmarks = Object.keys(marcadores).length > 0;
+                    
+                    if (hasBookmarks) {
+                        titleEl.textContent = `Referências: 🔖 ${entityName}`;
+                    }
+                    
+                    // Atualiza o ID global caso estivesse em falta
+                    activeReferenceEntity.id = realId;
+                }
+            } catch (e) {
+                console.warn("Erro ao verificar marcadores:", e);
+            }
+        }
+    }
+
+    // 7. CONFIGURAR BOTÕES
     const editBtn = document.getElementById('references-edit-btn');
     const anchorBtn = document.getElementById('references-anchor-btn'); 
     const wolBtn = document.getElementById('references-wol-btn');
     const bookmarkBtn = document.getElementById('references-bookmark-btn');
     
-    // Reset padrão dos botões
     if (editBtn) editBtn.style.display = 'block';
     if (wolBtn) wolBtn.style.display = 'none';
     if (bookmarkBtn) bookmarkBtn.style.display = 'none';
 
-    // ============================================================
-    // LÓGICA DE VISIBILIDADE DO BOTÃO ÂNCORA (⚓)
-    // ============================================================
     const noAnchorTypes = ['textobiblico', 'topico', 'destaque', 'marcadores', 'tag'];
 
     if (anchorBtn) {
@@ -18800,45 +18833,34 @@ async function showReferencesPanel(entityId, entityName, entityType, anexoId = n
             anchorBtn.style.display = 'block'; 
         }
     }
-    // ============================================================
 
-    // 7. ROTEAMENTO DE BUSCA E CONTEÚDO
-    
-    // A. PESQUISA POR METADADOS (Tópicos e Versículos Salvos)
+    // 8. ROTEAMENTO DE CONTEÚDO
     if (entityType === 'topico' || entityType === 'textobiblico') {
         if (entityType === 'textobiblico') {
-            if (editBtn) editBtn.style.display = 'none'; // Não se edita nome de versículo
+            if (editBtn) editBtn.style.display = 'none'; 
             if (wolBtn) wolBtn.style.display = 'block';
             if (bookmarkBtn) bookmarkBtn.style.display = 'block';
             
             if (descElement) {
                 descElement.innerHTML = `<em>A consultar biblioteca...</em>`;
-                // Tenta buscar o texto
                 const texto = await fetchBibleText(entityName);
                 descElement.innerHTML = texto ? `<div style="color:var(--text-color); font-size:0.95em;">"${texto}"</div>` : `<em>Texto não disponível.</em>`;
             }
         }
-        
-        // Renderiza a lista de referências (onde este tópico/texto foi usado)
         renderTopicResultsList(entityId, entityType); 
     } 
-    
-    // B. PESQUISA POR TEXTO EXATO / CATEGORIA
     else {
-        // Se for TAG, usa a função específica para tags
         if (entityType === 'tag') {
-            showTagReferencesPanel(entityName); // Chama a função dedicada e sai
+            showTagReferencesPanel(entityName); 
             return;
         }
 
-        // Para os outros (Personagem, Local, Data, Cosmos, etc.)
         renderUniversalTextSearch(entityName);
         
-        // Tenta carregar a descrição do item
         if (descElement) {
             try {
                 const coll = getCollectionFromType(entityType);
-                if (coll) {
+                if (coll && entityId) {
                     const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
                     const docSnap = await getDoc(doc(db, coll, entityId));
                     if (docSnap.exists()) {
@@ -18853,7 +18875,6 @@ async function showReferencesPanel(entityId, entityName, entityType, anexoId = n
         }
     }
 
-    // 8. Carregar o Quadro (Puzzle)
     loadPuzzleData(entityId, entityType);
 }
 
