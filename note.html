@@ -8985,6 +8985,10 @@ details.toggle-section * {
     flex-direction: column; /* Necessário para o cabeçalho das sub-abas ficar no topo */
 }
 
+#note-content-editor, .post-editor-content {
+    overflow-anchor: none !important; /* Impede o "Scroll Anchoring" automático do browser */
+}
+
 </style>
 
 
@@ -14167,20 +14171,15 @@ async function executeSave() {
 
     // 1. Verificação de segurança
     if (!selectedNoteId && !activeEditingPostId) {
-        console.warn("⚠️ Nada para gravar (nenhuma nota ou post selecionado).");
         return;
     }
     
-    if (isClosingNote) {
-        console.log("⚠️ Nota a fechar, ignorando gravação automática.");
-        return;
-    }
+    if (isClosingNote) return;
 
     // 2. MODO ARQUIVO (FEED)
     const archiveArea = document.getElementById('archive-area');
     if (archiveArea && archiveArea.style.display !== 'none') {
         if (activeEditingPostId) {
-            console.log(`📱 [ARQUIVO] A gravar post ${activeEditingPostId}...`);
             await saveArchivePost(activeEditingPostId);
             updateSaveStatus('saved');
             return true;
@@ -14188,33 +14187,36 @@ async function executeSave() {
         return true; 
     }
 
-    // 3. SINCRONIZAÇÃO CRÍTICA (Inputs -> HTML)
-    // Antes de extrair o .innerHTML, temos de garantir que o que o user escreveu nos inputs
-    // (títulos das caixas) fica gravado no atributo 'value' ou no texto do textarea.
+    // 3. SINCRONIZAÇÃO CRÍTICA (Inputs -> HTML) - COM PROTEÇÃO DE SCROLL
     const editor = document.getElementById('note-content-editor');
+    let currentScrollPos = 0;
+    
     if (editor) {
+        // Guarda a posição exata do scroll antes de mexer no DOM
+        currentScrollPos = editor.scrollTop;
+
         const allInputs = editor.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
         
         allInputs.forEach(t => {
+            // PROTEÇÃO: Se este é o campo onde estás a escrever agora, NÃO mexe no DOM dele.
+            // O valor já está lá e será capturado no value, mexer no textContent causa o salto.
+            if (t === document.activeElement) return;
+
+            // Para os outros campos, atualiza apenas se necessário
             if (t.tagName === 'TEXTAREA') {
-                // Para textareas, o valor tem de ser o texto interno
-                t.textContent = t.value; 
+                if (t.textContent !== t.value) t.textContent = t.value; 
             } else {
-                // Para inputs, o valor fica no atributo value
-                t.setAttribute('value', t.value);
+                if (t.getAttribute('value') !== t.value) t.setAttribute('value', t.value);
             }
         });
     }
 
-    // 4. Início do envio para o Firebase
     updateSaveStatus('saving');
 
-    // Determina o ID correto (Nota Real ou ID Temporário)
     let targetId = selectedNoteId;
     const realId = editor ? editor.getAttribute('data-real-id') : null;
     if (realId) targetId = realId;
 
-    // Importações necessárias (caso não estejam no topo)
     const { doc, updateDoc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
     const noteRef = doc(db, 'pastas', targetId);
 
@@ -14224,7 +14226,6 @@ async function executeSave() {
         const finalContent = editor ? editor.innerHTML : "";
         const usedColors = typeof extractUsedColorsFromEditor === 'function' ? extractUsedColorsFromEditor() : [];
 
-        // 5. Gravação Principal
         await updateDoc(noteRef, { 
             nome: finalTitle, 
             conteudo: finalContent,
@@ -14232,33 +14233,32 @@ async function executeSave() {
             ultimaedicao: serverTimestamp()
         });
 
-        console.log("✅ [FIREBASE] Nota atualizada com sucesso.");
+        // RESTAURAÇÃO DE SCROLL (Caso tenha saltado milimetricamente)
+        if (editor && Math.abs(editor.scrollTop - currentScrollPos) > 5) {
+             editor.scrollTop = currentScrollPos;
+        }
 
-        // 6. Sincronização Pública (Se a nota estiver partilhada)
+        // Sincronização Pública
         if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
-            try {
+             try {
                 const shareId = currentNoteShareData.shareId;
                 const publicNoteRef = doc(db, 'shared_notes', shareId);
-                
-                // Grava sem await para não bloquear a UI (Fire-and-forget)
                 setDoc(publicNoteRef, {
                     nome: finalTitle,
                     conteudo: finalContent,
                     authorName: currentUserData?.nome || "Anónimo",
                     updatedAt: serverTimestamp(),
                     type: 'full_note' 
-                }, { merge: true }).catch(err => console.warn("Erro sync partilha:", err));
-                
-            } catch (e) { console.warn("Erro ao preparar partilha:", e); }
+                }, { merge: true }).catch(e => {});
+            } catch (e) {}
         }
 
         updateSaveStatus('saved');
         return true; 
 
     } catch (error) {
-        console.error("❌ ERRO CRÍTICO AO GUARDAR:", error);
+        console.error("❌ ERRO AO GUARDAR:", error);
         updateSaveStatus('error');
-        alert("Erro ao gravar. Verifique a sua ligação.");
         return false;
     }
 }
@@ -27821,28 +27821,37 @@ function applyTitleWrappingEffect() {
 function autoResizeTitle(el) {
     if (!el) return;
     
-    // Se a configuração estiver desligada, não faz nada
     if (typeof appSettings !== 'undefined' && !appSettings.showFullTitles) {
         el.style.height = ""; 
         return;
     }
 
-    // TRUQUE PARA EVITAR O SALTO:
-    // Antes de resetar para 'auto', guardamos a altura atual.
-    // Se a nova altura calculada for igual à antiga, não mexemos no DOM visualmente.
-    const oldHeight = el.style.height;
+    // TRUQUE ANTI-SALTO:
+    // Em vez de zerar a altura para medir (o que causa o salto),
+    // usamos o scrollHeight atual. Se ele aumentou, expandimos.
+    // Se precisarmos mesmo encolher, fazemos com cuidado.
 
-    // Precisamos definir height 'auto' momentaneamente para obter o scrollHeight correto
-    // mas fazemos isso de forma a minimizar o repaint
-    el.style.height = 'auto';
-    const newHeight = el.scrollHeight + 'px';
+    const currentHeight = el.offsetHeight;
+    
+    // Reseta temporariamente para medir o tamanho real do texto
+    // Mas guarda o scroll da página para restaurar se saltar
+    const scrollParent = el.closest('#note-content-editor') || document.documentElement;
+    const oldScroll = scrollParent.scrollTop;
 
-    // Só aplica se houve mudança real
-    if (newHeight !== oldHeight) {
-        el.style.height = newHeight;
+    el.style.height = 'auto'; 
+    const newHeight = el.scrollHeight;
+
+    // Se a diferença for mínima, não mexe para evitar tremores
+    if (Math.abs(newHeight - currentHeight) > 2) {
+        el.style.height = newHeight + 'px';
+        
+        // Se o ajuste de altura fez o scroll saltar, restaura-o
+        if (scrollParent.scrollTop !== oldScroll) {
+            scrollParent.scrollTop = oldScroll;
+        }
     } else {
-        // Se for igual, restaura a altura antiga imediatamente para evitar o "piscar"
-        el.style.height = oldHeight;
+        // Restaura a altura original se não houve mudança real
+        el.style.height = currentHeight + 'px';
     }
 }
 
