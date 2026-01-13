@@ -8989,6 +8989,37 @@ details.toggle-section * {
     overflow-anchor: none !important; /* Impede o "Scroll Anchoring" automático do browser */
 }
 
+/* ============================================================
+   AJUSTE AUTOMÁTICO DO TEXTO NO AQUÁRIO (SQUEEZE)
+   ============================================================ */
+
+/* Define a transição suave para o texto não saltar bruscamente */
+#aquarium-scroll-area {
+    transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+                margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 100%; /* Garante que ocupa o espaço */
+    box-sizing: border-box;
+}
+
+/* QUANDO A ESQUERDA (MEDUSA) ESTÁ ABERTA */
+#aquarium-environment.left-open #aquarium-scroll-area {
+    margin-left: 360px !important; /* Mesma largura da sidebar esquerda */
+}
+
+/* QUANDO A DIREITA (REFERÊNCIAS) ESTÁ ABERTA */
+#aquarium-environment.right-open #aquarium-scroll-area {
+    margin-right: 400px !important; /* Mesma largura do painel direito */
+}
+
+/* NO MOBILE: Ignora isto (continua a sobrepor para poupar espaço) */
+@media (max-width: 768px) {
+    #aquarium-environment.left-open #aquarium-scroll-area,
+    #aquarium-environment.right-open #aquarium-scroll-area {
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+    }
+}
+
 </style>
 
 
@@ -18740,6 +18771,10 @@ async function showReferencesPanel(entityId, entityName, entityType, anexoId = n
     if (aquariumEnv && aquariumEnv.style.display !== 'none') {
         refPanel.classList.add('aquarium-overlay-mode');
         aquariumEnv.appendChild(refPanel);
+
+        aquariumEnv.classList.add('right-open');
+
+
     } else {
         refPanel.classList.remove('aquarium-overlay-mode');
         const mainContainer = document.querySelector('.notebook-container');
@@ -18960,9 +18995,15 @@ window.manualInsertBibleText = async function(name) {
 async function hideReferencesPanel() {
     const refPanel = document.getElementById('references-panel');
     const mainContainer = document.querySelector('.notebook-container');
+    
+    // --- CORREÇÃO AQUI: Definir a variável que faltava ---
+    const aquariumEnv = document.getElementById('aquarium-environment'); 
+    // ----------------------------------------------------
 
     // 1. Grava o puzzle anterior se estivesse em modo edição
-    await forceSaveAndClosePuzzleMode();
+    if (typeof forceSaveAndClosePuzzleMode === 'function') {
+        await forceSaveAndClosePuzzleMode();
+    }
 
     // 2. RESET DO DOSSIÉ
     window.isDossieEditMode = false;
@@ -18976,6 +19017,11 @@ async function hideReferencesPanel() {
     if (refPanel.classList.contains('aquarium-overlay-mode')) {
         // Remove a classe que força a posição fixa na direita
         refPanel.classList.remove('aquarium-overlay-mode');
+        
+        // --- AGORA JÁ FUNCIONA: Remove a margem do texto ---
+        if (aquariumEnv) {
+            aquariumEnv.classList.remove('right-open');
+        }
         
         // Devolve o painel à estrutura principal do site (sai do #aquarium-environment)
         if (mainContainer && !mainContainer.contains(refPanel)) {
@@ -32366,13 +32412,61 @@ noteContentEditor.addEventListener('click', (e) => {
 const secToolbar = document.getElementById('secondary-toolbar');
 
 if (secToolbar) {
-    secToolbar.addEventListener('click', (e) => {
+    // Removemos listener antigo para garantir que não duplica
+    const newSecToolbar = secToolbar.cloneNode(true);
+    secToolbar.parentNode.replaceChild(newSecToolbar, secToolbar);
+
+    newSecToolbar.addEventListener('click', (e) => {
         const btn = e.target.closest('button');
         if (!btn) return;
 
-        // --- CORREÇÃO AQUI: Declarar a variável 'action' ---
-        const action = btn.dataset.action; 
+        const action = btn.dataset.action;
         
+        // --- FUNÇÃO AUXILIAR: EFEITO IGUAL À SUBNOTA ---
+        const insertWidget = (html, id, focusSelector) => {
+            // 1. Focar no editor antes de inserir (para saber onde colocar)
+            const editor = document.getElementById('note-content-editor');
+            if (document.activeElement !== editor && !editor.contains(document.activeElement)) {
+                editor.focus();
+            }
+
+            // 2. Inserir o HTML
+            document.execCommand('insertHTML', false, html);
+            
+            // 3. Marcar como não salvo
+            if (typeof updateSaveStatus === 'function') updateSaveStatus('unsaved');
+            
+            // 4. A MAGIA: Scroll e Foco (Igual à Subnota)
+            setTimeout(() => {
+                const element = document.getElementById(id);
+                if (element) {
+                    // A. Scroll Suave para o Centro
+                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    
+                    // B. Focar no Campo Específico (Título ou Conteúdo)
+                    const inputToFocus = element.querySelector(focusSelector);
+                    if (inputToFocus) {
+                        inputToFocus.focus();
+                        // Se for um input de texto, seleciona tudo para começar a escrever logo
+                        if (inputToFocus.tagName === 'INPUT') {
+                             // Pequeno hack para garantir cursor no fim ou seleção total
+                             inputToFocus.select(); 
+                        } else {
+                            // Se for div contenteditable, coloca cursor no fim
+                            const range = document.createRange();
+                            range.selectNodeContents(inputToFocus);
+                            range.collapse(false);
+                            const sel = window.getSelection();
+                            sel.removeAllRanges();
+                            sel.addRange(range);
+                        }
+                    }
+                }
+            }, 50); // 50ms é o timing ideal usado nas Subnotas
+            
+            if (typeof saveNote === 'function') saveNote(false);
+        };
+
         // 1. INSERIR IMAGEM (🖼️)
         if (action === 'insert-image') {
             e.preventDefault(); e.stopPropagation();
@@ -32385,12 +32479,9 @@ if (secToolbar) {
                         <button class="cmd-convert-img modal-btn primary" style="padding:2px 8px; cursor:pointer;">OK</button>
                     </div>
                 </div><p><br></p>`;
-            document.execCommand('insertHTML', false, widgetHTML);
-            setTimeout(() => {
-                const w = document.getElementById(uniqueId);
-                if(w) w.querySelector('input')?.focus();
-            }, 50);
-            if (typeof saveNote === 'function') saveNote();
+            
+            // Foca no input de URL
+            insertWidget(widgetHTML, uniqueId, 'input');
         }
 
         // 2. INSERIR PLACA/RACIOCÍNIO (🪧)
@@ -32415,12 +32506,9 @@ if (secToolbar) {
                         <button class="sign-add-btn" onclick="window.addAttachmentToSign(this)">+</button>
                     </div>
                 </div><p><br></p>`;
-            document.execCommand('insertHTML', false, signHTML);
-            setTimeout(() => {
-                const w = document.getElementById(uniqueId);
-                if(w) w.querySelector('.sign-title-input')?.focus();
-            }, 50);
-            if (typeof saveNote === 'function') saveNote();
+            
+            // Foca no Título (Input)
+            insertWidget(signHTML, uniqueId, '.sign-title-input');
         }
 
         // 3. INSERIR CARTÃO TEMÁTICO (🪪)
@@ -32446,12 +32534,9 @@ if (secToolbar) {
                         </div>
                     </div>
                 </div><p><br></p>`;
-            document.execCommand('insertHTML', false, cardHTML);
-            setTimeout(() => {
-                const w = document.getElementById(uniqueId);
-                if(w) w.querySelector('.card-title-input')?.focus();
-            }, 50);
-            if (typeof saveNote === 'function') saveNote();
+            
+            // Foca no Título (Input)
+            insertWidget(cardHTML, uniqueId, '.card-title-input');
         }
 
         // 4. INSERIR CUBO (🧊)
@@ -32474,24 +32559,14 @@ if (secToolbar) {
                         <p>Escreva aqui o seu texto...</p>
                     </div>
                 </div><p style="clear:both;"><br></p>`;
-            document.execCommand('insertHTML', false, cubeHTML);
-            setTimeout(() => {
-                const w = document.getElementById(uniqueId);
-                if(w) w.querySelector('.cube-content')?.focus();
-            }, 50);
-            if (typeof saveNote === 'function') saveNote();
+            
+            // Foca no Conteúdo
+            insertWidget(cubeHTML, uniqueId, '.cube-content');
         }
 
         // 5. INSERIR DUAS COLUNAS (⏸️)
         else if (action === 'insert-2-cols') {
             e.preventDefault(); e.stopPropagation();
-            
-            // Forçar foco no editor
-            const editor = document.getElementById('note-content-editor');
-            if (document.activeElement !== editor && !editor.contains(document.activeElement)) {
-                editor.focus();
-            }
-            
             const uniqueId = `cols_${Date.now()}`;
             const colsHTML = `
                 <div class="journal-cols-wrapper" id="${uniqueId}" contenteditable="false">
@@ -32505,12 +32580,8 @@ if (secToolbar) {
                     </div>
                 </div><p><br></p>`;
 
-            document.execCommand('insertHTML', false, colsHTML);
-            setTimeout(() => {
-                const container = document.getElementById(uniqueId);
-                if (container) container.querySelector('.journal-col')?.focus();
-            }, 50);
-            if (typeof saveNote === 'function') saveNote();
+            // Foca na primeira coluna
+            insertWidget(colsHTML, uniqueId, '.journal-col');
         }
     });
 }
@@ -37065,26 +37136,24 @@ if (aqSidebarBtn) {
     newBtn.addEventListener('click', () => {
         const env = document.getElementById('aquarium-environment');
         
-        // Alterna o estado do painel e do botão
+        // Alterna o estado do painel
         env.classList.toggle('sidebar-open');
         newBtn.classList.toggle('active');
+
+        // --- NOVO: Adiciona a classe para empurrar o texto ---
+        env.classList.toggle('left-open'); 
+        // ---------------------------------------------------
         
-        // LÓGICA DE ESTADO
         if (env.classList.contains('sidebar-open')) {
-            // Se abriu, carrega a aba ativa
             const activeTab = document.querySelector('.aq-tab.active');
             if (activeTab) loadAquariumTab(activeTab.dataset.tab);
         } else {
-            // --- CORREÇÃO AQUI: SE FECHOU, LIMPA O DESTAQUE AZUL ---
+            // Limpezas de fecho...
+            window.activeStoreGhostId = null;
             document.querySelectorAll('.ghost-block.active-store-target').forEach(g => {
                 g.classList.remove('active-store-target');
-                // Remove estilos inline forçados se houver
-                g.style.border = '';
-                g.style.backgroundColor = '';
-                g.style.boxShadow = '';
+                g.style.cssText = "";
             });
-            // Reseta a variável para sabermos que nada está selecionado
-            window.activeStoreGhostId = null;
         }
     });
 }
@@ -38111,35 +38180,42 @@ window.closeGhostPopup = function(ghostId) {
 window.resetAquariumState = function() {
     console.log("🧹 [RESET] A limpar estado do Aquário...");
 
-    // 1. Fechar Sidebar e Resetar Abas
+    // 1. Fechar Sidebar e Resetar Margens do Texto
     const env = document.getElementById('aquarium-environment');
-    if (env) env.classList.remove('sidebar-open');
+    if (env) {
+        env.classList.remove('sidebar-open');
+        
+        // --- NOVO: Remove as classes que empurram o texto ---
+        env.classList.remove('left-open');
+        env.classList.remove('right-open');
+    }
     
     // Reset do botão da Medusa
     const sideBtn = document.getElementById('aquarium-sidebar-toggle');
     if (sideBtn) sideBtn.classList.remove('active');
 
+    // Volta para a aba de listas por defeito na sidebar
     const listTab = document.querySelector('.aq-tab[data-tab="listas"]');
     if (listTab) listTab.click();
 
-    // 2. DESTRUIR TODOS OS POPUPS
+    // 2. DESTRUIR TODOS OS POPUPS FLUTUANTES
     document.querySelectorAll('.aq-popup-window').forEach(popup => popup.remove());
     
-    // --- CORREÇÃO AQUI: LIMPEZA TOTAL DOS EFEITOS VISUAIS AZUIS ---
+    // --- LIMPEZA TOTAL DOS EFEITOS VISUAIS AZUIS (Armazém) ---
     document.querySelectorAll('.ghost-block.active-store-target').forEach(g => {
         g.classList.remove('active-store-target');
-        // Remove estilos inline forçados para garantir limpeza
+        // Remove estilos inline forçados para garantir limpeza absoluta
         g.style.border = '';
         g.style.backgroundColor = '';
         g.style.boxShadow = '';
     });
     // Zera a variável de controlo
     window.activeStoreGhostId = null;
-    // -------------------------------------------------------------
 
-    // 3. DESBLOQUEAR BLOCOS ORIGINAIS
+    // 3. DESBLOQUEAR BLOCOS ORIGINAIS (Que estavam em janelas flutuantes)
     document.querySelectorAll('.ghost-block.locked-popup').forEach(block => {
         block.classList.remove('locked-popup');
+        block.setAttribute('contenteditable', 'true'); // Devolve a capacidade de editar
     });
 
     // 4. RESETAR VARIÁVEIS GLOBAIS
@@ -38147,7 +38223,7 @@ window.resetAquariumState = function() {
     aqListStack = [];          
     window.activeGhost = null; 
 
-    // 5. Esconder Barras e Modais
+    // 5. Esconder Barras de Contexto e Modais de Sistema
     const contextTools = document.getElementById('aq-context-tools');
     if (contextTools) contextTools.style.setProperty('display', 'none', 'important');
 
@@ -38160,7 +38236,10 @@ window.resetAquariumState = function() {
         if (el) el.style.display = 'none';
     });
 
-    if (typeof hideReferencesPanel === 'function') hideReferencesPanel();
+    // 6. Fechar o Painel de Referências (Direita) e devolvê-lo à app principal
+    if (typeof hideReferencesPanel === 'function') {
+        hideReferencesPanel();
+    }
 };
 
 // Permite clicar noutros blocos mesmo com popups abertos
