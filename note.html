@@ -9088,6 +9088,29 @@ details.toggle-section * {
     color: white !important;
 }
 
+/* Notificação na Aba Share */
+.folder-mode-item {
+    position: relative; /* Necessário para posicionar a bola */
+}
+
+.tab-notification-dot {
+    position: absolute;
+    top: -2px;
+    right: -6px;
+    width: 8px;
+    height: 8px;
+    background-color: #e74c3c;
+    border-radius: 50%;
+    box-shadow: 0 0 4px rgba(231, 76, 60, 0.6);
+    display: none; /* Escondido por defeito */
+    pointer-events: none;
+    animation: pulse-dot 2s infinite;
+}
+
+.tab-notification-dot.visible {
+    display: block !important;
+}
+
 </style>
 
 
@@ -11343,7 +11366,8 @@ let activeAquariumPopups = [];
 let activeStoreGhostId = null;
 let scrollTimer = null;
 let aqAutoSaveTimer = null;
-
+let hasGlobalShareNotification = false;
+let globalFoldersCache = []; 
 
 
 window.currentNoteHybridMode = false;
@@ -11501,6 +11525,12 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
             const configSnap = await getDoc(configRef);
             if (configSnap.exists()) appSettings = { ...appSettings, ...configSnap.data() };
 
+            // >>> INICIALIZAÇÃO DO MOTOR DE NOTIFICAÇÕES GLOBAIS <<<
+            // Inicia o listener silencioso para acender a luz vermelha na aba Share
+            if (typeof startGlobalNotificationListener === 'function') {
+                startGlobalNotificationListener();
+            }
+
             // Inicializar a navegação (Pastas/Arquivos)
             if (openFolderId) {
                 await reconstructFolderNavigation(openFolderId, targetNoteId);
@@ -11549,6 +11579,7 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
     }
 });
 
+     
 
 // --- FUNÇÃO PARA SALVAR CONFIGURAÇÕES ---
 async function saveUserSettings() {
@@ -21009,7 +21040,7 @@ function setLeftPanelTitle(text, isBackAction = false) {
         const localActive = currentViewMode === 'local' ? 'active' : '';
         const sharedActive = currentViewMode === 'shared' ? 'active mode-shared' : '';
         const pinsActive = currentViewMode === 'pins' ? 'active mode-pins' : '';
-        const flashActive = currentViewMode === 'flash' ? 'active mode-flash' : ''; // Novo modo
+        const flashActive = currentViewMode === 'flash' ? 'active mode-flash' : ''; 
 
         titleEl.innerHTML = `
             <span class="folder-mode-item ${localActive}" onclick="window.switchFolderView('local')">Local</span>
@@ -21020,6 +21051,12 @@ function setLeftPanelTitle(text, isBackAction = false) {
             <span class="folder-mode-separator">|</span>
             <span class="folder-mode-item ${flashActive}" onclick="window.switchFolderView('flash')">Flash</span>
         `;
+
+        // >>> ATUALIZAÇÃO DA NOTIFICAÇÃO GLOBAL <<<
+        // Chamamos a função para redesenhar a bolinha vermelha no novo HTML
+        setTimeout(() => {
+            if (typeof updateShareTabDot === 'function') updateShareTabDot();
+        }, 50);
     }
     // ============================================================
     // REGRA 3: OUTRAS ABAS (Lists, etc - Mantém comportamento de voltar)
@@ -40142,6 +40179,108 @@ function loadFlashListLeftPanel() {
         });
     });
 }
+
+function startGlobalNotificationListener() {
+    if (!auth.currentUser) return;
+    const myUid = auth.currentUser.uid;
+
+    // 1. OUVINTE DE LEITURAS (O que eu já vi)
+    onSnapshot(collection(db, 'users', myUid, 'archive_reads'), (readSnap) => {
+        const lastSeenMap = {};
+        readSnap.forEach(doc => {
+            lastSeenMap[doc.id] = doc.data().lastSeen || 0;
+        });
+        
+        // Atualiza a memória
+        userLastSeenArchives = lastSeenMap;
+        
+        // Recalcula a bola
+        recalcGlobalNotification();
+    });
+
+    // 2. OUVINTE DE PASTAS (O que existe)
+    const q1 = query(
+        collection(db, 'pastas'), 
+        where('tipo', 'in', ['partilhado', 'arquivo']), 
+        where('estado', '==', 'ativa')
+    );
+    
+    onSnapshot(q1, (folderSnap) => {
+        const folders = [];
+        folderSnap.forEach(doc => {
+            folders.push({ id: doc.id, ...doc.data() });
+        });
+
+        // Atualiza a memória
+        globalFoldersCache = folders;
+
+        // Recalcula a bola
+        recalcGlobalNotification();
+    });
+}
+
+// 3. FUNÇÃO DE CÁLCULO CENTRALIZADA
+function recalcGlobalNotification() {
+    const myUid = auth.currentUser.uid;
+    let hasNew = false;
+
+    globalFoldersCache.forEach(data => {
+        // Filtro de Segurança: Sou dono ou colaborador?
+        const isOwner = data.userId === myUid;
+        const isCollab = data.colaboradores && data.colaboradores[myUid];
+
+        if (isOwner || isCollab) {
+            const id = data.id;
+            // Se nunca vi (undefined), assume 0
+            const lastSeen = userLastSeenArchives[id] || 0;
+            const lastEdit = data.ultimaedicao?.toMillis() || 0;
+            const lastEditor = data.lastEditorId;
+
+            // LÓGICA REFINADA:
+            // 1. Tem de ter sido editado DEPOIS da minha última visita
+            // 2. O último editor NÃO posso ser eu
+            // 3. (CORREÇÃO) Se 'lastSeen' for 0 (nunca abri neste sistema), 
+            //    só marca como novo se não fui eu o CRIADOR ou o último editor.
+            
+            if (lastEdit > lastSeen) {
+                if (lastEditor && lastEditor !== myUid) {
+                    hasNew = true;
+                }
+                // Fallback para arquivos antigos sem lastEditorId:
+                else if (!lastEditor && data.userId !== myUid) {
+                    hasNew = true;
+                }
+            }
+        }
+    });
+
+    // Atualiza a variável global e a UI
+    hasGlobalShareNotification = hasNew;
+    updateShareTabDot();
+}
+
+// Função visual (Mantém-se igual, mas garante que existe)
+function updateShareTabDot() {
+    // Procura o elemento da aba Share
+    const shareTab = Array.from(document.querySelectorAll('.folder-mode-item')).find(el => el.textContent.includes('Share'));
+    
+    if (shareTab) {
+        let dot = shareTab.querySelector('.tab-notification-dot');
+        if (!dot) {
+            dot = document.createElement('div');
+            dot.className = 'tab-notification-dot';
+            shareTab.appendChild(dot);
+        }
+
+        if (hasGlobalShareNotification) {
+            dot.classList.add('visible');
+        } else {
+            dot.classList.remove('visible');
+        }
+    }
+}
+
+
 
     </script>
 </body>
