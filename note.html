@@ -16420,6 +16420,7 @@ window.deletePanelLink = async function(index) {
     links.splice(index, 1);
     await updateDoc(docRef, { panelLinks: links });
     renderPanelLinks();
+    await checkAndCleanVerseState(activeReferenceEntity.id);
 };
 
 
@@ -18052,33 +18053,38 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
     let headerHtml = "";
     let displayHtml = "";
 
-    // --- TIPO 1: TEXTO (Criado manualmente) ---
-   if (type === 'text') {
-    const contentHtml = data.content || '';
-    const initialStyle = isEditMode
-        ? "width:100%; min-height:40px; ..."
-        : "width:100%; min-height:40px; ...";
+    // --- TIPO 1: TEXTO MANUAL ---
+    if (type === 'text') {
+        const contentHtml = data.content || '';
+        const initialStyle = "width:100%; min-height:40px; outline:none; white-space:pre-wrap; word-break:break-word; color:var(--text-color); border:1px solid transparent; background-color:transparent; padding:2px 5px; transition:all 0.2s ease;";
 
-    // Adiciona o atributo spellcheck="false" aqui:
-    innerHTML = `<div class="board-text-content" spellcheck="false" style="${initialStyle}" ${isEditMode ? 'contenteditable="true"' : 'contenteditable="false"'}>${contentHtml}</div>`;
-    card.style.borderLeft = "3px solid var(--accent-color)"; 
-}
+        innerHTML = `<div class="board-text-content" spellcheck="false" style="${initialStyle}" ${isEditMode ? 'contenteditable="true"' : 'contenteditable="false"'}>${contentHtml}</div>`;
+        card.style.borderLeft = "3px solid var(--accent-color)"; 
+    }
 
-    // --- TIPO 2: REFERÊNCIA (Importado via +Ref) ---
+    // --- TIPO 2: REFERÊNCIA (Importado ou Nota Flash) ---
     else if (type === 'ref') {
         card.dataset.noteId = data.noteId;
         card.dataset.noteName = data.noteName || "Nota";
 
         let rawSnippet = data.snippet || '';
+        
+        // >>> CORREÇÃO CRÍTICA: DESCODIFICAR O HTML <<<
         try {
-            if (rawSnippet.includes('%3C')) rawSnippet = decodeURIComponent(rawSnippet);
-        } catch (e) { }
+            // Se estiver codificado (com %20, %3C, etc), descodifica
+            if (rawSnippet.includes('%3C') || rawSnippet.includes('%20')) {
+                rawSnippet = decodeURIComponent(rawSnippet);
+            }
+        } catch (e) { console.warn("Erro ao descodificar snippet:", e); }
+        
+        // Guarda a versão codificada no dataset para segurança ao gravar de volta
         card.dataset.snippet = encodeURIComponent(rawSnippet);
 
+        // --- PARSING DO HTML PARA EXTRAIR TEXTO LIMPO ---
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = rawSnippet;
 
-        // Extração de Título
+        // 1. Extração de Título
         const titleEl = tempDiv.querySelector('.mini-note-title-input');
         const h2El = tempDiv.querySelector('h2');
         const ideaEl = tempDiv.querySelector('.idea-span');
@@ -18097,7 +18103,7 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
             finalDisplayTitle = data.noteName || "Sem Título";
         }
 
-        // Definição de Ícone e Cor
+        // 2. Definição de Ícone e Cor
         let icon = "📄"; 
         let color = "#95a5a6"; 
         
@@ -18105,15 +18111,22 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
         else if (rawSnippet.includes('free-mode')) { icon = "📙"; color = "#e67e22"; }
         else if (rawSnippet.includes('toggle-section')) { icon = "☂"; color = "#9b59b6"; }
         else if (rawSnippet.includes('idea-span')) { icon = "💡"; color = "#e74c3c"; }
-        else if (rawSnippet.includes('mini-note-wrapper')) { icon = "📘"; color = "#3498db"; }
+        else if (rawSnippet.includes('mini-note-wrapper')) { icon = "📘"; color = "#3498db"; } // Subnota (Flash)
 
         card.style.borderLeft = `4px solid ${color}`;
 
-        // Extração de Conteúdo (Preview)
+        // 3. Extração de Conteúdo (Body)
         const contentDiv = tempDiv.querySelector('.mini-note-content') || tempDiv.querySelector('.toggle-content') || tempDiv;
+        
+        // Limpa o texto (remove quebras excessivas)
         let bodyText = contentDiv.innerText.replace(/\s+/g, ' ').trim();
-        if (bodyText.length > 150) bodyText = bodyText.substring(0, 150) + "...";
+        
+        // Remove lixo de botões se tiver ficado no innerText
+        bodyText = bodyText.replace(/🔐|🔺|🔻|⚡|🧬|🎨|📋|🗑️/g, '');
 
+        if (bodyText.length > 250) bodyText = bodyText.substring(0, 250) + "...";
+
+        // Montagem do HTML Visual
         headerHtml = `
             <div style="padding-left: 5px; margin-bottom: 5px;">
                 <div style="font-weight:bold; font-size:1em; cursor:pointer; color:var(--text-color); display: flex; align-items: center; gap: 8px;" 
@@ -18129,7 +18142,7 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
         innerHTML = `<div class="ref-card-content">${headerHtml}${displayHtml}</div>`;
     }
 
-    // Adiciona controlos (Lixo, Setas e GLOBO 🌐)
+    // Adiciona controlos (Lixo, Setas)
     innerHTML += `
         <div class="card-controls"> 
             ${type === 'text' ? '<button class="add-board-link" title="Gerir Links" style="margin-right: auto;">🌐</button>' : ''}
@@ -18141,44 +18154,29 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
 
     card.innerHTML = innerHTML;
 
-    // --- CONFIGURAÇÃO DOS LISTENERS (AQUI ESTÁ A CORREÇÃO) ---
-
-    // 1. Listener para o Globo 🌐 (Gerir Links no cartão de texto)
+    // --- RECONFIGURAÇÃO DOS LISTENERS ---
     const linkBtn = card.querySelector('.add-board-link');
     if (linkBtn) {
         linkBtn.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+            e.preventDefault(); e.stopPropagation();
             const contentDiv = card.querySelector('.board-text-content');
-            if (typeof openBoardLinkManager === 'function') {
-                openBoardLinkManager(contentDiv);
-            }
+            if (typeof openBoardLinkManager === 'function') openBoardLinkManager(contentDiv);
         };
     }
 
-    // 2. Listener para o Lixo 🗑️
     card.querySelector('.delete').onclick = async () => {
         const confirmModal = document.getElementById('confirm-modal');
         if (confirmModal) confirmModal.style.zIndex = "30000";
         const confirmed = await showConfirmation("Remover Item", "Deseja remover este item do quadro?");
         if (confirmed) { 
             card.remove(); 
-
-            // --- ADICIONE ESTA VERIFICAÇÃO AQUI ---
-        const container = document.getElementById('puzzle-board-container');
-        const remainingCards = container.querySelectorAll('.board-card');
-        const emptyMsg = document.getElementById('puzzle-empty-msg');
-        
-        if (remainingCards.length === 0 && emptyMsg) {
-            emptyMsg.style.display = 'block';
-        }
-
+            const container = document.getElementById('puzzle-board-container');
+            const emptyMsg = document.getElementById('puzzle-empty-msg');
             if(container.querySelectorAll('.board-card').length === 0 && emptyMsg) emptyMsg.style.display = 'block';
             if(isEditMode) savePuzzleData(); 
         }
     };
 
-    // 3. Listeners de Movimento 🔺 🔻
     card.querySelector('.move-up').onclick = () => {
         const p = card.previousElementSibling; 
         if (p && p.classList.contains('board-card')) container.insertBefore(card, p);
@@ -18698,11 +18696,11 @@ async function loadPuzzleData(entityId, entityType) {
     const container = document.getElementById('puzzle-board-container');
     if (!container) return;
 
-    // 1. MOSTRAR LOADING (Isto limpa o que quer que estivesse no container)
+    // 1. MOSTRAR LOADING
     container.innerHTML = `
         <div class="spinner-container" style="margin-top: 50px; display: flex; flex-direction: column; align-items: center;">
             <div class="spinner"></div>
-            <span style="font-style: italic; font-size: 0.9em; margin-top:10px; color: var(--text-muted-color);">A organizar Quadro...</span>
+            <span style="font-style: italic; font-size: 0.9em; margin-top:10px; color: var(--text-muted-color);">A carregar Quadro...</span>
         </div>`;
 
     const collectionName = getCollectionFromType(entityType);
@@ -18712,30 +18710,43 @@ async function loadPuzzleData(entityId, entityType) {
     }
 
     try {
-        let entityDoc = null;
+        let foundData = null;
 
-        // 2. Busca de dados (ID ou Nome)
-        if (entityId && !entityId.includes(' ') && !entityId.includes(':')) {
+        // 2. TENTATIVA A: Busca direta pelo ID (se for ID válido)
+        if (entityId && entityId.length > 5 && !entityId.includes(' ')) {
             const docRef = doc(db, collectionName, entityId);
             const snap = await getDoc(docRef);
-            if (snap.exists()) entityDoc = snap;
+            if (snap.exists()) {
+                foundData = snap.data();
+            }
         }
 
-        if (!entityDoc) {
-            const nameToFind = activeReferenceEntity.name;
-            const q = query(collection(db, collectionName), where("nome", "==", nameToFind), where("userId", "==", auth.currentUser.uid));
+        // 3. TENTATIVA B: Busca pelo Nome (CRÍTICO PARA VERSÍCULOS)
+        // Se a busca por ID falhou, procura pelo nome exato (ex: "Génesis 1:1")
+        if (!foundData) {
+            const nameToFind = (typeof entityId === 'string' && entityId.includes(' ')) ? entityId : activeReferenceEntity.name;
+            
+            const q = query(
+                collection(db, collectionName), 
+                where("nome", "==", nameToFind), 
+                where("userId", "==", auth.currentUser.uid)
+            );
+            
             const querySnapshot = await getDocs(q);
-            if (!querySnapshot.empty) entityDoc = querySnapshot.docs[0];
+            if (!querySnapshot.empty) {
+                foundData = querySnapshot.docs[0].data();
+                // Atualiza o ID da entidade ativa para o correto
+                activeReferenceEntity.id = querySnapshot.docs[0].id;
+            }
         }
 
-        // 3. LIMPAR O LOADING
+        // 4. LIMPAR O LOADING
         container.innerHTML = '';
 
-        // 4. VERIFICAÇÃO DE VAZIO: Se não houver documento ou não houver itens no array
-        const boardItems = entityDoc?.exists() ? (entityDoc.data().puzzleBoard || []) : [];
+        // 5. VERIFICAÇÃO DE DADOS
+        const boardItems = foundData ? (foundData.puzzleBoard || []) : [];
 
         if (boardItems.length === 0) {
-            // Recria a mensagem de vazio dinamicamente
             container.innerHTML = `
                 <p id="puzzle-empty-msg" style="text-align:center; color:var(--text-muted-color); font-size:0.9em; margin-top:40px; font-style: italic;">
                     O quadro está vazio.<br>Clique em "Editar" para adicionar notas ou referências.
@@ -18743,7 +18754,7 @@ async function loadPuzzleData(entityId, entityType) {
             return;
         }
 
-        // 5. SE HOUVER DADOS: Desenha os cartões
+        // 6. RENDERIZAR CARTÕES
         boardItems.forEach(item => {
             createBoardItem(item.type, {
                 content: item.content,
@@ -23434,18 +23445,25 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
             if (confirmed) {
                 const collectionName = (itemContext.type === 'cosmos-parent') ? 'cosmos' : 'pastas';
                 
-                // 1. Atualiza no Firebase
-                await updateDoc(doc(db, collectionName, itemContext.id), { 
-                    estado: 'desativa',
-                    ultimaedicao: serverTimestamp()
-                });
+               // 1. Atualiza no Firebase (Oculta a nota)
+        await updateDoc(doc(db, collectionName, itemContext.id), { 
+            estado: 'desativa',
+            ultimaedicao: serverTimestamp()
+        });
 
-                // 2. VERIFICAÇÃO VISUAL (NOVA): 
-                // Se o item que acabámos de ocultar for o que está aberto no editor...
-                if (selectedNoteId === itemContext.id) {
-                    console.log("🙈 A fechar editor pois a nota ativa foi ocultada.");
-                    resetEditor(); // ...fecha o editor e volta ao ecrã inicial.
-                }
+        // -----------------------------------------------------------
+        // 2. NOVA CHAMADA: Limpa os Puzzles associados
+        if (collectionName === 'pastas') {
+            // Executa em background (não precisa esperar para fechar o menu)
+            cleanUpHiddenNoteReferences(itemContext.id);
+        }
+        // -----------------------------------------------------------
+
+        // 3. Lógica visual existente...
+        if (selectedNoteId === itemContext.id) {
+            console.log("🙈 A fechar editor pois a nota ativa foi ocultada.");
+            resetEditor();
+        }
             }
         }
 
@@ -24028,120 +24046,129 @@ window.archiveMiniNote = async function(element, skipConfirmation = false) {
 
     console.group("📦 [ARCHIVE] Processando Eliminação Atómica");
     
-    // 1. VERIFICAÇÃO DE ID DA NOTA
+    // Identificação de IDs e Variáveis (Mantém-se igual)
     let targetId = selectedNoteId;
     if (!targetId) {
-        // Tenta recuperar do URL se estivermos numa vista isolada
         const urlParams = new URLSearchParams(window.location.search);
         targetId = urlParams.get('rootId') || urlParams.get('noteId');
     }
     
-    if (!targetId) {
-        console.error("❌ ERRO: ID da Nota não encontrado.");
-        alert("Erro: Não foi possível identificar a nota atual.");
-        console.groupEnd();
-        return false;
-    }
-
-    // 2. PARAR TEMPORIZADORES DE GRAVAÇÃO (CRÍTICO)
-    // Isto impede que o 'saveNote' automático atropele o nosso processo
+    if (!targetId) { console.error("❌ ERRO: ID da Nota não encontrado."); return false; }
     if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
     if (typeof archiveAutoSaveTimer !== 'undefined') clearTimeout(archiveAutoSaveTimer);
 
-    // --- CÁLCULO DA POSIÇÃO ORIGINAL ---
+    // Extração de dados da caixa
+    const itemId = element.id; // O ID da div (ex: box_171...)
+    if (!itemId) { console.warn("⚠️ Elemento sem ID, impossível sincronizar remoção remota."); }
+
     let originalIndex = -1;
-    if (element.parentNode) {
-        originalIndex = Array.from(element.parentNode.children).indexOf(element);
-    }
+    if (element.parentNode) originalIndex = Array.from(element.parentNode.children).indexOf(element);
 
-    // --- EXTRAÇÃO DE DADOS DO ELEMENTO ---
-    const itemId = element.id || `temp_${Date.now()}`;
-    let title = "Sem Título";
-    let content = "";
-    let type = "default";
-    let topicsJSON = '{}';
+    // =================================================================
+    // 3. LIMPEZA DE REFERÊNCIAS REMOTAS (ATUALIZADO)
+    // =================================================================
+    const boxLinksJson = element.getAttribute('data-box-links');
+    
+    // Só vale a pena procurar se a caixa tiver links ou se tivermos o ID
+    if (itemId) {
+        try {
+            const { doc, getDoc, updateDoc, query, collection, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            
+            // Lista de entidades a verificar
+            let entitiesToCheck = [];
 
-    // (Lógica de deteção de tipo mantém-se igual)
-    if (element.classList.contains('ghost-block')) {
-        type = 'ghost';
-        const semantic = element.dataset.semantic;
-        title = semantic ? `Bloco ${semantic.toUpperCase()}` : "Bloco de Texto";
-        content = element.innerHTML;
-        topicsJSON = element.getAttribute('data-topics') || '{}';
-    }
-    else if (element.tagName === 'DETAILS') {
-        type = 'toggle';
-        const h2 = element.querySelector('h2');
-        title = h2 ? h2.textContent : "Toggle Sem Título";
-        const inner = element.querySelector('.toggle-content');
-        content = inner ? inner.innerHTML : "";
-    } 
-    else if (element.classList.contains('journal-cube-wrapper')) {
-        type = 'cube';
-        const strong = element.querySelector('.cube-content strong, .cube-content h4');
-        title = strong ? strong.textContent : "Bloco de Texto";
-        const inner = element.querySelector('.cube-content');
-        content = inner ? inner.innerHTML : "";
-    }
-    else if (element.classList.contains('journal-sign-wrapper')) {
-        type = 'sign';
-        const inp = element.querySelector('.sign-title-input');
-        title = (inp && inp.value.trim()) ? inp.value : "Caixa de Raciocínio";
-        content = element.innerHTML; 
-    }
-    else if (element.classList.contains('journal-id-card')) {
-        type = 'card';
-        const inp = element.querySelector('.card-title-input');
-        title = inp ? inp.value : "Cartão Temático";
-        content = element.innerHTML; 
-    }
-    else if (element.classList.contains('redator-wrapper')) {
-        type = 'redator';
-        const inp = element.querySelector('.redator-input');
-        title = (inp && inp.value.trim()) ? inp.value : "Redator Sem Título";
-        const inner = element.querySelector('.redator-content');
-        content = inner ? inner.innerHTML : "";
-    }
-    else if (element.classList.contains('ref-depot-wrapper')) {
-        type = 'depot';
-        const inp = element.querySelector('.depot-title');
-        title = (inp && inp.value.trim()) ? inp.value : "Grua de Referências";
-        content = element.innerHTML;
-    }
-    else {
-        // Subnotas, Questões, Contentores
-        const inp = element.querySelector('.mini-note-title-input');
-        const inner = element.querySelector('.mini-note-content');
-        
-        if (element.classList.contains('question-mode')) type = 'question';
-        else if (element.classList.contains('free-mode')) type = 'free';
-        
-        if (inp) title = inp.value;
-        else if (type === 'free') {
-            const txt = inner ? inner.textContent.trim() : "";
-            title = txt.length > 30 ? txt.substring(0, 30) + "..." : (txt || "Contentor Livre");
+            // A. Adiciona entidades explicitamente vinculadas (data-box-links)
+            if (boxLinksJson) {
+                const boxData = JSON.parse(boxLinksJson);
+                if (boxData.categories && Array.isArray(boxData.categories)) {
+                    entitiesToCheck.push(...boxData.categories);
+                }
+            }
+
+            // B. (Opcional) Procura textos bíblicos que tenham referência a esta NOTA
+            // Isto é uma segurança extra caso o data-box-links esteja desatualizado
+            const q = query(
+                collection(db, 'textosbiblicos'), 
+                where(`referencias.${targetId}`, '==', true),
+                where('userId', '==', auth.currentUser.uid)
+            );
+            const snap = await getDocs(q);
+            snap.forEach(d => entitiesToCheck.push({ id: d.id, type: 'textobiblico', collection: 'textosbiblicos' }));
+
+            // Remove duplicados pelo ID
+            const uniqueEntities = [...new Map(entitiesToCheck.map(item => [item.id, item])).values()];
+
+            // PROCESSAMENTO
+            for (const ref of uniqueEntities) {
+                // Determina a coleção (se não vier definida, tenta adivinhar ou usa padrão)
+                let colName = ref.collection || (ref.type === 'textobiblico' ? 'textosbiblicos' : null);
+                if (!colName && ref.type) {
+                     // Função auxiliar que já tens no código
+                     colName = getCollectionFromType(ref.type);
+                }
+
+                if (colName && ref.id) {
+                    const entRef = doc(db, colName, ref.id);
+                    const entSnap = await getDoc(entRef);
+                    
+                    if (entSnap.exists()) {
+                        const data = entSnap.data();
+                        let puzzleBoard = data.puzzleBoard || [];
+                        const initialLen = puzzleBoard.length;
+                        
+                        // FILTRAGEM: Remove o cartão se ele contiver o ID da caixa que estamos a apagar
+                        puzzleBoard = puzzleBoard.filter(item => {
+                            // Só analisa itens que venham desta nota
+                            if (item.noteId === targetId) {
+                                // Descodifica o HTML guardado no snippet
+                                const snippetDecoded = decodeURIComponent(item.snippet || "");
+                                // Se o HTML contiver id="box_123...", removemos este cartão
+                                if (snippetDecoded.includes(`id="${itemId}"`)) {
+                                    console.log(`🗑️ Removendo cartão do Puzzle em: ${data.nome}`);
+                                    return false; // Remove
+                                }
+                            }
+                            return true; // Mantém
+                        });
+                        
+                        // Se houve remoção, atualiza o Firebase
+                        if (puzzleBoard.length !== initialLen) {
+                            await updateDoc(entRef, { puzzleBoard });
+
+                             await checkAndCleanVerseState(ref.id); 
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn("Erro não fatal ao limpar referências remotas:", e);
         }
-        
-        content = inner ? inner.innerHTML : "";
-        topicsJSON = element.getAttribute('data-topics') || '{}';
     }
+    // =================================================================
+
+    // --- RESTO DA LÓGICA DE ARQUIVO (Mantém-se igual) ---
+    // Extração de Título/Conteúdo para a Lixeira Local
+    let title = "Sem Título"; 
+    let content = element.innerHTML;
+    let type = "default";
+    let topicsJSON = element.getAttribute('data-topics') || '{}';
+
+    const inp = element.querySelector('.mini-note-title-input, .redator-input, .sign-title-input');
+    if (inp) title = inp.value;
+    
+    if (element.classList.contains('redator-wrapper')) type = 'redator';
+    else if (element.classList.contains('question-mode')) type = 'question';
 
     try {
         const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', targetId);
         
         const trashItem = {
-            id: itemId,
-            titulo: title,
-            conteudo: content, 
-            tipo: type,
-            topicsJSON: topicsJSON,
-            originalIndex: originalIndex,
-            deletedAt: serverTimestamp()
+            id: itemId, titulo: title, conteudo: content, type: type,
+            topicsJSON: topicsJSON, originalIndex: originalIndex, deletedAt: serverTimestamp()
         };
 
-        // 3. PREPARAÇÃO DO HTML (SYNC MANUAL)
-        // Antes de apagar, garantimos que todos os inputs das OUTRAS caixas estão gravados no HTML
+        // Sincroniza Inputs antes de remover
         const editor = document.getElementById('note-content-editor');
         if (editor) {
             editor.querySelectorAll('input, textarea').forEach(t => {
@@ -24150,63 +24177,36 @@ window.archiveMiniNote = async function(element, skipConfirmation = false) {
             });
         }
 
-        // 4. REMOÇÃO DO DOM
-        // Removemos o elemento e substituímos pelo marcador ANTES de enviar para o servidor
+        // Substitui por marcador
         const marker = document.createElement('span');
         marker.id = `marker_${itemId}`;
         marker.className = 'hidden-note-marker';
         marker.style.display = 'none';
-        marker.setAttribute('data-original-index', originalIndex);
-        
-        if (element.parentNode) {
-            element.replaceWith(marker);
-        }
+        if (element.parentNode) element.replaceWith(marker);
 
-        // 5. CAPTURA DO HTML FINAL
-        // Agora temos o HTML perfeito: com as outras caixas atualizadas e sem a caixa apagada
         const finalHTML = editor ? editor.innerHTML : "";
 
-        // 6. ENVIO ATÓMICO (A SOLUÇÃO)
-        // Enviamos o conteúdo atualizado E o item para a lixeira no MESMO pedido.
-        // Isto impede que o servidor devolva uma versão antiga da nota.
         await updateDoc(noteRef, {
-            conteudo: finalHTML, // Grava o texto (já sem a caixa)
-            [`subnotasocultas.${itemId}`]: trashItem, // Grava na lixeira
+            conteudo: finalHTML, 
+            [`subnotasocultas.${itemId}`]: trashItem, 
             ultimaedicao: serverTimestamp()
         });
         
-        // Se for aquário, também precisamos garantir o estado global
-        if (type === 'ghost' && typeof window.saveAquariumState === 'function') {
-             // O updateDoc acima já tratou da nota, mas o saveAquariumState limpa lixo visual
-             // Vamos chamá-lo apenas para garantir consistência visual se necessário,
-             // mas tecnicamente o updateDoc já fez o trabalho pesado.
-        }
-        
-        console.log("✅ Item removido e nota gravada num único passo.");
-        
-        // Atualiza estado visual do botão "Guardado"
+        console.log("✅ Item removido e sincronizado.");
         if (typeof updateSaveStatus === 'function') updateSaveStatus('saved');
-        
         console.groupEnd();
         return true;
 
     } catch (error) {
         console.error("❌ Erro ao arquivar:", error);
-        alert("Erro de conexão. O item não foi apagado para evitar perda de dados.");
-        
-        // Se houve erro, tentamos restaurar o elemento visualmente
-        const markerToCheck = document.getElementById(`marker_${itemId}`);
-        if (markerToCheck) {
-            markerToCheck.replaceWith(element);
-            element.style.display = 'block';
-        } else {
-            element.style.display = 'block';
-        }
-        
+        alert("Erro de conexão. Item não removido.");
+        element.style.display = 'block';
         console.groupEnd();
         return false;
     }
 };
+
+ 
 
 // ====================================================================
 
@@ -40280,7 +40280,107 @@ function updateShareTabDot() {
     }
 }
 
+// Função para limpar referências de uma nota inteira em todas as entidades conectadas
+async function cleanUpHiddenNoteReferences(noteId) {
+    if (!noteId) return;
+    console.log(`🧹 [LIMPEZA GLOBAL] Removendo referências da nota ${noteId} nos Puzzles...`);
 
+    try {
+        const { collection, query, where, getDocs, doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const myUid = auth.currentUser.uid;
+
+        // Lista de coleções que podem ter Puzzles
+        const collectionsToCheck = ['textosbiblicos', 'topicos', 'personagens', 'locais', 'cosmos', 'subcosmos'];
+
+        for (const colName of collectionsToCheck) {
+            // Procura entidades que tenham esta nota referenciada
+            const q = query(
+                collection(db, colName),
+                where(`referencias.${noteId}`, '==', true),
+                where('userId', '==', myUid)
+            );
+
+            const snap = await getDocs(q);
+
+            // Processa em paralelo
+            const updatePromises = snap.docs.map(async (docSnap) => {
+                const data = docSnap.data();
+                let puzzleBoard = data.puzzleBoard || [];
+                const initialLen = puzzleBoard.length;
+
+                // Remove TODOS os cartões que venham desta nota
+                puzzleBoard = puzzleBoard.filter(item => item.noteId !== noteId);
+
+                if (puzzleBoard.length !== initialLen) {
+                    console.log(`   - Atualizando entidade: ${data.nome} (${colName})`);
+                    const docRef = doc(db, colName, docSnap.id);
+                     // Atualiza
+    await updateDoc(docRef, { puzzleBoard: puzzleBoard });
+
+    // >>> LINHA NOVA: Verifica se ficou vazio <<<
+    if (colName === 'textosbiblicos') {
+        await checkAndCleanVerseState(docSnap.id);
+    }
+                    
+                    return updateDoc(docRef, { puzzleBoard: puzzleBoard });
+                }
+            });
+
+            await Promise.all(updatePromises);
+        }
+        console.log("✅ Limpeza global concluída.");
+
+    } catch (e) {
+        console.error("❌ Erro na limpeza global:", e);
+    }
+}
+
+// Função para verificar se o versículo ficou vazio e remover o "Verde"
+async function checkAndCleanVerseState(verseId) {
+    if (!verseId) return;
+
+    try {
+        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const verseRef = doc(db, 'textosbiblicos', verseId);
+        const snap = await getDoc(verseRef);
+
+        if (snap.exists()) {
+            const data = snap.data();
+
+            // Verifica se está tudo vazio
+            const hasPuzzle = data.puzzleBoard && data.puzzleBoard.length > 0;
+            const hasDossie = data.dossie && data.dossie.length > 0;
+            const hasLinks = data.panelLinks && data.panelLinks.length > 0;
+            const hasBookmarks = data.marcadoresAssociados && Object.keys(data.marcadoresAssociados).length > 0;
+
+            // Se NÃO tiver nada disto, removemos o estado "exists"
+            if (!hasPuzzle && !hasDossie && !hasLinks && !hasBookmarks) {
+                console.log(`🧹 O versículo ${data.nome} ficou vazio. Removendo indicador verde.`);
+
+                // 1. Atualizar Cache Local (Remove da lista de entidades conhecidas)
+                if (allEntities['textobiblico']) {
+                    allEntities['textobiblico'] = allEntities['textobiblico'].filter(e => e.id !== verseId);
+                }
+
+                // 2. Atualizar Visual na Grelha (Painel do Meio)
+                // O nome é algo como "Génesis 1:10". O número é o "10".
+                const verseNum = data.nome.split(':')[1]; 
+                
+                // Procura o botão na grelha que tenha este número
+                const gridBtns = document.querySelectorAll('.bible-grid-btn');
+                gridBtns.forEach(btn => {
+                    if (btn.textContent === verseNum) {
+                        btn.classList.remove('exists'); // Remove o verde
+                        // Mantém a classe 'active-verse' (azul) se estiver selecionado, 
+                        // mas tira o verde de fundo
+                    }
+                });
+            }
+        }
+    } catch (e) {
+        console.warn("Erro ao verificar estado do versículo:", e);
+    }
+}
 
     </script>
 </body>
