@@ -40239,11 +40239,18 @@ function recalcGlobalNotification() {
     const myUid = auth.currentUser.uid;
     let hasNew = false;
     
-    // Buffer de 2 segundos para resolver o problema de relógios dessincronizados
+    // Margem de erro de 2 segundos
     const TIME_BUFFER = 2000; 
 
+    console.group("🕵️ DEBUG: Análise da Bola Vermelha (Share)");
+    console.log("👤 O meu ID:", myUid);
+
+    if (globalFoldersCache.length === 0) {
+        console.log("📭 Cache de pastas vazio.");
+    }
+
     globalFoldersCache.forEach(data => {
-        // Filtro de Segurança: Sou dono ou colaborador?
+        // Filtro de Segurança
         const isOwner = data.userId === myUid;
         const isCollab = data.colaboradores && data.colaboradores[myUid];
 
@@ -40251,30 +40258,49 @@ function recalcGlobalNotification() {
             const id = data.id;
             const lastSeen = userLastSeenArchives[id] || 0;
             const lastEdit = data.ultimaedicao?.toMillis() || 0;
-            const lastEditor = data.lastEditorId;
+            const lastEditor = data.lastEditorId || null;
 
-            // LÓGICA CORRIGIDA:
-            // 1. A edição tem de ser REALMENTE mais recente que a última vista (+ buffer)
-            if (lastEdit > (lastSeen + TIME_BUFFER)) {
+            // Formatação de datas para humanos lerem
+            const timeSeenStr = lastSeen === 0 ? "NUNCA" : new Date(lastSeen).toLocaleTimeString();
+            const timeEditStr = new Date(lastEdit).toLocaleTimeString();
+
+            // Lógica de decisão
+            const isTimeNew = lastEdit > (lastSeen + TIME_BUFFER);
+            
+            // Só faz log se o tempo indicar que é novo (para não encher a consola com lixo)
+            if (isTimeNew) {
+                console.groupCollapsed(`📄 Ficheiro Suspeito: "${data.nome}"`);
+                console.log(`👁️ Visto pela última vez: ${timeSeenStr} (${lastSeen})`);
+                console.log(`💾 Editado pela última vez: ${timeEditStr} (${lastEdit})`);
+                console.log(`⏱️ Diferença: +${((lastEdit - lastSeen)/1000).toFixed(2)} segundos`);
                 
-                // 2. Se sabemos quem editou (Sistema Novo)
                 if (lastEditor) {
-                    // Só notifica se NÃO fui eu
+                    console.log(`✍️ Quem editou (ID): ${lastEditor}`);
+                    
                     if (lastEditor !== myUid) {
+                        console.log("%c🔴 CULPADO: Foi editado por outra pessoa.", "color: red; font-weight: bold;");
                         hasNew = true;
+                    } else {
+                        console.log("%c🟢 INOCENTE: Fui eu que editei.", "color: green; font-weight: bold;");
+                    }
+                } else {
+                    console.log("❓ ID do Editor: NÃO EXISTE (Ficheiro antigo?)");
+                    
+                    // Fallback para ficheiros antigos
+                    if (!isOwner) { // Se não sou o dono, assumo que é novo
+                        console.log("%c🔴 CULPADO: Sem editor registado e eu não sou o dono.", "color: red; font-weight: bold;");
+                        hasNew = true;
+                    } else {
+                         console.log("%c🟢 INOCENTE: Sem editor registado, mas sou o dono.", "color: green;");
                     }
                 }
-                // 3. Se não sabemos quem editou (Ficheiros Antigos)
-                else {
-                    // Se eu sou o dono, assumo que fui eu (sem notificação)
-                    // Se eu sou colaborador, assumo que foi o dono (notificação)
-                    if (!isOwner) {
-                        hasNew = true;
-                    }
-                }
+                console.groupEnd();
             }
         }
     });
+
+    console.log(`🏁 Veredito Final: Bola ligada? ${hasNew}`);
+    console.groupEnd();
 
     // Atualiza a variável global e a UI
     hasGlobalShareNotification = hasNew;
