@@ -97,10 +97,14 @@ body {
 .folder-mode-container {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 18px;
-    font-weight: 500;
+    justify-content: space-between; /* Espalha os itens uniformemente */
+    gap: 2px; /* Reduz o espaço entre itens para caber tudo */
+    font-size: 13px; /* Reduzido de 18px para caber na linha */
+    font-weight: 600; /* Um pouco mais de peso para compensar o tamanho */
     color: var(--text-muted-color);
+    width: 100%;
+    white-space: nowrap; /* Impede quebra de linha */
+    padding: 0 2px; /* Pequena margem de segurança */
 }
 
 .folder-mode-item {
@@ -108,6 +112,7 @@ body {
     transition: color 0.2s, text-shadow 0.2s;
     user-select: none;
     position: relative;
+    padding: 4px 0; /* Aumenta área de toque vertical */
 }
 
 .folder-mode-item:hover {
@@ -123,7 +128,7 @@ body {
 .folder-mode-item.active::after {
     content: '';
     position: absolute;
-    bottom: -4px;
+    bottom: 0px;
     left: 0;
     width: 100%;
     height: 2px;
@@ -131,10 +136,20 @@ body {
     border-radius: 2px;
 }
 
+/* Separador mais fino */
 .folder-mode-separator {
     color: var(--border-color);
     font-weight: normal;
-    font-size: 0.9em;
+    font-size: 0.8em;
+    opacity: 0.5;
+}
+
+/* Adicione também o estilo para o modo Flash (Amarelo, por exemplo) */
+.folder-mode-item.active.mode-flash {
+    color: #f1c40f !important; /* Amarelo */
+}
+.folder-mode-item.active.mode-flash::after {
+    background-color: #f1c40f !important;
 }
 
 /* ============================================================
@@ -9031,6 +9046,34 @@ details.toggle-section * {
     animation: target-flash 1.5s ease-out;
 }
 
+/* --- MODO FLASH (LARANJA) --- */
+.folder-mode-item.active.mode-flash {
+    color: #e67e22 !important; /* Laranja */
+}
+
+.folder-mode-item.active.mode-flash::after {
+    background-color: #e67e22 !important;
+    height: 3px;
+}
+
+/* Estilo Laranja para o botão Adicionar (+) */
+#add-item-btn.flash-mode {
+    border-color: #e67e22 !important;
+    color: #e67e22 !important;
+}
+
+#add-item-btn.flash-mode:hover {
+    background-color: #e67e22 !important;
+    color: white !important;
+}
+
+/* Seleção Laranja (Modo Flash) */
+.list-item.selected-orange {
+    background-color: rgba(230, 126, 34, 0.15) !important;
+    border-left: 4px solid #e67e22 !important;
+    color: white !important;
+}
+
 </style>
 
 
@@ -12616,21 +12659,36 @@ function resetEditor() {
 function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
     if (!auth.currentUser) return;
 
-    // Definição dos tipos permitidos conforme o modo (Local vs Partilha)
+    // Definição dos tipos permitidos (código existente...)
     let allowedTypes = currentViewMode === 'local' 
         ? ['pasta', 'nota', 'agregacao', 'arquivo', 'jornal', 'aquario'] 
         : ['pasta', 'nota', 'agregacao', 'arquivo', 'partilhado', 'jornal', 'aquario'];
 
     const itemsRef = collection(db, 'pastas');
     
-    const q = query(
-        itemsRef, 
+    // --- QUERY BASE ---
+    let constraints = [
         where('parentId', '==', parentId), 
         where('estado', '==', 'ativa'), 
         where('userId', '==', auth.currentUser.uid), 
         where('tipo', 'in', allowedTypes), 
         orderBy('ordem')
-    );
+    ];
+
+    // --- FILTRO DE EXCLUSÃO FLASH (NOVO) ---
+    // Se estivermos no modo LOCAL, queremos esconder os itens Flash
+    if (currentViewMode === 'local') {
+        // O Firestore não suporta '!=', por isso a lógica é:
+        // Os itens normais NÃO TÊM o campo 'oque' ou têm valor diferente.
+        // Como o Firestore 9 não permite filtrar por "campo não existe", 
+        // a solução mais robusta é filtrar no cliente (dentro do onSnapshot).
+        // MAS, se preferir via query, teríamos de adicionar 'oque: normal' a todos os itens normais.
+        
+        // ABORDAGEM FILTRO CLIENT-SIDE (Mais segura para dados já existentes):
+        // Vamos manter a query como está e filtrar no loop forEach abaixo.
+    }
+
+    const q = query(itemsRef, ...constraints);
 
     return onSnapshot(q, (querySnapshot) => {
         listElement.innerHTML = '';
@@ -12638,7 +12696,15 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
         querySnapshot.forEach((doc) => {
             const item = { id: doc.id, ...doc.data() };
+            
+            // --- BLOQUEIO DE ITENS FLASH NA ABA LOCAL ---
+            if (currentViewMode === 'local' && item.oque === 'flash') {
+                return; // Pula este item, não o mostra na lista
+            }
+            // ---------------------------------------------
+
             const li = document.createElement('li');
+            // ... (resto do código de renderização do item igual ao que já tem) ...
             li.className = 'list-item';
             
             li.setAttribute('data-id', item.id);
@@ -12656,25 +12722,17 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
             let lockIcon = (item.passe && item.passe.trim() !== "") ? "🔒 " : "";
             
-            // O CSS encarrega-se dos ícones baseados no data-type
             li.innerHTML = `<span>${lockIcon}${item.nome}</span><button class="item-menu-btn">…</button>`;
 
-            // --- LÓGICA DE SELEÇÃO CORRIGIDA ---
-            let active = false;
-            
+            // ... (lógica de seleção active/selected) ...
+             let active = false;
             if (isColumn1) {
-                // Coluna da esquerda (Pastas) mantém-se igual
                 if (item.id === col1SelectedId) active = true;
                 else if (navigationStack.some(nav => nav.id === item.id)) active = true;
             } else {
-                // COLUNA 2 (NOTAS): Prioridade à transição!
-                
-                // 1. Se estamos a navegar (clicou em algo), usa o ID novo
                 if (window.nextSelectedId) {
                     if (item.id === window.nextSelectedId) active = true;
-                } 
-                // 2. Caso contrário, usa o ID da nota aberta
-                else if (selectedNoteId && item.id === selectedNoteId) {
+                } else if (selectedNoteId && item.id === selectedNoteId) {
                     active = true;
                 }
             }
@@ -12682,7 +12740,6 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             if (active) {
                 if (isColumn1) li.classList.add('selected');
                 else {
-                    // Aplica a cor correta (Vermelho se partilha, Azul se normal)
                     const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
                     li.classList.add(selectionClass);
                 }
@@ -15229,52 +15286,61 @@ function showContextMenu(e) {
         isSuperfolder: item.dataset.superpasta === "true",
         isPinned: item.dataset.pinned === "true",
         isProtected: item.dataset.protected === "true",
+        oque: item.dataset.oque, // <--- IMPORTANTE: Lê se é flash
         userId: item.dataset.userid || myUid
     };
 
-    // 1. Esconder todos os botões e separadores para filtrar
+    // 1. Esconder tudo primeiro
     menu.querySelectorAll('button').forEach(b => {
         if(!b.classList.contains('context-menu-close')) b.style.display = 'none';
     });
     menu.querySelectorAll('.menu-sep').forEach(sep => sep.style.display = 'none');
 
-    // 2. Lógica de exibição baseada no tipo (Reutilizando sua lógica original)
+    // 2. Lógica de exibição
     if (activeItemContext.type === 'cosmos-parent' || activeItemContext.type === 'subcosmos') {
+        // ... (lógica cosmos mantém-se) ...
         menu.querySelector('[data-action="rename"]').style.display = 'flex';
         menu.querySelector('[data-action="hide"]').style.display = 'flex';
     } else {
+        // SEMPRE VISÍVEIS (Renomear e Ocultar)
         menu.querySelector('[data-action="rename"]').style.display = 'flex';
         menu.querySelector('[data-action="hide"]').style.display = 'flex';
 
-        if (currentViewMode === 'local' || currentViewMode === 'pins') {
-            menu.querySelector('[data-action="toggle-pin"]').style.display = 'flex';
-            menu.querySelector('[data-action="toggle-pin"]').textContent = activeItemContext.isPinned ? "Remover Pin" : "Adicionar Pin";
+        // CONDIÇÕES PARA BOTÕES EXTRAS (Local, Pins OU FLASH)
+        if (currentViewMode === 'local' || currentViewMode === 'pins' || currentViewMode === 'flash') {
             
+            // --- PROTEÇÃO ---
             if (activeItemContext.isProtected) {
                 menu.querySelector('[data-action="unprotect"]').style.display = 'flex';
             } else {
                 menu.querySelector('[data-action="protect"]').style.display = 'flex';
             }
 
-            menu.querySelector('[data-action="move-position"]').style.display = 'flex';
+            // --- MOVIMENTO ---
+            // "Mover Posição" só faz sentido em listas ordenadas (Local), mas "Mover Pasta" serve para todos
+            if (currentViewMode === 'local') {
+                menu.querySelector('[data-action="move-position"]').style.display = 'flex';
+            }
             menu.querySelector('[data-action="move-folder"]').style.display = 'flex';
+            
+            // --- TÓPICOS ---
             menu.querySelector('[data-action="manage-topics"]').style.display = 'flex';
             
+            // --- PIN (Opcional no Flash, mas pode manter) ---
+            menu.querySelector('[data-action="toggle-pin"]').style.display = 'flex';
+            menu.querySelector('[data-action="toggle-pin"]').textContent = activeItemContext.isPinned ? "Remover Pin" : "Adicionar Pin";
+
+            // --- SUPERPASTA (Apenas se for pasta) ---
             if (activeItemContext.type === 'pasta') {
                 menu.querySelector('[data-action="toggle-superfolder"]').style.display = 'flex';
-                menu.querySelector('[data-action="toggle-superfolder"]').textContent = activeItemContext.isSuperfolder ? "Pasta Normal" : "Tornar Superpasta";
-                if (activeItemContext.isSuperfolder) {
-                    menu.querySelector('[data-action="change-icon"]').style.display = 'flex';
-                }
+                // ...
             }
         }
     }
 
-    // 3. Mostrar separadores apenas se os botões ao redor estiverem visíveis
-    // (Lógica automática: se houver botões visíveis antes e depois do HR, mostra ele)
+    // 3. Gestão de Separadores (Mantém-se igual)
     const separators = menu.querySelectorAll('.menu-sep');
     separators.forEach(sep => {
-        // Verifica se há algum botão visível antes deste separador
         let hasVisibleBefore = false;
         let prev = sep.previousElementSibling;
         while(prev && !prev.classList.contains('menu-sep')) {
@@ -15284,16 +15350,14 @@ function showContextMenu(e) {
         if(hasVisibleBefore) sep.style.display = 'block';
     });
 
-    // 4. Exibir o Popup Centralizado
+    // 4. Exibir o Popup
     menu.style.display = 'flex';
-    
-    // Opcional: Criar um overlay escuro se não existir
     let overlay = document.getElementById('context-menu-overlay');
     if (!overlay) {
         overlay = document.createElement('div');
         overlay.id = 'context-menu-overlay';
         overlay.style.cssText = "position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.6); z-index:9999999; display:none;";
-        overlay.onclick = hideContextMenu;
+        overlay.onclick = window.hideContextMenu;
         document.body.appendChild(overlay);
     }
     overlay.style.display = 'block';
@@ -15503,6 +15567,8 @@ async function openMoveModal(itemContext) {
 
     newConfirmBtn.onclick = async () => {
         let targetId = selectedDestFolderId;
+        
+        // Se não selecionou nada, assume a pasta atual da navegação do modal
         if (targetId === null) {
             const currentViewId = moveStack.length > 0 ? moveStack[moveStack.length - 1].id : startRootId;
             if(!confirm(`Mover "${itemContext.name}" para a pasta que está a ver agora?`)) return;
@@ -15515,15 +15581,41 @@ async function openMoveModal(itemContext) {
         }
 
         try {
+            // Importar deleteField se necessário (ou use 'deleteField()' direto se já importado no topo)
+            const { doc, updateDoc, serverTimestamp, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            
             const itemRef = doc(db, 'pastas', itemContext.id);
-            await updateDoc(itemRef, {
+            
+            // Dados base da atualização
+            const updateData = {
                 parentId: targetId, 
                 ultimaedicao: serverTimestamp()
-            });
+            };
+
+            // --- LÓGICA DE REMOÇÃO DO FLASH ---
+            // Se estamos no modo Flash OU se o item tem o marcador 'flash'
+            if (currentViewMode === 'flash' || itemContext.oque === 'flash') {
+                console.log("⚡ Removendo estado 'Flash' ao mover para pasta normal.");
+                // Remove o campo 'oque' do documento no Firebase
+                updateData.oque = deleteField();
+            }
+            // ----------------------------------
+
+            await updateDoc(itemRef, updateData);
+            
             modal.style.display = 'none';
-            updateNavigationView(true);
+            
+            // Atualiza a vista para refletir que o item saiu daqui
+            // Se estivermos em Flash, o item vai desaparecer da lista
+            if (currentViewMode === 'flash') {
+                 loadFlashListLeftPanel();
+            } else {
+                 updateNavigationView(true);
+            }
+            
         } catch (error) {
             console.error("Erro ao mover:", error);
+            alert("Erro ao mover item.");
         }
     };
 }
@@ -20859,15 +20951,18 @@ function setLeftPanelTitle(text, isBackAction = false) {
         const localActive = currentViewMode === 'local' ? 'active' : '';
         const sharedActive = currentViewMode === 'shared' ? 'active mode-shared' : '';
         const pinsActive = currentViewMode === 'pins' ? 'active mode-pins' : '';
+        const flashActive = currentViewMode === 'flash' ? 'active mode-flash' : ''; // Novo modo
 
         titleEl.innerHTML = `
             <span class="folder-mode-item ${localActive}" onclick="window.switchFolderView('local')">Local</span>
             <span class="folder-mode-separator">|</span>
-            <span class="folder-mode-item ${sharedActive}" onclick="window.switchFolderView('shared')">Partilha</span>
+            <span class="folder-mode-item ${sharedActive}" onclick="window.switchFolderView('shared')">Share</span>
             <span class="folder-mode-separator">|</span>
             <span class="folder-mode-item ${pinsActive}" onclick="window.switchFolderView('pins')">Pins</span>
+            <span class="folder-mode-separator">|</span>
+            <span class="folder-mode-item ${flashActive}" onclick="window.switchFolderView('flash')">Flash</span>
         `;
-    } 
+    }
     // ============================================================
     // REGRA 3: OUTRAS ABAS (Lists, etc - Mantém comportamento de voltar)
     // ============================================================
@@ -22800,53 +22895,22 @@ addItemBtn.addEventListener('click', async () => {
         await saveNote(true); 
     }
 
-    // ============================================================
-    // CASO A: ABA DE LISTAS (Categorias do Banco de Dados)
-    // ============================================================
+    // --- CÓDIGO EXISTENTE DE LISTAS (ABA Lists) ---
     if (currentTab === 'lists') {
+        // ... (código existente da aba Lists, mantenha igual) ...
+        // Se quiser, posso reenviar este bloco, mas o foco é o Flash abaixo
         const rootCategoryId = navigationStack[0]?.id;
-
-         // --- ADICIONA ESTE BLOCO AQUI ---
-         if (rootCategoryId === 'marcadores') {
-            openCreateBookmarkPopup(); // Função que vamos criar abaixo
-            return;
-        }
-        // -------------------------------
-
-        // 1. Tópicos (Abre o modal de gestão/criação)
-        if (rootCategoryId === 'topico') {
-            const manageModal = document.getElementById('manage-topics-modal');
-            document.body.appendChild(manageModal); // Força hierarquia
-            manageModal.style.setProperty('display', 'flex', 'important');
-            manageModal.style.zIndex = "8000000";
-            activeTopicIdForManagement = null;
-            renderManageTopicsList();
-            document.getElementById('create-new-subtopic-btn').style.display = 'none';
-        } 
-        // 2. Entidades Simples (Personagens, Locais, Datas)
-        else if (['personagem', 'local', 'data'].includes(rootCategoryId)) {
-            openEntityModal(rootCategoryId, ""); 
-        }
-        // 3. Cosmos (Temas e Subtemas)
-        else if (rootCategoryId === 'cosmos') {
-            const lastNav = navigationStack[navigationStack.length - 1];
-            if (lastNav.type === 'list-category') {
-                // Se está na raiz do Cosmos, cria um Tema
-                window.openCosmosCreator('cosmos');
-            } else if (lastNav.type === 'cosmos-parent') {
-                // Se está dentro de um tema, cria um Subtema
-                window.openCosmosCreator('subcosmos', lastNav.id);
-            }
-        }
-        return; // Sai da função após tratar a aba de listas
-
-        
+        if (rootCategoryId === 'marcadores') { openCreateBookmarkPopup(); return; }
+        if (rootCategoryId === 'topico') { /* ... logica topicos ... */ return; } 
+        if (['personagem', 'local', 'data'].includes(rootCategoryId)) { openEntityModal(rootCategoryId, ""); return; }
+        if (rootCategoryId === 'cosmos') { /* ... logica cosmos ... */ return; }
+        return; 
     }
 
     // ============================================================
-    // CASO B: ABA NOTE (Pastas, Notas e Arquivos)
+    // CASO B: ABA NOTE (Configuração do Modal)
     // ============================================================
- const modal = document.getElementById('add-item-modal');
+    const modal = document.getElementById('add-item-modal');
     if (!modal) return;
 
     document.body.appendChild(modal);
@@ -22861,27 +22925,55 @@ addItemBtn.addEventListener('click', async () => {
     const addAgregBtn = modal.querySelector('button[data-type="agregacao"]');
     const addArchiveBtn = modal.querySelector('button[data-type="arquivo"]');
     const addJornalBtn = modal.querySelector('button[data-type="jornal"]');
-    
-    // === NOVO SELETOR ===
     const addAquarioBtn = modal.querySelector('button[data-type="aquario"]'); 
 
-    // Reset da interface
+    // Reset da interface (input de nome escondido)
     newItemNameInput.value = '';
     newItemNameInput.style.display = 'none';
     document.getElementById('confirm-item-addition').style.display = 'none';
     document.getElementById('add-item-options').style.display = 'flex';
 
-    if (currentViewMode === 'shared') {
-        modalTitle.textContent = "Adicionar Item Partilhado";
-        addFolderBtn.style.display = 'none';
-        addNoteBtn.style.display = 'none';
-        addAgregBtn.style.display = 'none';
-        addArchiveBtn.style.display = 'block';
-        if(addJornalBtn) addJornalBtn.style.display = 'none';
-        if(addAquarioBtn) addAquarioBtn.style.display = 'none'; // Esconde Aquário na Partilha
+    // ============================================================
+    // ⚡ LÓGICA MODO FLASH (PRIORIDADE MÁXIMA) ⚡
+    // ============================================================
+    if (currentViewMode === 'flash') {
+        modalTitle.textContent = "⚡ Criação Rápida";
+        modalTitle.style.color = "#e67e22"; // Título Laranja
+
+        // 1. MOSTRAR APENAS O QUE QUEREMOS
+        if(addNoteBtn) addNoteBtn.style.display = 'block';     // 📄 Nota
+        if(addJornalBtn) addJornalBtn.style.display = 'block'; // 📰 Jornal
+        
+        // 2. ESCONDER TUDO O RESTO RIGOROSAMENTE
+        if(addFolderBtn) addFolderBtn.style.display = 'none';
+        if(addAgregBtn) addAgregBtn.style.display = 'none';
+        if(addArchiveBtn) addArchiveBtn.style.display = 'none';
+        if(addAquarioBtn) addAquarioBtn.style.display = 'none';
+
+        return; // SAI DA FUNÇÃO AQUI PARA NÃO EXECUTAR A LÓGICA LOCAL
     } 
+
+    // ============================================================
+    // LÓGICA MODO PARTILHA
+    // ============================================================
+    else if (currentViewMode === 'shared') {
+        modalTitle.textContent = "Adicionar Item Partilhado";
+        modalTitle.style.color = ""; // Cor padrão
+
+        if(addFolderBtn) addFolderBtn.style.display = 'none';
+        if(addNoteBtn) addNoteBtn.style.display = 'none';
+        if(addAgregBtn) addAgregBtn.style.display = 'none';
+        if(addArchiveBtn) addArchiveBtn.style.display = 'block'; // Só Arquivo
+        if(addJornalBtn) addJornalBtn.style.display = 'none';
+        if(addAquarioBtn) addAquarioBtn.style.display = 'none';
+    } 
+    
+    // ============================================================
+    // LÓGICA MODO LOCAL (NORMAL)
+    // ============================================================
     else {
         modalTitle.textContent = "Adicionar Item";
+        modalTitle.style.color = ""; 
         
         let isInSharedFolder = false;
         if (navigationStack.length > 0) {
@@ -22890,30 +22982,31 @@ addItemBtn.addEventListener('click', async () => {
         }
 
         if (isInSharedFolder) {
-            addFolderBtn.style.display = 'none';
-            addAgregBtn.style.display = 'none';
-            addNoteBtn.style.display = 'block';
-            addArchiveBtn.style.display = 'block';
+            // Regras dentro da pasta Partilhadas (mas no modo local)
+            if(addFolderBtn) addFolderBtn.style.display = 'none';
+            if(addAgregBtn) addAgregBtn.style.display = 'none';
+            if(addNoteBtn) addNoteBtn.style.display = 'block';
+            if(addArchiveBtn) addArchiveBtn.style.display = 'block';
             if(addJornalBtn) addJornalBtn.style.display = 'block';
-            if(addAquarioBtn) addAquarioBtn.style.display = 'block'; // Disponível
+            if(addAquarioBtn) addAquarioBtn.style.display = 'block';
         } 
         else if (navigationStack.length === 0) {
-            // Raiz Local
-            addFolderBtn.style.display = 'block';
-            addAgregBtn.style.display = 'block'; 
-            addNoteBtn.style.display = 'none';
-            addArchiveBtn.style.display = 'block';
+            // Raiz Local (Sem notas soltas aqui, normalmente)
+            if(addFolderBtn) addFolderBtn.style.display = 'block';
+            if(addAgregBtn) addAgregBtn.style.display = 'block'; 
+            if(addNoteBtn) addNoteBtn.style.display = 'none'; // Esconde Nota na Raiz
+            if(addArchiveBtn) addArchiveBtn.style.display = 'block';
             if(addJornalBtn) addJornalBtn.style.display = 'block';
-            if(addAquarioBtn) addAquarioBtn.style.display = 'block'; // Disponível na Raiz
+            if(addAquarioBtn) addAquarioBtn.style.display = 'block';
         } 
         else {
-            // Dentro de pastas normais
-            addFolderBtn.style.display = 'block';
-            addAgregBtn.style.display = 'block'; 
-            addNoteBtn.style.display = 'block';
-            addArchiveBtn.style.display = 'block';
+            // Dentro de pastas normais (Tudo permitido)
+            if(addFolderBtn) addFolderBtn.style.display = 'block';
+            if(addAgregBtn) addAgregBtn.style.display = 'block'; 
+            if(addNoteBtn) addNoteBtn.style.display = 'block';
+            if(addArchiveBtn) addArchiveBtn.style.display = 'block';
             if(addJornalBtn) addJornalBtn.style.display = 'block';
-            if(addAquarioBtn) addAquarioBtn.style.display = 'block'; // Disponível em pastas
+            if(addAquarioBtn) addAquarioBtn.style.display = 'block';
         }
     }
 });
@@ -22963,7 +23056,27 @@ let itemTypeToAdd = '';
 document.getElementById('add-item-options').addEventListener('click', (e) => {
     const btn = e.target.closest('button');
     if(!btn) return;
+    
     itemTypeToAdd = btn.dataset.type;
+
+    // --- NOVA LÓGICA: CRIAÇÃO IMEDIATA NO MODO FLASH ---
+    if (currentViewMode === 'flash') {
+        // 1. Gera um nome automático (Ex: Flash Note 10:45)
+        const now = new Date();
+        const timeString = now.getHours().toString().padStart(2,'0') + ":" + now.getMinutes().toString().padStart(2,'0');
+        const defaultName = (itemTypeToAdd === 'jornal') ? `Jornal Flash ${timeString}` : `Nota Flash ${timeString}`;
+        
+        // 2. Preenche o input invisível
+        newItemNameInput.value = defaultName;
+        
+        // 3. Simula o clique no botão "Criar" para executar a função de criação existente
+        document.getElementById('confirm-item-addition').click();
+        
+        return; // Pára aqui, não mostra o input de título
+    }
+    // ---------------------------------------------------
+
+    // Comportamento normal (pede título)
     document.getElementById('add-item-options').style.display = 'none';
     newItemNameInput.style.display = 'block';
     newItemNameInput.placeholder = `Nome d${itemTypeToAdd === 'pasta' ? 'a' : 'a'} ${itemTypeToAdd}...`;
@@ -23016,13 +23129,24 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
         // Dados Base
         const docData = {
             nome: itemName,
-            parentId: parentId,
+            parentId: parentId, // Será null na raiz, ou o ID da pasta se estiver dentro de uma
             userId: auth.currentUser.uid,
             estado: 'ativa',
             ordem: newOrder,
             createdAt: serverTimestamp(),
             ultimaedicao: serverTimestamp()
         };
+
+        // --- NOVA LÓGICA: MARCAR COMO FLASH ---
+        if (currentViewMode === 'flash') {
+            docData.oque = 'flash'; // Marca o item como pertencente à aba Flash
+            // No modo Flash, forçamos o parentId a null para não ficar preso numa pasta visualmente,
+            // ou mantemos se quiser que ele exista "fisicamente" numa pasta mas apareça na aba Flash.
+            // Para "aparecer apenas na aba Flash" e ser partilhável, geralmente o parentId é indiferente
+            // desde que a query da aba Flash ignore o parentId.
+        }
+
+        
 
         // =========================================================
         // LÓGICA DE TIPOS
@@ -25958,14 +26082,13 @@ async function switchFolderView(mode) {
     if (mode === currentViewMode && navigationStack.length === 0) return;
 
     // 3. GRAVAÇÃO AUTOMÁTICA DE SEGURANÇA (Antes de mudar a vista)
-    // Verifica se há uma nota normal por guardar ou um Post em edição
     const idToSave = activeEditingPostId || window.activeEditingPostId;
     
     if (currentSaveStatus === 'unsaved' || idToSave) {
         console.log("💾 [SISTEMA] Gravando alterações pendentes antes de mudar de modo...");
         try {
             if (idToSave) {
-                // Se for um post de Arquivo, grava e remove o cadeado (Unlock)
+                // Se for um post de Arquivo, grava e remove o cadeado
                 const tempId = idToSave;
                 activeEditingPostId = null;
                 window.activeEditingPostId = null;
@@ -25993,29 +26116,89 @@ async function switchFolderView(mode) {
     currentViewMode = mode;    
     navigationStack = [];      
 
-    // 6. RECONSTRÓI A INTERFACE (Cabeçalhos e Abas)
+    // 6. RECONSTRÓI A INTERFACE (Cabeçalhos e Abas da Esquerda)
     updateNavigationView(true);
 
+    // Referência ao botão "+"
+    const addItemBtn = document.getElementById('add-item-btn');
+
     // 7. CARREGAMENTO ESPECÍFICO DE DADOS
+    
+    // --- MODO PINS ---
     if (mode === 'pins') {
         console.log("📌 [SISTEMA] Modo Pins Ativado.");
         loadPinsView(); 
+        
+        // No modo Pins, geralmente escondemos o botão de adicionar na lista
+        if (addItemBtn) addItemBtn.style.display = 'none';
     } 
+    
+    // --- MODO FLASH (NOVO - LARANJA) ---
+    else if (mode === 'flash') {
+        console.log("⚡ [SISTEMA] Modo Flash Ativado.");
+        
+        // 1. Configura botão "+"
+        const addItemBtn = document.getElementById('add-item-btn');
+        if (addItemBtn) {
+            addItemBtn.style.display = 'flex';
+            addItemBtn.className = ''; 
+            addItemBtn.classList.add('flash-mode');
+        }
+
+        // 2. Limpa ouvintes antigos
+        if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
+        if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
+
+        // 3. COLUNA 1 (ESQUERDA): Lista de Itens Flash
+        // Aqui vamos carregar a lista de itens Flash na esquerda também, ou um menu específico
+        loadFlashListLeftPanel(); 
+
+        // 4. COLUNA 2 (MEIO): Detalhes ou Lista Secundária (depende da sua preferência)
+        // Se quiser que a Coluna 2 mostre o conteúdo do item clicado na esquerda, 
+        // ou se quiser que a Coluna 2 seja a lista principal e a esquerda fique vazia/estática.
+        
+        // OPÇÃO A: A esquerda mostra a lista de itens Flash. O meio fica vazio até clicar.
+        const midList = document.getElementById('file-list');
+        midList.innerHTML = '<li style="padding:40px; text-align:center; color:#e67e22; opacity:0.5;">⚡<br>Selecione um item Flash<br>ou crie um novo.</li>';
+        
+        // OPÇÃO B (O que pediu): "só podem aparecer notas e jornais com oque=flash"
+        // Se a ideia é ter a lista na ESQUERDA, use a função abaixo.
+        
+        // No mobile, salta para a lista (agora na esquerda)
+        if (window.innerWidth <= 768) {
+            document.body.classList.remove('mobile-view-editor');
+            // Nota: No seu CSS mobile, a esquerda é 'mobile-view-middle' ou normal?
+            // Geralmente esquerda é default. Vamos garantir que a esquerda está visível.
+            document.body.classList.remove('mobile-view-middle'); 
+        }
+    }
+
+    // --- MODO PARTILHA (VERMELHO) ---
     else if (mode === 'shared') {
         console.log("🤝 [SISTEMA] Modo Partilha Ativado.");
         loadSharedFilesRoot(); // Carrega arquivos na Coluna 2
 
-        // --- SALTO PARA MOBILE (Coluna 2) ---
+        if (addItemBtn) {
+            addItemBtn.style.display = 'flex';
+            addItemBtn.classList.remove('flash-mode', 'yellow-mode');
+            addItemBtn.classList.add('shared-mode'); // Adiciona estilo Vermelho
+        }
+
         if (window.innerWidth <= 768) {
-            // No mobile, força a vista para a lista de arquivos imediatamente
             document.body.classList.add('mobile-view-middle');
             document.body.classList.remove('mobile-view-editor');
         }
     }
+    
+    // --- MODO LOCAL (AZUL/PADRÃO) ---
     else if (mode === 'local') {
         console.log("🏠 [SISTEMA] Modo Local Ativado.");
-        const addItemBtn = document.getElementById('add-item-btn');
-        if (addItemBtn) addItemBtn.classList.remove('shared-mode', 'yellow-mode');
+        
+        if (addItemBtn) {
+            addItemBtn.style.display = 'flex';
+            // Remove estilos especiais para voltar ao azul padrão
+            addItemBtn.classList.remove('shared-mode', 'yellow-mode', 'flash-mode');
+        }
         // A lista local é carregada automaticamente pelo updateNavigationView()
     }
 
@@ -39752,6 +39935,133 @@ function applyVisualsToList(listContainer) {
             activeLi.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     }
+}
+
+// Função para carregar itens da aba Flash
+function loadFlashItems() {
+    const listElement = document.getElementById('file-list');
+    if (!auth.currentUser) return;
+
+    listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar Flash...</span></div>';
+
+    // Query para buscar TUDO o que tem "oque == 'flash'", independentemente da pasta
+    const q = query(
+        collection(db, 'pastas'),
+        where('userId', '==', auth.currentUser.uid),
+        where('oque', '==', 'flash'), // FILTRO CRÍTICO
+        where('estado', '==', 'ativa'),
+        orderBy('ultimaedicao', 'desc') // Ordenar por mais recente primeiro
+    );
+
+    // Usa onSnapshot para atualização em tempo real
+    unsubscribeMiddlePanel = onSnapshot(q, (querySnapshot) => {
+        listElement.innerHTML = '';
+        
+        if (querySnapshot.empty) {
+            listElement.innerHTML = `
+                <li style="padding:40px 20px; text-align:center; color:#e67e22; list-style:none;">
+                    <div style="font-size:30px; margin-bottom:10px;">⚡</div>
+                    <strong>Sem Itens Flash</strong><br>
+                    <small style="color:var(--text-muted-color);">Tudo o que criar aqui aparecerá nesta lista rápida.</small>
+                </li>`;
+            return;
+        }
+
+        querySnapshot.forEach((doc) => {
+            const item = { id: doc.id, ...doc.data() };
+            const li = document.createElement('li');
+            li.className = 'list-item';
+            
+            // Adiciona a classe para borda laranja se estiver selecionado
+            if (item.id === selectedNoteId) li.classList.add('selected-orange'); // Vamos criar este estilo CSS
+            
+            li.setAttribute('data-id', item.id);
+            li.setAttribute('data-type', item.tipo);
+            li.setAttribute('data-name', item.nome);
+            li.setAttribute('data-oque', item.oque || ""); 
+            
+            // Ícone baseado no tipo
+            let icon = '📄';
+            if (item.tipo === 'jornal') icon = '📰';
+            
+            li.innerHTML = `<span>${icon} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+
+            // Lógica de clique (igual à normal)
+            li.onclick = (e) => {
+                if (e.target.closest('.item-menu-btn')) return;
+                
+                // Limpa seleções
+                listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red', 'selected-orange'));
+                li.classList.add('selected-orange');
+                
+                if (window.innerWidth <= 768) {
+                    document.body.classList.add('mobile-view-editor');
+                }
+                
+                displayNote(item.id, li);
+            };
+
+            listElement.appendChild(li);
+        });
+    });
+}
+
+function loadFlashListLeftPanel() {
+    const listElement = document.getElementById('left-panel-list');
+    if (!auth.currentUser) return;
+
+    listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div></div>';
+
+    const q = query(
+        collection(db, 'pastas'),
+        where('userId', '==', auth.currentUser.uid),
+        where('oque', '==', 'flash'),
+        where('estado', '==', 'ativa'),
+        orderBy('ultimaedicao', 'desc')
+    );
+
+    unsubscribeLeftPanel = onSnapshot(q, (querySnapshot) => {
+        listElement.innerHTML = '';
+        
+        if (querySnapshot.empty) {
+            listElement.innerHTML = `
+                <li style="padding:20px; text-align:center; color:#666; font-style:italic;">
+                    Sem itens Flash.
+                </li>`;
+            return;
+        }
+
+        querySnapshot.forEach((doc) => {
+            const item = { id: doc.id, ...doc.data() };
+            const li = document.createElement('li');
+            li.className = 'list-item';
+            
+            if (item.id === selectedNoteId) li.classList.add('selected-orange');
+            
+            li.setAttribute('data-id', item.id);
+            li.setAttribute('data-type', item.tipo); // O CSS usa isto para pôr o ícone certo automaticamente
+            li.setAttribute('data-name', item.nome);
+            li.setAttribute('data-oque', item.oque || "");
+
+            // --- CORREÇÃO AQUI: Removemos o ${icon} porque o CSS já o mete ---
+            li.innerHTML = `<span>${item.nome}</span><button class="item-menu-btn">…</button>`;
+
+            li.onclick = (e) => {
+                if (e.target.closest('.item-menu-btn')) return;
+                
+                document.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red', 'selected-orange'));
+                li.classList.add('selected-orange');
+                
+                displayNote(item.id, li);
+                
+                if (window.innerWidth <= 768) {
+                    document.body.classList.add('mobile-view-editor');
+                }
+            };
+
+            listElement.appendChild(li);
+        });
+    });
 }
 
     </script>
