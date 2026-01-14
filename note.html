@@ -14280,16 +14280,11 @@ function extractTopicsFromEditorHTML() {
 
 // Função que faz a gravação real no Firebase
 async function executeSave() {
-    console.log("💾 [EXECUTE-SAVE] A iniciar processo de gravação...");
-
     // 1. Verificação de segurança
-    if (!selectedNoteId && !activeEditingPostId) {
-        return;
-    }
-    
+    if (!selectedNoteId && !activeEditingPostId) return;
     if (isClosingNote) return;
 
-    // 2. MODO ARQUIVO (FEED)
+    // 2. MODO ARQUIVO (FEED) - Lógica separada
     const archiveArea = document.getElementById('archive-area');
     if (archiveArea && archiveArea.style.display !== 'none') {
         if (activeEditingPostId) {
@@ -14300,28 +14295,40 @@ async function executeSave() {
         return true; 
     }
 
-    // 3. SINCRONIZAÇÃO CRÍTICA (Inputs -> HTML) - COM PROTEÇÃO DE SCROLL
+    // 3. SINCRONIZAÇÃO CRÍTICA (Inputs -> HTML) - COM ESTABILIZADOR DE SCROLL
     const editor = document.getElementById('note-content-editor');
     let currentScrollPos = 0;
     
     if (editor) {
-        // Guarda a posição exata do scroll antes de mexer no DOM
+        // A. Guarda a posição exata do scroll ANTES de qualquer alteração
         currentScrollPos = editor.scrollTop;
 
+        // Seleciona todos os campos que precisam de sincronização
         const allInputs = editor.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
         
         allInputs.forEach(t => {
-            // PROTEÇÃO: Se este é o campo onde estás a escrever agora, NÃO mexe no DOM dele.
-            // O valor já está lá e será capturado no value, mexer no textContent causa o salto.
-            if (t === document.activeElement) return;
-
-            // Para os outros campos, atualiza apenas se necessário
+            // Se for TEXTAREA: Sincroniza textContent
             if (t.tagName === 'TEXTAREA') {
-                if (t.textContent !== t.value) t.textContent = t.value; 
-            } else {
-                if (t.getAttribute('value') !== t.value) t.setAttribute('value', t.value);
+                if (t.textContent !== t.value) {
+                    t.textContent = t.value; 
+                }
+            } 
+            // Se for INPUT: Sincroniza atributo value
+            else {
+                // OTIMIZAÇÃO: Só toca no DOM se o valor for realmente diferente
+                // Isto evita que o navegador "pisque" ou salte em inputs que não mudaram
+                if (t.getAttribute('value') !== t.value) {
+                    t.setAttribute('value', t.value);
+                }
             }
         });
+
+        // B. RESTAURAÇÃO IMEDIATA DO SCROLL (O SEGREDO)
+        // Fazemos isto AGORA, antes mesmo de falar com o Firebase.
+        // Isto anula qualquer salto que a sincronização acima tenha causado.
+        if (editor.scrollTop !== currentScrollPos) {
+            editor.scrollTop = currentScrollPos;
+        }
     }
 
     updateSaveStatus('saving');
@@ -14330,15 +14337,20 @@ async function executeSave() {
     const realId = editor ? editor.getAttribute('data-real-id') : null;
     if (realId) targetId = realId;
 
-    const { doc, updateDoc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-    const noteRef = doc(db, 'pastas', targetId);
-
     try {
+        const { doc, updateDoc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const noteRef = doc(db, 'pastas', targetId);
+
         const titleInput = document.getElementById('note-title-input');
         const finalTitle = titleInput ? titleInput.value : "Sem Título";
+        
+        // Captura o HTML já estabilizado
         const finalContent = editor ? editor.innerHTML : "";
+        
+        // Extrai cores (se a função existir)
         const usedColors = typeof extractUsedColorsFromEditor === 'function' ? extractUsedColorsFromEditor() : [];
 
+        // Envio para o Firebase
         await updateDoc(noteRef, { 
             nome: finalTitle, 
             conteudo: finalContent,
@@ -14346,12 +14358,7 @@ async function executeSave() {
             ultimaedicao: serverTimestamp()
         });
 
-        // RESTAURAÇÃO DE SCROLL (Caso tenha saltado milimetricamente)
-        if (editor && Math.abs(editor.scrollTop - currentScrollPos) > 5) {
-             editor.scrollTop = currentScrollPos;
-        }
-
-        // Sincronização Pública
+        // Sincronização Pública (se necessário)
         if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
              try {
                 const shareId = currentNoteShareData.shareId;
@@ -39717,24 +39724,22 @@ if (editorContainer) {
 
 window.lastCursorGPS = {
     active: false,
-    containerId: null,      // ID da caixa (wrapper)
-    editableClass: null,    // Classe da área editável específica
-    path: [],               // Caminho exato na árvore HTML (ex: Parágrafo 2 > Nó de Texto 1)
-    offset: 0,              // Posição do cursor dentro do nó
+    containerId: null,
+    editableClass: null,
+    path: [],
+    offset: 0,
     timestamp: 0
 };
 
-// 1. FUNÇÃO DE RASTREIO (Memoriza a estrutura exata)
-function trackCursorPosition() {
-    // 1. VERIFICAÇÃO PRIORITÁRIA: ELEMENTO ATIVO (Inputs e Textareas)
-    // Isto resolve o problema do Título, pois inputs não usam window.getSelection da mesma forma
+function trackCursorPosition(e) {
+    const eventType = e ? e.type : 'manual';
+    if (eventType === 'mousemove') return;
+
+    // 1. INPUTS (Título)
     const activeEl = document.activeElement;
-    
     if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
         const wrapper = activeEl.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card');
-        
         if (wrapper && wrapper.id) {
-            // Detetou que estamos num Título! Guarda como 'input'
             window.lastCursorGPS = {
                 active: true,
                 type: 'input',
@@ -39743,28 +39748,23 @@ function trackCursorPosition() {
                 offset: 0,
                 timestamp: Date.now()
             };
-            return; // Sai da função, já encontrámos o lugar
+            return;
         }
     }
 
-    // 2. VERIFICAÇÃO SECUNDÁRIA: SELEÇÃO DE TEXTO (Divs ContentEditable)
+    // 2. CONTEÚDO (Divs)
     const selection = window.getSelection();
     if (!selection.rangeCount) return;
 
     const anchorNode = selection.anchorNode;
-    // Garante que temos o elemento HTML
     const element = anchorNode.nodeType === 3 ? anchorNode.parentElement : anchorNode;
 
-    // Encontra a área editável exata (ex: .mini-note-content)
     const contentDiv = element.closest('[contenteditable="true"]');
     const wrapper = element.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, details.toggle-section');
 
     if (contentDiv && wrapper && wrapper.id) {
-        
-        // Calcula o caminho na árvore DOM
         const path = [];
         let currentNode = anchorNode;
-
         while (currentNode && currentNode !== contentDiv) {
             const parent = currentNode.parentNode;
             if (!parent) break;
@@ -39783,15 +39783,23 @@ function trackCursorPosition() {
 
         window.lastCursorGPS = {
             active: true,
-            type: 'content', // Marca como conteúdo
+            type: 'content',
             containerId: wrapper.id,
             editableClass: targetClass,
             path: path,
             offset: selection.anchorOffset,
             timestamp: Date.now()
         };
+        return;
+    }
+
+    // 3. ZONA SEGURA (Nota Principal) -> Desativa o GPS
+    if (element.id === 'note-content-editor' || element.closest('#note-content-editor')) {
+        window.lastCursorGPS.active = false; 
+        window.lastCursorGPS.containerId = null;
     }
 }
+
 
 
 // 2. FUNÇÃO DE RESTAURO (Navega pelo HTML para achar o sítio)
@@ -39803,32 +39811,23 @@ function restoreCursorFromGPS() {
 
     if (!wrapper) return; 
 
-    // --- RESTAURAR INPUT (TÍTULO) ---
+    // --- RESTAURAR INPUT ---
     if (gps.type === 'input') {
         const input = wrapper.querySelector('input, textarea');
         if (input) {
             input.focus();
-            // Põe no fim por segurança
-            const len = input.value.length;
-            input.setSelectionRange(len, len);
         }
-        return;
     }
 
-    // --- RESTAURAR CONTEÚDO (HTML COMPLEXO) ---
-    if (gps.type === 'content') {
-        // Tenta encontrar a div editável exata
+    // --- RESTAURAR CONTEÚDO ---
+    else if (gps.type === 'content') {
         let contentDiv = null;
-        if (gps.editableClass) {
-            contentDiv = wrapper.querySelector(gps.editableClass);
-        }
-        // Fallback se a classe falhar
+        if (gps.editableClass) contentDiv = wrapper.querySelector(gps.editableClass);
         if (!contentDiv) contentDiv = wrapper.querySelector('[contenteditable="true"]');
 
         if (contentDiv) {
-            contentDiv.focus(); // Foca primeiro a div geral
+            contentDiv.focus();
 
-            // NAVEGA PELO CAMINHO GRAVADO
             let targetNode = contentDiv;
             let pathValid = true;
 
@@ -39845,22 +39844,17 @@ function restoreCursorFromGPS() {
             const range = document.createRange();
 
             if (pathValid) {
-                // Se encontrou o nó exato (mesmo que seja uma linha vazia ou texto)
                 try {
-                    // Proteção: garante que o offset não ultrapassa o tamanho
                     const maxOffset = targetNode.length || targetNode.childNodes.length || 0;
                     const safeOffset = Math.min(gps.offset, maxOffset);
-                    
                     range.setStart(targetNode, safeOffset);
                     range.collapse(true);
                     sel.removeAllRanges();
                     sel.addRange(range);
                 } catch (e) {
-                    console.warn("Erro offset GPS, usando fallback fim.");
                     placeCaretAtEnd(contentDiv);
                 }
             } else {
-                // Se o HTML mudou entretanto, põe no fim da caixa (segurança)
                 placeCaretAtEnd(contentDiv);
             }
         }
@@ -39882,13 +39876,15 @@ function placeCaretAtEnd(el) {
 const editorForGPS = document.getElementById('note-content-editor');
 
 if (editorForGPS) {
-    // Atualiza o GPS sempre que clica ou escreve
+    // Passamos a função diretamente para receber o argumento 'e'
     editorForGPS.addEventListener('keyup', trackCursorPosition);
     editorForGPS.addEventListener('mouseup', trackCursorPosition);
     editorForGPS.addEventListener('input', trackCursorPosition);
     
-    // Suporte para toque em mobile
-    editorForGPS.addEventListener('touchend', () => setTimeout(trackCursorPosition, 100));
+    // O evento CRÍTICO para a sua correção
+    editorForGPS.addEventListener('mousedown', trackCursorPosition);
+    
+    editorForGPS.addEventListener('touchend', (e) => setTimeout(() => trackCursorPosition(e), 100));
 }
 
 // 4. GATILHO DE REGRESSO (Quando volta à aba)
