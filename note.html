@@ -14499,52 +14499,67 @@ async function executeSave() {
     }
 
     // 1. INSERIR HTML
-    document.execCommand('insertHTML', false, finalHTML);
+   document.execCommand('insertHTML', false, finalHTML);
     
     // 2. MARCAR COMO "POR GUARDAR"
     if (typeof updateSaveStatus === 'function') updateSaveStatus('unsaved');
     if (typeof saveNote === 'function') saveNote(false); 
 
-    // 3. APLICAR FOCO (LÓGICA ALTERADA AQUI)
-    setTimeout(() => {
+    // 3. APLICAR FOCO (LÓGICA CORRIGIDA COM GPS)
+   setTimeout(() => {
         const insertedEl = document.getElementById(uniqueId);
         if (insertedEl) {
             
             // --- DECISÃO DE ALVO DO CURSOR ---
             let targetToFocus = null;
+            let isTitleInput = false;
 
             if (type === 'redator') {
-                // REDATOR: VAI PARA O CORPO DO TEXTO
                 targetToFocus = insertedEl.querySelector('.redator-content');
             } 
             else if (type === 'free') {
-                // CONTENTOR: VAI PARA O CORPO
                 targetToFocus = insertedEl.querySelector('.mini-note-content');
             } 
             else {
-                // SUBNOTA E QUESTÃO: VAI PARA O TÍTULO (INPUT)
+                // SUBNOTA E QUESTÃO: VAI PARA O TÍTULO
                 targetToFocus = insertedEl.querySelector('.mini-note-title-input');
+                isTitleInput = true;
             }
 
             // --- EXECUÇÃO DO FOCO ---
             if (targetToFocus) {
                 // Remove foco do editor principal
-                editor.blur(); 
+                if(editor) editor.blur(); 
                 
                 targetToFocus.focus();
                 
-                // Se for área de texto (div contenteditable)
+                // Se for div contenteditable (Redator/Contentor)
                 if (targetToFocus.getAttribute('contenteditable') === 'true') {
                     const range = document.createRange();
                     range.selectNodeContents(targetToFocus);
-                    range.collapse(false); // Colapsa para o fim (para começar a escrever)
+                    range.collapse(false); 
                     const sel = window.getSelection();
                     sel.removeAllRanges();
                     sel.addRange(range);
+                    
+                    // Chama o GPS normal para conteúdo
+                    if (typeof trackCursorPosition === 'function') trackCursorPosition();
+                } 
+                // Se for INPUT/TEXTAREA (SubNota/Questão) - FORÇA MANUAL
+                else {
+                    window.lastCursorGPS = {
+                        active: true,
+                        type: 'input', // Força 'input' para garantir que volta ao título
+                        containerId: uniqueId,
+                        path: [], 
+                        offset: 0,
+                        timestamp: Date.now()
+                    };
+                    console.log("📍 [GPS] Posição forçada no Título da nova caixa.");
                 }
             }
             
-            // Scroll suave para mostrar o item
+            // Scroll suave
             insertedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     }, 50); 
@@ -14574,27 +14589,29 @@ function applyFocusLogic(uniqueId, type, editor) {
 
     // C. Executar Foco
     if (targetToFocus) {
-        // TRUQUE VITAL: Tira o foco do editor principal explicitamente
         editor.blur(); 
         
         targetToFocus.focus();
-        targetToFocus.click(); // Ajuda no mobile
+        targetToFocus.click(); 
 
-        // Se for textarea/input, seleciona tudo (para garantir cursor ativo)
         if (targetToFocus.tagName === 'TEXTAREA' || targetToFocus.tagName === 'INPUT') {
-            // Pequeno hack: move cursor para o fim se tiver texto, ou seleciona se vazio
             const val = targetToFocus.value;
             targetToFocus.value = '';
             targetToFocus.value = val;
         }
-        // Se for div contenteditable
         else if (targetToFocus.getAttribute('contenteditable') === 'true') {
             const range = document.createRange();
             range.selectNodeContents(targetToFocus);
-            range.collapse(false); // Colapsa para o fim
+            range.collapse(false);
             const sel = window.getSelection();
             sel.removeAllRanges();
             sel.addRange(range);
+        }
+
+        // >>> CORREÇÃO FUNDAMENTAL AQUI TAMBÉM <<<
+        // Atualiza o GPS manualmente
+        if (typeof trackCursorPosition === 'function') {
+            trackCursorPosition();
         }
     }
 }
@@ -39709,18 +39726,15 @@ window.lastCursorGPS = {
 
 // 1. FUNÇÃO DE RASTREIO (Memoriza a estrutura exata)
 function trackCursorPosition() {
-    const selection = window.getSelection();
-    if (!selection.rangeCount) return;
-
-    const anchorNode = selection.anchorNode;
-    // Garante que temos o elemento HTML
-    const element = anchorNode.nodeType === 3 ? anchorNode.parentElement : anchorNode;
-
-    // --- A. ESTÁ NUM TÍTULO (Input/Textarea)? ---
-    // (A lógica de inputs mantém-se simples pois eles não suportam HTML complexo)
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-        const wrapper = element.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card');
+    // 1. VERIFICAÇÃO PRIORITÁRIA: ELEMENTO ATIVO (Inputs e Textareas)
+    // Isto resolve o problema do Título, pois inputs não usam window.getSelection da mesma forma
+    const activeEl = document.activeElement;
+    
+    if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+        const wrapper = activeEl.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card');
+        
         if (wrapper && wrapper.id) {
+            // Detetou que estamos num Título! Guarda como 'input'
             window.lastCursorGPS = {
                 active: true,
                 type: 'input',
@@ -39729,34 +39743,36 @@ function trackCursorPosition() {
                 offset: 0,
                 timestamp: Date.now()
             };
-            return;
+            return; // Sai da função, já encontrámos o lugar
         }
     }
 
-    // --- B. ESTÁ NO CONTEÚDO (Div Editável)? ---
+    // 2. VERIFICAÇÃO SECUNDÁRIA: SELEÇÃO DE TEXTO (Divs ContentEditable)
+    const selection = window.getSelection();
+    if (!selection.rangeCount) return;
+
+    const anchorNode = selection.anchorNode;
+    // Garante que temos o elemento HTML
+    const element = anchorNode.nodeType === 3 ? anchorNode.parentElement : anchorNode;
+
     // Encontra a área editável exata (ex: .mini-note-content)
     const contentDiv = element.closest('[contenteditable="true"]');
     const wrapper = element.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, details.toggle-section');
 
     if (contentDiv && wrapper && wrapper.id) {
         
-        // 1. CALCULA O CAMINHO NA ÁRVORE DOM
-        // Em vez de contar letras, memorizamos: "Filho 2 > Neto 0"
+        // Calcula o caminho na árvore DOM
         const path = [];
         let currentNode = anchorNode;
 
         while (currentNode && currentNode !== contentDiv) {
             const parent = currentNode.parentNode;
             if (!parent) break;
-            
-            // Descobre qual o índice deste nó entre os irmãos
             const index = Array.prototype.indexOf.call(parent.childNodes, currentNode);
-            path.unshift(index); // Adiciona ao início da lista
-            
+            path.unshift(index);
             currentNode = parent;
         }
 
-        // Guarda a classe para sabermos exatamente qual div focar (content vs title)
         let targetClass = "";
         if (contentDiv.classList.contains('mini-note-content')) targetClass = '.mini-note-content';
         else if (contentDiv.classList.contains('redator-content')) targetClass = '.redator-content';
@@ -39767,15 +39783,16 @@ function trackCursorPosition() {
 
         window.lastCursorGPS = {
             active: true,
-            type: 'content',
+            type: 'content', // Marca como conteúdo
             containerId: wrapper.id,
-            editableClass: targetClass, // Guarda qual a div específica
-            path: path,                 // O caminho do nó (ex: [2, 0])
-            offset: selection.anchorOffset, // A posição do cursor nesse nó
+            editableClass: targetClass,
+            path: path,
+            offset: selection.anchorOffset,
             timestamp: Date.now()
         };
     }
 }
+
 
 // 2. FUNÇÃO DE RESTAURO (Navega pelo HTML para achar o sítio)
 function restoreCursorFromGPS() {
