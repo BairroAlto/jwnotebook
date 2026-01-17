@@ -17820,12 +17820,23 @@ async function openEditEntityModal(entityId, entityType) {
 
     if (!modal) return;
 
-    // Configuração Visual (Nível 20 Milhões)
-    document.body.appendChild(modal);
-    modal.style.setProperty('display', 'flex', 'important');
-    modal.style.setProperty('z-index', '20000000', 'important');
-    modal.style.setProperty('visibility', 'visible', 'important');
-    modal.style.setProperty('opacity', '1', 'important');
+    // 1. FORÇAR VISIBILIDADE MÁXIMA
+    document.body.appendChild(modal); // Move para o topo
+    
+    modal.style.cssText = `
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        background-color: rgba(0, 0, 0, 0.85) !important;
+        z-index: 2147483647 !important; /* MÁXIMO ABSOLUTO */
+        justify-content: center !important;
+        align-items: center !important;
+    `;
     
     if (modalContent) modalContent.style.position = 'relative';
 
@@ -17838,50 +17849,30 @@ async function openEditEntityModal(entityId, entityType) {
         emojiContainer.style.display = 'none';
     }
 
-    // --- 1. BOTÃO OCULTAR (CANTO SUPERIOR DIREITO) ---
+    // --- BOTÃO OCULTAR (CANTO SUPERIOR DIREITO) ---
     const oldBtn = document.getElementById('btn-hide-entity-corner');
     if (oldBtn) oldBtn.remove();
-    const oldActionBtn = document.getElementById('btn-hide-entity-dynamic');
-    if (oldActionBtn) oldActionBtn.remove();
 
     const hideBtn = document.createElement('button');
     hideBtn.id = 'btn-hide-entity-corner';
     hideBtn.textContent = "👁️ Ocultar";
-    hideBtn.title = "Mover para Itens Ocultos";
     
     hideBtn.style.cssText = `
-        position: absolute;
-        top: 15px;
-        right: 15px;
-        background: none;
-        border: 1px solid transparent;
-        color: var(--text-muted-color);
-        font-size: 0.75em;
-        cursor: pointer;
-        padding: 4px 8px;
-        border-radius: 4px;
-        transition: all 0.2s;
-        opacity: 0.7;
+        position: absolute; top: 15px; right: 15px;
+        background: none; border: 1px solid transparent;
+        color: var(--text-muted-color); font-size: 0.75em;
+        cursor: pointer; padding: 4px 8px; border-radius: 4px;
+        transition: all 0.2s; opacity: 0.7;
     `;
     
-    hideBtn.onmouseover = () => { 
-        hideBtn.style.color = "#e74c3c"; 
-        hideBtn.style.opacity = "1"; 
-        hideBtn.style.backgroundColor = "rgba(231, 76, 60, 0.1)";
-    };
-    hideBtn.onmouseout = () => { 
-        hideBtn.style.color = "var(--text-muted-color)"; 
-        hideBtn.style.opacity = "0.7"; 
-        hideBtn.style.backgroundColor = "transparent";
-    };
+    hideBtn.onmouseover = () => { hideBtn.style.color = "#e74c3c"; hideBtn.style.opacity = "1"; hideBtn.style.backgroundColor = "rgba(231, 76, 60, 0.1)"; };
+    hideBtn.onmouseout = () => { hideBtn.style.color = "var(--text-muted-color)"; hideBtn.style.opacity = "0.7"; hideBtn.style.backgroundColor = "transparent"; };
 
     modalContent.appendChild(hideBtn);
 
     const collectionName = getCollectionFromType(entityType);
     
     try {
-        if (!collectionName) throw new Error("Tipo inválido: " + entityType);
-
         const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const entityRef = doc(db, collectionName, entityId);
         const entitySnap = await getDoc(entityRef);
@@ -17897,43 +17888,34 @@ async function openEditEntityModal(entityId, entityType) {
         nameInput.value = entityData.nome;
         descriptionInput.value = entityData.descricao || '';
         
-        if (entityType === 'subcosmos') {
-            emojiInput.value = entityData.emoji || "💼";
-        }
+        if (entityType === 'subcosmos') emojiInput.value = entityData.emoji || "💼";
 
-        // --- 2. LÓGICA DO BOTÃO OCULTAR (COM CORREÇÃO DE Z-INDEX) ---
+        // --- LÓGICA DO BOTÃO OCULTAR ---
         hideBtn.onclick = async () => {
-            // A. Iniciar a promessa do popup de confirmação
-            const confirmationPromise = showConfirmation(
+            // A. Trazemos o modal de confirmação para a frente deste modal
+            const confirmModal = document.getElementById('confirm-modal');
+            if (confirmModal) {
+                // Truque: remove e readiciona ao body para garantir que é o último elemento
+                document.body.appendChild(confirmModal); 
+                confirmModal.style.setProperty('z-index', '2147483647', 'important'); 
+            }
+
+            const confirmed = await showConfirmation(
                 "Ocultar Item?",
                 `Deseja ocultar "${entityData.nome}"?\n\nEle sairá das listas mas pode ser recuperado em Configurações > Itens Ocultos.`
             );
-
-            // B. TRUQUE: Forçar o z-index do popup de confirmação para 21 Milhões
-            // Fazemos isto imediatamente após chamar a função, antes de esperar a resposta
-            const confirmModal = document.getElementById('confirm-modal');
-            if (confirmModal) {
-                confirmModal.style.setProperty('z-index', '21000000', 'important');
-            }
-
-            // C. Agora esperamos a resposta do utilizador
-            const confirmed = await confirmationPromise;
-
-            // D. Restaurar z-index original (limpeza)
-            if (confirmModal) confirmModal.style.zIndex = '';
 
             if (confirmed) {
                 modal.style.display = 'none';
                 await updateDoc(entityRef, { estado: 'desativa' });
                 
                 if (typeof hideReferencesPanel === 'function') hideReferencesPanel();
-                
-                if (currentTab === 'lists' && typeof renderListCategoryItems === 'function') {
-                    const activeCat = navigationStack.length > 0 ? navigationStack[0].id : entityType;
-                    renderListCategoryItems(activeCat);
-                }
-                
                 if (typeof fetchAllEntities === 'function') fetchAllEntities();
+                
+                // Se estiver no modo lista, atualiza
+                if (currentTab === 'lists' && navigationStack.length > 0) {
+                    renderListCategoryItems(navigationStack[0].id);
+                }
             }
         };
 
@@ -17948,40 +17930,31 @@ async function openEditEntityModal(entityId, entityType) {
 
             if (!newName) return alert('O nome é obrigatório.');
 
-            const updateData = {
-                nome: newName,
-                descricao: newDescription
-            };
-
+            const updateData = { nome: newName, descricao: newDescription };
             if (entityType === 'subcosmos') updateData.emoji = newEmoji || "💼"; 
 
             await updateDoc(entityRef, updateData);
 
-            const type = entityType; // (vem dos argumentos)
-if (allEntities[type]) {
-    const cachedEntity = allEntities[type].find(e => e.id === entityId);
-    if (cachedEntity) {
-        cachedEntity.nome = newName;
-        cachedEntity.descricao = newDescription; // <--- Isto corrige o "Jó 1:1" fantasma
-        cachedEntity.emoji = newEmoji;
-    }
-}
-// >>> FIM DA CORREÇÃO <<<
+            // Atualiza Cache
+            if (allEntities[entityType]) {
+                const cached = allEntities[entityType].find(e => e.id === entityId);
+                if (cached) {
+                    cached.nome = newName;
+                    cached.descricao = newDescription;
+                    cached.emoji = newEmoji;
+                }
+            }
 
             modal.style.display = 'none';
             
-            if (typeof fetchAllEntities === 'function') await fetchAllEntities();
-            
+            // Atualiza UI
             if (activeReferenceEntity && activeReferenceEntity.id === entityId) {
                 activeReferenceEntity.name = newName;
-                const titleEl = document.getElementById('references-panel-title');
-                const descEl = document.getElementById('references-panel-description');
-                if (titleEl) titleEl.textContent = `Referências: ${newName}`;
-                if (descEl) descEl.textContent = newDescription;
+                const tEl = document.getElementById('references-panel-title');
+                const dEl = document.getElementById('references-panel-description');
+                if (tEl) tEl.textContent = `Referências: ${newName}`;
+                if (dEl) dEl.textContent = newDescription;
             }
-            
-            const activeCat = navigationStack.length > 0 ? navigationStack[0].id : entityType;
-            if (currentTab === 'lists') renderListCategoryItems(activeCat);
         };
 
     } catch (error) {
@@ -18241,7 +18214,27 @@ async function openReferenceSelectionPopup() {
         return;
     }
 
-    modal.style.display = 'flex';
+    // ============================================================
+    // CORREÇÃO DE HIERARQUIA (AQUÁRIO FIX)
+    // ============================================================
+    document.body.appendChild(modal); // Move para o topo do DOM
+    
+    modal.style.cssText = `
+        display: flex !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        background-color: rgba(0, 0, 0, 0.85) !important;
+        z-index: 2147483647 !important; /* MÁXIMO ABSOLUTO */
+        justify-content: center !important;
+        align-items: center !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+    `;
+    // ============================================================
+
     list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar notas e categorias anexadas...</span></div>';
 
     allFoundReferenceBoxes = [];
@@ -18284,9 +18277,7 @@ async function openReferenceSelectionPopup() {
                 const allWrappers = docHTML.querySelectorAll('.mini-note-wrapper, details.toggle-section');
                 
                 allWrappers.forEach((w) => {
-                    // --- EXTRAÇÃO DE TEXTO LIMPO (CORREÇÃO AQUI) ---
                     let boxTitle = "";
-                    let boxFullText = "";
                     let boxContentOnly = "";
 
                     if (w.tagName === 'DETAILS') {
@@ -18296,15 +18287,12 @@ async function openReferenceSelectionPopup() {
                         boxContentOnly = contentDiv ? contentDiv.textContent : "";
                     } else {
                         const titleInput = w.querySelector('.mini-note-title-input');
-                        // Pegamos no valor real do input/textarea, não no HTML
                         boxTitle = titleInput ? (titleInput.value || titleInput.getAttribute('value') || "") : "";
                         const contentDiv = w.querySelector('.mini-note-content');
                         boxContentOnly = contentDiv ? contentDiv.textContent : "";
                     }
 
-                    // Texto para pesquisa (Título + Conteúdo, sem icons da toolbar)
-                    boxFullText = (boxTitle + " " + boxContentOnly).toLowerCase();
-
+                    const boxFullText = (boxTitle + " " + boxContentOnly).toLowerCase();
                     let match = false;
 
                     // 1. Match por Cor
@@ -18313,7 +18301,7 @@ async function openReferenceSelectionPopup() {
                         if (elColor && elColor.toUpperCase() === hexToFind) match = true;
                     } 
                     
-                    // 2. Match por Texto (Pesquisa no texto limpo)
+                    // 2. Match por Texto
                     if (!match && boxFullText.includes(searchTerm)) {
                         match = true;
                     }
@@ -18339,7 +18327,6 @@ async function openReferenceSelectionPopup() {
                         else if (w.classList.contains('free-mode')) { boxType = "Contentor"; boxIcon = "📙"; }
                         else { boxType = "SubNota"; boxIcon = "📘"; }
 
-                        // Se o título estiver vazio (comum em contentores), usa o início do texto
                         let displayTitle = boxTitle.trim();
                         if (!displayTitle) {
                             displayTitle = boxContentOnly.trim().substring(0, 40) + "...";
@@ -18349,7 +18336,7 @@ async function openReferenceSelectionPopup() {
                             id: docSnap.id, 
                             name: item.originName, 
                             snippet: w.outerHTML,
-                            displaySnippet: displayTitle, // AGORA É O TÍTULO LIMPO
+                            displaySnippet: displayTitle,
                             typeName: boxType, 
                             typeIcon: boxIcon, 
                             updatedTime: updatedTime
@@ -21114,14 +21101,39 @@ function setLeftPanelTitle(text, isBackAction = false) {
 async function showHighlightReferencesPanel(hexCode, colorName) {
     // 1. Gravar antes de mudar
     await forceSaveAndClosePuzzleMode();
-  resetReferencesPanelUI();
+    resetReferencesPanelUI();
+
+    // --- DETEÇÃO DO MODO AQUÁRIO (IMPORTANTE) ---
+    const aquariumEnv = document.getElementById('aquarium-environment');
+    const refPanel = document.getElementById('references-panel');
+
+    if (aquariumEnv && aquariumEnv.style.display !== 'none') {
+        // Se o Aquário está aberto, forçamos o painel a flutuar sobre ele
+        refPanel.classList.add('aquarium-overlay-mode');
+        
+        // Movemos o painel para dentro do ambiente do Aquário para garantir que fica visível
+        if (refPanel.parentElement !== aquariumEnv) {
+            aquariumEnv.appendChild(refPanel);
+        }
+
+        // Adiciona classe para empurrar o texto do Aquário (Squeeze)
+        aquariumEnv.classList.add('right-open');
+    } else {
+        // Modo Normal: Devolve à estrutura principal
+        refPanel.classList.remove('aquarium-overlay-mode');
+        const mainContainer = document.querySelector('.notebook-container');
+        if (mainContainer && refPanel.parentElement !== mainContainer) {
+            mainContainer.appendChild(refPanel);
+        }
+    }
+    // ---------------------------------------------
 
     // 2. Configuração Visual
     document.getElementById('references-panel-description').style.display = 'none';
     document.getElementById('references-toolbar').style.display = 'flex';
     document.querySelectorAll('.references-separator').forEach(el => el.style.display = 'block');
     
-    // Forçar aba "Referências"
+    // Forçar aba "Referências" (Cita)
     const refTabBtn = document.querySelector('[data-ref-tab="references"]');
     if (refTabBtn) refTabBtn.click();
 
@@ -21129,8 +21141,10 @@ async function showHighlightReferencesPanel(hexCode, colorName) {
     document.getElementById('references-wol-btn').style.display = 'none';
     document.getElementById('references-bookmark-btn').style.display = 'none';
 
+    // 3. Mostrar o Painel
     notebookContainer.classList.add('references-panel-visible');
     
+    // 4. Configurar Título e Cabeçalho
     const titleEl = document.getElementById('references-panel-title');
     titleEl.innerHTML = `
         <span style="display:inline-block; width:15px; height:15px; background:${hexCode}; border-radius:50%; border:1px solid #ccc; margin-right:5px; vertical-align:middle;"></span>
@@ -21144,8 +21158,19 @@ async function showHighlightReferencesPanel(hexCode, colorName) {
             <span>A procurar destaques...</span>
         </div>`;
 
+    // 5. Definir a Entidade Ativa (Para o +Ref funcionar)
+    // Usamos o código Hex como ID e 'destaque' como tipo
+    activeReferenceEntity = {
+        id: hexCode,
+        type: 'destaque',
+        name: colorName
+    };
+
+    // Carregar dados do Quadro (Puzzle) para esta cor
+    loadPuzzleData(hexCode, 'destaque');
+
     try {
-        // 3. Pesquisa por coresUsadas (Garante que está em maiúsculas para comparar)
+        // 6. Pesquisa no Firestore (Notas com esta cor)
         const q = query(
             collection(db, 'pastas'), 
             where('tipo', '==', 'nota'),
@@ -21223,7 +21248,6 @@ async function showHighlightReferencesPanel(hexCode, colorName) {
             details.className = 'reference-item';
             details.style.borderLeft = `3px solid ${hexCode}`;
             
-            // --- AQUI ESTAVA O ERRO: DEFINIR AS VARIÁVEIS ANTES DO INNERHTML ---
             const safeName = encodeURIComponent(item.noteName);
             const safeSnippet = encodeURIComponent(item.snippet);
 
@@ -21231,8 +21255,7 @@ async function showHighlightReferencesPanel(hexCode, colorName) {
             summary.style.listStyle = "none"; 
 
             const goToBtn = `<button class="go-to-note-btn" 
-                data-note-id="${item.noteId}" 
-                data-search-term="${item.displayTitle}"
+                onclick="window.handleGoToNote('${item.noteId}')" 
                 title="Ir para nota">➔</button>`;
 
             summary.innerHTML = `
@@ -21251,7 +21274,7 @@ async function showHighlightReferencesPanel(hexCode, colorName) {
             
             const contextDiv = document.createElement('div');
             contextDiv.className = 'reference-context';
-            // Se for HTML (Subnotas), mostramos um texto limpo como preview
+            // Limpa HTML para mostrar preview de texto
             const previewText = item.snippet.replace(/<[^>]*>/g, '').substring(0, 150);
             contextDiv.innerHTML = `<p>${previewText}...</p>`;
             
@@ -28258,6 +28281,9 @@ function convertToTextarea(inputEl) {
     });
 }
 
+// ============================================================
+// FUNÇÃO: RENDERIZAR ITENS DA CATEGORIA (COLUNA DO MEIO)
+// ============================================================
 async function renderListCategoryItems(categoryId) {
     const listElement = middlePanelList;
     const myUid = auth.currentUser.uid;
@@ -28280,11 +28306,10 @@ async function renderListCategoryItems(categoryId) {
         // ==========================================
         // 1. NÍVEL PROFUNDO: DENTRO DE UM MARCADOR (Listar Versículos)
         // ==========================================
-        if (lastNav.type === 'marcadores') {
+        if (lastNav && lastNav.type === 'marcadores') {
             middlePanelTitle.textContent = `🔖 ${lastNav.name}`;
-            updateAddButtonState(false); // Esconde botão + (não criamos versículos aqui)
+            updateAddButtonState(false); 
 
-            // Procura textos bíblicos que tenham este marcador ID associado
             const q = query(
                 collection(db, 'textosbiblicos'),
                 where(`marcadoresAssociados.${lastNav.id}`, '==', true),
@@ -28304,26 +28329,21 @@ async function renderListCategoryItems(categoryId) {
                 const li = document.createElement('li');
                 li.className = 'list-item';
                 
-                // Se o versículo estiver aberto na 4ª coluna, destaca-o
                 if (activeReferenceEntity && activeReferenceEntity.id === item.id) {
                     li.classList.add(currentViewMode === 'shared' ? 'selected-red' : 'selected');
                 }
 
                 li.innerHTML = `<span>📜 ${item.nome}</span>`;
 
-                // CLIQUE: Abre a 4ª Coluna (Comportamento final)
                 li.onclick = () => {
-                    // Limpa seleções visuais
                     listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
-                    
                     const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
                     li.classList.add(selectionClass);
-                    
                     showReferencesPanel(item.id, item.nome, 'textobiblico');
                 };
                 listElement.appendChild(li);
             });
-            return; // Sai da função aqui
+            return; 
         }
 
         // ==========================================
@@ -28395,7 +28415,7 @@ async function renderListCategoryItems(categoryId) {
         }
 
         // ==========================================
-        // 3. CAMINHO: BÍBLIA (LIVROS -> CAPÍTULOS -> VERSÍCULOS)
+        // 3. CAMINHO: BÍBLIA
         // ==========================================
         if (origin === 'biblia-root') {
             if (lastNav.type === 'list-category') {
@@ -28454,49 +28474,73 @@ async function renderListCategoryItems(categoryId) {
         }
 
         // ==========================================
-        // 4. LISTAS PRINCIPAIS (Tópicos, Marcadores, etc.)
+        // 4. LISTAS PRINCIPAIS (RAIZ)
         // ==========================================
-        if (lastNav.type === 'list-category') {
+        if (!lastNav || lastNav.type === 'list-category') {
             let items = [];
             
-            // --- CASO MARCADORES (NOVO COMPORTAMENTO) ---
+            // --- MARCADORES ---
             if (categoryId === 'marcadores') {
                 middlePanelTitle.textContent = "Marcadores";
-                // Mostra botão + (para criar novos géneros de marcador)
                 updateAddButtonState(true, true); 
-                
                 const q = query(collection(db, 'marcadores'), where('userId', '==', myUid), orderBy('nome'));
                 const snap = await getDocs(q);
-                
-                listElement.innerHTML = ''; // Limpa antes de preencher
-
+                listElement.innerHTML = '';
                 if (snap.empty) {
                     listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum marcador criado.</li>';
                     return;
                 }
-
                 snap.forEach(docSnap => {
                     const data = docSnap.data();
                     const li = document.createElement('li');
                     li.className = 'list-item';
                     li.innerHTML = `<span>🔖 ${data.nome}</span>`;
-                    
-                    // CLIQUE: NAVEGA PARA DENTRO (Push Stack)
                     li.onclick = () => {
-                        navigationStack.push({ 
-                            id: docSnap.id, 
-                            name: data.nome, 
-                            type: 'marcadores' // Isto ativa o "Nível Profundo" acima
-                        });
+                        navigationStack.push({ id: docSnap.id, name: data.nome, type: 'marcadores' });
                         updateNavigationView(true);
+                    };
+                    listElement.appendChild(li);
+                });
+                return;
+            }
+
+            // --- DESTAQUES (CORES) - AQUI ESTAVA A FALTA ---
+            else if (categoryId === 'destaque') {
+                middlePanelTitle.textContent = "Destaques (Cores)";
+                updateAddButtonState(false); 
+                listElement.innerHTML = '';
+                
+                // Itera sobre as cores globais
+                DEFAULT_HIGHLIGHTS.forEach(colorObj => {
+                    // Verifica se o user deu um nome personalizado
+                    const displayName = userCustomHighlights[colorObj.code] || colorObj.name;
+                    
+                    const li = document.createElement('li');
+                    li.className = 'list-item';
+                    
+                    // Bolinha de cor visual
+                    const colorDot = `<span style="display:inline-block; width:12px; height:12px; background:${colorObj.code}; border-radius:50%; margin-right:8px; border:1px solid #555;"></span>`;
+                    
+                    li.innerHTML = `${colorDot} ${displayName}`;
+                    
+                    li.onclick = () => {
+                        // Limpa seleção visual
+                        listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
+                        
+                        // Aplica seleção
+                        const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+                        li.classList.add(selectionClass);
+                        
+                        // Abre a 4ª coluna com as referências desta cor
+                        showHighlightReferencesPanel(colorObj.code, displayName);
                     };
                     
                     listElement.appendChild(li);
                 });
-                return; // Sai porque já renderizámos manualmente
+                return;
             }
 
-            // --- CASO TÓPICOS ---
+            // --- TÓPICOS ---
             else if (categoryId === 'topico') {
                 middlePanelTitle.textContent = "Tópicos";
                 updateAddButtonState(true, true);
@@ -28508,7 +28552,7 @@ async function renderListCategoryItems(categoryId) {
                 });
             } 
             
-            // --- CASO TAGS ---
+            // --- TAGS ---
             else if (categoryId === 'tag') {
                 middlePanelTitle.textContent = "Tags (#)";
                 updateAddButtonState(false);
@@ -28519,7 +28563,7 @@ async function renderListCategoryItems(categoryId) {
                 items = Array.from(tagSet).sort().map(t => ({ id: t, nome: t, type: 'tag' }));
             }
             
-            // --- ENTIDADES GENÉRICAS (Personagens, Locais, etc.) ---
+            // --- GENÉRICOS (Personagens, Locais, etc) ---
             else {
                 const config = ENTITY_CONFIG[categoryId];
                 if (config) {
@@ -28537,7 +28581,7 @@ async function renderListCategoryItems(categoryId) {
                 }
             }
             
-            // Renderiza para os casos padrão
+            // Renderiza para os casos padrão (Tópicos, Tags, Entidades)
             renderStandardList(items);
         }
 
@@ -28992,6 +29036,8 @@ window.removeManualField = function(closeBtn, type) {
 };
 
 window.openPanelLinkCreator = async function(type, editingIndex = null) {
+    console.log("🚀 [GESTOR] Abertura iniciada (Links/Codex)...");
+    
     const modal = document.getElementById('link-modal');
     const saveBtn = document.getElementById('link-save-btn');
     const modalTitle = document.getElementById('link-modal-title');
@@ -29008,6 +29054,29 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
     const urlsContainer = document.getElementById('link-urls-container');
     const titleInput = document.getElementById('link-title-input');
 
+    if (!modal) return;
+
+    // ============================================================
+    // CORREÇÃO DE HIERARQUIA (AQUÁRIO FIX)
+    // ============================================================
+    document.body.appendChild(modal); // Move para o topo do DOM
+    
+    modal.style.cssText = `
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        background-color: rgba(0, 0, 0, 0.85) !important;
+        z-index: 2147483647 !important; /* MÁXIMO ABSOLUTO */
+        justify-content: center !important;
+        align-items: center !important;
+    `;
+    // ============================================================
+
     // --- 1. LIMPEZA PROFUNDA (RESET) ---
     if (tabHeader) tabHeader.style.display = 'none'; 
     if (categoriesTabContent) categoriesTabContent.style.display = 'none'; 
@@ -29021,7 +29090,7 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
     saveBtn.disabled = false;
     saveBtn.textContent = "Gravar";
 
-    // --- 2. DEFINIR existingData (CORREÇÃO DO ERRO) ---
+    // --- 2. DEFINIR existingData ---
     let existingData = null; 
     if (editingIndex !== null) {
         try {
@@ -29132,8 +29201,6 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
             newSaveBtn.textContent = "Gravar";
         }
     };
-
-    modal.style.display = 'flex';
 };
 
 
@@ -34761,27 +34828,39 @@ if (btnOpenMobile) {
 
 // 1. Abrir o Modal de Gestão
 async function openAnchorManagerModal() {
+    console.log("⚓ [GESTOR] Abrindo Gestor de Âncoras...");
+    
     const modal = document.getElementById('anchors-manager-modal');
     const list = document.getElementById('anchors-manager-list');
     
     if (!activeReferenceEntity || !activeReferenceEntity.id) return;
+    if (!modal) return console.error("Modal #anchors-manager-modal não encontrado.");
 
-    // Forçar exibição
-    document.body.appendChild(modal);
-    modal.style.setProperty('display', 'flex', 'important');
-    modal.style.zIndex = "50000";
-    modal.style.opacity = "1";
-    modal.style.visibility = "visible";
+    // 1. FORÇAR VISIBILIDADE MÁXIMA
+    document.body.appendChild(modal); // Move para o topo da hierarquia
+    
+    modal.style.cssText = `
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        background-color: rgba(0, 0, 0, 0.85) !important;
+        z-index: 2147483647 !important; /* MÁXIMO ABSOLUTO */
+        justify-content: center !important;
+        align-items: center !important;
+    `;
 
     list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar âncoras...</span></div>';
 
     try {
         const myUid = auth.currentUser.uid;
-        
-        // Importação dinâmica das funções necessárias
         const { collection, query, where, orderBy, getDocs, doc, getDoc, updateDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
-        // A. Buscar a Entidade Atual (para saber quais já estão selecionadas)
+        // A. Buscar a Entidade Atual
         const collectionName = getCollectionFromType(activeReferenceEntity.type);
         const entityRef = doc(db, collectionName, activeReferenceEntity.id);
         const entitySnap = await getDoc(entityRef);
@@ -34791,8 +34870,7 @@ async function openAnchorManagerModal() {
             attachedAnchors = entitySnap.data().ancorasAssociadas || {};
         }
 
-        // B. Buscar todas as Âncoras (QUERY CORRIGIDA)
-        // Removemos o filtro 'estado' do Firebase para trazer TODOS os itens do utilizador
+        // B. Buscar todas as Âncoras
         const qAnchors = query(
             collection(db, 'ancoras'),
             where('userId', '==', myUid),
@@ -34812,10 +34890,6 @@ async function openAnchorManagerModal() {
 
         snapAnchors.forEach(docSnap => {
             const anchor = { id: docSnap.id, ...docSnap.data() };
-            
-            // --- FILTRO NO JAVASCRIPT ---
-            // Só esconde se estiver explicitamente 'desativa'.
-            // Se o campo não existir (undefined), mostra na mesma.
             if (anchor.estado === 'desativa') return;
 
             const isSelected = !!attachedAnchors[anchor.id];
@@ -34828,27 +34902,21 @@ async function openAnchorManagerModal() {
                     <span class="anchor-name">${anchor.nome}</span>
                     ${anchor.descricao ? `<small style="color:var(--text-muted-color);">${anchor.descricao}</small>` : ''}
                 </div>
-                
-                <!-- Botão Editar (Lápis) -->
                 <button class="anchor-edit-btn" title="Editar Âncora">✏️</button>
-                
-                <!-- Check Visual -->
                 <div class="anchor-check-icon">✓</div>
             `;
 
-            // Clique na linha (Toggle Seleção)
+            // Toggle
             li.onclick = (e) => {
-                // Se clicou no lápis, não ativa a seleção
                 if (e.target.closest('.anchor-edit-btn')) return;
                 toggleAnchorOnEntity(anchor.id, !li.classList.contains('selected'), li);
             };
 
-            // Clique no botão Editar
+            // Editar (Abre o sub-modal, que também precisa de z-index alto)
             const editBtn = li.querySelector('.anchor-edit-btn');
             editBtn.onclick = (e) => {
-                e.preventDefault();
-                e.stopPropagation(); // Impede o clique na linha
-                openEditAnchorModal(anchor);
+                e.preventDefault(); e.stopPropagation();
+                openEditAnchorModal(anchor); // Esta função também foi corrigida abaixo
             };
             
             list.appendChild(li);
@@ -37978,7 +38046,22 @@ function renderAquariumIndex(canvas) {
     let count = 0;
 
     blocks.forEach((block, index) => {
-        const text = block.innerText.trim();
+        // --- CORREÇÃO: Limpeza dos Botões ---
+        // 1. Clona o bloco para não afetar o original no ecrã
+        const clone = block.cloneNode(true);
+        
+        // 2. Remove a div dos botões de ação (onde estão o 🐚 e o ⇱)
+        const actionsDiv = clone.querySelector('.ghost-actions');
+        if (actionsDiv) actionsDiv.remove();
+
+        // 3. Remove o botão de adicionar entre linhas (o + pequeno) se existir
+        const addBtn = clone.querySelector('.ghost-add-between-btn');
+        if (addBtn) addBtn.remove();
+
+        // 4. Lê o texto limpo
+        const text = clone.innerText.trim();
+        // -------------------------------------
+
         if (!text) return;
 
         // Tenta obter título: ou atributo semântico ou primeira frase
