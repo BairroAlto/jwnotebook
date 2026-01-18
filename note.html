@@ -1282,9 +1282,17 @@ input:checked + .slider:before { transform: translateX(20px); }
 .cal-day:hover { background-color: var(--hover-color); border-color: var(--border-color); }
 .cal-day.empty { background: transparent; cursor: default; }
 .cal-day.today { border: 1px solid var(--accent-color); font-weight: bold; color: var(--accent-color); }
-.cal-day.has-task::after {
-    content: ''; position: absolute; bottom: 3px; left: 50%; transform: translateX(-50%);
-    width: 4px; height: 4px; background-color: #e74c3c; border-radius: 50%;
+
+/* Ponto indicador de tarefa */
+.cal-day.has-task {
+    font-weight: bold; /* Opcional: põe o número a negrito */
+}
+
+
+.cal-day.has-task::after { content: ''; position: absolute; bottom: 4px; /* Ajuste a altura */ left: 50%; transform: translateX(-50%); width: 5px; height: 5px; background-color: #e74c3c; /* Vermelho */ border-radius: 50%; z-index: 2; }
+/* Garante que o dia tem posição relativa para o ponto ficar dentro dele */
+.cal-day {
+    position: relative; 
 }
 
 /* Estilos para o Seletor de Agregação */
@@ -13128,6 +13136,52 @@ else if (btn.dataset.action === 'insert-timeline') {
     saveNote();
 }
 
+// --- H. Inserir Calendário (📅) - CORRIGIDO ---
+            else if (btn.dataset.action === 'insert-date') {
+                e.preventDefault(); 
+                e.stopPropagation();
+                e.stopImmediatePropagation(); // PÁRA TUDO: Garante que só executa uma vez
+
+                const calId = `cal_${Date.now()}`;
+                const today = new Date();
+                
+                const widgetHTML = `
+                    <div class="jwn-calendar-widget" contenteditable="false" id="${calId}" data-view="month" data-month="${today.getMonth()}" data-year="${today.getFullYear()}">
+                        <div class="cal-header">
+                            <button class="cal-btn cal-prev">◀</button>
+                            <span class="cal-title">Carregando...</span>
+                            <div style="display:flex; gap:5px;">
+                                <button class="cal-btn cal-next">▶</button>
+                                <button class="cal-btn cal-settings">⚙️</button>
+                            </div>
+                        </div>
+                        
+                        <div class="cal-settings-menu">
+                            <div style="display:flex; gap:5px; justify-content:center; width:100%;">
+                                <button class="cal-view-btn" data-view="week" style="flex:1;">Semana</button>
+                                <button class="cal-view-btn active" data-view="month" style="flex:1;">Mês</button>
+                                <button class="cal-view-btn" data-view="year" style="flex:1;">Ano</button>
+                            </div>
+                            <hr style="border:0; border-top:1px solid var(--border-color); opacity: 0.5;">
+                            <button class="cal-delete-btn">🗑️ Eliminar Agenda</button>
+                        </div>
+                        
+                        <div class="cal-grid"></div>
+                    </div>
+                    <p><br></p>`;
+                
+                document.execCommand('insertHTML', false, widgetHTML);
+                
+                setTimeout(() => {
+                    if (typeof renderCalendarUI === 'function') {
+                        renderCalendarUI(document.getElementById(calId));
+                    }
+                }, 50);
+                
+                saveNote();
+                return; // Sai da função para evitar conflitos
+            }
+
    // G. TORNAR TEXTO MOVÍVEL (ᯓ) - CÓDIGO CORRIGIDO E INTEGRADO
        else if (btn.dataset.action === 'make-draggable') {
             const selection = window.getSelection();
@@ -14183,6 +14237,8 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
             
             noteTitleInput.value = serverTitle;
             noteContentEditor.innerHTML = serverContent;
+
+             setTimeout(() => refreshAllCalendars(), 100); 
 
             // Scripts de ajuste
             if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
@@ -19844,77 +19900,150 @@ async function renderCalendarUI(widget) {
     const grid = widget.querySelector('.cal-grid');
     const title = widget.querySelector('.cal-title');
 
-    grid.innerHTML = ''; // Limpa
-
-    // Carregar tarefas do Firebase para este mês
-    const tasksMap = await fetchTasksForMonth(year, month);
+    // Limpa a grelha visualmente
+    grid.innerHTML = ''; 
 
     const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 
-    // --- MODO MÊS (Padrão) ---
+    // --------------------------------------------------------
+    // VISTA: MÊS (Padrão)
+    // --------------------------------------------------------
     if (view === 'month') {
         title.textContent = `${monthNames[month]} ${year}`;
+        
+        // Reset do CSS da grelha para 7 colunas
+        grid.style.display = "grid";
+        grid.style.gridTemplateColumns = "repeat(7, 1fr)";
+        grid.style.gap = "2px";
 
-        // Cabeçalhos (D S T Q Q S S)
+        // 1. Carregar tarefas do Firebase
+        const tasksMap = await fetchTasksForMonth(year, month);
+
+        // Cabeçalhos
         const days = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
         days.forEach(d => grid.innerHTML += `<div class="cal-day-header">${d}</div>`);
 
-        const firstDay = new Date(year, month, 1).getDay(); // 0 = Domingo
+        const firstDay = new Date(year, month, 1).getDay(); 
         const daysInMonth = new Date(year, month + 1, 0).getDate();
         const today = new Date();
 
-        // Espaços vazios antes do dia 1
+        // Espaços vazios
         for (let i = 0; i < firstDay; i++) {
             grid.innerHTML += `<div class="cal-day empty"></div>`;
         }
 
         // Dias
         for (let i = 1; i <= daysInMonth; i++) {
-            const dateISO = new Date(year, month, i).toLocaleDateString('en-CA'); // YYYY-MM-DD local hack
-            // Nota: construção de ISO manual é mais segura:
-            const realISO = `${year}-${String(month+1).padStart(2,'0')}-${String(i).padStart(2,'0')}`;
+            // FORMATAÇÃO CRÍTICA (YYYY-MM-DD)
+            const dayStr = String(i).padStart(2, '0');
+            const monthStr = String(month + 1).padStart(2, '0');
+            const dateKey = `${year}-${monthStr}-${dayStr}`; 
             
             const isToday = (i === today.getDate() && month === today.getMonth() && year === today.getFullYear());
-            const hasTask = tasksMap[realISO]; // Verifica se há tarefa no map
+            const hasTask = tasksMap[dateKey] === true;
 
             const div = document.createElement('div');
             div.className = `cal-day ${isToday ? 'today' : ''} ${hasTask ? 'has-task' : ''}`;
             div.textContent = i;
             div.dataset.day = i;
-            if (hasTask) div.title = "Tem tarefas";
+            
+            if (hasTask) {
+                div.title = "Ver tarefas";
+            }
+            
             grid.appendChild(div);
         }
     } 
-    // --- MODO ANO (Simplificado) ---
+    
+    // --------------------------------------------------------
+    // VISTA: ANO (Seleção de Meses)
+    // --------------------------------------------------------
     else if (view === 'year') {
         title.textContent = `${year}`;
-        grid.style.gridTemplateColumns = "repeat(3, 1fr)"; // 3 colunas de meses
+        
+        // Ajusta grelha para 3 colunas (4 linhas de meses)
+        grid.style.display = "grid";
+        grid.style.gridTemplateColumns = "repeat(3, 1fr)";
         grid.style.gap = "10px";
         
         monthNames.forEach((mName, idx) => {
             const btn = document.createElement('div');
-            btn.className = 'cal-day'; // Reusa estilo
-            btn.textContent = mName.substring(0, 3);
+            btn.className = 'cal-day'; 
+            btn.style.padding = "15px 0"; // Botões maiores
+            btn.textContent = mName.substring(0, 3); // Jan, Fev...
+            
+            // Marca o mês atual se estivermos no ano corrente
+            const now = new Date();
+            if (now.getFullYear() === year && now.getMonth() === idx) {
+                btn.classList.add('today');
+            }
+
             btn.onclick = (e) => {
                 e.stopPropagation();
-                // Ao clicar no mês, entra no modo mês
+                // Muda para a vista do mês selecionado
                 widget.dataset.month = idx;
                 widget.dataset.view = 'month';
-                // Atualiza botão visual
+                
+                // Atualiza visual dos botões de topo
                 widget.querySelectorAll('.cal-view-btn').forEach(b => b.classList.remove('active'));
                 widget.querySelector('[data-view="month"]').classList.add('active');
+                
                 renderCalendarUI(widget);
             };
             grid.appendChild(btn);
         });
     }
-    // --- MODO SEMANA (Placeholder funcional) ---
+
+    // --------------------------------------------------------
+    // VISTA: SEMANA (Simplificada)
+    // --------------------------------------------------------
     else if (view === 'week') {
-        title.textContent = `Semana (Demo) - ${monthNames[month]}`;
-        grid.innerHTML = '<div style="grid-column: span 7; padding:10px; color:#888;">Modo semana simplificado para o dia 1 a 7.</div>';
-        // (Pode expandir se quiser, mas mês é o mais útil)
+        title.textContent = `Semana em ${monthNames[month]}`;
+        
+        grid.style.display = "flex";
+        grid.style.flexDirection = "column";
+        grid.style.gap = "5px";
+
+        // Carrega tarefas para mostrar resumo
+        const tasksMap = await fetchTasksForMonth(year, month);
+
+        // Lógica: Mostra a semana atual (se for o mês corrente) ou a primeira semana
+        let startDay = 1;
+        const today = new Date();
+        if (year === today.getFullYear() && month === today.getMonth()) {
+            // Se for hoje, tenta começar a semana no Domingo anterior
+            startDay = today.getDate() - today.getDay(); 
+            if (startDay < 1) startDay = 1;
+        }
+
+        const endDay = Math.min(startDay + 6, new Date(year, month + 1, 0).getDate());
+
+        for (let i = startDay; i <= endDay; i++) {
+            const dayStr = String(i).padStart(2, '0');
+            const monthStr = String(month + 1).padStart(2, '0');
+            const dateKey = `${year}-${monthStr}-${dayStr}`;
+            const hasTask = tasksMap[dateKey] === true;
+            
+            // Cria uma linha por dia
+            const row = document.createElement('div');
+            row.className = 'cal-day'; // Reusa estilo base
+            row.style.width = "100%";
+            row.style.textAlign = "left";
+            row.style.padding = "8px 15px";
+            row.style.display = "flex";
+            row.style.justifyContent = "space-between";
+            
+            // Conteúdo
+            let taskIndicator = hasTask ? '<span style="color:#e74c3c;">• Tarefas</span>' : '<span style="color:#666; font-size:0.8em;">Vazio</span>';
+            
+            row.innerHTML = `<span>Dia ${i}</span> ${taskIndicator}`;
+            row.dataset.day = i; // Permite clicar para abrir modal
+
+            grid.appendChild(row);
+        }
     }
 }
+
 
 // 3. Navegação
 function changeCalendarDate(widget, direction) {
@@ -19939,31 +20068,41 @@ function changeCalendarDate(widget, direction) {
 async function fetchTasksForMonth(year, month) {
     if (!auth.currentUser) return {};
 
-    // Define intervalo do mês para query
-    // Construímos strings YYYY-MM para filtrar (simplificado: pegamos tudo e filtramos)
-    // Para produção ideal: `where('data', '>=', startStr)`
-    
-    const startStr = `${year}-${String(month+1).padStart(2,'0')}-01`;
-    const endStr = `${year}-${String(month+1).padStart(2,'0')}-31`;
+    // Formata o início e fim do mês garantindo os zeros (01, 05, etc.)
+    // Mês em JS é 0-11, por isso somamos 1
+    const mStr = String(month + 1).padStart(2, '0');
+    const startStr = `${year}-${mStr}-01`;
+    const endStr = `${year}-${mStr}-31`;
 
-    const q = query(
-        collection(db, 'agenda'),
-        where('userId', '==', auth.currentUser.uid),
-        where('data', '>=', startStr),
-        where('data', '<=', endStr)
-    );
+    try {
+        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const q = query(
+            collection(db, 'agenda'),
+            where('userId', '==', auth.currentUser.uid),
+            where('data', '>=', startStr),
+            where('data', '<=', endStr)
+        );
 
-    const snapshot = await getDocs(q);
-    const map = {};
-    snapshot.forEach(doc => {
-        const d = doc.data();
-        map[d.data] = true; // Marca que este dia tem algo
-    });
-    return map;
+        const snapshot = await getDocs(q);
+        const map = {};
+        
+        snapshot.forEach(doc => {
+            const d = doc.data();
+            if (d.data) {
+                map[d.data] = true; // Ex: map['2026-01-12'] = true
+            }
+        });
+        
+        return map;
+    } catch (e) {
+        console.error("Erro ao buscar tarefas:", e);
+        return {};
+    }
 }
 
 // 5. Modal de Tarefas
-let currentCalendarWidget = null; // Para saber qual atualizar ao fechar
+let currentCalendarWidget = null; 
 
 async function openCalendarModal(dateISO, widget) {
     const modal = document.getElementById('calendar-task-modal');
@@ -19973,48 +20112,72 @@ async function openCalendarModal(dateISO, widget) {
     const existingList = document.getElementById('cal-existing-tasks');
     const saveBtn = document.getElementById('cal-save-task-btn');
 
+    // Segurança: Se não encontrar os elementos, sai sem erro
+    if (!modal || !saveBtn) return;
+
+    // 1. Garante que o modal está no DOM (Body) e visível
+    document.body.appendChild(modal);
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "10000000"; // Garante que fica no topo
+
     currentCalendarWidget = widget;
-    displaySpan.textContent = dateISO; // Ex: 2024-05-25
+    displaySpan.textContent = dateISO; 
     isoInput.value = dateISO;
     descInput.value = '';
     existingList.innerHTML = 'Carregando...';
     
-    modal.style.display = 'flex';
     descInput.focus();
 
-    // Carregar tarefas existentes desse dia
-    const q = query(
-        collection(db, 'agenda'),
-        where('userId', '==', auth.currentUser.uid),
-        where('data', '==', dateISO)
-    );
-    const snap = await getDocs(q);
-    existingList.innerHTML = '';
-    
-    if (snap.empty) {
-        existingList.innerHTML = '<small style="color:#888;">Sem tarefas.</small>';
-    } else {
-        snap.forEach(doc => {
-            const task = doc.data();
-            const div = document.createElement('div');
-            div.style.borderBottom = '1px solid var(--border-color)';
-            div.style.padding = '5px';
-            div.style.fontSize = '0.9em';
-            div.innerHTML = `• ${task.descricao}`;
-            existingList.appendChild(div);
-        });
+    // 2. Carregar tarefas existentes desse dia
+    try {
+        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const q = query(
+            collection(db, 'agenda'),
+            where('userId', '==', auth.currentUser.uid),
+            where('data', '==', dateISO)
+        );
+        const snap = await getDocs(q);
+        
+        existingList.innerHTML = '';
+        if (snap.empty) {
+            existingList.innerHTML = '<small style="color:#888;">Sem tarefas.</small>';
+        } else {
+            snap.forEach(doc => {
+                const task = doc.data();
+                const div = document.createElement('div');
+                div.style.borderBottom = '1px solid var(--border-color)';
+                div.style.padding = '5px';
+                div.style.fontSize = '0.9em';
+                
+                // Botão de apagar tarefa individual
+                div.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span>• ${task.descricao}</span>
+                        <button onclick="window.deleteCalendarTask('${doc.id}', '${dateISO}')" style="color:#e74c3c; background:none; border:none; cursor:pointer;">×</button>
+                    </div>`;
+                existingList.appendChild(div);
+            });
+        }
+    } catch (e) {
+        console.error(e);
+        existingList.innerHTML = '<small style="color:red;">Erro ao carregar.</small>';
     }
 
-    // Gravar Nova Tarefa
-    // (Removemos listeners antigos clonando)
-    const newSaveBtn = saveBtn.cloneNode(true);
-    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
-
-    newSaveBtn.onclick = async () => {
+    // 3. GRAVAR NOVA TAREFA (A CORREÇÃO ESTÁ AQUI)
+    // Em vez de replaceChild, usamos onclick direto. É mais seguro.
+    saveBtn.onclick = async () => {
         const desc = descInput.value.trim();
         if (!desc) return;
 
+        // Feedback visual
+        const originalText = saveBtn.textContent;
+        saveBtn.textContent = "A gravar...";
+        saveBtn.disabled = true;
+
         try {
+            const { addDoc, collection, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            
             await addDoc(collection(db, 'agenda'), {
                 data: dateISO,
                 descricao: desc,
@@ -20023,15 +20186,38 @@ async function openCalendarModal(dateISO, widget) {
             });
             
             modal.style.display = 'none';
+            
             // Atualiza o widget para mostrar a bolinha vermelha
-            renderCalendarUI(currentCalendarWidget); 
+            if (currentCalendarWidget && typeof renderCalendarUI === 'function') {
+                renderCalendarUI(currentCalendarWidget);
+            }
             
         } catch (e) {
             console.error(e);
             alert("Erro ao gravar tarefa.");
+        } finally {
+            saveBtn.textContent = originalText;
+            saveBtn.disabled = false;
         }
     };
 }
+
+// Função auxiliar para apagar tarefa (já incluída na lógica acima)
+window.deleteCalendarTask = async function(taskId, dateISO) {
+    if(!confirm("Apagar esta tarefa?")) return;
+    try {
+        const { doc, deleteDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        await deleteDoc(doc(db, 'agenda', taskId));
+        
+        // Recarrega o modal para atualizar a lista
+        if (currentCalendarWidget) openCalendarModal(dateISO, currentCalendarWidget);
+        
+        // Atualiza o calendário atrás
+        renderCalendarUI(currentCalendarWidget);
+    } catch(e) {
+        console.error(e);
+    }
+};
 
 // 6. AUTO-INICIAR CALENDÁRIOS AO ABRIR NOTA
 // Adicione esta chamada dentro da função displayNote()
@@ -40574,6 +40760,39 @@ if (bibleSearchToggle) {
     });
 }
 
+// ============================================================
+// CORREÇÃO: CLIQUES NOS DIAS DO CALENDÁRIO
+// ============================================================
+document.getElementById('note-content-editor').addEventListener('click', (e) => {
+    // Verifica se clicou num dia (que não esteja vazio)
+    const dayBtn = e.target.closest('.cal-day');
+    
+    if (dayBtn && !dayBtn.classList.contains('empty')) {
+        e.preventDefault();
+        e.stopPropagation(); // Impede que o editor tente fazer outra coisa
+
+        const widget = dayBtn.closest('.jwn-calendar-widget');
+        if (!widget) return;
+
+        // 1. Obter dados
+        const day = parseInt(dayBtn.dataset.day);
+        const month = parseInt(widget.dataset.month); // 0 a 11
+        const year = parseInt(widget.dataset.year);
+
+        // 2. Formatar data segura (YYYY-MM-DD)
+        // Usamos String padStart para garantir "2024-05-01" e não "2024-5-1"
+        const dateISO = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+        console.log("📅 Abrindo agenda para:", dateISO);
+
+        // 3. Abrir o Modal
+        if (typeof openCalendarModal === 'function') {
+            openCalendarModal(dateISO, widget);
+        } else {
+            console.error("Erro: Função openCalendarModal não encontrada.");
+        }
+    }
+});
 
     </script>
 </body>
