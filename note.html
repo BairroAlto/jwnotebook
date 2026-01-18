@@ -23534,7 +23534,7 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
             where('userId', '==', auth.currentUser.uid)
         );
         const snapshot = await getDocs(q);
-        const newOrder = snapshot.size;
+           const newOrder = 0 - Date.now();
 
         // Dados Base
         const docData = {
@@ -23619,9 +23619,27 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
         } 
         
         // B. Abrir Nota ou Jornal
-        else if (docData.tipo === 'nota' || docData.tipo === 'jornal') {
+          else if (docData.tipo === 'nota' || docData.tipo === 'jornal') {
             displayNote(docRef.id, null);
-        } 
+
+            // --- NOVO: FOCAR NO EDITOR AUTOMATICAMENTE ---
+            setTimeout(() => {
+                const editor = document.getElementById('note-content-editor');
+                if (editor) {
+                    // 1. Foca o elemento
+                    editor.focus();
+                    
+                    // 2. Garante que o cursor está lá a piscar (Range)
+                    const range = document.createRange();
+                    range.selectNodeContents(editor);
+                    range.collapse(false); // Colapsa para o fim (embora esteja vazia)
+                    
+                    const sel = window.getSelection();
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                }
+            }, 600); // 600ms de atraso para dar tempo à nota de carregar do Firebase
+        }
         
         // C. Abrir Arquivo
         else if (docData.tipo === 'arquivo' || docData.tipo === 'partilhado') {
@@ -40708,6 +40726,7 @@ function loadFlashListLeftPanel() {
 
     listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div></div>';
 
+    // Ordenamos pela última edição para as mais recentes ficarem no topo
     const q = query(
         collection(db, 'pastas'),
         where('userId', '==', auth.currentUser.uid),
@@ -40727,13 +40746,47 @@ function loadFlashListLeftPanel() {
             return;
         }
 
+        // Variável para controlar a mudança de mês
+        let currentMonthYear = null;
+
         querySnapshot.forEach((doc) => {
             const item = { id: doc.id, ...doc.data() };
+            
+            // --- 1. LÓGICA DE AGRUPAMENTO POR DATA ---
+            // Usa a data de edição (para coincidir com a ordem da lista) ou criação como fallback
+            const timestamp = item.ultimaedicao?.toMillis() || item.createdAt?.toMillis() || Date.now();
+            const dateObj = new Date(timestamp);
+            
+            // Formata: "janeiro 2026"
+            const monthYearString = dateObj.toLocaleDateString('pt-PT', { month: 'long', year: 'numeric' });
+            
+            // Se o mês mudou em relação ao item anterior, insere o cabeçalho
+            if (monthYearString !== currentMonthYear) {
+                currentMonthYear = monthYearString;
+                
+                const headerLi = document.createElement('li');
+                // Estilo "Pequeno Visualmente": Cinzento, letras pequenas, espaçamento no topo
+                headerLi.style.cssText = `
+                    font-size: 10px; 
+                    text-transform: uppercase; 
+                    color: var(--text-muted-color); 
+                    font-weight: bold; 
+                    padding: 15px 10px 5px 10px; /* Mais espaço em cima para separar grupos */
+                    letter-spacing: 1px; 
+                    cursor: default; 
+                    pointer-events: none; /* Não clicável */
+                    opacity: 0.6;
+                `;
+                headerLi.textContent = monthYearString;
+                listElement.appendChild(headerLi);
+            }
+            // -----------------------------------------
+
             const li = document.createElement('li');
             li.className = 'list-item';
             
-            // --- NOVO: BORDA LARANJA LATERAL ---
-            li.style.borderLeft = "4px solid #e67e22"; // Adiciona a linha laranja
+            // Borda Laranja Lateral
+            li.style.borderLeft = "4px solid #e67e22"; 
             
             if (item.id === selectedNoteId) li.classList.add('selected-orange');
             
@@ -40742,7 +40795,11 @@ function loadFlashListLeftPanel() {
             li.setAttribute('data-name', item.nome);
             li.setAttribute('data-oque', item.oque || "");
 
-            li.innerHTML = `<span>${item.nome}</span><button class="item-menu-btn">…</button>`;
+            // Ícone diferente para Jornais
+            let icon = '📄';
+            if (item.tipo === 'jornal') icon = '📰';
+
+            li.innerHTML = `<span>${icon} ${item.nome}</span><button class="item-menu-btn">…</button>`;
 
             li.onclick = (e) => {
                 if (e.target.closest('.item-menu-btn')) return;
