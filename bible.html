@@ -1976,7 +1976,7 @@ document.getElementById('btn-confirm-edit-card').onclick = async () => {
     const dataOriginal = existingUserData[vNumOriginal];
     if (!dataOriginal) return;
 
-    btn.textContent = "A gravar em todos...";
+    btn.textContent = "A gravar...";
     btn.disabled = true;
 
     try {
@@ -1984,13 +1984,9 @@ document.getElementById('btn-confirm-edit-card').onclick = async () => {
 
         // 1. Identificar a Nota Original
         const itemOriginal = dataOriginal.puzzleBoard[indexOriginal];
-        
-        // O "Elo de Ligação" entre os versículos é o noteId.
-        // Se for uma nota antiga sem noteId, usamos o snippet como fallback (menos seguro, mas funcional)
         const targetNoteId = itemOriginal.noteId; 
 
         // 2. Preparar o Novo Snippet (HTML)
-        // Precisamos reconstruir o HTML uma vez para aplicar em todas as instâncias
         let rawSnippet = decodeURIComponent(itemOriginal.snippet || "");
         const parser = new DOMParser();
         const docHTML = parser.parseFromString(rawSnippet, 'text/html');
@@ -2005,101 +2001,98 @@ document.getElementById('btn-confirm-edit-card').onclick = async () => {
         if (contentDiv) {
             contentDiv.innerHTML = newContent;
         }
-        // Atualiza atributos ocultos (Tópicos/Links)
+        
+        // Mantém atributos ocultos (Tópicos/Links)
         const wrapper = docHTML.querySelector('.mini-note-wrapper');
         if (wrapper) {
             wrapper.setAttribute('data-topics', JSON.stringify(currentFlashTopics));
             wrapper.setAttribute('data-box-links', JSON.stringify(currentFlashLinks));
-            
-            // Atualiza a borda se mudou o tipo (Questão/Subnota)
-            if (currentFlashTopics && Object.keys(currentFlashTopics).length > 0) { 
-                // Lógica opcional se quiser mudar cor baseada em tópicos, 
-                // mas aqui mantemos o user selection:
-            }
         }
         const newSnippet = encodeURIComponent(docHTML.body.innerHTML);
 
+        // --- A NOVA COR ---
+        // Usa a cor selecionada no picker, ou mantém a antiga se não houve alteração
+        const newColorToSave = selectedColorHex || itemOriginal.noteColor || itemOriginal.cor || '#3498db';
 
-        // 3. CICLO DE ATUALIZAÇÃO GLOBAL (O Segredo)
-        // Vamos percorrer TODOS os versículos carregados na memória (existingUserData)
-        // Se encontrarmos esta nota noutro versículo, atualizamos também!
-        
+        // 3. CICLO DE ATUALIZAÇÃO GLOBAL
         const updatePromises = [];
 
-        for (const [vKey, vData] of Object.entries(existingUserData)) {
-            let hasChanges = false;
-            
-            // Percorre o puzzleBoard deste versículo
-            const newBoard = vData.puzzleBoard.map(item => {
-                // Verifica se é a "mesma" nota (pelo ID ou, em último caso, comparando o snippet antigo)
-                const isMatch = targetNoteId 
-                    ? (item.noteId === targetNoteId) 
-                    : (item.snippet === itemOriginal.snippet);
+    for (const [vKey, vData] of Object.entries(existingUserData)) {
+    // --- PROTEÇÃO CONTRA DADOS CORROMPIDOS ---
+    if (!vData || !Array.isArray(vData.puzzleBoard)) {
+        console.warn(`⚠️ Versículo V${vKey} ignorado na edição (dados inválidos).`);
+        continue; // Salta para o próximo sem crashar
+    }
+    // ----------------------------------------
 
-                if (isMatch) {
-                    hasChanges = true;
-                    return {
-                        ...item,
-                        noteName: newTitle,
-                        snippet: newSnippet,
-                        noteColor: selectedColorHex, // <--- APLICA A NOVA COR AQUI
-                        // IMPORTANTE: Mantemos o 'highlightRef' original de cada item!
-                        // O versículo 1 mantém o texto "A", o versículo 2 mantém o texto "B".
-                        highlightRef: item.highlightRef 
-                    };
-                }
-                return item;
-            });
+    let hasChanges = false;
+    
+    // Percorre o puzzleBoard deste versículo e CRIA UM NOVO ARRAY
+    const newBoard = vData.puzzleBoard.map(item => {
+        // ... (o resto do código map mantém-se igual) ...
+        const isMatch = targetNoteId 
+            ? (item.noteId === targetNoteId) 
+            : (item.snippet === itemOriginal.snippet);
+
+        if (isMatch) {
+            hasChanges = true;
+            return {
+                ...item,
+                noteName: newTitle,
+                snippet: newSnippet,
+                noteColor: newColorToSave, 
+                cor: newColorToSave,       
+                highlightRef: item.highlightRef 
+            };
+        }
+        return item;
+    });
 
             if (hasChanges) {
-                // Atualiza Cache Local
-                existingUserData[vKey].puzzleBoard = newBoard;
-
-                // Prepara Atualização Firebase
-                const docRef = doc(db, 'textosbiblicos', vData.docId);
-                updatePromises.push(updateDoc(docRef, { puzzleBoard: newBoard }));
-            }
+                // A. Atualiza Cache Local (Isto permite que o visual mude instantaneamente)
+           existingUserData[vKey].puzzleBoard = newBoard;
+        if (vData.docId) {
+             const docRef = doc(db, 'textosbiblicos', vData.docId);
+             updatePromises.push(updateDoc(docRef, { puzzleBoard: newBoard }));
         }
+    }
+}
 
-        // Executa todas as gravações na base de dados em paralelo
+        // Executa gravações na BD
         await Promise.all(updatePromises);
 
-        
-        // 4. FINALIZAÇÃO
-        document.getElementById('edit-card-modal').style.display = 'none';
-
-        // Atualiza visualmente TODOS os picotados na página
+        // 4. ATUALIZAR OS PICOTADOS NO ECRÃ
+        // Como atualizámos o existingUserData acima, esta função vai ler a nova cor e redesenhar
         if (typeof window.refreshVisualHighlights === 'function') {
             window.refreshVisualHighlights();
         }
-
-        // Redirecionamento Inteligente
-        if (activeHighlightContext) {
-            // Atualiza o contexto com a nova cor para o cabeçalho ficar certo
-            if (selectedColorHex) activeHighlightContext.color = selectedColorHex;
+        
+        // 5. ATUALIZAR CONTEXTO SE ESTIVERMOS NO PAINEL DO TRECHO
+        // Se a nota editada pertencer ao trecho que está aberto agora, atualizamos a cor do cabeçalho/botão
+        if (activeHighlightContext && activeHighlightContext.text === itemOriginal.highlightRef) {
+            activeHighlightContext.color = newColorToSave;
             
-            const safeText = encodeURIComponent(activeHighlightContext.text);
-            const safeColor = encodeURIComponent(activeHighlightContext.color);
-            
-            // Simula o evento para reabrir o painel
-            // (Nota: Usamos vNumOriginal para localizar o elemento no DOM)
-            const verseElement = document.getElementById(`vnum-${vNumOriginal}`)?.closest('.verse-item');
-            const mockEvent = { stopPropagation: () => {}, target: verseElement };
-
-            await window.openHighlightDetails(mockEvent, safeText, safeColor);
-
+            // Simula reabertura para atualizar a cor do botão e título
+            const verseEl = document.getElementById(`vnum-${vNumOriginal}`)?.closest('.verse-item');
+            window.openHighlightDetails(
+                { stopPropagation: () => {}, target: verseEl },
+                encodeURIComponent(activeHighlightContext.text),
+                encodeURIComponent(newColorToSave)
+            );
         } else {
-            // Modo Geral
+            // Se estávamos num versículo normal, voltamos para lá
             window.openModalForVerse(vNumOriginal);
         }
 
+        document.getElementById('edit-card-modal').style.display = 'none';
+
     } catch (e) {
-        console.error("Erro ao editar globalmente:", e);
-        alert("Erro ao gravar alterações em múltiplos versículos.");
+        console.error("Erro ao editar:", e);
+        alert("Erro ao gravar. Verifique a consola.");
     } finally {
         btn.textContent = "Gravar";
         btn.disabled = false;
-        selectedColorHex = null; 
+        selectedColorHex = null; // Limpa seleção
     }
 };
 
