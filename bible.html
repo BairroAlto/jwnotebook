@@ -1838,7 +1838,7 @@ window.openFlashLinkManager = function() {
     document.getElementById('flash-cat-selected').innerHTML = '';
     document.getElementById('flash-cat-results').innerHTML = '';
     
-    // 2. Carrega Título (se já houver dados em memória)
+    // 2. Carrega Título
     document.getElementById('flash-link-title').value = currentFlashLinks.title || "";
 
     // 3. Carrega Toggle Bíblia
@@ -1851,20 +1851,37 @@ window.openFlashLinkManager = function() {
     if (currentFlashLinks.urls) {
         Object.values(currentFlashLinks.urls).forEach(url => window.addFlashUrlField(url));
     } else {
-        window.addFlashUrlField(); // Cria campo vazio
+        window.addFlashUrlField(); 
     }
 
     // 5. Carrega Codex
     if (currentFlashLinks.codex && currentFlashLinks.codex.length > 0) {
         currentFlashLinks.codex.forEach(c => window.createFlashCodexRow(c));
     } else {
-        window.createFlashCodexRow(); // Cria uma linha vazia
+        window.createFlashCodexRow(); 
     }
 
-    // 6. Carrega Categorias
-    if (currentFlashLinks.categories) {
-        currentFlashLinks.categories.forEach(c => renderFlashCategoryChip(c));
+    // --- NOVA LÓGICA INTELIGENTE AQUI ---
+    
+    // Se a lista de categorias ainda não existir, inicializa-a como array
+    if (!currentFlashLinks.categories) currentFlashLinks.categories = [];
+
+    // Verifica se o Versículo Atual já está na lista. Se não estiver, ADICIONA-O.
+    // Isto garante que ao abrir o gestor, vês logo o versículo de origem selecionado.
+    const currentVerseName = activeVerseFullName; // Ex: "Génesis 1:1"
+    const alreadyHasCurrent = currentFlashLinks.categories.some(c => c.name === currentVerseName);
+
+    if (!alreadyHasCurrent) {
+        // Nota: O ID aqui é provisório se a nota for nova, mas o nome é o que importa para a pesquisa
+        currentFlashLinks.categories.unshift({ 
+            id: activeVerseDocId || "new_temp_id", 
+            name: currentVerseName, 
+            type: "textobiblico" 
+        });
     }
+
+    // 6. Renderiza todas as Categorias (incluindo a que acabámos de adicionar)
+    currentFlashLinks.categories.forEach(c => renderFlashCategoryChip(c));
 
     // Abre na primeira aba
     window.switchFlashLinkTab('refs');
@@ -1908,36 +1925,44 @@ window.addFlashCodexField = (data = null) => {
 window.searchFlashCategories = async (text) => {
     if (text.length < 2) return;
     
+    // Normaliza texto (Primeira letra maiúscula)
+    const searchText = text.charAt(0).toUpperCase() + text.slice(1);
+    
     const resDiv = document.getElementById('flash-cat-results');
     const isGlobal = document.getElementById('flash-bible-toggle').checked;
     
     resDiv.innerHTML = '<div style="padding:10px; color:#888;">A procurar...</div>';
     
     try {
-        const { collection, query, where, getDocs, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { collection, query, where, getDocs, limit, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
         let q;
         let type = '';
 
         if (isGlobal) {
-            // Pesquisa Global na Bíblia
+            // --- MODO LIGADO: PESQUISA VERSÍCULOS NA BÍBLIA ---
+            // AUMENTAMOS O LIMIT PARA 300
+            // Isto é necessário porque "Génesis 10" vem antes de "Génesis 1:" na base de dados.
+            // Precisamos sacar muitos versículos para garantir que o Capítulo 1 vem no pacote.
             q = query(
                 collection(db, "bible_verses_public"), 
-                where("nome", ">=", text), 
-                where("nome", "<=", text + '\uf8ff'),
-                limit(10)
+                where("nome", ">=", searchText), 
+                where("nome", "<=", searchText + '\uf8ff'),
+                orderBy("nome"),
+                limit(300) 
             );
             type = 'bible_public';
         } else {
-            // Pesquisa Local (Textos Bíblicos do Utilizador)
+            // --- MODO DESLIGADO: PESQUISA NOS TÓPICOS ---
             q = query(
-                collection(db, "textosbiblicos"), 
+                collection(db, "topicos"),
                 where("userId", "==", currentUser.uid),
-                where("nome", ">=", text), 
-                where("nome", "<=", text + '\uf8ff'),
-                limit(10)
+                where("nome", ">=", searchText), 
+                where("nome", "<=", searchText + '\uf8ff'),
+                orderBy("nome"),
+                limit(20)
             );
-            type = 'textobiblico';
+            type = 'topic';
         }
 
         const snap = await getDocs(q);
@@ -1948,22 +1973,43 @@ window.searchFlashCategories = async (text) => {
             return;
         }
 
+        // Converter para Array
+        let resultsArray = [];
         snap.forEach(doc => {
-            const d = doc.data();
+            resultsArray.push({ id: doc.id, ...doc.data() });
+        });
+
+        // ORDENAÇÃO NATURAL (Corrige a ordem visualmente)
+        // Agora que temos 300 resultados, o Capítulo 1 deve estar no meio deles.
+        // Esta função coloca o 1:1 antes do 10:1.
+        resultsArray.sort((a, b) => {
+            return a.nome.localeCompare(b.nome, undefined, { numeric: true, sensitivity: 'base' });
+        });
+
+        // Cortar para mostrar apenas os primeiros 15 (para a lista não ficar gigante)
+        const displayResults = resultsArray.slice(0, 15);
+
+        // Renderizar
+        displayResults.forEach(d => {
             const div = document.createElement('div');
-            div.style.cssText = "padding:8px; border-bottom:1px solid #333; cursor:pointer; display:flex; justify-content:space-between;";
+            div.style.cssText = "padding:8px; border-bottom:1px solid #333; cursor:pointer; display:flex; justify-content:space-between; align-items:center;";
             
-            // Ícone visual
-            const icon = type === 'bible_public' ? '🌍' : '👤';
-            div.innerHTML = `<span>${icon} ${d.nome}</span> <span style="color:#2ecc71;">+</span>`;
+            const icon = type === 'bible_public' ? '🌍' : '🏷️';
+            
+            // Destaque visual
+            const nomeHtml = d.nome.replace(new RegExp(`(${text})`, 'gi'), '<span style="color:#e67e22; font-weight:bold;">$1</span>');
+
+            div.innerHTML = `
+                <span style="font-size:0.9rem;">${icon} ${nomeHtml}</span> 
+                <button style="background:none; border:1px solid #2ecc71; color:#2ecc71; border-radius:50%; width:24px; height:24px; cursor:pointer; display:flex; align-items:center; justify-content:center;">+</button>
+            `;
             
             div.onclick = () => {
-                // Adiciona
-                const catObj = { id: doc.id, name: d.nome, type: type };
+                const catObj = { id: d.id, name: d.nome, type: type };
                 renderFlashCategoryChip(catObj);
                 
                 if (!currentFlashLinks.categories) currentFlashLinks.categories = [];
-                // Evita duplicados
+                
                 if (!currentFlashLinks.categories.some(c => c.name === d.nome)) {
                     currentFlashLinks.categories.push(catObj);
                 }
@@ -1974,7 +2020,11 @@ window.searchFlashCategories = async (text) => {
             };
             resDiv.appendChild(div);
         });
-    } catch(e) { console.error(e); }
+
+    } catch(e) { 
+        console.error(e); 
+        resDiv.innerHTML = '<div style="padding:10px; color:#e74c3c;">Erro na pesquisa.</div>';
+    }
 };
 
 function renderFlashCategoryChip(cat) {
