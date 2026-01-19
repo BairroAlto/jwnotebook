@@ -830,7 +830,7 @@ input:checked + .slider:before { transform: translateX(16px); }
                     🔗 Anexado a: <span id="flash-attached-verse" style="color: #3498db;"></span>
                 </div>
 
-                <button id="btn-save-flash" style="width:100%; margin-top:20px; padding:12px; background:var(--accent-color); color:white; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">GRAVAR NOTA</button>
+<button id="btn-save-flash" onclick="window.saveFlashNoteGlobal()" style="width:100%; margin-top:20px; padding:12px; background:var(--accent-color); color:white; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">GRAVAR NOTA</button>
             </div>
         </div>
     </div>
@@ -1017,7 +1017,7 @@ input:checked + .slider:before { transform: translateX(16px); }
 
 <!-- BARRA FLUTUANTE DE SELEÇÃO -->
 <div id="selection-toolbar">
-    <button id="btn-copy-selection" title="Copiar">🗐</button>
+    <button id="btn-copy-selection" title="Copiar">📑</button>
     <button id="btn-note-selection" title="Criar Nota Flash">✍ Nota Flash</button>
 </div>
 
@@ -1079,6 +1079,9 @@ let activeHighlightContext = null;
         // Botões
         const btnAddFlash = document.getElementById('btn-add-flash-note');
         const btnSaveFlash = document.getElementById('btn-save-flash');
+        if (document.getElementById('btn-save-flash')) {
+    document.getElementById('btn-save-flash').onclick = window.saveFlashNoteGlobal;
+}
         const settingsBtn = document.getElementById('settings-btn');
         const btnSaveCfg = document.getElementById('btn-save-cfg');
         const btnToggleView = document.getElementById('btn-toggle-view');
@@ -1673,44 +1676,78 @@ window.openModalForVerse = async (num) => {
     }, 50);
 };
 
- window.saveFlashNoteGlobal = async () => {
-    const titleInput = document.getElementById('flash-title');
-    const editor = document.getElementById('flash-editor');
-    const typeSelect = document.getElementById('flash-type-select');
-    const saveBtn = document.querySelector('#flash-note-modal button:last-of-type') || document.getElementById('btn-save-flash');
-
-    const title = titleInput.value.trim();
-    const content = editor.innerHTML;
-    const noteType = typeSelect ? typeSelect.value : 'default';
+ window.saveFlashNoteGlobal = async (clickedBtn = null) => {
+    console.log("🚀 A tentar gravar...");
     
-    if (!title) return alert("Escreva um título para a nota.");
+    // 1. Identificar o botão de forma robusta
+    const btn = clickedBtn || document.getElementById('btn-submit-flash') || document.querySelector('#flash-note-modal button') || document.getElementById('btn-save-flash');
 
-    saveBtn.textContent = "A gravar...";
-    saveBtn.disabled = true;
+    // 2. BLOQUEIO DE SEGURANÇA (Impede duplo clique)
+    if (btn && btn.disabled) {
+        console.warn("🚫 Clique duplicado impedido.");
+        return; 
+    }
+
+    // 3. Bloquear visualmente
+    if(btn) { 
+        btn.textContent = "A gravar..."; 
+        btn.disabled = true; 
+        btn.style.opacity = "0.7"; // Feedback visual extra
+        btn.style.cursor = "not-allowed";
+    }
 
     try {
+        // --- Detetar onde estão os dados ---
+        let container;
+        const sidePanel = document.getElementById('side-panel');
+        if (sidePanel && sidePanel.classList.contains('open') && window.innerWidth >= 768) {
+            container = document.getElementById('sidebar-content');
+        } else {
+            container = document.getElementById('flash-note-modal');
+        }
+
+        // --- Ler Valores ---
+        const titleInput = container.querySelector('#flash-title');
+        const editor = container.querySelector('#flash-editor');
+        const typeSelect = container.querySelector('#flash-type-select');
+
+        if (!titleInput || !editor) {
+            throw new Error("Campos não encontrados. Tente reabrir.");
+        }
+
+        const title = titleInput.value.trim();
+        const content = editor.innerHTML;
+        const noteType = typeSelect ? typeSelect.value : 'default';
+
+        if (!title) {
+            // Reativa o botão se falhar a validação
+            if(btn) { 
+                btn.textContent = "GRAVAR NOTA"; 
+                btn.disabled = false; 
+                btn.style.opacity = "1";
+                btn.style.cursor = "pointer";
+            }
+            return alert("O título é obrigatório!");
+        }
+
+        // --- Importar Firebase ---
         const { collection, addDoc, doc, updateDoc, arrayUnion, serverTimestamp, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
-        // 1. DADOS DE CONTEXTO
-        // Se for uma seleção nova, currentSelectionText tem o texto COMPLETO (ex: "luz Depois disso,")
-        let fullHighlightText = currentSelectionText; 
-        if (!fullHighlightText && activeHighlightContext) fullHighlightText = activeHighlightContext.text;
-
-        let colorToSave = selectedColorHex;
-        if (!colorToSave && activeHighlightContext) colorToSave = activeHighlightContext.color;
-        if (!colorToSave) colorToSave = '#3498db'; // Azul padrão
-
-        // Lista de versículos envolvidos (ex: ["Génesis 1:3", "Génesis 1:4"])
+        // --- Preparar Dados ---
+        let fullHighlightText = currentSelectionText || (activeHighlightContext ? activeHighlightContext.text : null);
+        let colorToSave = selectedColorHex || (activeHighlightContext ? activeHighlightContext.color : '#3498db');
+        
         const versesToAttach = (currentSelectionVerses && currentSelectionVerses.length > 0) 
-                       ? currentSelectionVerses 
-                       : [activeVerseFullName];
+                               ? currentSelectionVerses 
+                               : [activeVerseFullName];
 
-        // 2. CRIAR A NOTA (DOC)
         const safeTopics = JSON.stringify(currentFlashTopics || {}).replace(/"/g, '&quot;');
+        
         if (!currentFlashLinks || (!currentFlashLinks.categories && !currentFlashLinks.urls && !currentFlashLinks.codex)) {
              currentFlashLinks = { categories: [{ id: "temp", name: versesToAttach[0], type: "textobiblico" }] };
         }
         const safeBoxLinks = JSON.stringify(currentFlashLinks).replace(/"/g, '&quot;');
+
         let wrapperClass = "mini-note-wrapper";
         if (noteType === 'question') wrapperClass += " question-mode";
 
@@ -1726,133 +1763,113 @@ window.openModalForVerse = async (num) => {
             </div><p><br></p>
         `;
 
+        // --- Gravar na Coleção 'pastas' ---
         const noteRef = await addDoc(collection(db, 'pastas'), {
             nome: title, conteudo: subNoteHtml, tipo: 'nota', oque: 'flash',
             userId: currentUser.uid, estado: 'ativa', createdAt: serverTimestamp(), ultimaedicao: serverTimestamp()
         });
 
-        // 3. GRAVAR TRECHO GLOBAL (O "Cérebro" da ligação)
-        // Guardamos o texto COMPLETO aqui
+        // --- Atualizar Trecho Global ---
         if (fullHighlightText) {
-            const qCheck = query(
-                collection(db, 'trechosbiblicos'), 
-                where('userId', '==', currentUser.uid),
-                where('nome', '==', fullHighlightText),
-                where('textosbiblicos', 'array-contains', versesToAttach[0])
-            );
+            const qCheck = query(collection(db, 'trechosbiblicos'), where('userId', '==', currentUser.uid), where('nome', '==', fullHighlightText));
             const snapCheck = await getDocs(qCheck);
             
             if (!snapCheck.empty) {
-                await updateDoc(doc(db, 'trechosbiblicos', snapCheck.docs[0].id), {
-                    noteIds: arrayUnion(noteRef.id),
-                    cor: colorToSave
-                });
+                await updateDoc(doc(db, 'trechosbiblicos', snapCheck.docs[0].id), { noteIds: arrayUnion(noteRef.id), cor: colorToSave });
             } else {
                 await addDoc(collection(db, 'trechosbiblicos'), {
-                    userId: currentUser.uid, textosbiblicos: versesToAttach,
-                    nome: fullHighlightText, // TEXTO COMPLETO
-                    cor: colorToSave, noteIds: [noteRef.id], createdAt: serverTimestamp()
+                    userId: currentUser.uid, textosbiblicos: versesToAttach, nome: fullHighlightText, cor: colorToSave, noteIds: [noteRef.id], createdAt: serverTimestamp()
                 });
             }
         }
 
-        // 4. ATUALIZAR CADA VERSÍCULO (A "Fatia")
-        const puzzleItemBase = {
-            type: 'ref', noteId: noteRef.id, noteName: title,
-            snippet: encodeURIComponent(subNoteHtml), addedAt: Date.now(),
-            noteColor: colorToSave 
-        };
+        // --- Atualizar Versículos Individuais ---
+        const puzzleItemBase = { type: 'ref', noteId: noteRef.id, noteName: title, snippet: encodeURIComponent(subNoteHtml), addedAt: Date.now(), noteColor: colorToSave };
 
         for (const verseName of versesToAttach) {
-            if (!verseName || typeof verseName !== 'string') continue;
-            
+            if (!verseName) continue;
             const cleanName = verseName.trim();
             const vNum = cleanName.split(':')[1].trim().split('-')[0];
             
-            // --- CÁLCULO DA FATIA (INTERSEÇÃO) ---
-            // Se selecionei texto em 2 versículos, preciso saber qual parte pertence a ESTE versículo
             let sliceText = null;
-            
-            // Tenta obter o texto do versículo da memória ou do DOM
-            let verseContent = "";
             const verseSpan = document.getElementById(`vtext-${vNum}`);
-            if (verseSpan) {
-                verseContent = verseSpan.innerText;
-            } else {
-                // Fallback de segurança (raro acontecer se o DOM estiver carregado)
-                verseContent = ""; 
-            }
+            if (fullHighlightText && verseSpan) sliceText = calculateVerseIntersection(verseSpan.innerText, fullHighlightText);
+            
+            const specificItem = { ...puzzleItemBase, highlightRef: sliceText || fullHighlightText };
 
-            if (fullHighlightText && verseContent) {
-                // Usa a função auxiliar para descobrir qual pedaço do texto selecionado está neste versículo
-                sliceText = calculateVerseIntersection(verseContent, fullHighlightText);
-            }
-
-            // Se não conseguimos calcular a fatia (ex: erro de espaços), usamos o texto completo como fallback
-            // mas o ideal é a fatia exata para o picotado ficar bonito
-            const finalHighlightRef = sliceText || fullHighlightText;
-
-            const specificPuzzleItem = { 
-                ...puzzleItemBase, 
-                highlightRef: finalHighlightRef // <--- AQUI GRAVAMOS SÓ A PARTE DO VERSÍCULO
-            };
-
-            // Firebase Update (Lógica padrão de add/update)
             const qVerse = query(collection(db, 'textosbiblicos'), where('nome', '==', cleanName), where('userId', '==', currentUser.uid));
             const snapshot = await getDocs(qVerse);
             
             let targetId;
             if (!snapshot.empty) {
                 targetId = snapshot.docs[0].id;
-                await updateDoc(doc(db, 'textosbiblicos', targetId), { puzzleBoard: arrayUnion(specificPuzzleItem) });
+                await updateDoc(doc(db, 'textosbiblicos', targetId), { puzzleBoard: arrayUnion(specificItem) });
             } else {
                 const newDoc = await addDoc(collection(db, 'textosbiblicos'), {
-                    nome: cleanName, userId: currentUser.uid, createdAt: serverTimestamp(),
-                    referencias: {}, puzzleBoard: [specificPuzzleItem], dossie: [], panelLinks: []
+                    nome: cleanName, userId: currentUser.uid, createdAt: serverTimestamp(), puzzleBoard: [specificItem], dossie: [], panelLinks: []
                 });
                 targetId = newDoc.id;
             }
-
-            // Cache Local
-            const numBadge = document.getElementById(`vnum-${vNum}`);
-            if(numBadge) numBadge.classList.add('has-data');
+            
+            document.getElementById(`vnum-${vNum}`)?.classList.add('has-data');
             const currentData = existingUserData[vNum] || {};
-            const novoPuzzleBoard = [...(currentData.puzzleBoard || []), specificPuzzleItem];
-            existingUserData[vNum] = { ...currentData, docId: targetId, puzzleBoard: novoPuzzleBoard, nome: cleanName };
+            existingUserData[vNum] = { ...currentData, docId: targetId, puzzleBoard: [...(currentData.puzzleBoard || []), specificItem] };
         }
 
-        // 5. FINALIZAÇÃO E REDESENHO
+        console.log("✅ Sucesso!");
+        
+        // --- Limpeza Final ---
         document.getElementById('flash-note-modal').style.display = 'none';
         
-        // Redesenha os picotados (agora em 2 versículos diferentes!)
-        if (typeof window.refreshVisualHighlights === 'function') window.refreshVisualHighlights();
-
-        // Abre o painel com o contexto global
+        if (fullHighlightText && typeof window.refreshVisualHighlights === 'function') window.refreshVisualHighlights();
+        
         if (fullHighlightText) {
             activeHighlightContext = { text: fullHighlightText, color: colorToSave };
-            // Usa o primeiro versículo como alvo do evento
             const vNumFirst = versesToAttach[0].split(':')[1].trim().split('-')[0];
             const verseEl = document.getElementById(`vnum-${vNumFirst}`)?.closest('.verse-item');
-            
-            window.openHighlightDetails(
-                {stopPropagation:()=>{}, target: verseEl}, 
-                encodeURIComponent(fullHighlightText), 
-                encodeURIComponent(colorToSave)
-            );
+            window.openHighlightDetails({stopPropagation:()=>{}, target: verseEl}, encodeURIComponent(fullHighlightText), encodeURIComponent(colorToSave));
+        } else {
+            window.returnToVerseDetails();
         }
 
-        // Limpeza
-        currentSelectionText = "";
-        currentSelectionVerses = [];
-        selectedColorHex = null;
+        // Resets
+        currentSelectionText = ""; currentSelectionVerses = []; selectedColorHex = null;
         if (window.getSelection) window.getSelection().removeAllRanges();
 
+        // NOTA: Não reativamos o botão aqui porque o modal vai fechar ou mudar de conteúdo.
+        // Se reativarmos, o utilizador pode ver o botão piscar antes de desaparecer.
+
     } catch (e) {
-        console.error("Erro ao gravar:", e);
+        console.error(e);
         alert("Erro: " + e.message);
-        saveBtn.disabled = false;
+        
+        // REATIVA O BOTÃO EM CASO DE ERRO para permitir tentar de novo
+        if(btn) { 
+            btn.textContent = "GRAVAR NOTA"; 
+            btn.disabled = false; 
+            btn.style.opacity = "1";
+            btn.style.cursor = "pointer";
+        }
     }
 };
+
+// --- FORÇAR LIGAÇÃO DOS BOTÕES (CORREÇÃO DE ERROS DE LOAD) ---
+// Adiciona isto para garantir que os botões funcionam mesmo que o HTML falhe
+setTimeout(() => {
+    // 1. Botão de Abrir
+    const btnOpen = document.getElementById('btn-add-flash-note');
+    if (btnOpen) {
+        btnOpen.onclick = window.handleCreateNoteClick;
+        console.log("🔧 Botão 'Adicionar' reparado.");
+    }
+
+    // 2. Botão de Gravar
+    const btnSave = document.getElementById('btn-save-flash');
+    if (btnSave) {
+        btnSave.onclick = window.saveFlashNoteGlobal;
+        console.log("🔧 Botão 'Gravar' reparado.");
+    }
+}, 1000);
 
 
 
@@ -2381,62 +2398,45 @@ function toggleFlashSubtopic(topicId, subId, isChecked) {
 
 // 2. FUNÇÃO DE ABERTURA
 window.openFlashLinkManager = function() {
+    console.log("⚡ A abrir Gestor de Links...");
     const modal = document.getElementById('flash-links-modal');
-    modal.style.display = 'flex';
-    
-    // 1. Limpeza visual
-    document.getElementById('flash-urls-list').innerHTML = '';
-    document.getElementById('flash-codex-rows-container').innerHTML = ''; 
-    document.getElementById('flash-cat-selected').innerHTML = '';
-    document.getElementById('flash-cat-results').innerHTML = '';
-    
-    // 2. Carrega Título
-    document.getElementById('flash-link-title').value = currentFlashLinks.title || "";
+    if(modal) {
+        modal.style.display = 'flex';
+        
+        // Inicialização básica (limpar e carregar)
+        document.getElementById('flash-urls-list').innerHTML = '';
+        document.getElementById('flash-codex-rows-container').innerHTML = ''; 
+        document.getElementById('flash-cat-selected').innerHTML = '';
+        document.getElementById('flash-cat-results').innerHTML = '';
+        document.getElementById('flash-link-title').value = currentFlashLinks.title || "";
 
-    // 3. Carrega Toggle Bíblia
-    const bibleToggle = document.getElementById('flash-bible-toggle');
-    if (bibleToggle) {
-        bibleToggle.checked = currentFlashLinks.bibleMode === true;
-    }
+        // Toggle Bíblia
+        const bibleToggle = document.getElementById('flash-bible-toggle');
+        if (bibleToggle) bibleToggle.checked = currentFlashLinks.bibleMode === true;
 
-    // 4. Carrega URLs
-    if (currentFlashLinks.urls) {
-        Object.values(currentFlashLinks.urls).forEach(url => window.addFlashUrlField(url));
+        // Se não houver links, inicializa o array de categorias
+        if (!currentFlashLinks.categories) currentFlashLinks.categories = [];
+        
+        // Garante que o versículo atual está na lista
+        const currentVerseName = activeVerseFullName;
+        const alreadyHasCurrent = currentFlashLinks.categories.some(c => c.name === currentVerseName);
+
+        if (!alreadyHasCurrent) {
+            currentFlashLinks.categories.unshift({ 
+                id: activeVerseDocId || "new_temp_id", 
+                name: currentVerseName, 
+                type: "textobiblico" 
+            });
+        }
+
+        // Renderiza
+        currentFlashLinks.categories.forEach(c => renderFlashCategoryChip(c));
+        
+        // Abre na primeira aba
+        window.switchFlashLinkTab('refs');
     } else {
-        window.addFlashUrlField(); 
+        console.error("Erro: Modal 'flash-links-modal' não encontrado no HTML.");
     }
-
-    // 5. Carrega Codex
-    if (currentFlashLinks.codex && currentFlashLinks.codex.length > 0) {
-        currentFlashLinks.codex.forEach(c => window.createFlashCodexRow(c));
-    } else {
-        window.createFlashCodexRow(); 
-    }
-
-    // --- NOVA LÓGICA INTELIGENTE AQUI ---
-    
-    // Se a lista de categorias ainda não existir, inicializa-a como array
-    if (!currentFlashLinks.categories) currentFlashLinks.categories = [];
-
-    // Verifica se o Versículo Atual já está na lista. Se não estiver, ADICIONA-O.
-    // Isto garante que ao abrir o gestor, vês logo o versículo de origem selecionado.
-    const currentVerseName = activeVerseFullName; // Ex: "Génesis 1:1"
-    const alreadyHasCurrent = currentFlashLinks.categories.some(c => c.name === currentVerseName);
-
-    if (!alreadyHasCurrent) {
-        // Nota: O ID aqui é provisório se a nota for nova, mas o nome é o que importa para a pesquisa
-        currentFlashLinks.categories.unshift({ 
-            id: activeVerseDocId || "new_temp_id", 
-            name: currentVerseName, 
-            type: "textobiblico" 
-        });
-    }
-
-    // 6. Renderiza todas as Categorias (incluindo a que acabámos de adicionar)
-    currentFlashLinks.categories.forEach(c => renderFlashCategoryChip(c));
-
-    // Abre na primeira aba
-    window.switchFlashLinkTab('refs');
 };
 
 // 3. FUNÇÕES DE UI (ABAS E CAMPOS)
@@ -2835,7 +2835,8 @@ window.getFlashFormHTML = (customLabel = null) => {
                 🔗 Anexado a: <span id="flash-attached-verse" style="color: #3498db;">${displayLabel}</span>
             </div>
 
-            <button onclick="window.saveFlashNoteGlobal()" style="width:100%; margin-top:20px; padding:12px; background:var(--accent-color); color:white; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">GRAVAR NOTA</button>
+            <!-- ALTERAÇÃO AQUI: ID ADICIONADO E 'THIS' PASSADO NO ONCLICK -->
+            <button id="btn-submit-flash" onclick="window.saveFlashNoteGlobal(this)" style="width:100%; margin-top:20px; padding:12px; background:var(--accent-color); color:white; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">GRAVAR NOTA</button>
         </div>
     `;
 };
@@ -2844,34 +2845,26 @@ window.getFlashFormHTML = (customLabel = null) => {
 
 // Quando clica em "+ Adicionar Nota"
 window.handleCreateNoteClick = () => {
-       const toolbar = document.getElementById('selection-toolbar');
+    // 1. Esconde a barra flutuante se estiver aberta
+    const toolbar = document.getElementById('selection-toolbar');
     if (toolbar) toolbar.style.display = 'none';
-    // 1. Definição do Modo (Com ou Sem Cor)
-    // Só mostramos cores se houver um contexto de trecho ativo OU se houver texto selecionado (barra flutuante)
+
+    // 2. Lógica de Contexto (Trecho vs Versículo Geral)
     const shouldShowColors = (activeHighlightContext !== null) || (currentSelectionText && currentSelectionText.trim() !== "");
 
-    // 2. Limpa os campos visuais
+    // 3. Reset das Variáveis Globais
     document.getElementById('flash-title').value = "";
     document.getElementById('flash-editor').innerHTML = "";
-    
-    // 3. Reset das variáveis de dados
     currentFlashTopics = {}; 
     currentFlashLinks = {};
     activeTopicIdForFlash = null;
     
-    // Reset do dropdown para o padrão
+    // Reset do Dropdown
     const typeSelect = document.getElementById('flash-type-select');
     if(typeSelect) typeSelect.value = "default";
 
-    // Reset visual da toolbar
-    const btnLink = document.getElementById('btn-flash-links');
-    if(btnLink) { 
-        btnLink.style.color = ""; 
-        btnLink.style.borderColor = ""; 
-    }
-
-    // 4. Lógica do Rótulo "Anexado a"
-    let labelParaMostrar = activeVerseFullName; // Padrão
+    // 4. Definir Rótulo "Anexado a"
+    let labelParaMostrar = activeVerseFullName; 
 
     if (activeHighlightContext && activeHighlightContext.text) {
         labelParaMostrar = `Trecho: "${activeHighlightContext.text.substring(0, 25)}..."`;
@@ -2884,7 +2877,11 @@ window.handleCreateNoteClick = () => {
     }
 
     // 5. Renderização (PC vs Mobile)
-    if (window.innerWidth >= 768) {
+    const isDesktop = window.innerWidth >= 768;
+    let containerForButtons; // Para sabermos onde procurar os botões depois
+
+    if (isDesktop) {
+        // --- PC (Sidebar) ---
         const sidePanel = document.getElementById('side-panel');
         const contentDiv = document.getElementById('sidebar-content');
         const backBtn = document.getElementById('sidebar-back-btn');
@@ -2897,99 +2894,149 @@ window.handleCreateNoteClick = () => {
         if(titleEl) titleEl.innerText = "Nova Nota";     
         
         contentDiv.innerHTML = window.getFlashFormHTML(labelParaMostrar);
+        containerForButtons = contentDiv;
     } else {
+        // --- MOBILE (Popup) ---
         const modal = document.getElementById('flash-note-modal');
         const modalBody = modal.querySelector('.details-body');
         modalBody.innerHTML = window.getFlashFormHTML(labelParaMostrar);
         modal.style.display = 'flex';
+        containerForButtons = modalBody;
     }
 
-    // 6. INJEÇÃO CONDICIONAL DE CORES E FOCO
+    // 6. FORÇAR A LIGAÇÃO DOS BOTÕES E CORES (A CORREÇÃO)
     setTimeout(() => {
-        // --- AQUI ESTÁ A MUDANÇA: Só injeta se for um Trecho ---
+        // A. Injeta Seletor de Cores se for Trecho
         if (shouldShowColors && typeof window.injectColorPickerIntoForm === 'function') {
             window.injectColorPickerIntoForm();
         }
-        // -------------------------------------------------------
 
+        // B. Foca no Título
         const input = document.getElementById('flash-title');
         if(input) input.focus();
+
+        // C. REPARAÇÃO DOS BOTÕES DA TOOLBAR (Raio e Prancheta)
+        // Procuramos os botões dentro do contentor ativo para garantir que são os certos
+        if (containerForButtons) {
+            const btnLinks = containerForButtons.querySelector('#btn-flash-links');
+            const btnTopics = containerForButtons.querySelector('#btn-flash-topics');
+
+            if (btnLinks) {
+                console.log("🔧 Botão Links (Raio) ativado manualmente.");
+                btnLinks.onclick = (e) => {
+                    e.preventDefault(); // Evita recargas estranhas
+                    window.openFlashLinkManager();
+                };
+            }
+
+            if (btnTopics) {
+                console.log("🔧 Botão Tópicos ativado manualmente.");
+                btnTopics.onclick = (e) => {
+                    e.preventDefault();
+                    window.openTopicsModal();
+                };
+            }
+        }
     }, 100);
 };
 
 // Quando clica na Seta "Voltar" (PC)
 window.returnToVerseDetails = () => {
-    // Extrai o número do versículo da string global (ex: "Génesis 1:1" -> "1")
+    // 1. Identificar o versículo
     const vNum = activeVerseFullName.split(':')[1].trim().split('-')[0];
+    const data = existingUserData[vNum];
 
-    // Referências aos elementos da Sidebar (PC)
-    const contentDiv = document.getElementById('sidebar-content');
-    const titleEl = document.getElementById('sidebar-verse-title');
-    const centerActions = document.getElementById('sidebar-center-actions');
-    const backBtn = document.getElementById('sidebar-back-btn');
+    // 2. Determinar Modo (PC ou Mobile)
+    const isDesktop = window.innerWidth >= 768;
+    let contentDiv, titleEl, centerActions, backBtn;
 
-    // Esconde o botão de voltar, pois chegámos à vista principal (seja do Trecho ou do Versículo)
+    if (isDesktop) {
+        // --- MODO PC ---
+        contentDiv = document.getElementById('sidebar-content');
+        titleEl = document.getElementById('sidebar-verse-title');
+        centerActions = document.getElementById('sidebar-center-actions');
+        backBtn = document.getElementById('sidebar-back-btn');
+        document.getElementById('side-panel').classList.add('open');
+    } else {
+        // --- MODO MOBILE (A Correção) ---
+        const modal = document.getElementById('verse-details-modal');
+        modal.style.display = 'flex'; // Garante que o modal está visível
+        contentDiv = document.getElementById('details-content');
+        titleEl = document.getElementById('modal-verse-title');
+        
+        // Remove botões antigos de contexto se existirem
+        const customBtn = document.getElementById('btn-custom-highlight');
+        if (customBtn) customBtn.remove();
+        
+        // Garante que o botão padrão está visível (será escondido abaixo se for trecho)
+        const defaultBtn = document.getElementById('btn-add-flash-note');
+        if(defaultBtn) {
+            defaultBtn.style.display = 'inline-block';
+            defaultBtn.innerText = "+ Adicionar Nota";
+        }
+    }
+
+    // 3. Reset da UI para Estado "Geral"
     if (backBtn) backBtn.style.display = 'none';
 
-    // --- LÓGICA DE DECISÃO: TRECHO OU VERSÍCULO GERAL? ---
+    // Se estávamos num Trecho, voltamos ao Geral
     if (activeHighlightContext) {
-        // === CASO A: VOLTAR PARA O PAINEL DO TRECHO (HIGHLIGHT) ===
+        // === VOLTAR AO TRECHO (Se estivéssemos num) ===
+        // Se a nota gravada pertencia a um trecho, queremos ver o trecho, não o geral.
+        // Mas se a função foi chamada sem contexto, desenha o geral.
         
+        // Vamos forçar o redesenho do trecho se o contexto ainda existir
         const { text, color } = activeHighlightContext;
-        const encodedText = encodeURIComponent(text);
-        const encodedColor = encodeURIComponent(color);
-
-        // 1. Define o Título com o sublinhado colorido
+        
+        // Atualiza Título
         if (titleEl) titleEl.innerHTML = `<span style="color: ${color}; font-weight: bold;">${text}</span>`;
+        
+        // Botão Personalizado
+        const btnHtml = `
+            <button id="btn-custom-highlight" 
+                    onclick="window.openFlashForHighlight('${encodeURIComponent(text)}', '${encodeURIComponent(color)}')" 
+                    style="background: var(--accent-color); color: #fff; border: none; padding: 6px 12px; border-radius: 20px; cursor: pointer; margin-right:5px; font-size: 0.8rem;">
+                + Nota no Trecho
+            </button>
+        `;
 
-        // 2. Restaura o Botão Personalizado (Colorido) no Topo
-        if (centerActions) {
+        if (isDesktop && centerActions) {
+            centerActions.innerHTML = btnHtml;
             centerActions.style.display = 'block';
-            centerActions.innerHTML = `
-                <button id="btn-custom-highlight" 
-                        onclick="window.openFlashForHighlight('${encodedText}', '${encodedColor}')" 
-                        style="background: var(--accent-color); color: #fff; font-weight: bold; border: none; padding: 6px 12px; border-radius: 20px; cursor: pointer; box-shadow: 0 0 10px ${color}66; white-space: nowrap; font-size: 0.85rem;">
-                    + Nota no Trecho
-                </button>
-            `;
+        } else if (!isDesktop) {
+             // CORREÇÃO MOBILE:
+             const defaultBtn = document.getElementById('btn-add-flash-note');
+             if(defaultBtn) defaultBtn.style.display = 'none'; // Esconde o geral
+             
+             // Remove duplicados antigos
+             const oldCustom = document.getElementById('btn-custom-highlight');
+             if(oldCustom) oldCustom.remove();
+
+             // Injeta o botão usando insertAdjacentHTML para evitar erros de espaços em branco
+             const headerActions = document.querySelector('#verse-details-modal .modal-header > div');
+             if(headerActions) {
+                 headerActions.insertAdjacentHTML('beforeend', btnHtml);
+             }
         }
 
-        // 3. Renderiza apenas as notas deste trecho específico
-        if (contentDiv) {
-            contentDiv.innerHTML = '<div class="spinner"></div>';
+        // Renderiza Notas do Trecho
+        const relatedNotes = (data && data.puzzleBoard) 
+            ? data.puzzleBoard.filter(item => item.highlightRef === text) 
+            : [];
             
-            const data = existingUserData[vNum];
-            // Filtra notas que pertencem a este trecho
-            const relatedNotes = (data && data.puzzleBoard) 
-                ? data.puzzleBoard.filter(item => item.highlightRef === text) 
-                : [];
-            
-            // Usa a função auxiliar para desenhar os cards
-            renderHighlightContent(contentDiv, relatedNotes, color);
-        }
+        renderHighlightContentConsolidated(contentDiv, relatedNotes, color);
 
     } else {
-        // === CASO B: VOLTAR PARA O PAINEL GERAL DO VERSÍCULO ===
-        
-        // 1. Define o Título Padrão (Nome do Versículo)
+        // === VOLTAR AO GERAL (Versículo Completo) ===
         if (titleEl) titleEl.innerText = activeVerseFullName;
 
-        // 2. Restaura o Botão Padrão (Laranja) no Topo
-        if (centerActions) {
+        if (isDesktop && centerActions) {
             centerActions.style.display = 'block';
-            centerActions.innerHTML = `
-                <button class="btn-create-note" onclick="window.handleCreateNoteClick()" style="margin: 0;">
-                    + Adicionar Nota
-                </button>
-            `;
+            centerActions.innerHTML = `<button class="btn-create-note" onclick="window.handleCreateNoteClick()">+ Adicionar Nota</button>`;
         }
 
-        // 3. Renderiza todas as notas do versículo (Puzzle, Dossier, Links)
-        if (contentDiv) {
-            const data = existingUserData[vNum];
-            // Usa a função padrão que constrói todo o conteúdo do versículo
-            contentDiv.innerHTML = buildVerseHTML(data, vNum);
-        }
+        // Renderiza TUDO
+        contentDiv.innerHTML = buildVerseHTML(data, vNum);
     }
 };
 
@@ -3016,16 +3063,38 @@ window.changeFlashBorder = (selectElement) => {
 document.addEventListener('selectionchange', () => {
     const selection = window.getSelection();
     const toolbar = document.getElementById('selection-toolbar');
+    
+    // Segurança básica
+    if (!toolbar) return;
 
-    // Se não houver texto ou a seleção estiver vazia
+    // Se não houver seleção ou estiver vazia, esconde
     if (!selection.rangeCount || selection.isCollapsed) {
         toolbar.style.display = 'none';
         return;
     }
 
+    // --- A CORREÇÃO: FILTRO DE ÁREAS PROIBIDAS ---
+    // Descobre onde a seleção começou
+    const node = selection.anchorNode;
+    // Garante que temos um Elemento HTML (se for texto puro, pega o pai)
+    const element = node.nodeType === 3 ? node.parentElement : node;
+
+    // A Lista Negra: Se a seleção estiver dentro de qualquer um destes, NÃO MOSTRA A BARRA
+    if (element.closest('.modal-content') ||    // Dentro de qualquer modal (Popup)
+        element.closest('#side-panel') ||       // Dentro da barra lateral (PC)
+        element.closest('.flash-editor') ||     // Dentro do editor de texto
+        element.closest('input') ||             // Dentro de um input normal
+        element.closest('textarea') ||          // Dentro de uma caixa de texto
+        element.isContentEditable) {            // Qualquer área editável
+        
+        toolbar.style.display = 'none';
+        return; // Sai da função imediatamente
+    }
+    // ----------------------------------------------
+
     const text = selection.toString().trim();
     if (text.length > 0) {
-        // Guarda o texto
+        // Guarda o texto globalmente
         currentSelectionText = text;
 
         // Calcula posição da barra flutuante
@@ -3034,13 +3103,18 @@ document.addEventListener('selectionchange', () => {
         
         // Posiciona a barra logo acima da seleção
         toolbar.style.top = `${window.scrollY + rect.top - 50}px`;
+        
         // Centraliza horizontalmente (com limites de ecrã)
         let leftPos = rect.left + (rect.width / 2) - 60; 
         if (leftPos < 10) leftPos = 10;
+        
+        // Se a seleção for muito à direita, ajusta para não sair do ecrã
+        if (leftPos > window.innerWidth - 130) leftPos = window.innerWidth - 130;
+
         toolbar.style.left = `${leftPos}px`;
         toolbar.style.display = 'flex';
 
-        // Identifica os versículos envolvidos
+        // Identifica os versículos envolvidos (apenas se for texto bíblico)
         identifyVersesInSelection(range);
     }
 });
@@ -3345,127 +3419,122 @@ window.applyHighlightToUI = (textToHighlight, colorHex) => {
 };
 
 window.openHighlightDetails = async (event, encodedText, encodedColor) => {
-    // 1. PROTEÇÃO DE SELEÇÃO (CRUCIAL)
+    // 1. Proteção de Seleção
     const selection = window.getSelection();
-    
-    // Se houver texto selecionado, NÃO abre o modal.
-    if (selection && selection.toString().length > 0 && !selection.isCollapsed) {
-        console.log("Seleção detetada, ignorando clique no destaque.");
-        return; 
-    }
-    
-    // --- LINHA NOVA: Se passou a proteção e vai abrir o modal, esconde a barra ---
+    if (selection && selection.toString().length > 0 && !selection.isCollapsed) return;
     window.hideSelectionToolbar();
-
-    // 2. Comportamento normal do clique (Abrir Modal)
     if(event && event.stopPropagation) event.stopPropagation(); 
 
     const rawPartialText = decodeURIComponent(encodedText);
     let fullText = rawPartialText.trim();
     let displayColor = decodeURIComponent(encodedColor); 
 
-    // Identificar versículo
-    let verseRow = event.target ? event.target.closest('.verse-item') : null;
-    if (!verseRow) {
-        const vNum = activeVerseFullName.split(':')[1].trim().split('-')[0];
-        const el = document.getElementById(`vnum-${vNum}`);
-        if(el) verseRow = el.closest('.verse-item');
+    // 2. Identificar Versículo
+    let vNum;
+    // Tenta obter do evento
+    let verseRow = event && event.target ? event.target.closest('.verse-item') : null;
+    if (verseRow) {
+        vNum = verseRow.querySelector('.verse-number').innerText.trim();
+    } else {
+        // Fallback: usa a global
+        vNum = activeVerseFullName.split(':')[1].trim().split('-')[0];
     }
-    if(!verseRow) return;
-
-    const currentVerseNum = verseRow.querySelector('.verse-number').innerText.trim();
-    const fullVerseName = `${selectedBook.nome} ${selectedChapter}:${currentVerseNum}`;
-
-     // --- ADICIONA ESTA LINHA AQUI ---
-    activeVerseFullName = fullVerseName; 
     
-    // --- SETUP UI (Desktop/Mobile) ---
-    // (Mantém a lógica de UI existente, resumida aqui para brevidade)
-    let contentDiv, titleEl, centerActions;
-const loadingBtnHtml = `<button style="background:var(--accent-color); color:#fff; border:none; padding:6px 12px; border-radius:20px;">Carregando...</button>`;
+    // Atualiza a global para garantir sincronia
+    const fullVerseName = `${selectedBook.nome} ${selectedChapter}:${vNum}`;
+    activeVerseFullName = fullVerseName; 
 
-    if (window.innerWidth >= 768) {
+    // 3. Determinar Modo (PC vs Mobile)
+    const isDesktop = window.innerWidth >= 768;
+    let contentDiv, titleEl, centerActions;
+
+    if (isDesktop) {
+        // PC
         document.getElementById('side-panel').classList.add('open');
         contentDiv = document.getElementById('sidebar-content');
         titleEl = document.getElementById('sidebar-verse-title');
         centerActions = document.getElementById('sidebar-center-actions');
         document.getElementById('sidebar-back-btn').style.display = 'none';
-        if (centerActions) { centerActions.style.display = 'block'; centerActions.innerHTML = loadingBtnHtml; }
     } else {
+        // MOBILE (A Correção Importante)
         const modal = document.getElementById('verse-details-modal');
-        modal.style.display = 'flex';
+        modal.style.display = 'flex'; // Abre o modal
         contentDiv = document.getElementById('details-content');
         titleEl = document.getElementById('modal-verse-title');
-        // ... (restante lógica mobile)
+        
+        // Esconde o botão normal no mobile para não confundir
+        const defaultBtn = document.getElementById('btn-add-flash-note');
+        if(defaultBtn) defaultBtn.style.display = 'none';
     }
 
+    // 4. Interface de Carregamento
     titleEl.innerHTML = `<span style="color: ${displayColor}; font-weight: bold;">${fullText}</span>`;
     contentDiv.innerHTML = '<div class="spinner-container" style="padding:40px; text-align:center;"><div class="spinner"></div></div>';
 
     try {
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        // 1. Tenta encontrar o Trecho Global
-const qMaster = query(
-    collection(db, 'trechosbiblicos'),
-    where('userId', '==', currentUser.uid),
-    where('textosbiblicos', 'array-contains', fullVerseName)
-);
+        // Tenta encontrar contexto global
+        const qMaster = query(collection(db, 'trechosbiblicos'), where('userId', '==', currentUser.uid), where('textosbiblicos', 'array-contains', fullVerseName));
+        const snapMaster = await getDocs(qMaster);
+        let masterDoc = null;
 
-const snapMaster = await getDocs(qMaster);
-let masterDoc = null;
+        snapMaster.forEach(doc => {
+            const data = doc.data();
+            if (data.nome && data.nome.includes(rawPartialText)) {
+                masterDoc = { ...data, id: doc.id };
+            }
+        });
 
-snapMaster.forEach(doc => {
-    const data = doc.data();
-    // AQUI ESTÁ O SEGREDO:
-    // Verifica se o texto clicado (rawPartialText) faz parte do texto global (data.nome)
-    // Ex: "Então houve luz" está dentro de "Então houve luz Depois disso,"? SIM.
-    if (data.nome && data.nome.includes(rawPartialText)) {
-        masterDoc = { ...data, id: doc.id };
-    }
-});
+        if (masterDoc) {
+            fullText = masterDoc.nome; 
+            displayColor = masterDoc.cor || displayColor;
+            activeHighlightContext = { text: fullText, color: displayColor };
+        } else {
+             activeHighlightContext = { text: fullText, color: displayColor };
+        }
 
-if (masterDoc) {
-    // Se encontrou o pai, usa o texto COMPLETO para o título e contexto
-    fullText = masterDoc.nome; 
-    displayColor = masterDoc.cor || displayColor;
-    activeHighlightContext = { text: fullText, color: displayColor };
-}
+        // Botão Personalizado (+ Nota no Trecho)
+        const btnHtml = `
+            <button id="btn-custom-highlight" 
+                    onclick="window.openFlashForHighlight('${encodeURIComponent(fullText)}', '${encodeURIComponent(displayColor)}')" 
+                    style="background: var(--accent-color); color: #fff; border: none; padding: 6px 12px; border-radius: 20px; cursor: pointer; font-weight: bold; box-shadow: 0 0 10px rgba(0,0,0,0.2); white-space: nowrap; font-size: 0.85rem;">
+                + Nota no Trecho
+            </button>
+        `;
 
-        // --- ATUALIZAÇÃO DO BOTÃO "+ NOTA NO TRECHO" ---
-   const finalBtnHtml = `
-    <button id="btn-custom-highlight" 
-            onclick="window.openFlashForHighlight('${encodeURIComponent(fullText)}', '${encodeURIComponent(displayColor)}')" 
-            style="background: var(--accent-color); color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.5); border: none; padding: 6px 12px; border-radius: 20px; cursor: pointer; font-weight: bold; box-shadow: 0 0 10px rgba(0,0,0,0.2); white-space: nowrap; font-size: 0.85rem;">
-        + Nota no Trecho
-    </button>
-`;
-        if (centerActions) centerActions.innerHTML = finalBtnHtml;
+        if (isDesktop && centerActions) {
+            centerActions.innerHTML = btnHtml;
+            centerActions.style.display = 'block';
+        } else if (!isDesktop) {
+            // CORREÇÃO: Injeção Mobile no Header
+            const headerDiv = document.querySelector('#verse-details-modal .modal-header > div');
+            
+            // 1. Remove botão antigo se existir
+            const old = document.getElementById('btn-custom-highlight');
+            if(old) old.remove();
+            
+            // 2. Injeta HTML diretamente (resolve o problema do firstChild pegar espaços)
+            if (headerDiv) {
+                headerDiv.insertAdjacentHTML('beforeend', btnHtml);
+            }
+        }
 
-        // --- RENDERIZAÇÃO DAS NOTAS (CORRIGIDA) ---
+        // Renderização Consolidada
         let finalNotes = [];
         let seenNoteIds = new Set(); 
-        const vData = existingUserData[currentVerseNum];
+        const vData = existingUserData[vNum];
 
         if (vData && vData.puzzleBoard) {
             vData.puzzleBoard.forEach((item, idx) => {
                 let shouldInclude = false;
-
-                // Critério 1: Ligado pelo ID Global (se existir)
-                if (masterDoc && masterDoc.noteIds && masterDoc.noteIds.includes(item.noteId)) {
-                    shouldInclude = true;
-                }
-                
-                // Critério 2: Ligado pelo Texto Local (Fallback para órfãos e notas antigas)
-                // Se o texto destacado na nota coincidir com o texto clicado
-                if (item.highlightRef === rawPartialText || item.highlightRef === fullText) {
-                    shouldInclude = true;
-                }
+                if (masterDoc && masterDoc.noteIds && masterDoc.noteIds.includes(item.noteId)) shouldInclude = true;
+                if (item.highlightRef === rawPartialText || item.highlightRef === fullText) shouldInclude = true;
 
                 if (shouldInclude) {
-                    if (!seenNoteIds.has(item.noteId || idx)) { // Usa idx como fallback de ID
+                    if (!seenNoteIds.has(item.noteId || idx)) {
                         seenNoteIds.add(item.noteId || idx);
-                        finalNotes.push({ ...item, originalIndex: idx, sourceVerse: currentVerseNum });
+                        finalNotes.push({ ...item, originalIndex: idx, sourceVerse: vNum });
                     }
                 }
             });
