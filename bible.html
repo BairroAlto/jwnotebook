@@ -701,6 +701,35 @@ input:checked + .slider:before { transform: translateX(16px); }
         background-color: #8c739e;
     }
     
+    /* --- ECRÃ DE CARREGAMENTO DE CAPÍTULO --- */
+    #loading-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: var(--bg-color); /* Fundo preto para tapar tudo */
+        z-index: 5000;
+        display: none; /* Escondido por defeito */
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .spinner-main {
+        width: 50px;
+        height: 50px;
+        border: 5px solid #333;
+        border-top: 5px solid var(--accent-color); /* A cor laranja */
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
 </style>
 
 </head>
@@ -992,6 +1021,12 @@ input:checked + .slider:before { transform: translateX(16px); }
     <button id="btn-note-selection" title="Criar Nota Flash">✍ Nota Flash</button>
 </div>
 
+<!-- ECRÃ DE CARREGAMENTO (OVERLAY) -->
+<div id="loading-overlay">
+    <div class="spinner-main"></div>
+    <p style="margin-top: 15px; color: #888; font-size: 0.9rem; letter-spacing: 1px;">A CARREGAR TEXTO E NOTAS...</p>
+</div>
+
 
   <script type="module">
         import { BIBLE_DATA } from './js/bible-data.js';
@@ -1230,46 +1265,67 @@ const HIGHLIGHT_COLORS = [
         }
 
 async function openVerses(chapter) {
-    selectedChapter = chapter; 
-    versesList.innerHTML = ''; 
-    existingUserData = {}; 
-    currentChapterHighlights = []; 
-    
-    applyConfigToUI();
+    // 1. ATIVAR O LOADING IMEDIATAMENTE
+    const loader = document.getElementById('loading-overlay');
+    if (loader) loader.style.display = 'flex';
 
-    const totalVerses = selectedBook.versiculos[chapter - 1] || 50;
-    
-    // Array para guardar as promessas de carregamento do texto
-    const textLoadPromises = [];
+    // Pequeno delay para garantir que o browser renderiza o loader antes de bloquear a thread
+    await new Promise(r => setTimeout(r, 50));
 
-    for (let i = 1; i <= totalVerses; i++) {
-        const row = document.createElement('div'); 
-        row.className = 'verse-item';
+    try {
+        selectedChapter = chapter; 
+        versesList.innerHTML = ''; 
+        existingUserData = {}; 
+        currentChapterHighlights = []; 
         
-        const spanId = `vtext-${i}`; 
-        const numId = `vnum-${i}`;
+        applyConfigToUI();
+
+        const totalVerses = selectedBook.versiculos[chapter - 1] || 50;
         
-        row.innerHTML = `
-            <span id="${numId}" class="verse-number" onclick="window.openModalForVerse(${i})">${i}</span>
-            <span id="${spanId}" class="verse-text loading-text">...</span>
-        `;
-        versesList.appendChild(row);
-        
-        // Adiciona o carregamento deste versículo à lista de espera
-        textLoadPromises.push(fetchVerseText(selectedBook.nome, chapter, i, spanId));
-    }
+        // Array para guardar as promessas de carregamento do texto
+        const textLoadPromises = [];
 
-    updateUI('verses');
+        // Construção do DOM (Placeholders)
+        for (let i = 1; i <= totalVerses; i++) {
+            const row = document.createElement('div'); 
+            row.className = 'verse-item';
+            
+            const spanId = `vtext-${i}`; 
+            const numId = `vnum-${i}`;
+            
+            row.innerHTML = `
+                <span id="${numId}" class="verse-number" onclick="window.openModalForVerse(${i})">${i}</span>
+                <span id="${spanId}" class="verse-text loading-text">...</span>
+            `;
+            versesList.appendChild(row);
+            
+            // Inicia o download do texto
+            textLoadPromises.push(fetchVerseText(selectedBook.nome, chapter, i, spanId));
+        }
 
-    // --- CORREÇÃO DE SINCRONIA ---
-    // 1. Espera que TODOS os textos da Bíblia apareçam
-    await Promise.all(textLoadPromises);
+        // Muda a vista para Versículos (o loader ainda está por cima a tapar tudo)
+        updateUI('verses');
 
-    // 2. Só agora carrega os dados do utilizador e desenha as cores
-    if (currentUser) {
-        // NÃO chamamos mais o loadHighlightsForChapter aqui para evitar conflitos visuais
-        // Chamamos apenas o loadUserData, que vai chamar o refreshVisualHighlights no fim
-        await loadUserDataForChapter(selectedBook.nome, chapter);
+        // 2. ESPERA QUE TODO O TEXTO BÍBLICO CHEGUE
+        await Promise.all(textLoadPromises);
+
+        // 3. CARREGA DADOS DO UTILIZADOR E DESENHA OS PICOTADOS
+        if (currentUser) {
+            // Esta função já chama o window.refreshVisualHighlights() no final da execução
+            await loadUserDataForChapter(selectedBook.nome, chapter);
+        }
+
+    } catch (error) {
+        console.error("Erro crítico ao abrir capítulo:", error);
+        alert("Ocorreu um erro ao carregar o capítulo.");
+    } finally {
+        // 4. SÓ AGORA ESCONDE O LOADER
+        // Um pequeno delay extra (300ms) dá uma sensação de suavidade e garante que o CSS dos picotados "assentou"
+        if (loader) {
+            setTimeout(() => {
+                loader.style.display = 'none';
+            }, 300);
+        }
     }
 }
 
@@ -1407,6 +1463,7 @@ async function fetchVerseText(bookName, chapter, verse, elementId) {
         };
 
 window.openModalForVerse = async (num) => {
+     window.hideSelectionToolbar();
     // --- RESET DO CONTEXTO (IMPORTANTE) ---
     activeHighlightContext = null; 
     currentSelectionText = ""; // Garante que não há texto selecionado
@@ -1817,6 +1874,7 @@ window.openModalForVerse = async (num) => {
         }
 
         backBtn.addEventListener('click', () => {
+              window.hideSelectionToolbar(); 
             if (currentView === 'verses') updateUI('chapters'); 
             else if (currentView === 'chapters') { 
                 selectedBook = null; 
@@ -2780,6 +2838,8 @@ window.getFlashFormHTML = (customLabel = null) => {
 
 // Quando clica em "+ Adicionar Nota"
 window.handleCreateNoteClick = () => {
+       const toolbar = document.getElementById('selection-toolbar');
+    if (toolbar) toolbar.style.display = 'none';
     // 1. Definição do Modo (Com ou Sem Cor)
     // Só mostramos cores se houver um contexto de trecho ativo OU se houver texto selecionado (barra flutuante)
     const shouldShowColors = (activeHighlightContext !== null) || (currentSelectionText && currentSelectionText.trim() !== "");
@@ -3283,14 +3343,13 @@ window.openHighlightDetails = async (event, encodedText, encodedColor) => {
     const selection = window.getSelection();
     
     // Se houver texto selecionado, NÃO abre o modal.
-    // O browser dá prioridade ao evento de seleção antes do click completo.
-    if (selection && selection.toString().length > 0) {
-        // Verifica se não é apenas um cursor piscando (collapsed)
-        if (!selection.isCollapsed) {
-            console.log("Seleção detetada, ignorando clique no destaque.");
-            return; // Sai da função imediatamente, permitindo a seleção nativa
-        }
+    if (selection && selection.toString().length > 0 && !selection.isCollapsed) {
+        console.log("Seleção detetada, ignorando clique no destaque.");
+        return; 
     }
+    
+    // --- LINHA NOVA: Se passou a proteção e vai abrir o modal, esconde a barra ---
+    window.hideSelectionToolbar();
 
     // 2. Comportamento normal do clique (Abrir Modal)
     if(event && event.stopPropagation) event.stopPropagation(); 
@@ -3697,6 +3756,22 @@ function calculateVerseIntersection(verseText, fullSelection) {
 
     return null; // Não encontrou interseção válida
 }
+
+
+window.hideSelectionToolbar = () => {
+    const toolbar = document.getElementById('selection-toolbar');
+    if (toolbar) {
+        toolbar.style.display = 'none';
+    }
+    // Remove a seleção azul do texto para ficar limpo
+    if (window.getSelection) {
+        window.getSelection().removeAllRanges();
+    }
+    // Limpa a variável global de texto selecionado
+    currentSelectionText = "";
+    currentSelectionVerses = [];
+};
+
 
     </script>
 </body>
