@@ -729,16 +729,72 @@ input:checked + .slider:before { transform: translateX(16px); }
         100% { transform: rotate(360deg); }
     }
     
+    /* Botão de Marcadores no Header */
+#bookmarks-btn {
+    background: none; 
+    border: none; 
+    font-size: 1.2rem; 
+    cursor: pointer;
+    padding: 5px; 
+    transition: 0.3s;
+    min-width: 30px;
+}
+#bookmarks-btn:hover { transform: scale(1.1); }
+
+/* Lista de Navegação de Marcadores */
+.bk-list-item {
+    padding: 15px;
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.95rem;
+    transition: background 0.2s;
+}
+.bk-list-item:hover { background-color: var(--hover-color); }
+
+.bk-count {
+    background: rgba(255,255,255,0.1);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.8em;
+    color: #aaa;
+}
+
+/* Item de Versículo Específico */
+.bk-verse-item {
+    padding: 12px 15px;
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+}
+.bk-verse-item:hover { background-color: rgba(46, 204, 113, 0.1); }
+
+.bk-verse-ref { font-weight: bold; color: var(--accent-color); display: block; }
+.bk-verse-desc { font-size: 0.85em; color: #888; margin-top: 2px; }
+
+/* Efeito de Flash ao encontrar o versículo */
+@keyframes verse-flash {
+    0% { background-color: rgba(230, 126, 34, 0.6); }
+    100% { background-color: transparent; }
+}
+.flash-target { animation: verse-flash 2s ease-out; }
+
 </style>
 
 </head>
 <body>
 
-    <header>
-        <button id="back-btn">⬅</button>
-        <div id="page-title">Bíblia</div>
-         <button id="settings-btn">⚙️</button>
-    </header>
+ <header>
+    <button id="back-btn">⬅</button>
+    <div id="page-title">Bíblia</div>
+    
+    <!-- NOVO: Contentor de botões da direita -->
+    <div style="display:flex; align-items:center;">
+        <button id="bookmarks-btn" title="Meus Marcadores" style="margin-right: 5px;">🔖</button>
+        <button id="settings-btn">⚙️</button>
+    </div>
+</header>
 
 <!-- NOVO WRAPPER FLEX -->
     <div id="main-layout">
@@ -1025,6 +1081,24 @@ input:checked + .slider:before { transform: translateX(16px); }
     <div class="spinner-main"></div>
     <p style="margin-top: 15px; color: #888; font-size: 0.9rem; letter-spacing: 1px;">A CARREGAR TEXTO E NOTAS...</p>
 </div>
+
+
+<!-- MODAL DE MARCADORES (Painel de Navegação) -->
+<div id="bookmarks-navigator-modal" class="modal-overlay" style="z-index: 6000;">
+    <div class="modal-content" style="height: 80vh; max-height: 600px; display:flex; flex-direction:column;">
+        <div class="modal-header">
+            <!-- Botão Voltar (aparece só quando dentro de uma categoria) -->
+            <button id="bk-nav-back" style="display:none; background:none; border:none; color:var(--accent-color); font-size:1.2rem; cursor:pointer; margin-right:10px;">⬅</button>
+            <h3 id="bk-nav-title" style="color:var(--text-color); font-size:1.1rem;">Meus Marcadores</h3>
+            <button class="modal-close" onclick="document.getElementById('bookmarks-navigator-modal').style.display='none'">×</button>
+        </div>
+        
+        <div class="details-body" id="bk-nav-content" style="padding:0;">
+            <!-- Lista será injetada aqui -->
+        </div>
+    </div>
+</div>
+
 
 
   <script type="module">
@@ -3860,6 +3934,181 @@ window.hideSelectionToolbar = () => {
     currentSelectionVerses = [];
 };
 
+
+// Abrir Navegador de Marcadores
+document.getElementById('bookmarks-btn').addEventListener('click', () => {
+    // Se for PC, podemos usar o SidePanel (opcional), mas o modal funciona bem em ambos.
+    // Para cumprir o requisito "Painel (PC) / Popup (Mobile)", vamos usar o modal
+    // mas estilizá-lo como painel lateral se for PC.
+    
+    const modal = document.getElementById('bookmarks-navigator-modal');
+    modal.style.display = 'flex';
+    
+    // Carrega a lista inicial (Categorias)
+    loadBookmarkCategories();
+});
+
+// Botão Voltar dentro do Modal
+document.getElementById('bk-nav-back').addEventListener('click', () => {
+    loadBookmarkCategories();
+});
+
+
+// Carregar Categorias (Géneros)
+async function loadBookmarkCategories() {
+    const listDiv = document.getElementById('bk-nav-content');
+    const titleEl = document.getElementById('bk-nav-title');
+    const backBtn = document.getElementById('bk-nav-back');
+    
+    listDiv.innerHTML = '<div class="spinner-container" style="padding:20px; text-align:center;"><div class="spinner"></div></div>';
+    titleEl.textContent = "Meus Marcadores";
+    backBtn.style.display = 'none';
+
+    try {
+        const { collection, query, where, getDocs, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const q = query(
+            collection(db, 'marcadores'), 
+            where('userId', '==', currentUser.uid),
+            orderBy('nome')
+        );
+        
+        const snap = await getDocs(q);
+        listDiv.innerHTML = '';
+        
+        if (snap.empty) {
+            listDiv.innerHTML = '<p style="padding:20px; text-align:center; color:#888;">Sem marcadores criados.</p>';
+            return;
+        }
+
+        snap.forEach(doc => {
+            const data = doc.data();
+            const div = document.createElement('div');
+            div.className = 'bk-list-item';
+            div.innerHTML = `
+                <span>🔖 ${data.nome}</span>
+                <span class="bk-count">➔</span>
+            `;
+            div.onclick = () => loadVersesInBookmark(doc.id, data.nome);
+            listDiv.appendChild(div);
+        });
+
+    } catch (e) {
+        console.error(e);
+        listDiv.innerHTML = '<p style="color:red; padding:10px;">Erro ao carregar.</p>';
+    }
+}
+
+// Carregar Versículos dentro de uma Categoria
+async function loadVersesInBookmark(markerId, markerName) {
+    const listDiv = document.getElementById('bk-nav-content');
+    const titleEl = document.getElementById('bk-nav-title');
+    const backBtn = document.getElementById('bk-nav-back');
+
+    listDiv.innerHTML = '<div class="spinner-container" style="padding:20px; text-align:center;"><div class="spinner"></div></div>';
+    titleEl.textContent = markerName;
+    backBtn.style.display = 'block';
+
+    try {
+        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // Procura textos que tenham este marcador
+        const q = query(
+            collection(db, 'textosbiblicos'),
+            where(`marcadoresAssociados.${markerId}`, '==', true),
+            where('userId', '==', currentUser.uid)
+        );
+
+        const snap = await getDocs(q);
+        listDiv.innerHTML = '';
+
+        if (snap.empty) {
+            listDiv.innerHTML = '<p style="padding:20px; text-align:center; color:#888;">Nenhum versículo nesta categoria.</p>';
+            return;
+        }
+
+        // Ordenar alfabeticamente (opcional)
+        const verses = [];
+        snap.forEach(doc => verses.push({id: doc.id, ...doc.data()}));
+        verses.sort((a,b) => a.nome.localeCompare(b.nome, undefined, {numeric: true}));
+
+        verses.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'bk-verse-item';
+            div.innerHTML = `
+                <div class="bk-verse-ref">📜 ${item.nome}</div>
+                ${item.descricao ? `<div class="bk-verse-desc">${item.descricao.substring(0, 50)}...</div>` : ''}
+            `;
+            
+            // AQUI ESTÁ A MAGIA DO SCROLL
+            div.onclick = () => {
+                document.getElementById('bookmarks-navigator-modal').style.display = 'none';
+                navigateToBibleVerse(item.nome);
+            };
+            
+            listDiv.appendChild(div);
+        });
+
+    } catch (e) {
+        console.error(e);
+        listDiv.innerHTML = '<p style="color:red; padding:10px;">Erro ao carregar versículos.</p>';
+    }
+}
+
+async function navigateToBibleVerse(verseRef) {
+    console.log("🧭 Navegando para:", verseRef);
+
+    // 1. Parse da string (Ex: "1 Coríntios 13:4")
+    // Regex captura: (Nome do Livro) (Capítulo):(Versículo)
+    // Suporta nomes com números e espaços (ex: 1 Reis, Atos)
+    const match = verseRef.match(/(.+)\s+(\d+):(\d+)/);
+    
+    if (!match) {
+        alert("Formato de referência inválido.");
+        return;
+    }
+
+    const bookName = match[1].trim();
+    const chapter = parseInt(match[2]);
+    const verse = parseInt(match[3]);
+
+    // 2. Encontrar o Livro na Base de Dados Local (BIBLE_DATA)
+    const bookData = BIBLE_DATA.find(b => b.nome.toLowerCase() === bookName.toLowerCase());
+    
+    if (!bookData) {
+        alert(`Livro "${bookName}" não encontrado.`);
+        return;
+    }
+
+    // 3. Abrir o Capítulo
+    // Isto define o selectedBook globalmente e prepara a vista
+    selectedBook = bookData;
+    
+    // Chama a função existente que carrega o capítulo e o texto
+    // Importante: openVerses tem de ser async para esperarmos o texto carregar
+    await openVerses(chapter);
+
+    // 4. Scroll e Destaque
+    // Espera um pouco para o DOM renderizar
+    setTimeout(() => {
+        // Tenta encontrar pelo número ou pelo texto
+        const verseElement = document.getElementById(`vnum-${verse}`) || document.getElementById(`vtext-${verse}`);
+        
+        if (verseElement) {
+            // Scroll suave para o centro
+            verseElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            // Efeito visual (Flash)
+            const parentRow = verseElement.closest('.verse-item');
+            if (parentRow) {
+                parentRow.classList.add('flash-target');
+                setTimeout(() => parentRow.classList.remove('flash-target'), 2000);
+            }
+        } else {
+            console.warn("Versículo não encontrado no DOM:", verse);
+        }
+    }, 300); // 300ms delay para garantir que o HTML foi injetado
+}
 
     </script>
 </body>
