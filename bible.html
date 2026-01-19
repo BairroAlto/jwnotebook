@@ -506,19 +506,22 @@ input:checked + .slider:before { transform: translateX(16px); }
         </div>
 
         <!-- Nova Coluna Lateral (Sidebar PC) -->
- <aside id="side-panel">
-        <!-- Adicionámos 'position: relative' para permitir o alinhamento absoluto do botão -->
-        <div class="modal-header" style="position: relative; justify-content: space-between;">
+<aside id="side-panel">
+        <div class="modal-header" style="position: relative; justify-content: space-between; height: 50px;">
             
-            <!-- ESQUERDA: Título (com limite de largura para não tapar o botão) -->
-            <h3 id="sidebar-verse-title" style="color:var(--accent-color); font-size:1.1rem; white-space:nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 30%;">
-                Versículo
-            </h3>
+            <!-- ESQUERDA: Contentor para Título e Botão Voltar -->
+            <div style="display: flex; align-items: center; max-width: 30%; overflow: hidden;">
+                <!-- Botão Voltar (Escondido por defeito) -->
+                <button id="sidebar-back-btn" onclick="window.returnToVerseDetails()" style="display: none; background:none; border:none; color:white; font-size:1.2rem; cursor:pointer; margin-right: 10px;">⬅</button>
+                
+                <h3 id="sidebar-verse-title" style="color:var(--accent-color); font-size:1.1rem; white-space:nowrap; overflow: hidden; text-overflow: ellipsis;">
+                    Versículo
+                </h3>
+            </div>
             
-            <!-- CENTRO: Botão (Posicionado matematicamente no centro) -->
-            <div style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 10;">
-                <!-- Removemos a margem esquerda (margin-left: 0) para o centro ser exato -->
-                <button class="btn-create-note" onclick="document.getElementById('btn-add-flash-note').click()" style="margin: 0;">
+            <!-- CENTRO: Botão Criar Nota -->
+            <div id="sidebar-center-actions" style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 10;">
+                <button class="btn-create-note" onclick="window.handleCreateNoteClick()" style="margin: 0;">
                     + Adicionar Nota
                 </button>
             </div>
@@ -531,6 +534,8 @@ input:checked + .slider:before { transform: translateX(16px); }
             <!-- Conteúdo carregado via JS -->
         </div>
     </aside>
+
+
 
     </div>
 
@@ -1252,23 +1257,34 @@ let currentFlashLinks = {};
     }, 50);
 };
 
-btnSaveFlash.onclick = async () => {
-    const title = document.getElementById('flash-title').value.trim();
-    const content = document.getElementById('flash-editor').innerHTML;
-    const noteType = document.getElementById('flash-type-select').value;
+window.saveFlashNoteGlobal = async () => {
+    // 1. Obter referências aos elementos do formulário (que agora são dinâmicos)
+    const titleInput = document.getElementById('flash-title');
+    const editor = document.getElementById('flash-editor');
+    const typeSelect = document.getElementById('flash-type-select');
+    
+    // Tenta encontrar o botão de gravar (é o último botão do contentor)
+    // Usamos o editor.parentElement para garantir que apanhamos o botão certo onde quer que esteja injetado
+    const saveBtn = editor.parentElement.querySelector('button:last-of-type');
+
+    const title = titleInput.value.trim();
+    const content = editor.innerHTML;
+    const noteType = typeSelect.value;
     
     if (!title) return alert("Escreva um título para a nota.");
 
-    const originalBtnText = btnSaveFlash.textContent;
-    btnSaveFlash.textContent = "A conectar ao Quadro...";
-    btnSaveFlash.disabled = true;
+    // Feedback Visual
+    const originalBtnText = saveBtn.textContent;
+    saveBtn.textContent = "A conectar ao Quadro...";
+    saveBtn.disabled = true;
 
     try {
-        // 1. OBTER OU CRIAR DOCUMENTO DO VERSÍCULO
+        // --- 1. FIREBASE: CONFIGURAÇÃO ---
+        const { collection, query, where, getDocs, addDoc, doc, updateDoc, arrayUnion, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+
+        // --- 2. OBTER OU CRIAR DOCUMENTO DO VERSÍCULO ---
         let targetRef;
         let targetId;
-
-        const { collection, query, where, getDocs, addDoc, doc, updateDoc, arrayUnion, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
         const qVerse = query(
             collection(db, 'textosbiblicos'), 
@@ -1281,6 +1297,7 @@ btnSaveFlash.onclick = async () => {
             targetId = snapshot.docs[0].id;
             targetRef = doc(db, 'textosbiblicos', targetId);
         } else {
+            // Cria documento novo se não existir
             const newVerseDoc = await addDoc(collection(db, 'textosbiblicos'), {
                 nome: activeVerseFullName,
                 userId: currentUser.uid,
@@ -1294,7 +1311,7 @@ btnSaveFlash.onclick = async () => {
             targetRef = newVerseDoc;
         }
 
-        // 2. PREPARAR DADOS PARA O HTML
+        // --- 3. PREPARAR DADOS PARA O HTML ---
         // Tópicos
         const safeTopics = JSON.stringify(currentFlashTopics).replace(/"/g, '&quot;');
         
@@ -1314,7 +1331,7 @@ btnSaveFlash.onclick = async () => {
         let wrapperClass = "mini-note-wrapper";
         if (noteType === 'question') wrapperClass += " question-mode";
 
-        // HTML FINAL COM OS ATRIBUTOS CORRETOS
+        // HTML FINAL (Snippet)
         const subNoteHtml = `
             <div class="${wrapperClass}" id="box_${Date.now()}" 
                  data-topics='${safeTopics}' 
@@ -1331,7 +1348,7 @@ btnSaveFlash.onclick = async () => {
             </div><p><br></p>
         `;
 
-        // 3. GRAVAR A NOTA (FLASH)
+        // --- 4. GRAVAR A NOTA (COLEÇÃO 'PASTAS') ---
         const noteRef = await addDoc(collection(db, 'pastas'), {
             nome: title,
             conteudo: subNoteHtml,
@@ -1344,7 +1361,7 @@ btnSaveFlash.onclick = async () => {
             ultimaedicao: serverTimestamp()
         });
 
-        // 4. ATUALIZAR O QUADRO (PUZZLE)
+        // --- 5. ATUALIZAR O QUADRO (PUZZLE) NO VERSÍCULO ---
         const puzzleItem = {
             type: 'ref',
             noteId: noteRef.id,
@@ -1357,13 +1374,16 @@ btnSaveFlash.onclick = async () => {
             puzzleBoard: arrayUnion(puzzleItem)
         });
 
-        // 5. ATUALIZAR CACHE LOCAL
-        const vNum = activeVerseFullName.split(':')[1].trim();
+        // --- 6. ATUALIZAR CACHE LOCAL ---
+        // Extrair apenas o número (ex: "1" de "Génesis 1:1")
+        const vNum = activeVerseFullName.split(':')[1].trim(); 
         const firstNum = parseInt(vNum.split('-')[0]);
         
+        // Atualiza UI da grelha de versículos (cor laranja)
         const numBadge = document.getElementById(`vnum-${firstNum}`);
         if(numBadge) numBadge.classList.add('has-data');
 
+        // Atualiza objeto em memória
         const currentData = existingUserData[vNum] || {};
         const currentBoard = currentData.puzzleBoard || [];
         const newBoard = [...currentBoard, puzzleItem];
@@ -1375,24 +1395,28 @@ btnSaveFlash.onclick = async () => {
             nome: activeVerseFullName
         };
 
-        flashModal.style.display = 'none';
+        // --- 7. NAVEGAÇÃO DE SUCESSO (AQUI ESTÁ A LÓGICA HÍBRIDA) ---
         
-        // Limpa campos
-        document.getElementById('flash-title').value = "";
-        document.getElementById('flash-editor').innerHTML = "";
-
-        // Reabre o modal para mostrar a lista nova
-        window.openModalForVerse(vNum);
+        // Verifica se estamos no modo PC (Sidebar)
+        if (window.innerWidth >= 768) {
+            // PC: Volta para a lista de detalhes dentro da sidebar
+            window.returnToVerseDetails();
+        } else {
+            // MOBILE: Fecha o modal de criação e reabre o modal de detalhes
+            document.getElementById('flash-note-modal').style.display = 'none';
+            // Recarrega o modal do versículo para mostrar a nova nota
+            window.openModalForVerse(vNum);
+        }
 
     } catch (e) {
-        console.error("Erro:", e);
+        console.error("Erro ao gravar:", e);
         alert("Erro: " + e.message);
-    } finally {
-        btnSaveFlash.textContent = originalBtnText;
-        btnSaveFlash.disabled = false;
+        saveBtn.textContent = originalBtnText;
+        saveBtn.disabled = false;
     }
 };
-        
+
+
 
         // --- NAVEGAÇÃO UI ---
         function updateUI(view) {
@@ -1801,23 +1825,20 @@ function toggleFlashSubtopic(topicId, subId, isChecked) {
     }
 }
 
-// 1. LISTENER DO BOTÃO ⚡
-document.getElementById('btn-flash-links').addEventListener('click', () => {
-    openFlashLinkManager();
-});
+
 
 // 2. FUNÇÃO DE ABERTURA
-function openFlashLinkManager() {
+window.openFlashLinkManager = function() {
     const modal = document.getElementById('flash-links-modal');
     modal.style.display = 'flex';
     
-    // 1. Limpeza
+    // 1. Limpeza visual
     document.getElementById('flash-urls-list').innerHTML = '';
-    document.getElementById('flash-codex-rows-container').innerHTML = ''; // Limpa contentor de linhas
+    document.getElementById('flash-codex-rows-container').innerHTML = ''; 
     document.getElementById('flash-cat-selected').innerHTML = '';
     document.getElementById('flash-cat-results').innerHTML = '';
     
-    // 2. Carrega Título
+    // 2. Carrega Título (se já houver dados em memória)
     document.getElementById('flash-link-title').value = currentFlashLinks.title || "";
 
     // 3. Carrega Toggle Bíblia
@@ -1830,10 +1851,10 @@ function openFlashLinkManager() {
     if (currentFlashLinks.urls) {
         Object.values(currentFlashLinks.urls).forEach(url => window.addFlashUrlField(url));
     } else {
-        window.addFlashUrlField();
+        window.addFlashUrlField(); // Cria campo vazio
     }
 
-    // 5. Carrega Codex (USANDO A NOVA FUNÇÃO)
+    // 5. Carrega Codex
     if (currentFlashLinks.codex && currentFlashLinks.codex.length > 0) {
         currentFlashLinks.codex.forEach(c => window.createFlashCodexRow(c));
     } else {
@@ -1845,8 +1866,9 @@ function openFlashLinkManager() {
         currentFlashLinks.categories.forEach(c => renderFlashCategoryChip(c));
     }
 
+    // Abre na primeira aba
     window.switchFlashLinkTab('refs');
-}
+};
 
 // 3. FUNÇÕES DE UI (ABAS E CAMPOS)
 window.switchFlashLinkTab = (tab) => {
@@ -2153,6 +2175,102 @@ window.closeFlashManual = function(closeBtn, type) {
     const toggleBtn = row.querySelector(`button[onclick*="'${type}'"]`);
     if(toggleBtn) toggleBtn.classList.remove('active');
     closeBtn.parentElement.remove();
+};
+
+// --- 1. FUNÇÃO QUE GERA O FORMULÁRIO (HTML STRING) ---
+// Isto permite usar o mesmo formulário no Modal e na Sidebar
+window.getFlashFormHTML = () => {
+    return `
+        <div style="padding: 10px;">
+            <input type="text" id="flash-title" class="flash-input-title" placeholder="Título da Nota..." autofocus>
+            
+            <!-- Toolbar -->
+            <div class="flash-toolbar">
+                <button onclick="document.execCommand('bold')"><b>B</b></button>
+                <button onclick="document.execCommand('italic')"><i>I</i></button>
+                <button onclick="document.execCommand('underline')"><u>U</u></button>
+                
+                <!-- Estes botões abrem os modais existentes (popups) -->
+                <button id="btn-flash-topics" onclick="window.openTopicsModal()" title="Tópicos">📋</button>
+                <button id="btn-flash-links" onclick="window.openFlashLinkManager()" title="Links">⚡</button>
+
+                <select id="flash-type-select">
+                    <option value="default">📘 Subnota</option>
+                    <option value="question">📗 Questão</option>
+                </select>
+            </div>
+
+            <div id="flash-editor" class="flash-editor" contenteditable="true" placeholder="Escreva aqui..."></div>
+            
+            <div style="margin-top: 15px; font-size: 0.8rem; color: #888;">
+                🔗 Anexado a: <span id="flash-attached-verse" style="color: #3498db;">${activeVerseFullName}</span>
+            </div>
+
+            <button onclick="window.saveFlashNoteGlobal()" style="width:100%; margin-top:20px; padding:12px; background:var(--accent-color); color:white; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">GRAVAR NOTA</button>
+        </div>
+    `;
+};
+
+// --- 2. GESTÃO DE CLIQUES E NAVEGAÇÃO ---
+
+// Quando clica em "+ Adicionar Nota"
+window.handleCreateNoteClick = () => {
+    // Reset das variáveis globais
+    currentFlashTopics = {}; 
+    currentFlashLinks = {};
+    activeTopicIdForFlash = null;
+
+    if (window.innerWidth >= 768) {
+        // MODO PC: Renderiza DENTRO da Sidebar
+        const contentDiv = document.getElementById('sidebar-content');
+        const backBtn = document.getElementById('sidebar-back-btn');
+        const centerBtn = document.getElementById('sidebar-center-actions');
+        const titleEl = document.getElementById('sidebar-verse-title');
+
+        // UI Updates
+        backBtn.style.display = 'block';     // Mostra Seta
+        centerBtn.style.display = 'none';    // Esconde botão "+ Adicionar"
+        titleEl.innerText = "Nova Nota";     // Muda Título
+        
+        // Injeta o HTML
+        contentDiv.innerHTML = window.getFlashFormHTML();
+        
+        // Foca no título (pequeno delay para renderizar)
+        setTimeout(() => document.getElementById('flash-title').focus(), 50);
+
+    } else {
+        // MODO MOBILE: Abre o Modal antigo
+        // Primeiro limpamos o modal antigo e injetamos o HTML novo lá também
+        const modalBody = document.querySelector('#flash-note-modal .details-body');
+        modalBody.innerHTML = window.getFlashFormHTML();
+        
+        // Adiciona botão fechar no modal mobile (porque substituímos o HTML todo)
+        // (Opcional: se o seu modal mobile tem header separado, não precisa disto)
+        
+        document.getElementById('flash-note-modal').style.display = 'flex';
+        setTimeout(() => document.getElementById('flash-title').focus(), 50);
+    }
+};
+
+// Quando clica na Seta "Voltar" (PC)
+window.returnToVerseDetails = () => {
+    const vNum = activeVerseFullName.split(':')[1].trim(); // Extrai número
+    
+    // UI Updates
+    document.getElementById('sidebar-back-btn').style.display = 'none';
+    document.getElementById('sidebar-center-actions').style.display = 'block';
+    document.getElementById('sidebar-verse-title').innerText = activeVerseFullName;
+
+    // Recarrega o conteúdo do versículo
+    const contentDiv = document.getElementById('sidebar-content');
+    const data = existingUserData[vNum];
+    contentDiv.innerHTML = buildVerseHTML(data, vNum);
+};
+
+// Funções wrapper para os botões da toolbar (para funcionarem no innerHTML)
+window.openTopicsModal = () => {
+    document.getElementById('flash-topics-modal').style.display = 'flex';
+    loadFlashTopicsList();
 };
 
     </script>
