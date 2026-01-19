@@ -1514,7 +1514,7 @@ window.openModalForVerse = async (num) => {
     const titleInput = document.getElementById('flash-title');
     const editor = document.getElementById('flash-editor');
     const typeSelect = document.getElementById('flash-type-select');
-    const saveBtn = editor.parentElement.querySelector('button:last-of-type') || document.getElementById('btn-save-flash');
+    const saveBtn = document.querySelector('#flash-note-modal button:last-of-type') || document.getElementById('btn-save-flash');
 
     const title = titleInput.value.trim();
     const content = editor.innerHTML;
@@ -1529,37 +1529,34 @@ window.openModalForVerse = async (num) => {
         const { collection, addDoc, doc, updateDoc, arrayUnion, serverTimestamp, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
         // 1. DADOS DE CONTEXTO
-        let highlightRefTexto = currentSelectionText; 
-        if (!highlightRefTexto && activeHighlightContext) highlightRefTexto = activeHighlightContext.text;
+        // Se for uma seleção nova, currentSelectionText tem o texto COMPLETO (ex: "luz Depois disso,")
+        let fullHighlightText = currentSelectionText; 
+        if (!fullHighlightText && activeHighlightContext) fullHighlightText = activeHighlightContext.text;
 
         let colorToSave = selectedColorHex;
         if (!colorToSave && activeHighlightContext) colorToSave = activeHighlightContext.color;
-        if (!colorToSave && highlightRefTexto) colorToSave = '#3498db'; 
+        if (!colorToSave) colorToSave = '#3498db'; // Azul padrão
 
+        // Lista de versículos envolvidos (ex: ["Génesis 1:3", "Génesis 1:4"])
         const versesToAttach = (currentSelectionVerses && currentSelectionVerses.length > 0) 
                        ? currentSelectionVerses 
                        : [activeVerseFullName];
 
-        // 2. CRIAR A NOTA (DOC) PRIMEIRO para obter o ID
+        // 2. CRIAR A NOTA (DOC)
         const safeTopics = JSON.stringify(currentFlashTopics || {}).replace(/"/g, '&quot;');
         if (!currentFlashLinks || (!currentFlashLinks.categories && !currentFlashLinks.urls && !currentFlashLinks.codex)) {
              currentFlashLinks = { categories: [{ id: "temp", name: versesToAttach[0], type: "textobiblico" }] };
         }
         const safeBoxLinks = JSON.stringify(currentFlashLinks).replace(/"/g, '&quot;');
-
         let wrapperClass = "mini-note-wrapper";
         if (noteType === 'question') wrapperClass += " question-mode";
 
         const subNoteHtml = `
             <div class="${wrapperClass}" id="box_${Date.now()}" 
-                 data-topics='${safeTopics}' 
-                 data-shared="false" 
-                 data-box-links='${safeBoxLinks}' 
-                 contenteditable="false">
+                 data-topics='${safeTopics}' data-shared="false" data-box-links='${safeBoxLinks}' contenteditable="false">
                 <textarea class="mini-note-title-input" rows="1">${title}</textarea>
                 <div class="mini-note-toolbar" contenteditable="false">
-                    <button>🔐</button>
-                    <div class="toolbar-btn-group"><button>🔺</button><button>🔻</button></div>
+                    <button>🔐</button><div class="toolbar-btn-group"><button>🔺</button><button>🔻</button></div>
                     <button class="has-links">⚡</button><button>🧬</button><button>🎨</button><button>📋</button><button>🗑️</button>
                 </div>
                 <div class="mini-note-content" contenteditable="true">${content}</div>
@@ -1567,150 +1564,118 @@ window.openModalForVerse = async (num) => {
         `;
 
         const noteRef = await addDoc(collection(db, 'pastas'), {
-            nome: title,
-            conteudo: subNoteHtml,
-            tipo: 'nota',
-            oque: 'flash',
-            userId: currentUser.uid,
-            estado: 'ativa',
-            createdAt: serverTimestamp(),
-            ultimaedicao: serverTimestamp()
+            nome: title, conteudo: subNoteHtml, tipo: 'nota', oque: 'flash',
+            userId: currentUser.uid, estado: 'ativa', createdAt: serverTimestamp(), ultimaedicao: serverTimestamp()
         });
 
-        // 3. AGORA GRAVAMOS O TRECHO GLOBAL (COM O NOTE ID)
-        // Verificamos se já existe este trecho exato para não duplicar, ou criamos novo
-        if (currentSelectionText && colorToSave) {
-            // Pequena query para ver se este trecho já existe
+        // 3. GRAVAR TRECHO GLOBAL (O "Cérebro" da ligação)
+        // Guardamos o texto COMPLETO aqui
+        if (fullHighlightText) {
             const qCheck = query(
                 collection(db, 'trechosbiblicos'), 
                 where('userId', '==', currentUser.uid),
-                where('nome', '==', currentSelectionText),
-                where('textosbiblicos', 'array-contains', versesToAttach[0]) // Simplificação
+                where('nome', '==', fullHighlightText),
+                where('textosbiblicos', 'array-contains', versesToAttach[0])
             );
             const snapCheck = await getDocs(qCheck);
             
             if (!snapCheck.empty) {
-                // Se já existe, adicionamos o ID desta nova nota ao array de noteIds
-                const docId = snapCheck.docs[0].id;
-                await updateDoc(doc(db, 'trechosbiblicos', docId), {
+                await updateDoc(doc(db, 'trechosbiblicos', snapCheck.docs[0].id), {
                     noteIds: arrayUnion(noteRef.id),
-                    cor: colorToSave // Atualiza a cor se mudou
+                    cor: colorToSave
                 });
             } else {
-                // Se é novo, cria
                 await addDoc(collection(db, 'trechosbiblicos'), {
-                    userId: currentUser.uid,
-                    textosbiblicos: versesToAttach,
-                    nome: currentSelectionText, // O TEXTO COMPLETO (ex: "Hoje... calor")
-                    cor: colorToSave,
-                    noteIds: [noteRef.id], // <--- O ELO DE LIGAÇÃO
-                    createdAt: serverTimestamp()
+                    userId: currentUser.uid, textosbiblicos: versesToAttach,
+                    nome: fullHighlightText, // TEXTO COMPLETO
+                    cor: colorToSave, noteIds: [noteRef.id], createdAt: serverTimestamp()
                 });
             }
         }
 
-        // 4. ATUALIZAR VERSÍCULOS INDIVIDUAIS
-     const puzzleItemBase = {
-    type: 'ref',
-    noteId: noteRef.id,
-    noteName: title,
-    snippet: encodeURIComponent(subNoteHtml),
-    addedAt: Date.now(),
-    noteColor: colorToSave || null 
-};
+        // 4. ATUALIZAR CADA VERSÍCULO (A "Fatia")
+        const puzzleItemBase = {
+            type: 'ref', noteId: noteRef.id, noteName: title,
+            snippet: encodeURIComponent(subNoteHtml), addedAt: Date.now(),
+            noteColor: colorToSave 
+        };
 
-for (const verseName of versesToAttach) {
-    // --- PROTEÇÃO CONTRA VALORES VAZIOS ---
-    if (!verseName || typeof verseName !== 'string') {
-        console.warn("⚠️ Versículo inválido ignorado no ciclo de gravação.");
-        continue; // Salta para o próximo
-    }
-    
-    let targetRef, targetId;
-    const cleanName = verseName.trim(); 
-
-    const qVerse = query(
-        collection(db, 'textosbiblicos'), 
-        where('nome', '==', cleanName), 
-        where('userId', '==', currentUser.uid)
-    );
-    const snapshot = await getDocs(qVerse);
-
-    // Calcular Interseção (Mantém-se igual)
-    let specificHighlightRef = highlightRefTexto; 
-             try {
-        const vNum = cleanName.split(':')[1].trim().split('-')[0];
-        const verseSpan = document.getElementById(`vtext-${vNum}`);
-        if (verseSpan && highlightRefTexto) {
-            const overlap = calculateVerseIntersection(verseSpan.innerText, highlightRefTexto);
-            if (overlap) specificHighlightRef = overlap;
-        }
-    } catch(err) { console.log(err); }
-
-    const specificPuzzleItem = { 
-        ...puzzleItemBase, 
-        highlightRef: specificHighlightRef || null 
-    };
-
-    if (!snapshot.empty) {
-        // Se encontrou, usa o PRIMEIRO documento encontrado
-        targetId = snapshot.docs[0].id;
-        targetRef = doc(db, 'textosbiblicos', targetId);
-        await updateDoc(targetRef, { puzzleBoard: arrayUnion(specificPuzzleItem) });
-        
-        // Se houver duplicados (mais que 1 doc), avisa na consola para limpar
-        if (snapshot.size > 1) {
-            console.warn(`⚠️ ALERTA: Existem ${snapshot.size} documentos para ${cleanName}. Considere limpar duplicados no Firebase.`);
-        }
-    } else {
-        // Se não encontrou, cria um novo
-        const newVerseDoc = await addDoc(collection(db, 'textosbiblicos'), {
-            nome: cleanName, // Garante que grava sem espaços extra
-            userId: currentUser.uid, 
-            createdAt: serverTimestamp(), 
-            referencias: {},
-            puzzleBoard: [specificPuzzleItem], 
-            dossie: [], 
-            panelLinks: []
-        });
-        targetId = newVerseDoc.id;
-        targetRef = newVerseDoc;
-    }
-
-            // Cache Local (Atualização vital para veres logo o picotado)
-    const vNum = cleanName.split(':')[1].trim().split('-')[0];
-    const numBadge = document.getElementById(`vnum-${vNum}`);
-    if(numBadge) numBadge.classList.add('has-data');
-    
-    const currentData = existingUserData[vNum] || {};
-    
-    // Força a atualização do puzzleBoard local
-    const novoPuzzleBoard = [...(currentData.puzzleBoard || []), specificPuzzleItem];
-    
-    existingUserData[vNum] = { 
-        ...currentData, 
-        docId: targetId, 
-        puzzleBoard: novoPuzzleBoard, 
-        nome: cleanName 
-    };
-}
-
-        // 5. FINALIZAÇÃO
-        if (typeof window.refreshVisualHighlights === 'function') window.refreshVisualHighlights();
-        document.getElementById('flash-note-modal').style.display = 'none';
-
-        // Redireciona para o painel consolidado
-        if (highlightRefTexto) {
-            activeHighlightContext = { text: highlightRefTexto, color: colorToSave };
-            // Usa o primeiro versículo como "âncora" para o evento
-            const vNum = versesToAttach[0].split(':')[1].trim().split('-')[0];
-            const verseEl = document.getElementById(`vnum-${vNum}`).closest('.verse-item');
+        for (const verseName of versesToAttach) {
+            if (!verseName || typeof verseName !== 'string') continue;
             
-            // Importante: Passamos o texto completo aqui
-            window.openHighlightDetails({stopPropagation:()=>{}, target: verseEl}, encodeURIComponent(highlightRefTexto), encodeURIComponent(colorToSave));
-        } else {
-             if (window.innerWidth >= 768) window.returnToVerseDetails();
-             else window.openModalForVerse(versesToAttach[0].split(':')[1].trim().split('-')[0]);
+            const cleanName = verseName.trim();
+            const vNum = cleanName.split(':')[1].trim().split('-')[0];
+            
+            // --- CÁLCULO DA FATIA (INTERSEÇÃO) ---
+            // Se selecionei texto em 2 versículos, preciso saber qual parte pertence a ESTE versículo
+            let sliceText = null;
+            
+            // Tenta obter o texto do versículo da memória ou do DOM
+            let verseContent = "";
+            const verseSpan = document.getElementById(`vtext-${vNum}`);
+            if (verseSpan) {
+                verseContent = verseSpan.innerText;
+            } else {
+                // Fallback de segurança (raro acontecer se o DOM estiver carregado)
+                verseContent = ""; 
+            }
+
+            if (fullHighlightText && verseContent) {
+                // Usa a função auxiliar para descobrir qual pedaço do texto selecionado está neste versículo
+                sliceText = calculateVerseIntersection(verseContent, fullHighlightText);
+            }
+
+            // Se não conseguimos calcular a fatia (ex: erro de espaços), usamos o texto completo como fallback
+            // mas o ideal é a fatia exata para o picotado ficar bonito
+            const finalHighlightRef = sliceText || fullHighlightText;
+
+            const specificPuzzleItem = { 
+                ...puzzleItemBase, 
+                highlightRef: finalHighlightRef // <--- AQUI GRAVAMOS SÓ A PARTE DO VERSÍCULO
+            };
+
+            // Firebase Update (Lógica padrão de add/update)
+            const qVerse = query(collection(db, 'textosbiblicos'), where('nome', '==', cleanName), where('userId', '==', currentUser.uid));
+            const snapshot = await getDocs(qVerse);
+            
+            let targetId;
+            if (!snapshot.empty) {
+                targetId = snapshot.docs[0].id;
+                await updateDoc(doc(db, 'textosbiblicos', targetId), { puzzleBoard: arrayUnion(specificPuzzleItem) });
+            } else {
+                const newDoc = await addDoc(collection(db, 'textosbiblicos'), {
+                    nome: cleanName, userId: currentUser.uid, createdAt: serverTimestamp(),
+                    referencias: {}, puzzleBoard: [specificPuzzleItem], dossie: [], panelLinks: []
+                });
+                targetId = newDoc.id;
+            }
+
+            // Cache Local
+            const numBadge = document.getElementById(`vnum-${vNum}`);
+            if(numBadge) numBadge.classList.add('has-data');
+            const currentData = existingUserData[vNum] || {};
+            const novoPuzzleBoard = [...(currentData.puzzleBoard || []), specificPuzzleItem];
+            existingUserData[vNum] = { ...currentData, docId: targetId, puzzleBoard: novoPuzzleBoard, nome: cleanName };
+        }
+
+        // 5. FINALIZAÇÃO E REDESENHO
+        document.getElementById('flash-note-modal').style.display = 'none';
+        
+        // Redesenha os picotados (agora em 2 versículos diferentes!)
+        if (typeof window.refreshVisualHighlights === 'function') window.refreshVisualHighlights();
+
+        // Abre o painel com o contexto global
+        if (fullHighlightText) {
+            activeHighlightContext = { text: fullHighlightText, color: colorToSave };
+            // Usa o primeiro versículo como alvo do evento
+            const vNumFirst = versesToAttach[0].split(':')[1].trim().split('-')[0];
+            const verseEl = document.getElementById(`vnum-${vNumFirst}`)?.closest('.verse-item');
+            
+            window.openHighlightDetails(
+                {stopPropagation:()=>{}, target: verseEl}, 
+                encodeURIComponent(fullHighlightText), 
+                encodeURIComponent(colorToSave)
+            );
         }
 
         // Limpeza
@@ -1816,14 +1781,15 @@ window.deletePuzzleItem = async (vNum, index) => {
     );
     if (!confirmed) return;
 
-    // 2. Obter dados da nota alvo (do versículo onde clicámos)
+    // 2. Obter dados
     const data = existingUserData[vNum];
     if (!data || !data.puzzleBoard || !data.puzzleBoard[index]) return;
 
     const itemToDelete = data.puzzleBoard[index];
-    const targetNoteId = itemToDelete.noteId; // O ID de ligação global
+    const targetNoteId = itemToDelete.noteId;
+    const highlightTextContext = itemToDelete.highlightRef; // Guardamos o texto do trecho para verificar depois
 
-    // Feedback visual imediato (muda o ícone para um relógio)
+    // Feedback visual
     const btn = document.querySelector('.btn-remove-card');
     if(btn) btn.innerText = "⏳";
 
@@ -1831,84 +1797,86 @@ window.deletePuzzleItem = async (vNum, index) => {
         const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const updatePromises = [];
 
-        // --- CENÁRIO A: Nota Global (com NoteID) ---
+        // --- LÓGICA DE APAGAR (GLOBAL OU LOCAL) ---
         if (targetNoteId) {
-            console.log(`🗑️ A apagar nota global: ${targetNoteId}`);
-
-            // Percorre TODOS os versículos carregados na memória
             for (const [verseKey, verseData] of Object.entries(existingUserData)) {
-                
-                // --- CORREÇÃO DO ERRO AQUI ---
-                // Verificação de segurança: Se o versículo não tiver dados ou não tiver puzzleBoard, salta fora.
-                if (!verseData || !Array.isArray(verseData.puzzleBoard)) {
-                    continue;
-                }
-                // -----------------------------
+                if (!verseData || !Array.isArray(verseData.puzzleBoard)) continue;
 
-                // Filtra o array para remover a nota com este ID
                 const originalLength = verseData.puzzleBoard.length;
                 const newBoard = verseData.puzzleBoard.filter(item => item.noteId !== targetNoteId);
 
-                // Se houve alteração (o tamanho diminuiu), significa que a nota existia aqui
                 if (newBoard.length < originalLength) {
-                    
-                    // 1. Atualiza Cache Local
                     existingUserData[verseKey].puzzleBoard = newBoard;
                     
-                    // Se ficou vazio e não tem mais nada, remove o destaque visual do número
+                    // Limpa badge se ficar vazio
                     if (newBoard.length === 0 && (!verseData.dossie?.length) && (!verseData.panelLinks?.length)) {
                         const numBadge = document.getElementById(`vnum-${verseKey}`);
                         if(numBadge) numBadge.classList.remove('has-data');
                     }
 
-                    // 2. Prepara Atualização Firebase para este versículo específico
                     if (verseData.docId) {
                         const docRef = doc(db, 'textosbiblicos', verseData.docId);
                         updatePromises.push(updateDoc(docRef, { puzzleBoard: newBoard }));
                     }
                 }
             }
-        } 
-        // --- CENÁRIO B: Nota Local Antiga (sem NoteID) ---
-        else {
-            console.log("🗑️ A apagar nota local simples.");
+        } else {
+            // Apagar Local Simples
             const newBoard = [...data.puzzleBoard];
             newBoard.splice(index, 1);
-            
             existingUserData[vNum].puzzleBoard = newBoard;
-            
             if (data.docId) {
                 const docRef = doc(db, 'textosbiblicos', data.docId);
                 updatePromises.push(updateDoc(docRef, { puzzleBoard: newBoard }));
             }
         }
 
-        // Executa todas as atualizações na base de dados
         await Promise.all(updatePromises);
 
-        // 3. Atualizar UI
-        // Recalcula os picotados visuais na Bíblia
+        // 3. ATUALIZAR UI (AQUI ESTÁ A NOVIDADE)
+        
+        // A. Redesenha a Bíblia (remove o picotado se não houver mais notas)
         if (typeof window.refreshVisualHighlights === 'function') {
             window.refreshVisualHighlights();
         }
 
-        // Se estivermos dentro do painel do trecho, recarregamos o contexto
+        // B. Decide para onde ir
         if (activeHighlightContext) {
-            const safeText = encodeURIComponent(activeHighlightContext.text);
-            const safeColor = encodeURIComponent(activeHighlightContext.color);
-            // Simula o alvo para o evento
-            const verseEl = document.getElementById(`vnum-${vNum}`)?.closest('.verse-item');
+            // Estamos dentro de um Painel de Trecho.
+            // Vamos verificar se AINDA SOBRARAM notas para este trecho neste versículo.
+            const currentData = existingUserData[vNum];
             
-            setTimeout(() => {
-                window.openHighlightDetails({stopPropagation:()=>{}, target: verseEl}, safeText, safeColor);
-            }, 50);
+            // Filtra: quantas notas restam que têm o mesmo texto do trecho?
+            // (Usamos activeHighlightContext.text porque é o mestre)
+            const notesRemainingForHighlight = currentData.puzzleBoard.filter(item => 
+                item.highlightRef === activeHighlightContext.text || 
+                (itemToDelete && item.highlightRef === itemToDelete.highlightRef)
+            );
+
+            if (notesRemainingForHighlight.length === 0) {
+                // SE NÃO SOBROU NADA: O trecho morreu.
+                // Volta para a vista geral do versículo (Verse Details)
+                console.log("🗑️ Última nota do trecho apagada. A fechar painel do trecho.");
+                window.returnToVerseDetails();
+            } else {
+                // AINDA HÁ NOTAS (ex: tinhas 2 cards, apagaste 1):
+                // Recarrega o painel do trecho para mostrar as que sobraram.
+                const safeText = encodeURIComponent(activeHighlightContext.text);
+                const safeColor = encodeURIComponent(activeHighlightContext.color);
+                
+                // Simula evento
+                const verseEl = document.getElementById(`vnum-${vNum}`)?.closest('.verse-item');
+                setTimeout(() => {
+                    window.openHighlightDetails({stopPropagation:()=>{}, target: verseEl}, safeText, safeColor);
+                }, 50);
+            }
         } else {
-            // Modo versículo normal
+            // Estávamos na vista normal, recarrega normal
             window.openModalForVerse(vNum);
         }
 
     } catch (e) {
-        console.error("Erro ao apagar globalmente:", e);
+        console.error("Erro ao apagar:", e);
         alert("Erro ao apagar nota: " + e.message);
     }
 };
@@ -1963,7 +1931,7 @@ window.openEditCard = (vNum, index) => {
 };
 
         // 4. Gravar Edição
-document.getElementById('btn-confirm-edit-card').onclick = async () => {
+ document.getElementById('btn-confirm-edit-card').onclick = async () => {
     const btn = document.getElementById('btn-confirm-edit-card');
     
     // Dados do formulário
@@ -1991,7 +1959,7 @@ document.getElementById('btn-confirm-edit-card').onclick = async () => {
         const parser = new DOMParser();
         const docHTML = parser.parseFromString(rawSnippet, 'text/html');
         
-        // Atualiza Título e Conteúdo no HTML
+        // Atualiza Título e Conteúdo
         const titleInput = docHTML.querySelector('.mini-note-title-input');
         if (titleInput) {
             titleInput.setAttribute('value', newTitle);
@@ -2002,7 +1970,7 @@ document.getElementById('btn-confirm-edit-card').onclick = async () => {
             contentDiv.innerHTML = newContent;
         }
         
-        // Mantém atributos ocultos (Tópicos/Links)
+        // Mantém atributos ocultos
         const wrapper = docHTML.querySelector('.mini-note-wrapper');
         if (wrapper) {
             wrapper.setAttribute('data-topics', JSON.stringify(currentFlashTopics));
@@ -2010,77 +1978,70 @@ document.getElementById('btn-confirm-edit-card').onclick = async () => {
         }
         const newSnippet = encodeURIComponent(docHTML.body.innerHTML);
 
-        // --- A NOVA COR ---
-        // Usa a cor selecionada no picker, ou mantém a antiga se não houve alteração
+        // A NOVA COR (Ou mantém a antiga)
         const newColorToSave = selectedColorHex || itemOriginal.noteColor || itemOriginal.cor || '#3498db';
 
-        // 3. CICLO DE ATUALIZAÇÃO GLOBAL
+        // 3. CICLO DE ATUALIZAÇÃO GLOBAL (Protegido contra erros)
         const updatePromises = [];
 
-    for (const [vKey, vData] of Object.entries(existingUserData)) {
-    // --- PROTEÇÃO CONTRA DADOS CORROMPIDOS ---
-    if (!vData || !Array.isArray(vData.puzzleBoard)) {
-        console.warn(`⚠️ Versículo V${vKey} ignorado na edição (dados inválidos).`);
-        continue; // Salta para o próximo sem crashar
-    }
-    // ----------------------------------------
+        for (const [vKey, vData] of Object.entries(existingUserData)) {
+            // Proteção contra dados inválidos
+            if (!vData || !Array.isArray(vData.puzzleBoard)) continue;
 
-    let hasChanges = false;
-    
-    // Percorre o puzzleBoard deste versículo e CRIA UM NOVO ARRAY
-    const newBoard = vData.puzzleBoard.map(item => {
-        // ... (o resto do código map mantém-se igual) ...
-        const isMatch = targetNoteId 
-            ? (item.noteId === targetNoteId) 
-            : (item.snippet === itemOriginal.snippet);
+            let hasChanges = false;
+            
+            const newBoard = vData.puzzleBoard.map(item => {
+                const isMatch = targetNoteId 
+                    ? (item.noteId === targetNoteId) 
+                    : (item.snippet === itemOriginal.snippet);
 
-        if (isMatch) {
-            hasChanges = true;
-            return {
-                ...item,
-                noteName: newTitle,
-                snippet: newSnippet,
-                noteColor: newColorToSave, 
-                cor: newColorToSave,       
-                highlightRef: item.highlightRef 
-            };
-        }
-        return item;
-    });
+                if (isMatch) {
+                    hasChanges = true;
+                    return {
+                        ...item,
+                        noteName: newTitle,
+                        snippet: newSnippet,
+                        noteColor: newColorToSave, 
+                        cor: newColorToSave,       
+                        highlightRef: item.highlightRef // MANTÉM O TEXTO ORIGINAL DO VERSÍCULO
+                    };
+                }
+                return item;
+            });
 
             if (hasChanges) {
-                // A. Atualiza Cache Local (Isto permite que o visual mude instantaneamente)
-           existingUserData[vKey].puzzleBoard = newBoard;
-        if (vData.docId) {
-             const docRef = doc(db, 'textosbiblicos', vData.docId);
-             updatePromises.push(updateDoc(docRef, { puzzleBoard: newBoard }));
+                existingUserData[vKey].puzzleBoard = newBoard;
+                if (vData.docId) {
+                     const docRef = doc(db, 'textosbiblicos', vData.docId);
+                     updatePromises.push(updateDoc(docRef, { puzzleBoard: newBoard }));
+                }
+            }
         }
-    }
-}
 
-        // Executa gravações na BD
         await Promise.all(updatePromises);
 
         // 4. ATUALIZAR OS PICOTADOS NO ECRÃ
-        // Como atualizámos o existingUserData acima, esta função vai ler a nova cor e redesenhar
         if (typeof window.refreshVisualHighlights === 'function') {
             window.refreshVisualHighlights();
         }
         
-        // 5. ATUALIZAR CONTEXTO SE ESTIVERMOS NO PAINEL DO TRECHO
-        // Se a nota editada pertencer ao trecho que está aberto agora, atualizamos a cor do cabeçalho/botão
-        if (activeHighlightContext && activeHighlightContext.text === itemOriginal.highlightRef) {
+        // 5. ATUALIZAR CONTEXTO E VOLTAR AO PAINEL DO TRECHO (A CORREÇÃO)
+        // Se activeHighlightContext existe, significa que viemos de um trecho!
+        if (activeHighlightContext) {
+            // Atualizamos a cor no contexto global para o cabeçalho ficar certo
             activeHighlightContext.color = newColorToSave;
             
-            // Simula reabertura para atualizar a cor do botão e título
+            // Simula reabertura usando o Texto Global (activeHighlightContext.text)
+            // e NÃO o texto parcial do item (itemOriginal.highlightRef)
             const verseEl = document.getElementById(`vnum-${vNumOriginal}`)?.closest('.verse-item');
+            
             window.openHighlightDetails(
                 { stopPropagation: () => {}, target: verseEl },
-                encodeURIComponent(activeHighlightContext.text),
+                encodeURIComponent(activeHighlightContext.text), // <--- O SEGREDO ESTÁ AQUI
                 encodeURIComponent(newColorToSave)
             );
         } else {
-            // Se estávamos num versículo normal, voltamos para lá
+            // Se não havia contexto de trecho, viemos do versículo geral
             window.openModalForVerse(vNumOriginal);
         }
 
@@ -2092,7 +2053,7 @@ document.getElementById('btn-confirm-edit-card').onclick = async () => {
     } finally {
         btn.textContent = "Gravar";
         btn.disabled = false;
-        selectedColorHex = null; // Limpa seleção
+        selectedColorHex = null; 
     }
 };
 
@@ -3266,32 +3227,31 @@ const loadingBtnHtml = `<button style="background:var(--accent-color); color:#ff
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
         // 1. Tenta encontrar o Trecho Global
-        const qMaster = query(
-            collection(db, 'trechosbiblicos'),
-            where('userId', '==', currentUser.uid),
-            where('textosbiblicos', 'array-contains', fullVerseName)
-        );
-        
-        const snapMaster = await getDocs(qMaster);
-        let masterDoc = null;
-        
-        // Procura correspondência de texto
-        snapMaster.forEach(doc => {
-            const data = doc.data();
-            if (data.nome && data.nome.includes(rawPartialText)) {
-                masterDoc = { ...data, id: doc.id };
-            }
-        });
+const qMaster = query(
+    collection(db, 'trechosbiblicos'),
+    where('userId', '==', currentUser.uid),
+    where('textosbiblicos', 'array-contains', fullVerseName)
+);
 
-        // Atualiza contexto se encontrou global
-        if (masterDoc) {
-            fullText = masterDoc.nome;
-            displayColor = masterDoc.cor || displayColor;
-            activeHighlightContext = { text: fullText, color: displayColor };
-        } else {
-            // Se não encontrou global, usa o local como contexto (PARA ORFÃOS)
-            activeHighlightContext = { text: rawPartialText, color: displayColor };
-        }
+const snapMaster = await getDocs(qMaster);
+let masterDoc = null;
+
+snapMaster.forEach(doc => {
+    const data = doc.data();
+    // AQUI ESTÁ O SEGREDO:
+    // Verifica se o texto clicado (rawPartialText) faz parte do texto global (data.nome)
+    // Ex: "Então houve luz" está dentro de "Então houve luz Depois disso,"? SIM.
+    if (data.nome && data.nome.includes(rawPartialText)) {
+        masterDoc = { ...data, id: doc.id };
+    }
+});
+
+if (masterDoc) {
+    // Se encontrou o pai, usa o texto COMPLETO para o título e contexto
+    fullText = masterDoc.nome; 
+    displayColor = masterDoc.cor || displayColor;
+    activeHighlightContext = { text: fullText, color: displayColor };
+}
 
         // --- ATUALIZAÇÃO DO BOTÃO "+ NOTA NO TRECHO" ---
    const finalBtnHtml = `
