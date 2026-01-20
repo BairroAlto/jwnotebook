@@ -9558,12 +9558,17 @@ a.silent-link:hover {
                         
                         <!-- Grupo 3: Estilo e Cor -->
                         <div class="toolbar-group" id="group-style">
-                            <select id="editor-zoom" title="Zoom">
-                                <option value="12px">50%</option>
-                                <option value="100%" selected>100%</option>
-                                <option value="18px">110%</option>
-                                <option value="24px">150%</option>
-                            </select>
+                        <select id="editor-zoom" title="Zoom">
+    <option value="50%">50%</option>
+    <option value="100%" selected>100%</option>
+    <option value="110%">110%</option>
+    <option value="120%">120%</option>
+    <option value="130%">130%</option>
+    <option value="140%">140%</option>
+    <option value="150%">150%</option>
+    <option value="160%">160%</option>
+    <option value="180%">180%</option>
+</select>
                             <select id="editor-format" title="Estilo" style="width: 90px;">
                                 <option value="P" selected>¶ Normal</option>
                                 <option value="H1">A1 Título</option>
@@ -14596,9 +14601,12 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
             if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
 
             // 5. Forçar Router e Atualizações Visuais
-            setTimeout(() => {
+          setTimeout(() => {
                 // Atualiza o ícone da aba central (Textos/Misto)
                 if (typeof refreshMiddlePanelTabIcon === 'function') refreshMiddlePanelTabIcon();
+
+                // >>>> ADICIONE ESTA LINHA: <<<<
+                if (typeof initToolbarDropdowns === 'function') initToolbarDropdowns();
 
                 // Mostra a barra de abas no fundo da lista
                 const tabsBar = document.querySelector('.middle-bottom-tabs');
@@ -14745,7 +14753,7 @@ async function executeSave() {
     if (!selectedNoteId && !activeEditingPostId) return;
     if (isClosingNote) return;
 
-    // 2. MODO ARQUIVO (FEED) - Lógica separada
+    // 2. MODO ARQUIVO (FEED)
     const archiveArea = document.getElementById('archive-area');
     if (archiveArea && archiveArea.style.display !== 'none') {
         if (activeEditingPostId) {
@@ -14756,37 +14764,31 @@ async function executeSave() {
         return true; 
     }
 
-    // 3. SINCRONIZAÇÃO CRÍTICA (Inputs -> HTML) - COM ESTABILIZADOR DE SCROLL
+    // 3. SINCRONIZAÇÃO CRÍTICA
     const editor = document.getElementById('note-content-editor');
-    let currentScrollPos = 0;
     
-    if (editor) {
-        // A. Guarda a posição exata do scroll ANTES de qualquer alteração
-        currentScrollPos = editor.scrollTop;
+    // --- CORREÇÃO DO SCROLL E ZOOM ---
+    let currentScrollPos = 0;
+    let currentZoomVal = '100%'; // Valor padrão
 
-        // Seleciona todos os campos que precisam de sincronização
-        const allInputs = editor.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
+    if (editor) {
+        currentScrollPos = editor.scrollTop;
         
+        // Captura o zoom atual do dropdown para gravar na BD
+        const zoomSelect = document.getElementById('editor-zoom');
+        if (zoomSelect) currentZoomVal = zoomSelect.value;
+
+        // Sincroniza inputs
+        const allInputs = editor.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
         allInputs.forEach(t => {
-            // Se for TEXTAREA: Sincroniza textContent
             if (t.tagName === 'TEXTAREA') {
-                if (t.textContent !== t.value) {
-                    t.textContent = t.value; 
-                }
-            } 
-            // Se for INPUT: Sincroniza atributo value
-            else {
-                // OTIMIZAÇÃO: Só toca no DOM se o valor for realmente diferente
-                // Isto evita que o navegador "pisque" ou salte em inputs que não mudaram
-                if (t.getAttribute('value') !== t.value) {
-                    t.setAttribute('value', t.value);
-                }
+                if (t.textContent !== t.value) t.textContent = t.value; 
+            } else {
+                if (t.getAttribute('value') !== t.value) t.setAttribute('value', t.value);
             }
         });
-
-        // B. RESTAURAÇÃO IMEDIATA DO SCROLL (O SEGREDO)
-        // Fazemos isto AGORA, antes mesmo de falar com o Firebase.
-        // Isto anula qualquer salto que a sincronização acima tenha causado.
+        
+        // Restaura scroll
         if (editor.scrollTop !== currentScrollPos) {
             editor.scrollTop = currentScrollPos;
         }
@@ -14804,22 +14806,17 @@ async function executeSave() {
 
         const titleInput = document.getElementById('note-title-input');
         const finalTitle = titleInput ? titleInput.value : "Sem Título";
-        
-        // Captura o HTML já estabilizado
         const finalContent = editor ? editor.innerHTML : "";
         
-         const zoomSelect = document.getElementById('editor-zoom');
-        const currentZoom = zoomSelect ? zoomSelect.value : '100%';
-
-        // Extrai cores (se a função existir)
+        // Extrai cores
         const usedColors = typeof extractUsedColorsFromEditor === 'function' ? extractUsedColorsFromEditor() : [];
 
-        // Envio para o Firebase
+        // --- GRAVAÇÃO INCLUINDO O ZOOM ---
         await updateDoc(noteRef, { 
             nome: finalTitle, 
             conteudo: finalContent,
             coresUsadas: usedColors,
-             zoomLevel: currentZoom,
+            zoomLevel: currentZoomVal, // <--- AQUI ESTÁ A CORREÇÃO CRÍTICA
             ultimaedicao: serverTimestamp()
         });
 
@@ -42380,6 +42377,84 @@ if (aqZoom) {
         }
     });
 }
+
+// ============================================================
+// CORREÇÃO FINAL: ZOOM E FORMATO (PERSISTENTE)
+// ============================================================
+
+(function fixToolbarBehaviors() {
+    const editor = document.getElementById('note-content-editor');
+    const zoomSelect = document.getElementById('editor-zoom');
+    const formatSelect = document.getElementById('editor-format');
+
+    // 1. LÓGICA DE ZOOM (PERCENTAGENS)
+    if (zoomSelect && editor) {
+        // Remove ouvintes antigos
+        const newZoom = zoomSelect.cloneNode(true);
+        zoomSelect.parentNode.replaceChild(newZoom, zoomSelect);
+
+        newZoom.addEventListener('change', async (e) => {
+            e.preventDefault();
+            const val = newZoom.value; // Ex: "110%"
+            
+            // Aplica o tamanho (matemática do browser trata do resto)
+            editor.style.fontSize = val;
+            
+            // Mantém altura da linha confortável
+            editor.style.lineHeight = '1.6';
+            
+            // CRÍTICO: Devolve o cursor ao editor para escrever
+            editor.focus();
+
+            // Grava na base de dados
+            if (typeof executeSave === 'function') {
+                await executeSave();
+            }
+        });
+    }
+
+    // 2. LÓGICA DE FORMATO (Títulos H1, H2)
+    if (formatSelect && editor) {
+        const newFormat = formatSelect.cloneNode(true);
+        formatSelect.parentNode.replaceChild(newFormat, formatSelect);
+
+        newFormat.addEventListener('change', async (e) => {
+            e.preventDefault();
+            const tag = newFormat.value; // H1, H2, P
+
+            // Recupera foco antes de aplicar
+            editor.focus();
+            
+            // Aplica o formato
+            document.execCommand('formatBlock', false, tag);
+
+            // Limpa estilos antigos que possam "prender" o tamanho
+            const selection = window.getSelection();
+            if (selection.anchorNode) {
+                let block = selection.anchorNode;
+                if (block.nodeType === 3) block = block.parentNode;
+                
+                // Encontra o bloco atual (H1, P, etc)
+                while(block && block.id !== 'note-content-editor' && block.tagName !== tag) {
+                    block = block.parentNode;
+                }
+
+                if (block && block.tagName === tag) {
+                    // Remove font-size fixo para respeitar o H1/H2 do tema
+                    block.style.fontSize = ""; 
+                    block.removeAttribute('size');
+                    
+                    // Limpa formatação interna
+                    block.querySelectorAll('span, font, b, i, u').forEach(child => {
+                        child.style.fontSize = '';
+                    });
+                }
+            }
+
+            if (typeof saveNote === 'function') saveNote(true);
+        });
+    }
+})();
 
     </script>
 </body>
