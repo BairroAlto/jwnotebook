@@ -7477,16 +7477,34 @@ body, .notebook-container {
 }
 
 .aquarium-title-group {
-    flex-grow: 1;
-    display: flex;
-    justify-content: flex-end; /* Encosta à direita */
+    /* Mantém alinhado à direita, mas força um espaço de segurança */
+    justify-content: flex-end !important;
+    
+    /* AQUI ESTÁ A CORREÇÃO: Afasta 60px da borda direita */
+    padding-right: 60px !important; 
+    
+    /* Impede que o título empurre a barra para fora do ecrã */
+    min-width: 0; 
+    overflow: hidden;
 }
 
+/* 2. Texto do Título */
 #aquarium-title-display {
-    font-size: 1.4em;
-    font-weight: bold;
-    color: var(--accent-color);
-    margin: 0;
+    /* Se o título for gigante, põe "..." em vez de cortar feio */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    max-width: 100%;
+    
+    /* Alinha o texto à direita dentro do seu espaço */
+    text-align: right;
+}
+
+/* 3. Caixa de Edição (Input) */
+/* Garante que quando clica para editar, a caixa de texto também respeita a margem */
+.aquarium-header-input {
+    margin-right: 60px !important;
 }
 
 /* Botões do Aquário */
@@ -9213,22 +9231,51 @@ details.toggle-section * {
 }
 
 /* Estilo para Links de Texto no Aquário (Subtil) */
-a.silent-link {
+ a.silent-link {
     color: inherit !important;
     text-decoration: none !important;
-    
-    /* --- MUDANÇA: Tracejado mais escuro e um pouco mais grosso --- */
-    border-bottom: 2px dashed rgba(200, 200, 200, 0.8) !important; 
-    
     cursor: text !important;
+    
+    /* Garante que o texto flui normalmente sem criar degraus */
+    display: inline !important;
+    line-height: inherit !important;
+    vertical-align: baseline !important;
+
+    /* Pequeno espaço físico entre frases coladas */
+    margin: 0 2px !important; 
+    padding: 0 2px !important; 
+    border-radius: 3px;
+
+    /* Garante que a cor segue a frase se ela mudar de linha */
+    -webkit-box-decoration-break: clone !important;
+    box-decoration-break: clone !important;
+
     transition: all 0.2s;
-    padding-bottom: 1px; /* Dá um pouco de ar ao texto */
 }
 
-a.silent-link:hover {
-    border-bottom-color: var(--accent-color) !important;
-    background-color: rgba(74, 144, 226, 0.15); /* Fundo azul suave ao passar o rato */
+/* 2. ÍMPARES (1º, 3º...): ROXO SUAVE */
+a.silent-link:nth-of-type(odd) {
+    background-color: rgba(155, 89, 182, 0.15) !important; /* Roxo Translúcido */
+    border-bottom: 1px dotted rgba(155, 89, 182, 0.6) !important;
 }
+
+/* 3. PARES (2º, 4º...): VERDE TURQUESA */
+a.silent-link:nth-of-type(even) {
+    background-color: rgba(26, 188, 156, 0.15) !important; /* Verde Translúcido */
+    border-bottom: 1px dotted rgba(26, 188, 156, 0.6) !important;
+}
+
+/* 4. HOVER (Ao passar o rato) */
+a.silent-link:hover {
+    background-color: rgba(255, 255, 255, 0.2) !important;
+    color: white !important;
+    border-bottom-style: solid !important;
+    box-shadow: 0 0 8px rgba(255,255,255,0.1);
+    opacity: 1 !important;
+    z-index: 10;
+    position: relative;
+}
+
 
 .dynamic-url-row {
     display: flex;
@@ -14452,11 +14499,17 @@ function syncVisualSelection(selectedId) {
 
 
 async function displayNote(noteId, noteElement, searchTerm = null) {
+    // 0. Reset de Estados Globais
     window.nextSelectedId = null; 
     document.body.classList.remove('show-fab');
-    if (unsubscribeCurrentNote) { unsubscribeCurrentNote(); unsubscribeCurrentNote = null; }
     
-    // 1. Reset
+    // Limpa ouvinte anterior para evitar fugas de memória
+    if (unsubscribeCurrentNote) { 
+        unsubscribeCurrentNote(); 
+        unsubscribeCurrentNote = null; 
+    }
+    
+    // 1. Reset de Variáveis Locais
     window.currentNoteHybridMode = false;
     activeNoteAnchorsIds = [];
     
@@ -14464,16 +14517,16 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
     const noteTitleInput = document.getElementById('note-title-input');
     const noteContentEditor = document.getElementById('note-content-editor');
     const editorArea = document.getElementById('editor-area');
-    const redatorBtn = document.getElementById('btn-insert-redator'); // Referência ao botão Redator
+    const zoomSelect = document.getElementById('editor-zoom'); // Referência ao botão de zoom
     
-    // Limpeza
+    // Limpeza Visual Imediata
     if (noteTitleInput) noteTitleInput.value = ""; 
     if (noteContentEditor) noteContentEditor.innerHTML = ""; 
     
     selectedNoteId = noteId;
     isClosingNote = false;
 
-    // UI Visível
+    // Gestão de Paineis (Esconder Placeholder / Arquivo, Mostrar Editor)
     document.getElementById('editor-placeholder').style.setProperty('display', 'none', 'important');
     document.getElementById('archive-area').style.setProperty('display', 'none', 'important');
     if (editorArea) editorArea.style.setProperty('display', 'flex', 'important');
@@ -14482,53 +14535,91 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
         const { doc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', noteId);
 
-     unsubscribeCurrentNote = onSnapshot(noteRef, (noteSnap) => {
-    if (!noteSnap.exists()) return;
-    const data = noteSnap.data();
+        // --- LISTENER EM TEMPO REAL ---
+        unsubscribeCurrentNote = onSnapshot(noteRef, (noteSnap) => {
+            if (!noteSnap.exists()) return;
+            const data = noteSnap.data();
 
-    // --- ATUALIZAÇÃO DO TIPO GLOBAL ---
-    window.currentNoteType = data.tipo; // Isto é essencial para o passo 2 funcionar!
+            // --- ATUALIZAÇÃO DO TIPO GLOBAL ---
+            window.currentNoteType = data.tipo; 
 
-    // Ativa a toolbar do Jornal (ícones de cima) se necessário
-    if (window.currentNoteType === 'jornal') {
-        toggleJournalToolbar(true);
-    } else {
-        toggleJournalToolbar(false);
-    }
-            // ---------------------------------------------
-
+            // Ativa a toolbar do Jornal (ícones de cima) se necessário
+            if (typeof toggleJournalToolbar === 'function') {
+                toggleJournalToolbar(window.currentNoteType === 'jornal');
+            }
+            
             // 2. Definir Variáveis Críticas
             window.currentNoteHybridMode = (data.isHybridMode === true);
             activeNoteAnchorsIds = Object.keys(data.ancorasSelecionadas || {});
 
-            // Atualizar HTML
+            // 3. Atualizar HTML (Título e Conteúdo)
             const serverTitle = data.nome || '';
             const serverContent = data.conteudo || '';
             
             noteTitleInput.value = serverTitle;
             noteContentEditor.innerHTML = serverContent;
 
-             setTimeout(() => refreshAllCalendars(), 100); 
+            // ============================================================
+            // 4. APLICAR ZOOM GUARDADO (A CORREÇÃO PEDIDA)
+            // ============================================================
+            const savedZoom = data.zoomLevel || '100%'; // Padrão 100% se não existir
+            
+            // A. Atualiza o valor visual da Dropdown
+            if (zoomSelect) {
+                zoomSelect.value = savedZoom;
+            }
+            
+            // B. Aplica o tamanho da fonte ao Editor
+            if (noteContentEditor) {
+                noteContentEditor.style.fontSize = savedZoom;
+                
+                // C. Ajuste inteligente da altura da linha
+                if (!savedZoom.includes('%')) { 
+                    // Se for Pixels (ex: 18px), calculamos 1.5x
+                    const sizeNum = parseInt(savedZoom);
+                    if (!isNaN(sizeNum)) {
+                        noteContentEditor.style.lineHeight = (sizeNum * 1.5) + 'px';
+                    }
+                } else {
+                    // Se for Percentagem, usamos o padrão
+                    noteContentEditor.style.lineHeight = '1.6';
+                }
+            }
+            // ============================================================
 
-            // Scripts de ajuste
+            // Scripts de ajuste pós-carregamento
+            setTimeout(() => {
+                if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
+            }, 100);
+
             if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
             if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
 
-            // 3. Forçar Router e Atualizações Visuais
+            // 5. Forçar Router e Atualizações Visuais
             setTimeout(() => {
+                // Atualiza o ícone da aba central (Textos/Misto)
                 if (typeof refreshMiddlePanelTabIcon === 'function') refreshMiddlePanelTabIcon();
 
+                // Mostra a barra de abas no fundo da lista
                 const tabsBar = document.querySelector('.middle-bottom-tabs');
                 if (tabsBar) tabsBar.style.display = 'flex';
 
+                // Se houver uma aba aberta no painel do meio, atualiza o conteúdo
                 if (typeof updateMiddlePanelViews === 'function') {
                     updateMiddlePanelViews(); 
                 }
                 
+                // Se houver um termo de pesquisa (vindo da lupa), foca nele
+                if (searchTerm && typeof scrollToAndHighlightText === 'function') {
+                    scrollToAndHighlightText(searchTerm);
+                }
+
                 updateSaveStatus('saved');
             }, 100);
         });
-    } catch (error) { console.error("Erro:", error); }
+    } catch (error) { 
+        console.error("Erro ao carregar nota:", error); 
+    }
     
     // Força a transição de ecrã no Mobile
     if (window.innerWidth <= 768) {
@@ -14717,6 +14808,9 @@ async function executeSave() {
         // Captura o HTML já estabilizado
         const finalContent = editor ? editor.innerHTML : "";
         
+         const zoomSelect = document.getElementById('editor-zoom');
+        const currentZoom = zoomSelect ? zoomSelect.value : '100%';
+
         // Extrai cores (se a função existir)
         const usedColors = typeof extractUsedColorsFromEditor === 'function' ? extractUsedColorsFromEditor() : [];
 
@@ -14725,6 +14819,7 @@ async function executeSave() {
             nome: finalTitle, 
             conteudo: finalContent,
             coresUsadas: usedColors,
+             zoomLevel: currentZoom,
             ultimaedicao: serverTimestamp()
         });
 
@@ -21223,38 +21318,33 @@ saveNote();
 
 
     // --- NOVO LISTENER PARA O DROPDOWN DE ZOOM ---
-    const zoomSelect = document.getElementById('editor-zoom');
-    if (zoomSelect) {
-        zoomSelect.addEventListener('change', () => {
-            const selectedValue = zoomSelect.value;
-            
-            // 1. Aplica o tamanho ao contentor principal
-            noteContentEditor.style.fontSize = selectedValue;
-            
-            // 2. LIMPEZA PROFUNDA: Remove tamanhos fixos antigos de todo o texto dentro da nota
-            const elementsWithFixedSize = noteContentEditor.querySelectorAll('*');
-            
-            elementsWithFixedSize.forEach(el => {
-                // Remove estilo inline de font-size (ex: style="font-size: 18px")
-                if (el.style.fontSize) {
-                    el.style.fontSize = ''; 
-                }
-                // Remove a tag antiga <font size="..."> se existir (usada por alguns browsers antigos)
-                if (el.tagName === 'FONT') {
-                    el.removeAttribute('size');
-                }
-            });
+const zoomSelect = document.getElementById('editor-zoom');
+if (zoomSelect) {
+    // Removemos clones antigos para evitar bugs
+    const newZoomSelect = zoomSelect.cloneNode(true);
+    zoomSelect.parentNode.replaceChild(newZoomSelect, zoomSelect);
 
-            // 3. Ajuste da altura da linha para ficar legível
+    newZoomSelect.addEventListener('change', () => {
+        const selectedValue = newZoomSelect.value;
+        const editor = document.getElementById('note-content-editor');
+        
+        if (editor) {
+            // 1. Aplica o tamanho
+            editor.style.fontSize = selectedValue;
+            
+            // 2. Ajuste de altura da linha (UX)
             if (selectedValue.includes('%')) {
-                 noteContentEditor.style.lineHeight = '1.6';
+                 editor.style.lineHeight = '1.6';
             } else {
-                 // Cálculo para pixels (1.5x o tamanho da fonte)
                  const sizeNum = parseInt(selectedValue);
-                 noteContentEditor.style.lineHeight = (sizeNum * 1.5) + 'px';
+                 editor.style.lineHeight = (sizeNum * 1.5) + 'px';
             }
-        });
-    }
+            
+            // 3. Grava imediatamente para persistir
+            saveNote(true);
+        }
+    });
+}
 
 
 
@@ -37110,7 +37200,7 @@ window.openAquariumEnvironment = async function(id, data) {
     console.group("🪸 [ABERTURA AQUÁRIO]");
     
     // 1. GRAVAÇÃO DE SEGURANÇA DA NOTA ANTERIOR
-    // Se estávamos numa nota normal e vamos para o Aquário
+    // Se estávamos numa nota normal e vamos para o Aquário (IDs diferentes)
     if (selectedNoteId && selectedNoteId !== id) {
         console.log("⏳ A guardar e fechar a nota anterior...");
         
@@ -37126,7 +37216,7 @@ window.openAquariumEnvironment = async function(id, data) {
             console.log("🔌 Ligação à nota anterior cortada.");
         }
 
-        // C. Limpar visualmente o Editor Normal (para não ficar lixo escondido)
+        // C. Limpar visualmente o Editor Normal
         const normalEditor = document.getElementById('note-content-editor');
         const normalTitle = document.getElementById('note-title-input');
         if (normalEditor) normalEditor.innerHTML = "";
@@ -37134,7 +37224,9 @@ window.openAquariumEnvironment = async function(id, data) {
     }
 
     // 2. LIMPEZA DO AMBIENTE AQUÁRIO
-    window.resetAquariumState(); 
+    if (typeof window.resetAquariumState === 'function') {
+        window.resetAquariumState();
+    }
     console.log("ID Novo:", id);
 
     // 3. MUDANÇA DE ESTADO
@@ -37148,8 +37240,8 @@ window.openAquariumEnvironment = async function(id, data) {
         
         const titleInput = document.createElement('input');
         titleInput.type = 'text';
-        titleInput.id = 'aquarium-title-input'; // Novo ID para controlo
-        titleInput.className = 'aquarium-header-input'; // Estilo definido no CSS
+        titleInput.id = 'aquarium-title-input';
+        titleInput.className = 'aquarium-header-input';
         titleInput.value = data.nome || "Sem Título";
         titleInput.placeholder = "Nome do Aquário...";
         
@@ -37158,7 +37250,6 @@ window.openAquariumEnvironment = async function(id, data) {
             // Atualiza o título na lista lateral (visual imediato)
             const listItem = document.querySelector(`.list-item[data-id="${id}"] span`);
             if (listItem) {
-                // Mantém o ícone, muda o texto
                 const icon = listItem.textContent.split(' ')[0]; 
                 listItem.textContent = `${icon} ${e.target.value}`;
             }
@@ -37175,10 +37266,12 @@ window.openAquariumEnvironment = async function(id, data) {
         titleGroup.appendChild(titleInput);
     }
     
+    // --- 5. CARREGAR CONTEÚDO E ZOOM ---
     const canvas = document.getElementById('aquarium-content-canvas');
     if (canvas) {
+        // A. Injetar Conteúdo
         if (data.conteudo && data.conteudo.trim() !== "") {
-            // Sanitiza e carrega
+            // Sanitiza e carrega (se DOMPurify estiver disponível)
             if (typeof DOMPurify !== 'undefined') {
                 canvas.innerHTML = DOMPurify.sanitize(data.conteudo);
             } else {
@@ -37188,6 +37281,31 @@ window.openAquariumEnvironment = async function(id, data) {
             // Se vazio, cria o primeiro bloco
             canvas.innerHTML = '<div class="ghost-block" contenteditable="true" data-placeholder=""></div>';
         }
+
+        // ============================================================
+        // B. APLICAR ZOOM GUARDADO (AQUI ESTÁ A CORREÇÃO)
+        // ============================================================
+        const savedZoom = data.zoomLevel || '100%';
+        const aqZoomSelect = document.getElementById('aq-zoom');
+
+        // Atualiza a dropdown visualmente
+        if (aqZoomSelect) {
+            aqZoomSelect.value = savedZoom;
+        }
+
+        // Aplica o estilo ao Canvas
+        canvas.style.fontSize = savedZoom;
+        
+        // Ajuste de altura de linha
+        if (!savedZoom.includes('%')) {
+             const sizeNum = parseInt(savedZoom);
+             if (!isNaN(sizeNum)) {
+                 canvas.style.lineHeight = (sizeNum * 1.5) + 'px';
+             }
+        } else {
+             canvas.style.lineHeight = '1.6';
+        }
+        // ============================================================
     }
 
     // --- AUTO-CURA E RECONSTRUÇÃO ---
@@ -37199,7 +37317,7 @@ window.openAquariumEnvironment = async function(id, data) {
         allGhosts.forEach(g => {
             // Desbloqueia tudo e restaura botões
             g.classList.remove('locked-popup', 'active-selection', 'active-store-target');
-            g.style.cssText = ""; // Limpa estilos inline (como o azul)
+            g.style.cssText = ""; // Limpa estilos inline
             g.setAttribute('contenteditable', 'true');
             
             if (typeof ensureGhostActions === 'function') {
@@ -37208,7 +37326,7 @@ window.openAquariumEnvironment = async function(id, data) {
         });
     }
 
-    // 5. VISIBILIDADE (O Grande Truque)
+    // 6. VISIBILIDADE (O Grande Truque)
     // Esconde a App Normal
     const mainApp = document.querySelector('.notebook-container');
     if (mainApp) mainApp.style.setProperty('display', 'none', 'important');
@@ -37240,34 +37358,25 @@ window.openAquariumEnvironment = async function(id, data) {
         }
     }
 
-    // --- AJUSTE MOBILE: MOVER STATUS PARA O TOPO (AO LADO DO 𒆜) ---
-  if (window.innerWidth <= 768) {
+    // --- AJUSTE MOBILE: MOVER STATUS PARA O TOPO ---
+    if (window.innerWidth <= 768) {
         const navGroup = document.querySelector('.aquarium-nav-group');
         const statusEl = document.getElementById('aq-save-status');
         
-        // Verifica se ambos existem e se o status ainda não está no topo
         if (navGroup && statusEl && !navGroup.contains(statusEl)) {
-            
-            // 1. Remove do local antigo
-            if (statusEl.parentNode) {
-                statusEl.parentNode.removeChild(statusEl);
-            }
+            if (statusEl.parentNode) statusEl.parentNode.removeChild(statusEl);
 
-            // 2. Cria um espaçador físico (bloco invisível)
             const spacer = document.createElement('div');
             spacer.style.cssText = "width: 15px; height: 1px; display: inline-block; flex-shrink: 0;";
             
-            // 3. Cria o separador visual (barra vertical)
             const sep = document.createElement('div');
             sep.className = 'mobile-status-sep';
             sep.style.cssText = "width:1px; height:20px; background:rgba(255,255,255,0.2); margin-right: 5px; display:inline-block; flex-shrink: 0;";
             
-            // 4. Insere tudo no grupo (Botão ... Espaço ... Barra ... Status)
             navGroup.appendChild(spacer);
             navGroup.appendChild(sep);
             navGroup.appendChild(statusEl);
             
-            // 5. Ajustes finais de estilo
             statusEl.style.fontSize = "0.75em";
             statusEl.style.whiteSpace = "nowrap";
             statusEl.style.position = "static"; 
@@ -37309,7 +37418,9 @@ window.saveAquariumState = async function() {
     const titleInput = document.getElementById('aquarium-title-input');
     const currentTitle = titleInput ? titleInput.value : null;
 
-    console.log("💾 [AQUÁRIO] A gravar...");
+ const aqZoom = document.getElementById('aq-zoom');
+    const currentZoom = aqZoom ? aqZoom.value : '100%';
+
 
     try {
         const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
@@ -37317,6 +37428,7 @@ window.saveAquariumState = async function() {
 
         const updatePayload = {
             conteudo: content,
+             zoomLevel: currentZoom, 
             ultimaedicao: serverTimestamp()
         };
 
@@ -40657,15 +40769,62 @@ function checkAquariumScroll() {
 // Inicialização
 setTimeout(() => {
     const scrollArea = document.getElementById('aquarium-scroll-area');
-    const canvas = document.getElementById('aquarium-content-canvas');
+    
+    if (scrollArea) {
+        // Usamos 'mousedown' em vez de 'click' para ser mais rápido e impedir
+        // que o evento se propague para lógicas de criação de novos blocos
+        scrollArea.addEventListener('mousedown', (e) => {
+            
+            // 1. VERIFICAÇÃO DE ALVO
+            // Se clicou num bloco, num botão ou numa popup, NÃO faz nada (deixa o clique funcionar)
+            if (e.target.closest('.ghost-block') || 
+                e.target.closest('button') || 
+                e.target.closest('.aq-popup-window') ||
+                e.target.closest('.ghost-actions') ||
+                e.target.closest('.ghost-side-controls')) {
+                return;
+            }
 
-    if (scrollArea && canvas) {
-        scrollArea.addEventListener('scroll', checkAquariumScroll);
-        window.addEventListener('resize', checkAquariumScroll);
-        canvas.addEventListener('input', checkAquariumScroll);
-        canvas.addEventListener('click', checkAquariumScroll);
+            // 2. VERIFICA SE HÁ ALGO SELECIONADO
+            const activeBlock = document.querySelector('.ghost-block.active-selection');
+            const activeStore = document.querySelector('.ghost-block.active-store-target');
+
+            if (activeBlock || activeStore) {
+                console.log("🖱️ Clique na margem detetado. A limpar seleção...");
+
+                // --- A. LIMPA SELEÇÃO VISUAL ---
+                document.querySelectorAll('.ghost-block').forEach(g => {
+                    g.classList.remove('active-selection');
+                    g.classList.remove('has-next'); // Esconde o botão (+)
+                    g.classList.remove('active-store-target'); // Limpa seleção do armazém
+                    
+                    // Limpa estilos inline (bordas azuis)
+                    g.style.borderTop = '';
+                    g.style.border = '';
+                    g.style.outline = '';
+                    g.style.boxShadow = '';
+                    g.style.backgroundColor = '';
+                });
+
+                // --- B. LIMPA ESTADO GLOBAL ---
+                window.activeGhost = null;
+                window.activeStoreGhostId = null;
+
+                // --- C. ESCONDE BARRA DE FERRAMENTAS ---
+                const contextTools = document.getElementById('aq-context-tools');
+                if (contextTools) {
+                    contextTools.style.setProperty('display', 'none', 'important');
+                }
+                
+                // (Opcional) Remove foco do teclado para garantir que o cursor pisca desaparece
+                if (document.activeElement) {
+                    document.activeElement.blur();
+                }
+            }
+            
+        });
     }
-}, 1500);
+}, 1000); // Delay de segurança para garantir que o HTML existe
 
 
 // Função para controlar o texto visual no Aquário
@@ -42134,6 +42293,41 @@ document.getElementById('aquarium-content-canvas').addEventListener('click', (e)
         return false; // Garante que morre aqui
     }
 }, true); // 'true' ativa a fase de captura (acontece antes de tudo!)
+
+const aqZoom = document.getElementById('aq-zoom');
+
+if (aqZoom) {
+    // 1. Removemos clones antigos para evitar duplicação de eventos
+    const newAqZoom = aqZoom.cloneNode(true);
+    aqZoom.parentNode.replaceChild(newAqZoom, aqZoom);
+
+    // 2. Adicionamos o novo Listener
+    newAqZoom.addEventListener('change', (e) => { 
+        const val = e.target.value; // Ex: '100%' ou '18px'
+        const canvas = document.getElementById('aquarium-content-canvas'); 
+        
+        if (canvas) {
+            // A. Aplica o tamanho da fonte ao contentor principal
+            canvas.style.fontSize = val;
+            
+            // B. Ajuste de altura da linha para melhor leitura
+            if (val.includes('%')) {
+                 canvas.style.lineHeight = '1.6'; // Padrão percentual
+            } else {
+                 const sizeNum = parseInt(val);
+                 // Se for pixels, a linha deve ser maior que a fonte (1.5x)
+                 if (!isNaN(sizeNum)) {
+                     canvas.style.lineHeight = (sizeNum * 1.5) + 'px';
+                 }
+            }
+            
+            // C. Grava imediatamente o estado do aquário para persistir a mudança
+            if (typeof window.saveAquariumState === 'function') {
+                window.saveAquariumState();
+            }
+        }
+    });
+}
 
     </script>
 </body>
