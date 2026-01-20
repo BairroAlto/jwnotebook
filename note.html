@@ -14749,11 +14749,13 @@ function extractTopicsFromEditorHTML() {
 
 // Função que faz a gravação real no Firebase
 async function executeSave() {
-    // 1. Verificação de segurança
+    // 1. Verificação de segurança: Se não há nota nem post selecionado, sai.
     if (!selectedNoteId && !activeEditingPostId) return;
+    
+    // Se a nota estiver num processo de fecho, evita gravações fantasma
     if (isClosingNote) return;
 
-    // 2. MODO ARQUIVO (FEED)
+    // 2. MODO ARQUIVO (FEED): Se estivermos no feed, grava o post específico
     const archiveArea = document.getElementById('archive-area');
     if (archiveArea && archiveArea.style.display !== 'none') {
         if (activeEditingPostId) {
@@ -14764,10 +14766,10 @@ async function executeSave() {
         return true; 
     }
 
-    // 3. SINCRONIZAÇÃO CRÍTICA
+    // 3. PREPARAÇÃO DO EDITOR (NOTA NORMAL)
     const editor = document.getElementById('note-content-editor');
     
-    // --- CORREÇÃO DO SCROLL E ZOOM ---
+    // --- PRESERVAR ESTADO VISUAL (Scroll e Zoom) ---
     let currentScrollPos = 0;
     let currentZoomVal = '100%'; // Valor padrão
 
@@ -14778,7 +14780,9 @@ async function executeSave() {
         const zoomSelect = document.getElementById('editor-zoom');
         if (zoomSelect) currentZoomVal = zoomSelect.value;
 
-        // Sincroniza inputs
+        // SINCRONIZAÇÃO DE INPUTS:
+        // O innerHTML não captura o texto escrito em <input> ou <textarea> automaticamente.
+        // Temos de passar o valor para o atributo HTML 'value' ou 'textContent' antes de gravar.
         const allInputs = editor.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
         allInputs.forEach(t => {
             if (t.tagName === 'TEXTAREA') {
@@ -14787,16 +14791,13 @@ async function executeSave() {
                 if (t.getAttribute('value') !== t.value) t.setAttribute('value', t.value);
             }
         });
-        
-        // Restaura scroll
-        if (editor.scrollTop !== currentScrollPos) {
-            editor.scrollTop = currentScrollPos;
-        }
     }
 
+    // Atualiza UI para "A guardar..."
     updateSaveStatus('saving');
 
     let targetId = selectedNoteId;
+    // Verifica se há um ID real injetado (usado em casos raros de redirecionamento)
     const realId = editor ? editor.getAttribute('data-real-id') : null;
     if (realId) targetId = realId;
 
@@ -14808,19 +14809,29 @@ async function executeSave() {
         const finalTitle = titleInput ? titleInput.value : "Sem Título";
         const finalContent = editor ? editor.innerHTML : "";
         
-        // Extrai cores
+        // Extrai cores usadas para facilitar a pesquisa por cor
         const usedColors = typeof extractUsedColorsFromEditor === 'function' ? extractUsedColorsFromEditor() : [];
 
-        // --- GRAVAÇÃO INCLUINDO O ZOOM ---
+        // --- GRAVAÇÃO PRINCIPAL NO FIREBASE ---
         await updateDoc(noteRef, { 
             nome: finalTitle, 
             conteudo: finalContent,
             coresUsadas: usedColors,
-            zoomLevel: currentZoomVal, // <--- AQUI ESTÁ A CORREÇÃO CRÍTICA
+            zoomLevel: currentZoomVal, 
             ultimaedicao: serverTimestamp()
         });
 
-        // Sincronização Pública (se necessário)
+        // ====================================================================
+        // NOVO: PROPAGAÇÃO PARA MICAS (EM SEGUNDO PLANO)
+        // ====================================================================
+        // Chama a função que verifica se alguma caixa desta nota existe numa Mica
+        // e atualiza-a automaticamente se houver mudanças.
+        if (typeof propagateUpdatesToMicas === 'function') {
+             propagateUpdatesToMicas(targetId, finalContent);
+        }
+        // ====================================================================
+
+        // Sincronização Pública (Se a nota estiver partilhada com link público)
         if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
              try {
                 const shareId = currentNoteShareData.shareId;
@@ -14833,6 +14844,11 @@ async function executeSave() {
                     type: 'full_note' 
                 }, { merge: true }).catch(e => {});
             } catch (e) {}
+        }
+
+        // Restaura a posição do scroll (para não saltar para o topo)
+        if (editor && editor.scrollTop !== currentScrollPos) {
+            editor.scrollTop = currentScrollPos;
         }
 
         updateSaveStatus('saved');
@@ -42675,6 +42691,146 @@ if (directEditorListener) {
 
 } else {
     console.error("❌ ERRO: Editor não encontrado para instalar o detetor.");
+}
+
+// ============================================================
+// SISTEMA DE PROPAGAÇÃO DE ATUALIZAÇÕES PARA MICAS
+// ============================================================
+async function propagateUpdatesToMicas(noteId, fullContent) {
+    console.group("📡 [MICAS SYNC - ROBUSTO]");
+    console.log("Target Note ID:", noteId);
+
+    try {
+        const { collection, query, where, getDocs, doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const myUid = auth.currentUser.uid;
+
+        // 1. CAPTURAR O HTML VIVO
+        const parser = new DOMParser();
+        const docDOM = parser.parseFromString(fullContent, 'text/html');
+        
+        const wrappers = docDOM.querySelectorAll('.mini-note-wrapper, .redator-wrapper, details.toggle-section, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, .jwn-timeline-wrapper, .jwn-table-wrapper');
+        
+        const liveBlocksMap = {};
+        wrappers.forEach(el => {
+            if (el.id) liveBlocksMap[el.id] = el.outerHTML;
+        });
+        
+        console.log(`📦 Blocos vivos: ${Object.keys(liveBlocksMap).length}`);
+
+        // 2. LISTA DE COLEÇÕES
+        const collectionsToCheck = [
+            'textosbiblicos', 'topicos', 'personagens', 'locais', 
+            'marcadores', 'cosmos', 'subcosmos'
+        ];
+
+        let totalUpdates = 0;
+
+        // 3. VARREDURA (SEM FILTRO DE REFERÊNCIAS - MAIS LENTO MAS GARANTIDO)
+        // Nota: Para otimizar, só buscamos documentos que tenham o campo 'dossie' preenchido
+        // Mas o Firestore não permite query por "campo existe", então buscamos tudo do user.
+        
+        for (const colName of collectionsToCheck) {
+            const q = query(
+                collection(db, colName),
+                where('userId', '==', myUid)
+            );
+
+            const snapshot = await getDocs(q);
+            
+            const updatePromises = snapshot.docs.map(async (docSnap) => {
+                const entityData = docSnap.data();
+                
+                // Se não tem dossiê, ignora
+                if (!entityData.dossie || !Array.isArray(entityData.dossie) || entityData.dossie.length === 0) return;
+
+                let dossieChanged = false;
+                let needsReferenceFix = false;
+                const dossie = entityData.dossie;
+
+                // Loop pelas Micas
+                dossie.forEach(mica => {
+                    if (!mica.items || !Array.isArray(mica.items)) return;
+
+                    // Loop pelos Itens
+                    mica.items.forEach(item => {
+                        // Verifica se pertence a esta nota
+                        if (item.noteId === noteId) {
+                            
+                            // Se encontrámos um item desta nota, significa que a referência DEVERIA existir
+                            if (!entityData.referencias || !entityData.referencias[noteId]) {
+                                needsReferenceFix = true;
+                            }
+
+                            // Tenta ler o ID guardado
+                            let savedID = null;
+                            try {
+                                const decodedSnippet = decodeURIComponent(item.snippet);
+                                const tempDiv = document.createElement('div');
+                                tempDiv.innerHTML = decodedSnippet;
+                                const savedWrapper = tempDiv.firstElementChild;
+                                if (savedWrapper) savedID = savedWrapper.id;
+                            } catch(e) { }
+
+                            if (savedID && liveBlocksMap[savedID]) {
+                                const newHTML = liveBlocksMap[savedID];
+                                const encodedNewHTML = encodeURIComponent(newHTML);
+
+                                if (item.snippet !== encodedNewHTML) {
+                                    console.log(`   🔄 ATUALIZANDO: ${savedID} em ${entityData.nome} > ${mica.name}`);
+                                    item.snippet = encodedNewHTML;
+                                    
+                                    // Atualiza título se possível
+                                    const tempLive = document.createElement('div');
+                                    tempLive.innerHTML = newHTML;
+                                    const titleInput = tempLive.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
+                                    
+                                    if(titleInput) {
+                                        const newTitle = titleInput.value || titleInput.textContent;
+                                        if(newTitle) item.title = newTitle;
+                                    }
+
+                                    dossieChanged = true;
+                                    totalUpdates++;
+                                }
+                            }
+                        }
+                    });
+                });
+
+                // Se alterámos algo neste documento, grava no Firebase
+                if (dossieChanged || needsReferenceFix) {
+                    const docRef = doc(db, colName, docSnap.id);
+                    const updatePayload = {};
+                    
+                    if (dossieChanged) updatePayload.dossie = dossie;
+                    
+                    // AUTO-CORREÇÃO: Cria o vínculo que faltava
+                    if (needsReferenceFix) {
+                        console.log(`   🔗 Reparando vínculo em falta para: ${entityData.nome}`);
+                        updatePayload[`referencias.${noteId}`] = true;
+                    }
+                    
+                    await updateDoc(docRef, updatePayload);
+                }
+            });
+
+            await Promise.all(updatePromises);
+        }
+
+        if (totalUpdates > 0) {
+            console.log(`✅ [SUCESSO] ${totalUpdates} itens atualizados.`);
+            // Atualiza visual se aberto
+            if (document.getElementById('ref-content-dossie').style.display !== 'none' && window.activeMicaId) {
+                if (typeof window.renderDossie === 'function') window.renderDossie();
+            }
+        } else {
+            console.log("🏁 Verificação completa. Nada a mudar.");
+        }
+
+    } catch (e) {
+        console.error("🔥 Erro na Sync Micas:", e);
+    }
+    console.groupEnd();
 }
 
     </script>
