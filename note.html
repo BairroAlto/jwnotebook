@@ -42457,167 +42457,225 @@ if (aqZoom) {
 })();
 
 // ============================================================
-// SINCRONIZAÇÃO BLINDADA: NOTA -> QUADRO
+// 1. SYNC VISUAL (PAINEL ABERTO) - MÉTODO DOM PARSER
 // ============================================================
-
 async function syncPuzzleRealTime() {
-    const editor = document.getElementById('note-content-editor');
+    console.group("🔍 [SYNC DEBUG] Iniciando Ciclo de Sincronização");
+
     const puzzleContainer = document.getElementById('puzzle-board-container');
+    const editor = document.getElementById('note-content-editor');
     
-    // 1. Só faz sync visual se o painel estiver aberto e o editor existir
-    if (!editor || !puzzleContainer || puzzleContainer.offsetParent === null) {
-        // Se estiver fechado, chama a função de background (veja abaixo)
+    if (!puzzleContainer || puzzleContainer.offsetParent === null) {
+        console.log("ℹ️ Painel fechado. Passando para Background Sync.");
+        console.groupEnd();
         await backgroundSyncCurrentPuzzle();
         return;
     }
 
     const cards = puzzleContainer.querySelectorAll('.board-card.type-ref');
+    console.log(`📊 Cartões encontrados no painel: ${cards.length}`);
+
     let hasUpdates = false;
 
-    cards.forEach(card => {
-        // 1. Ler o snippet antigo para encontrar o ID da caixa original
+    cards.forEach((card, index) => {
+        console.groupCollapsed(`🃏 Analisando Cartão #${index + 1}`);
+
+        // 1. Ler o snippet antigo
         let snippet = "";
-        try {
-            snippet = decodeURIComponent(card.dataset.snippet || "");
-        } catch(e) { snippet = card.dataset.snippet || ""; }
+        try { snippet = decodeURIComponent(card.dataset.snippet || ""); } 
+        catch(e) { snippet = card.dataset.snippet || ""; }
 
-        // Cria um elemento fantasma para ler o ID
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = snippet;
+        // 2. Extrair ID usando DOM Parser
+        const tempContainer = document.createElement('div');
+        tempContainer.innerHTML = snippet;
+        const savedWrapper = tempContainer.querySelector('[id]');
         
-        // Procura qualquer tipo de caixa dentro do snippet guardado
-        const savedWrapper = tempDiv.querySelector('.mini-note-wrapper, details.toggle-section, .journal-sign-wrapper, .journal-id-card, .redator-wrapper');
-        
-        if (savedWrapper && savedWrapper.id) {
-            // 2. Procura esse ID no Editor AO VIVO
-            const liveEl = document.getElementById(savedWrapper.id);
-
-            if (liveEl) {
-                // --- EXTRAÇÃO DO TEXTO NOVO (Ao Vivo) ---
-                let newBodyText = "";
-                let newTitleText = "";
-
-                // A. Título
-                const titleInput = liveEl.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
-                const h2 = liveEl.querySelector('h2');
-                if (titleInput) newTitleText = titleInput.value || titleInput.textContent;
-                else if (h2) newTitleText = h2.textContent;
-                
-                // B. Conteúdo
-                const contentDiv = liveEl.querySelector('.mini-note-content, .toggle-content, .redator-content, .sign-content, .card-desc-content');
-                if (contentDiv) {
-                    // Limpa espaços extras
-                    newBodyText = contentDiv.innerText.replace(/\s+/g, ' ').trim();
-                }
-
-                // Corta texto longo
-                if (newBodyText.length > 250) newBodyText = newBodyText.substring(0, 250) + "...";
-                if (!newTitleText) newTitleText = "Sem Título";
-
-                // --- 3. ATUALIZAÇÃO VISUAL (O que você vê no cartão) ---
-                const cardTitle = card.querySelector('.ref-title-text');
-                const cardBody = card.querySelector('.post-view-content, .bible-collapsible-content'); // Suporta ambos
-                
-                // Verifica se o texto visual é diferente do real. Se for, atualiza.
-                if (cardBody && cardBody.textContent.trim() !== newBodyText) {
-                    console.log(`🔄 Atualizando texto do cartão: ${savedWrapper.id}`);
-                    
-                    // Atualiza Visualmente
-                    if (cardTitle) cardTitle.textContent = newTitleText;
-                    if (cardBody) cardBody.textContent = newBodyText;
-
-                    // Atualiza o Dataset (Oculto) para a próxima gravação
-                    card.dataset.snippet = encodeURIComponent(liveEl.outerHTML);
-                    
-                    // Feedback Visual: Borda Verde
-                    card.style.transition = "border 0.3s";
-                    card.style.border = "2px solid #2ecc71"; // Verde
-                    setTimeout(() => card.style.border = "", 1000); // Remove após 1s
-
-                    hasUpdates = true;
-                }
-            }
+        if (!savedWrapper || !savedWrapper.id) {
+            console.warn("❌ Não foi possível encontrar um ID dentro do código do cartão.");
+            console.groupEnd();
+            return;
         }
+
+        const originalId = savedWrapper.id;
+        console.log(`🆔 ID Original Identificado: "${originalId}"`);
+
+        // 3. Buscar o elemento VIVO
+        const liveEl = document.getElementById(originalId);
+
+        if (!liveEl) {
+            console.warn(`❌ O elemento com ID "${originalId}" NÃO existe no editor atual.`);
+            console.groupEnd();
+            return;
+        }
+
+
+        // 4. Extração de Texto (EDITOR)
+        const contentEl = liveEl.querySelector('.mini-note-content, .toggle-content, .redator-content, .sign-content, .card-desc-content');
+        // Normaliza espaços para evitar falsos negativos (troca quebras de linha por espaço)
+        let editorText = contentEl ? contentEl.innerText.replace(/\s+/g, ' ').trim() : "";
+        
+        // Extração de Texto (CARTÃO)
+        const cardBodyEl = card.querySelector('.post-view-content, .bible-collapsible-content') || card.querySelector('.ref-card-content > div:last-child');
+        let cardText = cardBodyEl ? cardBodyEl.textContent.replace(/\s+/g, ' ').trim() : "";
+
+        // Título
+        const titleEl = liveEl.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
+        let editorTitle = "";
+        if (titleEl) editorTitle = (titleEl.value || titleEl.textContent || "").trim();
+
+        const cardTitleEl = card.querySelector('.ref-title-text');
+        let cardTitle = cardTitleEl ? cardTitleEl.textContent.trim() : "";
+
+        // 5. COMPARAÇÃO (LOG CRÍTICO)
+        
+        const textChanged = editorText !== cardText;
+        const titleChanged = editorTitle && (editorTitle !== cardTitle);
+
+
+        // 6. AÇÃO
+        if (textChanged || titleChanged) {
+            
+            // Atualiza Texto
+            if (cardBodyEl) {
+                // Limita tamanho visual
+                const finalText = editorText.length > 300 ? editorText.substring(0, 300) + "..." : editorText;
+                cardBodyEl.textContent = finalText;
+            }
+            
+            // Atualiza Título
+            if (cardTitleEl && editorTitle) cardTitleEl.textContent = editorTitle;
+
+            // Atualiza Snippet Oculto
+            card.dataset.snippet = encodeURIComponent(liveEl.outerHTML);
+            
+            // Flash Visual
+            card.style.border = "2px solid #e74c3c"; // VERMELHO PARA TESTE (Bem visível)
+            setTimeout(() => card.style.border = "", 1000);
+
+            hasUpdates = true;
+        } else {
+        }
+
+        console.groupEnd(); // Fim do grupo do cartão
     });
 
-    // 4. Se houve atualizações visuais, grava no Firebase da 4ª coluna
+
+    console.groupEnd();
+
+    // 7. Gravação
     if (hasUpdates) {
         if (typeof savePuzzleData === 'function') {
-            // Pequeno delay para não sobrecarregar
             setTimeout(() => savePuzzleData(), 500);
         }
     }
 }
 
 // ============================================================
-// SYNC DE FUNDO (QUANDO O PAINEL ESTÁ FECHADO)
+// 2. SYNC BACKGROUND (PAINEL FECHADO) - MÉTODO DOM PARSER
 // ============================================================
 async function backgroundSyncCurrentPuzzle() {
     if (!activeReferenceEntity || !activeReferenceEntity.id) return;
-    
-    // Se a coluna estiver fechada, precisamos ler os dados do Firebase, 
-    // atualizar o array e mandar de volta, sem tocar no DOM da 4ª coluna.
     
     const editor = document.getElementById('note-content-editor');
     if (!editor) return;
 
     try {
         const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
         const colName = getCollectionFromType(activeReferenceEntity.type);
         const docRef = doc(db, colName, activeReferenceEntity.id);
         const snap = await getDoc(docRef);
 
-        if (snap.exists()) {
-            let board = snap.data().puzzleBoard || [];
-            let changed = false;
+        if (!snap.exists()) return;
 
-            // Varre o array de dados
-            const updatedBoard = board.map(item => {
-                if (item.type === 'ref' && item.noteId === selectedNoteId) {
-                    try {
-                        const tempDiv = document.createElement('div');
-                        tempDiv.innerHTML = decodeURIComponent(item.snippet);
-                        const wrapper = tempDiv.querySelector('[id]');
+        let board = snap.data().puzzleBoard || [];
+        let changed = false;
+
+        // Varre o array de dados
+        const updatedBoard = board.map(item => {
+            if (item.type === 'ref' && item.noteId === selectedNoteId) {
+                try {
+                    // Parser em memória
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = decodeURIComponent(item.snippet);
+                    
+                    // Encontra o ID
+                    const savedWrapper = tempDiv.querySelector('[id]');
+                    
+                    if (savedWrapper && savedWrapper.id) {
+                        const liveEl = document.getElementById(savedWrapper.id);
                         
-                        if (wrapper && wrapper.id) {
-                            const liveEl = document.getElementById(wrapper.id);
-                            // Se encontrar o elemento vivo e o HTML for diferente
-                            if (liveEl) {
-                                const newHtml = liveEl.outerHTML;
-                                // Compara strings codificadas para evitar falsos positivos de espaços
-                                if (encodeURIComponent(newHtml) !== item.snippet) {
-                                    item.snippet = encodeURIComponent(newHtml);
-                                    changed = true;
-                                }
+                        if (liveEl) {
+                            // Compara o HTML completo novo com o antigo
+                            const newHTML = liveEl.outerHTML;
+                            
+                            // Se o HTML mudou, atualiza o array
+                            if (encodeURIComponent(newHTML) !== item.snippet) {
+                                console.log(`☁️ [BG] Atualizando dados de: ${savedWrapper.id}`);
+                                item.snippet = encodeURIComponent(newHTML);
+                                changed = true;
                             }
                         }
-                    } catch(e) {}
-                }
-                return item;
-            });
-
-            if (changed) {
-                console.log("☁️ [BACKGROUND] Atualizando dados do puzzle no servidor...");
-                await updateDoc(docRef, { puzzleBoard: updatedBoard });
+                    }
+                } catch(err) { console.warn(err); }
             }
+            return item;
+        });
+
+        // Se houve mudanças, envia para o Firebase
+        if (changed) {
+            await updateDoc(docRef, { puzzleBoard: updatedBoard });
+            console.log("✅ [BG] Firebase atualizado.");
         }
-    } catch (e) { console.error(e); }
+
+    } catch (e) {
+        console.error("Erro background sync:", e);
+    }
 }
 
 // ============================================================
-// OVERRIDE DO SAVENOTE
+// 3. GATILHO (SAVE NOTE)
 // ============================================================
 const originalSaveNote = window.saveNote || saveNote;
 
 window.saveNote = async function(forceImmediate = false) {
-    // 1. Grava a Nota
+    // 1. Grava a nota primeiro (Prioridade)
     const res = await originalSaveNote(forceImmediate);
     
-    // 2. Dispara o Sync (Visual ou Background)
-    syncPuzzleRealTime();
+    // 2. Dispara o Sync
+    await syncPuzzleRealTime();
     
     return res;
 };
+
+// ============================================================
+// FORÇA BRUTA: DETETOR DE ESCRITA DIRETO
+// ============================================================
+
+const directEditorListener = document.getElementById('note-content-editor');
+
+if (directEditorListener) {
+    let syncTimer = null;
+
+    directEditorListener.addEventListener('input', () => {
+        // Debounce: Espera 1 segundo após parar de escrever
+        clearTimeout(syncTimer);
+        
+        syncTimer = setTimeout(() => {
+            console.log("⚡ [FORÇA BRUTA] Input detetado. Disparando Sync...");
+            
+            // Chama a função de diagnóstico que criámos
+            if (typeof syncPuzzleRealTime === 'function') {
+                syncPuzzleRealTime();
+            } else {
+                console.error("❌ A função syncPuzzleRealTime não existe!");
+            }
+        }, 1500); // 1.5 segundos depois de parar de escrever
+    });
+
+} else {
+    console.error("❌ ERRO: Editor não encontrado para instalar o detetor.");
+}
 
     </script>
 </body>
