@@ -42456,6 +42456,109 @@ if (aqZoom) {
     }
 })();
 
+// ============================================================
+// SINCRONIZAÇÃO EM SEGUNDO PLANO (MESMO COM PAINEL FECHADO)
+// ============================================================
+
+async function backgroundSyncCurrentPuzzle() {
+    // 1. Verifica se temos uma entidade ativa em memória (ex: o último tópico que abriu)
+    if (!activeReferenceEntity || !activeReferenceEntity.id) return;
+    
+    // 2. Referência ao editor (para ler o texto novo)
+    const editor = document.getElementById('note-content-editor');
+    if (!editor) return;
+
+    const { id, type } = activeReferenceEntity;
+    const collectionName = getCollectionFromType(type);
+    
+    if (!collectionName) return;
+
+    try {
+        // 3. Leitura Silenciosa do Firebase (Busca o estado atual do quadro)
+        const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const docRef = doc(db, collectionName, id);
+        const docSnap = await getDoc(docRef);
+
+        if (!docSnap.exists()) return;
+
+        let puzzleBoard = docSnap.data().puzzleBoard || [];
+        let hasChanges = false;
+        
+        // 4. Varre os itens da base de dados (não os visuais)
+        const updatedBoard = puzzleBoard.map(item => {
+            // Só analisa itens que venham da nota atual e sejam referências
+            if (item.noteId === selectedNoteId && item.type === 'ref') {
+                
+                // Tenta extrair o ID do bloco original a partir do snippet antigo
+                try {
+                    let oldSnippet = decodeURIComponent(item.snippet);
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = oldSnippet;
+                    
+                    // Procura o elemento identificador (wrapper)
+                    const originalWrapper = tempDiv.querySelector('.mini-note-wrapper, details.toggle-section, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, .redator-wrapper');
+                    
+                    if (originalWrapper && originalWrapper.id) {
+                        // 5. Procura esse ID no Editor AO VIVO
+                        const liveElement = editor.querySelector(`[id="${originalWrapper.id}"]`);
+                        
+                        if (liveElement) {
+                            // Captura o novo HTML
+                            const newSnippet = liveElement.outerHTML;
+                            
+                            // Se houve alteração no texto/título
+                            if (newSnippet !== oldSnippet) {
+                                console.log(`🔄 [BACKGROUND SYNC] Atualizando: ${originalWrapper.id}`);
+                                item.snippet = encodeURIComponent(newSnippet);
+                                hasChanges = true;
+                                
+                                // (Opcional) Atualiza também os metadados de texto simples para pesquisas futuras
+                                // ...lógica de extração de texto...
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.warn("Erro ao processar item background:", err);
+                }
+            }
+            return item;
+        });
+
+        // 6. Se houve mudanças, grava no Firebase
+        if (hasChanges) {
+            await updateDoc(docRef, { puzzleBoard: updatedBoard });
+            
+            // Se o painel estiver visível, força um refresh visual para o utilizador ver
+            const panel = document.getElementById('puzzle-board-container');
+            if (panel && panel.offsetParent !== null) {
+                 // Recarrega apenas se estiver a olhar para ele, para atualizar os textos
+                 loadPuzzleData(id, type);
+            }
+        }
+
+    } catch (e) {
+        console.error("Erro no Sync Background:", e);
+    }
+}
+
+// ============================================================
+// GATILHO DE GRAVAÇÃO (SAVE NOTE)
+// ============================================================
+
+// Substituímos novamente para usar a nova função
+const originalSaveNote = window.saveNote || saveNote;
+
+window.saveNote = async function(forceImmediate = false) {
+    // 1. Grava a Nota Principal
+    const result = await originalSaveNote(forceImmediate);
+    
+    // 2. Dispara a sincronização do quadro em segundo plano
+    // (Não usamos await aqui para não bloquear a interface do utilizador)
+    backgroundSyncCurrentPuzzle();
+    
+    return result;
+};
+
     </script>
 </body>
 </html>
