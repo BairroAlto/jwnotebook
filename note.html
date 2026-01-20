@@ -14829,6 +14829,9 @@ async function executeSave() {
         if (typeof propagateUpdatesToMicas === 'function') {
              propagateUpdatesToMicas(targetId, finalContent);
         }
+        if (typeof propagateUpdatesToBible === 'function') {
+             propagateUpdatesToBible(targetId, finalContent, finalTitle);
+        }
         // ====================================================================
 
         // Sincronização Pública (Se a nota estiver partilhada com link público)
@@ -42829,6 +42832,99 @@ async function propagateUpdatesToMicas(noteId, fullContent) {
 
     } catch (e) {
         console.error("🔥 Erro na Sync Micas:", e);
+    }
+    console.groupEnd();
+}
+
+// ============================================================
+// SISTEMA DE PROPAGAÇÃO DE ATUALIZAÇÕES PARA A BÍBLIA (TEXTOS)
+// ============================================================
+async function propagateUpdatesToBible(noteId, fullContent, noteTitle) {
+    console.group("📖 [BIBLE SYNC] A propagar alterações para os versículos...");
+    
+    try {
+        const { collection, query, where, getDocs, doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const myUid = auth.currentUser.uid;
+
+        // 1. PREPARAR O SNIPPET (HTML Limpo da Nota)
+        // A Bíblia guarda o "snippet" codificado. Temos de extrair o wrapper principal.
+        const parser = new DOMParser();
+        const docDOM = parser.parseFromString(fullContent, 'text/html');
+        
+        // Procura o elemento principal da nota (Wrapper ou Redator)
+        const wrapper = docDOM.querySelector('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card');
+        
+        let finalSnippetEncoded = "";
+        
+        if (wrapper) {
+            // Se encontrou uma caixa estruturada, usa o HTML dela
+            finalSnippetEncoded = encodeURIComponent(wrapper.outerHTML);
+        } else {
+            // Se for texto livre, usa o conteúdo todo
+            finalSnippetEncoded = encodeURIComponent(fullContent);
+        }
+
+        // 2. PROCURAR VERSÍCULOS QUE TENHAM ESTA NOTA NO PUZZLE
+        // Nota: Como o Firestore não pesquisa bem dentro de arrays de objetos complexos sem índices,
+        // vamos buscar os textos do utilizador e filtrar no cliente (seguro para volume pessoal).
+        const q = query(
+            collection(db, 'textosbiblicos'),
+            where('userId', '==', myUid)
+        );
+
+        const snapshot = await getDocs(q);
+        let updatesCount = 0;
+
+        const updatePromises = snapshot.docs.map(async (docSnap) => {
+            const data = docSnap.data();
+            
+            // Se não tem quadro, ignora
+            if (!data.puzzleBoard || !Array.isArray(data.puzzleBoard) || data.puzzleBoard.length === 0) return;
+
+            let boardChanged = false;
+            
+            // Percorre o quadro para encontrar referências a esta nota
+            const newBoard = data.puzzleBoard.map(item => {
+                // Se encontrar o item correspondente ao ID da nota atual
+                if (item.noteId === noteId) {
+                    // Verifica se houve mudança real para evitar escritas desnecessárias
+                    if (item.snippet !== finalSnippetEncoded || item.noteName !== noteTitle) {
+                        console.log(`   🔄 Atualizando versículo: ${data.nome}`);
+                        
+                        // Atualiza os dados
+                        item.snippet = finalSnippetEncoded;
+                        item.noteName = noteTitle;
+                        
+                        // Atualiza a cor se existir na caixa
+                        if (wrapper && wrapper.getAttribute('data-highlight')) {
+                            item.noteColor = wrapper.getAttribute('data-highlight');
+                            item.cor = wrapper.getAttribute('data-highlight'); // Compatibilidade
+                        }
+
+                        boardChanged = true;
+                        updatesCount++;
+                    }
+                }
+                return item;
+            });
+
+            // Se houve alteração, grava no Firebase
+            if (boardChanged) {
+                const verseRef = doc(db, 'textosbiblicos', docSnap.id);
+                return updateDoc(verseRef, { puzzleBoard: newBoard });
+            }
+        });
+
+        await Promise.all(updatePromises);
+        
+        if (updatesCount > 0) {
+            console.log(`✅ Sucesso! ${updatesCount} versículos atualizados.`);
+        } else {
+            console.log("🏁 Nenhuma referência bíblica encontrada para atualizar.");
+        }
+
+    } catch (e) {
+        console.error("🔥 Erro na Sync Bíblia:", e);
     }
     console.groupEnd();
 }
