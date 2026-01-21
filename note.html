@@ -42331,58 +42331,57 @@ function startGlobalNotificationListener() {
 
 // 3. FUNÇÃO DE CÁLCULO CENTRALIZADA
 function recalcGlobalNotification() {
-    const myUid = auth.currentUser.uid;
-    let hasNew = false;
+    if (!auth.currentUser) return;
     
-    // Margem de erro de 2 segundos
+    const myUid = auth.currentUser.uid;
+    let hasNewGlobal = false;
     const TIME_BUFFER = 2000; 
 
-    console.groupCollapsed("🕵️ DEBUG: Análise da Bola Vermelha");
+    // console.groupCollapsed("🕵️ DEBUG: Análise da Bola Vermelha");
 
     globalFoldersCache.forEach(data => {
-        // Filtro de Segurança
+        // Se já encontrou, salta para poupar processamento
+        if (hasNewGlobal) return;
+
+        // --- FILTRO CRÍTICO: Só processa itens da aba PARTILHA ---
+        // Se for 'arquivo' (pessoal) ou 'nota', ignora para não acender a luz errada
+        if (data.tipo !== 'partilhado') return;
+
+        const id = data.id;
         const isOwner = data.userId === myUid;
         const isCollab = data.colaboradores && data.colaboradores[myUid];
 
         if (isOwner || isCollab) {
-            const id = data.id;
             const lastSeen = userLastSeenArchives[id] || 0;
-            const lastEdit = data.ultimaedicao?.toMillis() || 0;
-            const lastEditor = data.lastEditorId; // Pode ser undefined em ficheiros antigos
+            const posts = data.posts || [];
+            
+            for (const post of posts) {
+                const created = post.createdAt?.toMillis ? post.createdAt.toMillis() : (post.createdAt || 0);
+                const updated = post.updatedAt?.toMillis ? post.updatedAt.toMillis() : (post.updatedAt || 0);
+                
+                // 1. NOVO?
+                if (created > (lastSeen + TIME_BUFFER) && post.userId !== myUid) {
+                    hasNewGlobal = true;
+                    // console.log(`🔴 [NOVO] ${data.nome}`);
+                    return; 
+                }
 
-            // Condição 1: Tem de ter sido editado DEPOIS de eu ver (+ buffer)
-            if (lastEdit > (lastSeen + TIME_BUFFER)) {
-                
-                // --- NOVA LÓGICA DE FILTRAGEM ---
-                
-                // CASO A: Sabemos quem editou (Sistema Novo)
-                if (lastEditor) {
+                // 2. EDITADO?
+                if (updated > (lastSeen + TIME_BUFFER) && updated > (created + 2000)) {
+                    const lastEditor = post.lastEditorId || "unknown";
                     if (lastEditor !== myUid) {
-                        hasNew = true;
-                        console.log(`🔴 Novo (Com Editor): ${data.nome}`);
-                    }
-                } 
-                // CASO B: Não sabemos quem editou (Ficheiros Antigos / Legado)
-                else {
-                    // Só notificamos se eu JÁ TIVER ABERTO o ficheiro antes (lastSeen > 0).
-                    // Se lastSeen for 0, é um ficheiro antigo que eu nunca abri neste sistema, 
-                    // por isso ignoramos para não causar spam de notificação.
-                    if (lastSeen > 0 && !isOwner) {
-                        hasNew = true;
-                        console.log(`🔴 Novo (Legado mas já visto): ${data.nome}`);
-                    } else {
-                        console.log(`⚪ Ignorado (Legado/Nunca visto): ${data.nome}`);
+                        hasNewGlobal = true;
+                        // console.log(`🟠 [EDITADO] ${data.nome}`);
+                        return; 
                     }
                 }
             }
         }
     });
 
-    console.log(`🏁 Bola ligada? ${hasNew}`);
-    console.groupEnd();
+    // console.groupEnd();
 
-    // Atualiza a variável global e a UI
-    hasGlobalShareNotification = hasNew;
+    hasGlobalShareNotification = hasNewGlobal;
     updateShareTabDot();
 }
 
@@ -42398,6 +42397,8 @@ function updateShareTabDot() {
             dot.className = 'tab-notification-dot';
             shareTab.appendChild(dot);
         }
+
+        console.log(`💡 [UI] A atualizar bola Share. Estado: ${hasGlobalShareNotification}`);
 
         if (hasGlobalShareNotification) {
             dot.classList.add('visible');
