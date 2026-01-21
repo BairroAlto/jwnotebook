@@ -11798,6 +11798,8 @@ let scrollTimer = null;
 let aqAutoSaveTimer = null;
 let hasGlobalShareNotification = false;
 let globalFoldersCache = []; 
+let lockHeartbeatTimer = null;
+
 
 
 window.currentNoteHybridMode = false;
@@ -28675,6 +28677,8 @@ function initRealtimeCollab(docId) {
         // 1. Atualiza a lista de bloqueios na memória
         currentLocks = newData.locks || {};
         
+        cleanupStaleLocks(currentLocks); 
+        
         // 2. FORÇA A ATUALIZAÇÃO VISUAL DOS CADEADOS IMEDIATAMENTE
         // Isto acontece independentemente de estarmos a editar ou não.
         // Assim, o user vê logo quem entrou e saiu.
@@ -28865,23 +28869,34 @@ function applyVisualLocks() {
 
 // 4. Bloquear Post (Chamar ao clicar em Editar)
 async function lockPost(postId) {
-    if (!currentArchiveId) {
-        console.error("❌ Erro: ID do Arquivo não encontrado para bloquear.");
-        return false;
-    }
+    if (!currentArchiveId) return false;
 
     const docRef = doc(db, 'pastas', currentArchiveId);
     const myName = currentUserData?.nome || auth.currentUser.email.split('@')[0];
 
+    // Função interna para atualizar o timestamp
+    const sendPulse = async () => {
+        try {
+            await updateDoc(docRef, {
+                [`locks.${postId}`]: {
+                    userId: auth.currentUser.uid,
+                    userName: myName,
+                    timestamp: Date.now() // Atualiza a hora para "Agora"
+                }
+            });
+            console.log("💓 [LOCK] Batimento enviado.");
+        } catch (e) {
+            console.warn("Falha no batimento do lock:", e);
+        }
+    };
+
     try {
-        // Grava no campo 'locks' do documento pai
-        await updateDoc(docRef, {
-            [`locks.${postId}`]: {
-                userId: auth.currentUser.uid,
-                userName: myName,
-                timestamp: Date.now()
-            }
-        });
+        // Envia o primeiro bloqueio imediatamente
+        await sendPulse();
+
+        // Inicia o "Coração" (atualiza a cada 60 segundos)
+        if (lockHeartbeatTimer) clearInterval(lockHeartbeatTimer);
+        lockHeartbeatTimer = setInterval(sendPulse, 60000); 
     
         return true;
     } catch (e) {
@@ -28891,25 +28906,25 @@ async function lockPost(postId) {
 }
 
 async function unlockPost(postId) {
-    // Usa o ID atual ou tenta recuperar de um backup se a navegação já tiver começado
-    const targetArchiveId = currentArchiveId || selectedNoteId;
-    
-    if (!targetArchiveId) {
-        console.warn("⚠️ Sem ID de arquivo para desbloquear post:", postId);
-        return;
+    // 1. PÁRA O BATIMENTO CARDÍACO
+    if (lockHeartbeatTimer) {
+        clearInterval(lockHeartbeatTimer);
+        lockHeartbeatTimer = null;
     }
+
+    const targetArchiveId = currentArchiveId || selectedNoteId;
+    if (!targetArchiveId) return;
     
     try {
         const { doc, updateDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const docRef = doc(db, 'pastas', targetArchiveId);
         
-        // Remove a entrada do objeto 'locks' no Firebase
         await updateDoc(docRef, {
             [`locks.${postId}`]: deleteField()
         });
         console.log(`🔓 [SISTEMA] Cadeado removido de: ${postId}`);
     } catch (e) {
-        console.error("❌ [ERRO] Falha ao remover cadeado na saída:", e);
+        console.error("❌ Falha ao desbloquear:", e);
     }
 }
 
@@ -43706,6 +43721,65 @@ window.showPostDetails = function(postId) {
     modal.style.display = 'flex';
 };
 
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        // Verifica se há um post a ser editado
+        const idToSave = activeEditingPostId || window.activeEditingPostId;
+        
+        if (idToSave) {
+            console.log("📱 [SAÍDA DE EMERGÊNCIA] App escondida. Gravando e libertando...");
+            
+            // Captura dados da memória (Rascunho) se existirem, é mais seguro
+            let title = null;
+            let content = null;
+            
+            if (window.livePostDraft && window.livePostDraft.id === idToSave) {
+                title = window.livePostDraft.title;
+                content = window.livePostDraft.content;
+            }
+
+            // Grava e Desbloqueia (O saveArchivePost agora faz os dois)
+            // Usamos 'await' mas o browser pode não esperar muito tempo, 
+            // porém o saveFullArchive e unlockPost são disparados imediatamente.
+            if (content) {
+                window.saveArchivePost(idToSave, content, title);
+            } else {
+                window.saveArchivePost(idToSave);
+            }
+        }
+    }
+});
+
+// Adicione esta função nova
+async function cleanupStaleLocks(locksData) {
+    if (!locksData || Object.keys(locksData).length === 0) return;
+
+    const now = Date.now();
+    const TIMEOUT_LIMIT = 3 * 60 * 1000; // 3 Minutos de tolerância
+    let hasStaleLocks = false;
+    let updates = {};
+
+    Object.entries(locksData).forEach(([postId, lockInfo]) => {
+        // Se a última atualização foi há muito tempo...
+        if (now - lockInfo.timestamp > TIMEOUT_LIMIT) {
+            console.warn(`💀 [LOCK ZUMBI] O bloqueio do post ${postId} expirou. Removendo...`);
+            // Prepara para apagar do Firebase
+            updates[`locks.${postId}`] = deleteField();
+            hasStaleLocks = true;
+        }
+    });
+
+    // Se encontrou bloqueios velhos, limpa-os na base de dados
+    if (hasStaleLocks && currentArchiveId) {
+        try {
+            const { doc, updateDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            const docRef = doc(db, 'pastas', currentArchiveId);
+            await updateDoc(docRef, updates);
+        } catch (e) {
+            console.error("Erro ao limpar locks antigos:", e);
+        }
+    }
+}
 
     </script>
 </body>
