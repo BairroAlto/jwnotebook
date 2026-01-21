@@ -11879,8 +11879,8 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
         // --- 1. CAPTURA DE PARÂMETROS URL ---
         const params = new URLSearchParams(window.location.search);
         const urlRootId = params.get('rootId');
-        const openFolderId = params.get('openFolder'); // <--- CRÍTICO: ID da pasta onde guardou
-        const targetNoteId = params.get('noteId');     // <--- CRÍTICO: ID da nota nova
+        const openFolderId = params.get('openFolder'); 
+        const targetNoteId = params.get('noteId');     
         const redirectSearch = params.get('search');
         const viewParam = params.get('view');
         const openArchiveId = params.get('openArchive'); 
@@ -11909,31 +11909,24 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
             // 3. LÓGICA DE ABERTURA INTELIGENTE (ROUTING)
             // ============================================================
             
-            // CASO 1: Temos Pasta E Nota (Vindo do Sharenote ou Link específico)
+            // CASO 1: Temos Pasta E Nota
             if (openFolderId && targetNoteId) {
                 console.log(`📂 [ROUTER] Abertura Direta: Pasta ${openFolderId} -> Nota ${targetNoteId}`);
-                
-                // A. Reconstrói o caminho visual (breadcrumbs) até à pasta e carrega a lista do meio
-                // Isto garante que a lista lateral mostra a pasta certa e seleciona a nota a azul
                 await reconstructFolderNavigation(openFolderId, targetNoteId);
-                
-                // B. Abre o conteúdo da nota na direita
                 displayNote(targetNoteId, null, redirectSearch);
-
-                // C. Ajuste Mobile: Se estiver em telemóvel, vai direto para o editor
                 if (window.innerWidth <= 768) {
                     document.body.classList.remove('mobile-view-middle');
                     document.body.classList.add('mobile-view-editor');
                 }
             } 
             
-            // CASO 2: Apenas Nota (Link direto sem contexto de pasta, usa Smart Nav)
+            // CASO 2: Apenas Nota
             else if (targetNoteId && !openFolderId) {
                 console.log("🔍 [ROUTER] Link direto de nota. A calcular caminho...");
                 await navigateToNoteSmart(targetNoteId, redirectSearch);
             }
 
-            // CASO 3: Apenas Pasta (Navegação normal)
+            // CASO 3: Apenas Pasta
             else if (openFolderId) {
                 console.log("📂 [ROUTER] Abertura de pasta.");
                 await reconstructFolderNavigation(openFolderId);
@@ -11949,15 +11942,56 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
                 }
             } 
             
-            // CASO 5: Raiz Padrão (Sem parâmetros)
-            else {
-                updateNavigationView(false); 
+            // CASO 5: ARQUIVO PARTILHADO (AQUI ESTÁ A LÓGICA SEGURA)
+      else if (openArchiveId) {
+                const archiveRef = doc(db, 'pastas', openArchiveId);
+                const arcSnap = await getDoc(archiveRef);
+                
+                if (arcSnap.exists()) {
+                    const data = arcSnap.data();
+                    
+                    // Se for um link de colaboração
+                    if (modeParam === 'collab') {
+                        // 1. FORÇA O MODO VISUAL PARA 'SHARED'
+                        currentViewMode = 'shared';
+
+                        // 2. Lógica de Registo (igual à anterior)
+                        if (data.partilhado === 'ativo') {
+                            const myUid = user.uid;
+                            if (!data.colaboradores || !data.colaboradores[myUid]) {
+                                console.log("🤝 Novo colaborador detetado. A gravar dados seguros...");
+                                try {
+                                    const myName = currentUserData?.nome || user.displayName || user.email.split('@')[0];
+                                    const myEmail = user.email || "Sem Email";
+
+                                    await updateDoc(archiveRef, {
+                                        [`colaboradores.${myUid}`]: true,
+                                        [`dados_colaboradores.${myUid}`]: {
+                                            nome: myName,
+                                            email: myEmail,
+                                            data_entrada: Date.now()
+                                        }
+                                    });
+                                    if (!data.colaboradores) data.colaboradores = {};
+                                    data.colaboradores[myUid] = true;
+                                } catch (err) { console.error(err); }
+                            }
+                        }
+                    }
+                    
+                    // 3. ABRE O ARQUIVO (Painel Direito)
+                    displayArchive(openArchiveId, data);
+
+                    // 4. >>> A CORREÇÃO FINAL <<<
+                    // Atualiza a lista da esquerda/meio para mostrar "Partilha" e a lista de arquivos
+                    // Passamos 'true' para NÃO fechar o editor que acabámos de abrir (displayArchive)
+                    updateNavigationView(true); 
+                }
             }
 
-            // --- CASOS ESPECIAIS (ARQUIVOS) ---
-            if (openArchiveId) {
-                const arcSnap = await getDoc(doc(db, 'pastas', openArchiveId));
-                if (arcSnap.exists()) displayArchive(openArchiveId, arcSnap.data());
+            // CASO 6: Raiz Padrão
+            else {
+                updateNavigationView(false); 
             }
 
             // --- 4. CACHES DE FUNDO ---
@@ -11970,30 +12004,22 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
         }
 
         // ============================================================
-        // 5. REVELAÇÃO DA UI (Só após processar a navegação)
+        // 5. REVELAÇÃO DA UI
         // ============================================================
-     setTimeout(() => {
+        setTimeout(() => {
             if (container) {
-                // 1. Torna o site visível
                 container.style.setProperty('display', 'flex', 'important');
-                
-                // 2. CORREÇÃO CRÍTICA: Recalcular alturas agora que é visível
-                // Procura todos os títulos de caixas e força o ajuste
                 const textareas = document.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
                 textareas.forEach(el => {
                     if (el.tagName === 'TEXTAREA' && typeof autoResizeTitle === 'function') {
-                        // Reseta a altura para ler o scrollHeight real
                         el.style.height = 'auto'; 
                         el.style.height = el.scrollHeight + 'px';
                     }
                 });
             }
-            
             if (loader) {
                 loader.style.opacity = '0';
-                setTimeout(() => {
-                    loader.remove();
-                }, 500);
+                setTimeout(() => loader.remove(), 500);
             }
         }, 800);
     }
@@ -28406,31 +28432,73 @@ if (archiveTitleInput) {
 function initRealtimeCollab(docId) {
     const docRef = doc(db, 'pastas', docId);
 
+    // Se já existia um ouvinte, desliga-o para não duplicar
+    if (collabUnsubscribe) collabUnsubscribe();
+
     collabUnsubscribe = onSnapshot(docRef, (docSnap) => {
-        if (!docSnap.exists()) return;
+        // A. Se o documento foi apagado
+        if (!docSnap.exists()) {
+            alert("Este arquivo foi eliminado pelo proprietário.");
+            resetEditor();
+            return;
+        }
 
         const newData = docSnap.data();
+        const myUid = auth.currentUser.uid;
+
+        // ============================================================
+        // B. VERIFICAÇÃO DE SEGURANÇA EM TEMPO REAL (KICK-OUT LÓGICO)
+        // ============================================================
+        const isOwner = newData.userId === myUid;
+        const isListed = newData.colaboradores && newData.colaboradores[myUid];
+
+        // Se não sou o dono E não estou na lista de colaboradores...
+        if (!isOwner && !isListed) {
+            console.warn("🚫 Acesso revogado (Detetado via Dados).");
+            
+            // 1. Para os processos
+            if (activeEditingPostId) cancelArchiveEdit(activeEditingPostId);
+            
+            // 2. Limpa o ecrã
+            resetEditor(); 
+            
+            // 3. Avisa o utilizador
+            alert("O seu acesso a este arquivo foi removido.");
+            
+            // 4. Força a atualização da lista lateral
+            if (currentViewMode === 'shared') loadSharedFilesRoot();
+            
+            return;
+        }
+
+        // C. Continuação normal (Locks e Updates)
         currentLocks = newData.locks || {};
         applyVisualLocks();
 
-        // --- REAVALIAÇÃO DE SEGURANÇA DO CADEADO EM TEMPO REAL ---
-        const shareBtn = document.querySelector('button[data-action="archive-share"]');
-        if (shareBtn) {
-            const isOwner = newData.userId === auth.currentUser.uid;
-            const isSharedType = (newData.tipo === 'partilhado');
-            
-            if (isSharedType && !isOwner) {
-                shareBtn.style.display = 'none';
-            } else {
-                shareBtn.style.display = 'block';
-            }
-        }
-        // -------------------------------------------------------
-
+        // Só atualiza o feed se eu não estiver a editar nada
         if (!activeEditingPostId) {
             currentArchiveData.posts = newData.posts;
             renderArchiveFeed();
             applyVisualLocks();
+        }
+    }, (error) => {
+        // ============================================================
+        // C. TRATAMENTO DE ERRO DE PERMISSÃO (KICK-OUT DE SEGURANÇA)
+        // ============================================================
+        // Este bloco apanha o "Missing or insufficient permissions"
+        if (error.code === 'permission-denied') {
+            console.log("🔒 Permissão negada pelo Firebase. A fechar editor...");
+            
+            // Faz exatamente o mesmo que o kick-out lógico
+            if (activeEditingPostId) cancelArchiveEdit(activeEditingPostId);
+            resetEditor();
+            
+            // Não mostramos alert aqui para evitar duplicar avisos se o bloco B já tiver disparado
+            // Mas garantimos que a interface limpa.
+            if (currentViewMode === 'shared') loadSharedFilesRoot();
+        } else {
+            // Outros erros reais (ex: falta de internet)
+            console.error("Erro no listener:", error);
         }
     });
 }
@@ -28722,12 +28790,10 @@ function clearAllListSelections() {
 document.querySelectorAll('.archive-tab-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
         const targetTab = btn.dataset.archiveTab;
-        console.group(`🔄 [TRANSICAO] Indo para: ${targetTab}`);
 
         // A. AUTO-SAVE (Mesma lógica robusta anterior)
         const idToSave = activeEditingPostId || window.activeEditingPostId;
         if (idToSave) { 
-            console.log(`%c⚠️ [AUTO-SAVE] Gravando post ${idToSave} antes de mudar de aba...`, "color: #e67e22; font-weight: bold;");
             const tempId = idToSave;
             activeEditingPostId = null;
             window.activeEditingPostId = null;
@@ -28737,7 +28803,6 @@ document.querySelectorAll('.archive-tab-btn').forEach(btn => {
         // B. LÓGICA DE NAVEGAÇÃO: SE CLICOU NA PRATELEIRA, SAI DA GAVETA
         if (targetTab === 'prateleira') {
             if (window.activeGavetaId) {
-                console.log(`%c📂 [RESET] Limpando activeGavetaId (${window.activeGavetaId}) para mostrar feed completo.`, "color: #3498db;");
                 window.activeGavetaId = null;
                 window.activeGavetaData = null;
             }
@@ -28759,7 +28824,6 @@ document.querySelectorAll('.archive-tab-btn').forEach(btn => {
         }
 
         // D. RENDERIZAÇÃO FINAL
-        console.log(`🎬 [RENDER] Desenhando feed para: ${currentArchiveTab}`);
         renderArchiveFeed();
         console.groupEnd();
     });
@@ -32363,16 +32427,16 @@ document.getElementById('create-separator-btn').onclick = async () => {
 
 // 1. Definir a função como global para evitar conflitos de nome
 window.openShareModalForArchive = async function() {
-    console.log("🚀 [NUCLEAR-START] A abrir popup de partilha...");
+    console.log("🚀 [PARTILHA] A abrir gestão de colaboradores...");
     
     const modal = document.getElementById('note-share-popup');
-    if (!modal) return console.error("❌ Erro: #note-share-popup não encontrado.");
+    if (!modal) return;
 
     // 1. Configuração de IDs
     const id = selectedNoteId || currentArchiveId;
     if (!id) return;
 
-    // 2. RECONSTRUÇÃO FÍSICA DO MODAL (Força Bruta)
+    // 2. FORÇA HIERARQUIA
     document.body.appendChild(modal); 
     modal.style.cssText = `
         display: flex !important;
@@ -32387,112 +32451,114 @@ window.openShareModalForArchive = async function() {
         align-items: center !important;
         visibility: visible !important;
         opacity: 1 !important;
-        pointer-events: all !important;
     `;
 
-    const content = modal.querySelector('.modal-content');
-    if (content) {
-        content.style.cssText = `
-            display: block !important;
-            background-color: var(--sidebar-color, #252528) !important;
-            padding: 30px !important;
-            border-radius: 12px !important;
-            width: 90% !important;
-            max-width: 450px !important;
-            position: relative !important;
-            z-index: 10000000 !important;
-            opacity: 1 !important;
-            visibility: visible !important;
-        `;
-    }
-
     try {
-        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { doc, getDoc, collection } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const docRef = doc(db, 'pastas', id);
         const docSnap = await getDoc(docRef);
         
         if (docSnap.exists()) {
             const data = docSnap.data();
 
-            // 🛡️ BLOQUEIO DE SEGURANÇA: Se não for o dono, fecha e sai
+            // BLOQUEIO DE SEGURANÇA
             if (data.userId !== auth.currentUser.uid) {
-                console.warn("🚫 Acesso negado: Apenas o dono pode gerir a partilha.");
+                alert("Apenas o dono pode gerir a partilha.");
                 modal.style.display = 'none';
                 return;
             }
 
+            // --- CONFIGURAÇÃO VISUAL ---
             currentNoteShareData = data.shareSettings || { shared: false, shareId: null };
-
-            // A. Configurar Link de Leitura
-            const mainToggle = document.getElementById('note-share-toggle');
-            if(mainToggle) mainToggle.checked = currentNoteShareData.shared || false;
-
-            // Efeito de onda visual no modal
-            const modalContent = document.querySelector('#note-share-popup .modal-content');
-            if (currentNoteShareData.shared) modalContent.classList.add('share-active-wave');
-            else modalContent.classList.remove('share-active-wave');
-
-            const linkContainer = document.getElementById('note-share-link-container');
-            const urlInput = document.getElementById('note-share-url');
-
-            if (currentNoteShareData.shared) {
-                if(linkContainer) linkContainer.style.display = 'block';
-                
-                const baseUrl = window.location.origin + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
-                const shareId = currentNoteShareData.shareId || id;
-                
-                if(urlInput) {
-                    urlInput.value = `${baseUrl}/sharenote.html?id=${shareId}`;
-                    
-                    // ============================================================
-                    // ATUALIZAÇÃO VISUAL: COR AZUL NO INPUT
-                    // ============================================================
-                    urlInput.style.color = "#4a90e2";
-                    urlInput.style.borderColor = "#4a90e2";
-                    urlInput.style.fontWeight = "bold";
-                }
-                
-                // Garante que o botão na toolbar fica aberto também
-                if (typeof updateNoteSharingButtonUI === 'function') {
-                    updateNoteSharingButtonUI(true);
-                }
-
-            } else {
-                if(linkContainer) linkContainer.style.display = 'none';
-                // Reseta estilo
-                if(urlInput) {
-                    urlInput.style.color = "";
-                    urlInput.style.borderColor = "";
-                    urlInput.style.fontWeight = "";
-                }
-            }
-
-            // B. Configurar Link de Colaboração (Apenas para Arquivos Partilhados)
-            const collabSection = document.getElementById('archive-collab-section');
-            if ((data.tipo === 'arquivo' || data.tipo === 'partilhado') && currentViewMode === 'shared') {
-                if(collabSection) collabSection.style.display = 'block';
-                
-                const collabToggle = document.getElementById('collab-share-toggle');
-                if(collabToggle) collabToggle.checked = (data.partilhado === "ativo");
-                
-                const collabLinkContainer = document.getElementById('collab-share-link-container');
-                if (data.partilhado === "ativo") {
-                    if(collabLinkContainer) collabLinkContainer.style.display = 'block';
-                    const baseUrl = window.location.origin + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
-                    const collabUrl = `${baseUrl}/note.html?openArchive=${id}&mode=collab`;
-                    const collabInput = document.getElementById('collab-share-url');
-                    if(collabInput) collabInput.value = collabUrl;
-                } else {
-                    if(collabLinkContainer) collabLinkContainer.style.display = 'none';
-                }
-            } else {
-                if(collabSection) collabSection.style.display = 'none';
-            }
+            document.getElementById('note-share-toggle').checked = currentNoteShareData.shared || false;
             
-            console.log("✨ [NUCLEAR-SUCCESS] Configuração de partilha carregada.");
+            const linkContainer = document.getElementById('note-share-link-container');
+            linkContainer.style.display = currentNoteShareData.shared ? 'block' : 'none';
+            if(currentNoteShareData.shared) {
+                const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
+                const shareId = currentNoteShareData.shareId || id;
+                document.getElementById('note-share-url').value = `${baseUrl}/sharenote.html?id=${shareId}`;
+            }
+
+            // --- SECÇÃO DE COLABORAÇÃO (AQUI ESTÁ A NOVIDADE) ---
+            const collabSection = document.getElementById('archive-collab-section');
+            const collabToggle = document.getElementById('collab-share-toggle');
+            const collabLinkContainer = document.getElementById('collab-share-link-container');
+            
+            // Só mostra se for Arquivo
+            if (data.tipo === 'arquivo' || data.tipo === 'partilhado') {
+                collabSection.style.display = 'block';
+                const isCollabActive = (data.partilhado === "ativo");
+                collabToggle.checked = isCollabActive;
+                
+                if (isCollabActive) {
+                    collabLinkContainer.style.display = 'block';
+                    const baseUrl = window.location.origin + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
+                    document.getElementById('collab-share-url').value = `${baseUrl}/note.html?openArchive=${id}&mode=collab`;
+
+                    // ============================================================
+                    // LISTA DE COLABORADORES
+                    // ============================================================
+                    
+                    // 1. Cria ou limpa o contentor da lista
+                let usersListDiv = document.getElementById('collab-users-list');
+if (!usersListDiv) {
+    usersListDiv = document.createElement('div');
+    usersListDiv.id = 'collab-users-list';
+    usersListDiv.style.marginTop = "15px";
+    usersListDiv.style.borderTop = "1px solid var(--border-color)";
+    usersListDiv.style.paddingTop = "10px";
+    collabLinkContainer.appendChild(usersListDiv);
+}
+
+// Limpa a lista
+usersListDiv.innerHTML = '';
+
+// Pega na lista de IDs autorizados
+const collaboratorsMap = data.colaboradores || {};
+// Pega nos dados visuais (Nomes/Emails) que gravámos
+const metaMap = data.dados_colaboradores || {};
+
+const guestIDs = Object.keys(collaboratorsMap).filter(uid => uid !== auth.currentUser.uid);
+
+if (guestIDs.length === 0) {
+    usersListDiv.innerHTML = '<p style="font-size:0.8em; color:#888; font-style:italic;">Ainda sem colaboradores.</p>';
+} else {
+    usersListDiv.innerHTML = '<h5 style="color:var(--text-muted-color); margin:0 0 8px 0;">Colaboradores Ativos:</h5>';
+    
+    const ul = document.createElement('ul');
+    ul.style.listStyle = "none";
+    ul.style.padding = "0";
+
+    guestIDs.forEach(uid => {
+        // Tenta obter os dados. Se for um user antigo (antes desta atualização), mostra "Desconhecido"
+       const userInfo = metaMap[uid] || { nome: "Utilizador (Antigo)" };
+
+    const li = document.createElement('li');
+    li.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:10px 12px; background:rgba(255,255,255,0.05); margin-bottom:5px; border-radius:4px;";
+    
+    // ALTERAÇÃO AQUI: Removi o span do email
+    li.innerHTML = `
+        <span style="font-weight:bold; font-size:0.95em; color:var(--text-color);">${userInfo.nome}</span>
+        <button onclick="window.removeCollaborator('${id}', '${uid}')" style="background:none; border:none; color:#e74c3c; cursor:pointer; font-weight:bold; font-size:12px;">Remover</button>
+    `;
+    ul.appendChild(li);
+    });
+    usersListDiv.appendChild(ul);
+}
+
+                } else {
+                    collabLinkContainer.style.display = 'none';
+                    // Limpa a lista se desativar a colaboração
+                    const list = document.getElementById('collab-users-list');
+                    if(list) list.innerHTML = '';
+                }
+            } else {
+                collabSection.style.display = 'none';
+            }
         }
     } catch (err) {
-        console.error("🔥 Erro ao carregar dados de partilha:", err);
+        console.error("Erro popup partilha:", err);
     }
 };
 
@@ -33523,36 +33589,96 @@ function renderPostViewMode(container, post) {
 // 4. ATUALIZAR LISTA LATERAL COM BADGE (Dentro de loadSharedFilesRoot)
 // Substitua o loop .forEach de loadSharedFilesRoot por este:
 async function updateSharedListWithNotifs(resultsMap) {
+    const middlePanelList = document.getElementById('file-list');
+    if (!middlePanelList) return;
+
     const myUid = auth.currentUser.uid;
     
-    // Carregar todos os "lastSeen" do user primeiro
-    const readsSnap = await getDocs(collection(db, 'users', myUid, 'archive_reads'));
-    readsSnap.forEach(d => userLastSeenArchives[d.id] = d.data().lastSeen);
+    // Carregar histórico de leitura para as bolas de notificação
+    try {
+        const readsSnap = await getDocs(collection(db, 'users', myUid, 'archive_reads'));
+        readsSnap.forEach(d => userLastSeenArchives[d.id] = d.data().lastSeen || 0);
+    } catch(e) {}
 
     middlePanelList.innerHTML = '';
     
- resultsMap.forEach(item => {
-    const li = document.createElement('li');
-    li.className = 'list-item';
-    li.setAttribute('data-id', item.id);
-    
-    // LOG DE CRIAÇÃO (Para saber se o item está na lista)
-    console.log(`[LISTA] Gerando item: ${item.nome} (ID: ${item.id})`);
+    // Ordenar alfabeticamente
+    const sortedItems = Array.from(resultsMap.values()).sort((a, b) => (a.nome || "").localeCompare(b.nome || ""));
 
-    li.innerHTML = `<span>${item.userId === myUid ? '👑' : '🤝'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+    sortedItems.forEach(item => {
+        const li = document.createElement('li');
+        li.className = 'list-item';
+        
+        li.setAttribute('data-id', item.id);
+        li.setAttribute('data-type', item.tipo || 'partilhado');
+        li.setAttribute('data-name', item.nome);
+        li.style.position = "relative"; 
 
-    li.onclick = (e) => {
-        if (e.target.closest('.item-menu-btn')) return;
+        // ============================================================
+        // 1. CORREÇÃO VISUAL: APLICA A LINHA VERMELHA SEMPRE
+        // ============================================================
+        if (item.id === selectedNoteId) {
+            li.classList.add('selected-red'); // Fundo vermelho + Borda
+        } else {
+            // Se não estiver selecionado, força apenas a borda vermelha
+            li.style.borderLeft = "4px solid #e74c3c"; 
+        }
+        // ============================================================
+
+        // --- LÓGICA DE NOTIFICAÇÃO (Bola Vermelha/Laranja) ---
+        const lastSeen = userLastSeenArchives[item.id] || 0;
+        const posts = item.posts || [];
         
-        // LOG DE CLIQUE
-        console.log(`%c🖱️ CLIQUE DETETADO: A tentar abrir o arquivo "${item.nome}"...`, "color: #3498db; font-weight: bold;");
+        let hasNew = false;
+        let hasEdit = false;
+
+        for (const post of posts) {
+            const created = post.createdAt?.toMillis ? post.createdAt.toMillis() : (post.createdAt || 0);
+            const updated = post.updatedAt?.toMillis ? post.updatedAt.toMillis() : (post.updatedAt || 0);
+            
+            // Novo Post de outro utilizador
+            if (created > lastSeen && post.userId !== myUid) {
+                hasNew = true;
+                break; 
+            }
+            // Post Editado por outro
+            if (updated > lastSeen && updated > (created + 2000)) {
+                const lastEditor = post.lastEditorId || "unknown";
+                if (lastEditor !== myUid) {
+                    hasEdit = true;
+                }
+            }
+        }
+
+        let notifHTML = "";
+        if (hasNew) {
+            notifHTML = `<span class="notif-badge" style="background-color: #e74c3c; animation: pulse-dot 2s infinite;" title="Novos Posts">!</span>`;
+        } else if (hasEdit) {
+            notifHTML = `<span class="notif-badge" style="background-color: #f39c12;" title="Edições Recentes">!</span>`;
+        }
+
+        const isOwner = item.userId === myUid;
         
-        // Chama a abertura
-        window.displayArchive(item.id, item, li);
-    };
-    
-    middlePanelList.appendChild(li);
-});
+        li.innerHTML = `
+            <span>${isOwner ? '👑' : '🤝'} ${item.nome}</span>
+            ${notifHTML}
+            <button class="item-menu-btn">…</button>
+        `;
+        
+        // Se eu sou o dono mas desliguei a partilha, fica meio transparente
+        if (isOwner && item.partilhado !== "ativo") {
+            li.style.opacity = "0.6";
+            li.title = "Partilha Desativada";
+        }
+        
+        middlePanelList.appendChild(li);
+        
+        // Configurar clique
+        li.onclick = (e) => {
+            if (e.target.closest('.item-menu-btn')) return;
+            window.displayArchive(item.id, item, li);
+        };
+    });
 }
 
 
@@ -33560,122 +33686,103 @@ async function updateSharedListWithNotifs(resultsMap) {
  async function loadSharedFilesRoot() {
     console.log("%c[SISTEMA] Iniciando renderização da Partilha...", "color: #e74c3c;");
     
-    // Limpeza de segurança inicial
+    // 1. Limpeza de ouvintes antigos para evitar duplicados
     if (unsubscribeShared1) { unsubscribeShared1(); unsubscribeShared1 = null; }
     if (unsubscribeShared2) { unsubscribeShared2(); unsubscribeShared2 = null; }
 
-    // Define o visual inicial
+    // 2. Estado visual inicial
     middlePanelTitle.textContent = "Arquivos Partilhados";
     middlePanelList.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A procurar arquivos...</span></div>';
 
     const myUid = auth.currentUser.uid;
     const foldersRef = collection(db, 'pastas');
+    
+    // Mapa para unificar resultados das duas queries sem duplicados
     let resultsMap = new Map();
 
+    // 3. Carregar histórico de leitura para as bolas vermelhas/laranjas
     try {
-        // Carregar histórico de leitura
         const readsSnap = await getDocs(collection(db, 'users', myUid, 'archive_reads'));
-        
-        if (currentViewMode !== 'shared') return;
-
         readsSnap.forEach(d => userLastSeenArchives[d.id] = d.data().lastSeen || 0);
-    } catch(e) { console.warn("Aviso: Histórico de leitura inacessível."); }
+    } catch(e) { 
+        console.warn("Aviso: Histórico de leitura inacessível."); 
+    }
 
-    // --- FUNÇÃO DE DESENHO INTELIGENTE ---
+    // 4. Função interna de renderização
     const renderUnifiedList = () => {
+        // Se o utilizador mudou de aba entretanto, não desenha nada
         if (currentViewMode !== 'shared') return;
 
-        middlePanelList.innerHTML = '';
-        
-        Array.from(resultsMap.values())
-            .sort((a, b) => (a.nome || "").localeCompare(b.nome || ""))
-            .forEach(item => {
+        // Usa a função auxiliar que já criámos para desenhar a lista com badges
+        if (typeof updateSharedListWithNotifs === 'function') {
+            updateSharedListWithNotifs(resultsMap);
+        } else {
+            // Fallback caso a função auxiliar não exista
+            middlePanelList.innerHTML = '';
+            resultsMap.forEach(item => {
                 const li = document.createElement('li');
                 li.className = 'list-item';
-                
                 li.setAttribute('data-id', item.id);
-                li.setAttribute('data-type', item.tipo || 'partilhado');
-                li.setAttribute('data-name', item.nome);
-                li.style.position = "relative"; 
-
-                // Seleção visual
-                if (item.id === selectedNoteId) li.classList.add('selected-red');
-                else li.style.borderLeft = "4px solid #e74c3c";
-
-                // --- LÓGICA DE DETEÇÃO DE NOTIFICAÇÃO (CRÍTICA) ---
-                const lastSeen = userLastSeenArchives[item.id] || 0;
-                const posts = item.posts || [];
-                
-                let hasNew = false;
-                let hasEdit = false;
-
-                // Percorre os posts para ver se há novidades
-                for (const post of posts) {
-                    const created = post.createdAt?.toMillis ? post.createdAt.toMillis() : (post.createdAt || 0);
-                    const updated = post.updatedAt?.toMillis ? post.updatedAt.toMillis() : (post.updatedAt || 0);
-                    
-                    // 1. Verificar se é NOVO (Criado por outro depois da visita)
-                    if (created > lastSeen && post.userId !== myUid) {
-                        hasNew = true;
-                        break; // Se há novo, ganha prioridade máxima (Vermelho), paramos de procurar.
-                    }
-
-                    // 2. Verificar se foi EDITADO (Atualizado por outro depois da visita)
-                    // Ignora se foi acabado de criar (margem 2s)
-                    if (updated > lastSeen && updated > (created + 2000)) {
-                        const lastEditor = post.lastEditorId || "unknown";
-                        if (lastEditor !== myUid) {
-                            hasEdit = true;
-                        }
-                    }
-                }
-
-                // Decide a cor da bola
-                let notifHTML = "";
-                if (hasNew) {
-                    // Bola Vermelha com Animação
-                    notifHTML = `<span class="notif-badge" style="background-color: #e74c3c; animation: pulse-dot 2s infinite;" title="Novos Posts">!</span>`;
-                } else if (hasEdit) {
-                    // Bola Laranja (Sem animação ou mais calma)
-                    notifHTML = `<span class="notif-badge" style="background-color: #f39c12;" title="Edições Recentes">!</span>`;
-                }
-
-                const isOwner = item.userId === myUid;
-                
-                li.innerHTML = `
-                    <span>${isOwner ? '👑' : '🤝'} ${item.nome}</span>
-                    ${notifHTML}
-                    <button class="item-menu-btn">…</button>
-                `;
-                
-                if (isOwner && item.partilhado !== "ativo") li.style.opacity = "0.7";
-                
+                li.innerHTML = `<span>${item.userId === myUid ? '👑' : '🤝'} ${item.nome}</span>`;
+                li.onclick = () => window.displayArchive(item.id, item, li);
                 middlePanelList.appendChild(li);
-                
-                // Configurar clique
-                li.onclick = (e) => {
-                    if (e.target.closest('.item-menu-btn')) return;
-                    window.displayArchive(item.id, item, li);
-                };
             });
-            console.log("✅ Lista de Partilha atualizada com estados precisos.");
+        }
     };
 
-    // Queries (Mantêm-se iguais)
-    const q1 = query(foldersRef, where('userId', '==', myUid), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
-    const q2 = query(foldersRef, where(`colaboradores.${myUid}`, '==', true), where('partilhado', '==', 'ativo'), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
-
-    unsubscribeShared1 = onSnapshot(q1, (snap) => {
+    // 5. Callback genérico para lidar com alterações do Firestore
+    const handleSnapshot = (snap) => {
         if (currentViewMode !== 'shared') return;
-        snap.docChanges().forEach(c => resultsMap.set(c.doc.id, { ...c.doc.data(), id: c.doc.id }));
-        renderUnifiedList();
-    });
+        
+        let hasChanges = false;
 
-    unsubscribeShared2 = onSnapshot(q2, (snap) => {
-        if (currentViewMode !== 'shared') return;
-        snap.docChanges().forEach(c => resultsMap.set(c.doc.id, { ...c.doc.data(), id: c.doc.id }));
-        renderUnifiedList();
-    });
+        snap.docChanges().forEach(change => {
+            const docId = change.doc.id;
+            const docData = change.doc.data();
+
+            // ADICIONADO ou MODIFICADO
+            if (change.type === "added" || change.type === "modified") {
+                resultsMap.set(docId, { ...docData, id: docId });
+                hasChanges = true;
+            } 
+            
+            // REMOVIDO (Aqui acontece a magia da expulsão da lista)
+            // Isto dispara quando o documento é apagado OU quando deixa de cumprir a query
+            // (ex: o teu ID foi removido de 'colaboradores')
+            else if (change.type === "removed") {
+                console.log(`🗑️ Item removido da lista: ${docId}`);
+                if (resultsMap.has(docId)) {
+                    resultsMap.delete(docId);
+                    hasChanges = true;
+                }
+            }
+        });
+
+        if (hasChanges) {
+            renderUnifiedList();
+        }
+    };
+
+    // 6. Query 1: Arquivos que EU criei (Dono)
+    const q1 = query(
+        foldersRef, 
+        where('userId', '==', myUid), 
+        where('tipo', '==', 'partilhado'), 
+        where('estado', '==', 'ativa')
+    );
+
+    // 7. Query 2: Arquivos onde SOU COLABORADOR
+    const q2 = query(
+        foldersRef, 
+        where(`colaboradores.${myUid}`, '==', true), // A chave da permissão
+        where('partilhado', '==', 'ativo'), 
+        where('tipo', '==', 'partilhado'), 
+        where('estado', '==', 'ativa')
+    );
+
+    // 8. Ligar os ouvintes
+    unsubscribeShared1 = onSnapshot(q1, handleSnapshot);
+    unsubscribeShared2 = onSnapshot(q2, handleSnapshot);
 }
 
 // Função para converter RGB para Hex (para comparar cores)
@@ -41960,7 +42067,6 @@ function recalcGlobalNotification() {
     // Margem de erro de 2 segundos
     const TIME_BUFFER = 2000; 
 
-    console.groupCollapsed("🕵️ DEBUG: Análise da Bola Vermelha");
 
     globalFoldersCache.forEach(data => {
         // Filtro de Segurança
@@ -41992,16 +42098,13 @@ function recalcGlobalNotification() {
                     // por isso ignoramos para não causar spam de notificação.
                     if (lastSeen > 0 && !isOwner) {
                         hasNew = true;
-                        console.log(`🔴 Novo (Legado mas já visto): ${data.nome}`);
                     } else {
-                        console.log(`⚪ Ignorado (Legado/Nunca visto): ${data.nome}`);
                     }
                 }
             }
         }
     });
 
-    console.log(`🏁 Bola ligada? ${hasNew}`);
     console.groupEnd();
 
     // Atualiza a variável global e a UI
@@ -43360,6 +43463,66 @@ function clearUrlParams() {
         console.log("🧹 URL limpo (Parâmetros removidos)");
     }
 }
+
+window.removeCollaborator = async function(archiveId, targetUid) {
+    // 1. Capturar o botão clicado ANTES da pausa do await (para não perder a referência)
+    const btn = event.target;
+
+    // 2. AJUSTE DE HIERARQUIA (Z-INDEX)
+    // Como o popup de partilha já tem um z-index muito alto, temos de garantir que
+    // o popup de confirmação fica AINDA MAIS ALTO.
+    const confirmModal = document.getElementById('confirm-modal');
+    if (confirmModal) {
+        confirmModal.style.setProperty('z-index', '2147483647', 'important'); // Máximo absoluto
+    }
+
+    // 3. CHAMAR O POPUP PERSONALIZADO
+    const confirmed = await showConfirmation(
+        "Remover Acesso?",
+        "Tem a certeza que deseja remover o acesso deste utilizador?"
+    );
+
+    // 4. RESET DO Z-INDEX (Limpeza)
+    if (confirmModal) {
+        confirmModal.style.zIndex = ""; 
+    }
+
+    // Se o utilizador clicou em "Cancelar"
+    if (!confirmed) return;
+
+    // --- LÓGICA DE REMOÇÃO (Mantém-se igual) ---
+    const originalText = btn.textContent;
+    btn.textContent = "...";
+    btn.disabled = true;
+
+    try {
+        const { doc, updateDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const archiveRef = doc(db, 'pastas', archiveId);
+
+        // Remove permissão e dados visuais
+        await updateDoc(archiveRef, {
+            [`colaboradores.${targetUid}`]: deleteField(),
+            [`dados_colaboradores.${targetUid}`]: deleteField()
+        });
+
+        // Efeito visual de saída
+        const li = btn.closest('li');
+        if (li) {
+            li.style.transition = "all 0.3s ease";
+            li.style.opacity = '0';
+            li.style.transform = "translateX(20px)";
+            setTimeout(() => li.remove(), 300);
+        }
+
+        console.log(`🚫 Acesso removido para: ${targetUid}`);
+
+    } catch (e) {
+        console.error("Erro ao remover colaborador:", e);
+        alert("Erro ao remover. Verifique a sua ligação.");
+        btn.textContent = originalText;
+        btn.disabled = false;
+    }
+};
 
     </script>
 </body>
