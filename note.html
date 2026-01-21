@@ -16453,21 +16453,19 @@ function renderMoveList(items, activeItemId = null) {
 async function showHiddenItemsModal() {
     const modal = document.getElementById('hidden-items-modal');
     const list = document.getElementById('hidden-items-list');
-    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar itens ocultos...</span></div>';
     
-    // Força visibilidade máxima
+    // Mostra o modal com loading
+    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar itens ocultos...</span></div>';
     document.body.appendChild(modal);
     modal.style.setProperty('display', 'flex', 'important');
     modal.style.zIndex = "9000000";
 
     try {
-        // Importação dinâmica para garantir acesso
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        
         const myUid = auth.currentUser.uid;
         let allHiddenItems = [];
 
-        // 1. BUSCAR PASTAS E NOTAS
+        // 1. BUSCAR PASTAS E NOTAS (Inclui Arquivos, Jornais, Aquários)
         const qPastas = query(
             collection(db, 'pastas'), 
             where('estado', '==', 'desativa'), 
@@ -16498,7 +16496,7 @@ async function showHiddenItemsModal() {
             });
         }
 
-        // 3. BUSCAR ÂNCORAS (NOVO CÓDIGO AQUI)
+        // 3. BUSCAR ÂNCORAS
         const qAncoras = query(
             collection(db, 'ancoras'),
             where('estado', '==', 'desativa'),
@@ -16509,66 +16507,118 @@ async function showHiddenItemsModal() {
             allHiddenItems.push({
                 id: doc.id,
                 ...doc.data(),
-                collectionName: 'ancoras', // Define a coleção correta para restaurar/apagar
-                tipo: 'ancora',            // Define o tipo para o ícone
+                collectionName: 'ancoras',
+                tipo: 'ancora',
                 isEntity: true
             });
         });
 
-        // Renderização
-        list.innerHTML = '';
-        
-        if (allHiddenItems.length === 0) {
-            list.innerHTML = '<li style="padding:15px; color:#888; text-align:center;">A reciclagem está vazia.</li>';
-            return;
-        }
+        // --- ORGANIZAÇÃO POR SECÇÕES ---
+        const groups = {
+            'pastas': { title: '📁 Pastas', items: [] },
+            'notas': { title: '📄 Notas', items: [] },
+            'jornais': { title: '📰 Jornais', items: [] },
+            'aquarios': { title: '🪸 Aquários', items: [] },
+            'arquivos': { title: '🗄️ Arquivos Pessoais', items: [] },
+            'partilhados': { title: '🤝 Arquivos Partilhados', items: [] },
+            'entidades': { title: '🔹 Entidades & Outros', items: [] }
+        };
 
+        // Distribui os itens pelos grupos corretos
         allHiddenItems.forEach(item => {
-            const li = document.createElement('li');
-            li.style.display = 'flex';
-            li.style.justifyContent = 'space-between';
-            li.style.alignItems = 'center';
-            li.style.padding = '10px';
-            li.style.borderBottom = '1px solid var(--border-color)';
-
-            // Ícone base
-            let icon = '📄';
-            if (item.collectionName === 'pastas') {
-                icon = item.tipo === 'pasta' ? '📁' : '📄';
+            if (item.isEntity) {
+                groups['entidades'].items.push(item);
             } else {
-                // Ícone para entidades
-                if (item.tipo === 'personagem') icon = '👤';
-                else if (item.tipo === 'local') icon = '📍';
-                else if (item.tipo === 'data') icon = '📅';
-                else if (item.tipo === 'ancora') icon = '⚓'; // Ícone da Âncora
-                else icon = '🔹';
+                switch (item.tipo) {
+                    case 'pasta': groups['pastas'].items.push(item); break;
+                    case 'nota': groups['notas'].items.push(item); break;
+                    case 'jornal': groups['jornais'].items.push(item); break;
+                    case 'aquario': groups['aquarios'].items.push(item); break;
+                    case 'arquivo': groups['arquivos'].items.push(item); break;
+                    case 'partilhado': groups['partilhados'].items.push(item); break;
+                    default: groups['notas'].items.push(item); break; // Fallback para notas antigas
+                }
             }
-
-            li.innerHTML = `
-                <div style="display:flex; flex-direction:column;">
-                    <span style="font-weight:500;">${icon} ${item.nome}</span>
-                    ${item.isEntity ? '<small style="color:#888; font-size:0.75em;">Entidade / Lista</small>' : ''}
-                </div>
-                <div style="display:flex; gap:10px;">
-                    <button class="modal-btn primary" 
-                            data-action="restore-universal" 
-                            data-id="${item.id}" 
-                            data-collection="${item.collectionName}"
-                            style="font-size:0.8em; padding:5px 10px;">Restaurar</button>
-                    
-                    <button class="modal-btn" 
-                            data-action="delete-universal" 
-                            data-id="${item.id}" 
-                            data-collection="${item.collectionName}"
-                            style="background-color:#c0392b; color:white; font-size:0.8em; padding:5px 10px; border:none; border-radius:5px; cursor:pointer;">Eliminar</button>
-                </div>
-            `;
-            list.appendChild(li);
         });
+
+        // RENDERIZAÇÃO NA TELA
+        list.innerHTML = '';
+        let hasContent = false;
+
+        // Função auxiliar interna para desenhar uma secção
+        const renderSection = (key) => {
+            const group = groups[key];
+            if (group.items.length === 0) return;
+
+            hasContent = true;
+
+            // Cabeçalho da Secção
+            const header = document.createElement('div');
+            header.style.cssText = "background: rgba(255,255,255,0.05); color: var(--accent-color); font-weight: bold; padding: 8px 10px; font-size: 0.85em; text-transform: uppercase; border-bottom: 1px solid var(--border-color); margin-top: 15px; border-radius: 4px;";
+            header.textContent = `${group.title} (${group.items.length})`;
+            list.appendChild(header);
+
+            // Itens da Secção
+            group.items.forEach(item => {
+                const li = document.createElement('li');
+                li.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:10px; border-bottom:1px solid var(--border-color);';
+
+                // Define o ícone correto para a lista
+                let icon = '';
+                if (item.isEntity) {
+                    if (item.tipo === 'personagem') icon = '👤';
+                    else if (item.tipo === 'local') icon = '📍';
+                    else if (item.tipo === 'data') icon = '📅';
+                    else if (item.tipo === 'ancora') icon = '⚓';
+                    else icon = '🔹';
+                } else {
+                    // Ícones para tipos principais já estão no cabeçalho, mas pomos aqui também
+                    if (item.tipo === 'aquario') icon = '🪸';
+                    else if (item.tipo === 'jornal') icon = '📰';
+                    else if (item.tipo === 'arquivo' || item.tipo === 'partilhado') icon = '🗄️';
+                    else if (item.tipo === 'pasta') icon = '📁';
+                    else icon = '📄';
+                }
+
+                li.innerHTML = `
+                    <div style="display:flex; flex-direction:column;">
+                        <span style="font-weight:500;">${icon} ${item.nome}</span>
+                        ${item.ultimaedicao ? `<small style="color:#666; font-size:0.7em;">Removido recentemente</small>` : ''}
+                    </div>
+                    <div style="display:flex; gap:10px;">
+                        <button class="modal-btn primary" 
+                                data-action="restore-universal" 
+                                data-id="${item.id}" 
+                                data-collection="${item.collectionName}"
+                                style="font-size:0.8em; padding:5px 10px;">Restaurar</button>
+                        
+                        <button class="modal-btn" 
+                                data-action="delete-universal" 
+                                data-id="${item.id}" 
+                                data-collection="${item.collectionName}"
+                                style="background-color:#c0392b; color:white; font-size:0.8em; padding:5px 10px; border:none; border-radius:5px; cursor:pointer;">Eliminar</button>
+                    </div>
+                `;
+                list.appendChild(li);
+            });
+        };
+
+        // Renderiza na ordem específica que pediu
+        renderSection('pastas');
+        renderSection('notas');
+        renderSection('jornais');
+        renderSection('aquarios');
+        renderSection('arquivos');
+        renderSection('partilhados');
+        renderSection('entidades');
+
+        if (!hasContent) {
+            list.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">A reciclagem está vazia.</li>';
+        }
 
     } catch (e) {
         console.error(e);
-        list.innerHTML = '<li>Erro ao carregar itens.</li>';
+        list.innerHTML = '<li style="color:red; padding:10px;">Erro ao carregar itens.</li>';
     }
 }
 
@@ -24138,6 +24188,8 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
         if (action === 'rename') {
             openRenameModal(itemContext.name, async (newName) => {
                 const collectionName = (itemContext.type === 'cosmos-parent') ? 'cosmos' : 'pastas';
+                const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+                
                 await updateDoc(doc(db, collectionName, itemContext.id), {
                     nome: newName,
                     ultimaedicao: serverTimestamp()
@@ -24164,6 +24216,8 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
         // --- AÇÃO: ALTERNAR PIN (📌) ---
         else if (action === 'toggle-pin') {
             const newState = !itemContext.isPinned;
+            const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            
             await updateDoc(doc(db, 'pastas', itemContext.id), {
                 isPinned: newState,
                 ultimaedicao: serverTimestamp()
@@ -24174,6 +24228,8 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
         else if (action === 'protect') {
             const newPass = await requestPassword('create', itemContext.id);
             if (newPass) {
+                const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+                
                 await updateDoc(doc(db, 'pastas', itemContext.id), {
                     passe: newPass,
                     ultimaedicao: serverTimestamp()
@@ -24198,6 +24254,8 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
         // --- AÇÃO: TORNAR SUPERPASTA (🗃️) ---
         else if (action === 'toggle-superfolder') {
             const newState = !itemContext.isSuperfolder;
+            const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            
             await updateDoc(doc(db, 'pastas', itemContext.id), {
                 superpasta: newState,
                 ultimaedicao: serverTimestamp()
@@ -24216,7 +24274,7 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
         }
 
         // --- AÇÃO: OCULTAR/MOVER PARA LIXEIRA (🗑️) ---
-       else if (action === 'hide') {
+        else if (action === 'hide') {
             const confirmed = await showConfirmation(
                 'Ocultar Item?', 
                 `Deseja mover "${itemContext.name}" para a lixeira?`
@@ -24225,25 +24283,47 @@ document.getElementById('context-menu').addEventListener('click', async (e) => {
             if (confirmed) {
                 const collectionName = (itemContext.type === 'cosmos-parent') ? 'cosmos' : 'pastas';
                 
-               // 1. Atualiza no Firebase (Oculta a nota)
-        await updateDoc(doc(db, collectionName, itemContext.id), { 
-            estado: 'desativa',
-            ultimaedicao: serverTimestamp()
-        });
+                // 1. REMOÇÃO VISUAL IMEDIATA (Para parecer rápido)
+                const domItem = document.querySelector(`.list-item[data-id="${itemContext.id}"]`);
+                if (domItem) {
+                    domItem.style.transition = "opacity 0.3s, transform 0.3s";
+                    domItem.style.opacity = "0";
+                    domItem.style.transform = "translateX(-20px)";
+                    setTimeout(() => domItem.remove(), 300);
+                }
 
-        // -----------------------------------------------------------
-        // 2. NOVA CHAMADA: Limpa os Puzzles associados
-        if (collectionName === 'pastas') {
-            // Executa em background (não precisa esperar para fechar o menu)
-            cleanUpHiddenNoteReferences(itemContext.id);
-        }
-        // -----------------------------------------------------------
+                // 2. ATUALIZA NO FIREBASE
+                const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+                await updateDoc(doc(db, collectionName, itemContext.id), { 
+                    estado: 'desativa',
+                    ultimaedicao: serverTimestamp()
+                });
 
-        // 3. Lógica visual existente...
-        if (selectedNoteId === itemContext.id) {
-            console.log("🙈 A fechar editor pois a nota ativa foi ocultada.");
-            resetEditor();
-        }
+                // 3. LIMPEZA DE REFERÊNCIAS (PUZZLES)
+                if (collectionName === 'pastas') {
+                    if(typeof cleanUpHiddenNoteReferences === 'function') {
+                        cleanUpHiddenNoteReferences(itemContext.id);
+                    }
+                }
+
+                // 4. ATUALIZA A LISTA CORRETA (RECARREGAMENTO DE DADOS)
+                if (currentViewMode === 'flash') {
+                     if(typeof loadFlashListLeftPanel === 'function') loadFlashListLeftPanel();
+                } else if (currentViewMode === 'shared') {
+                     // >>> ATENÇÃO: Recarrega a lista de partilha se estiver nesse modo <<<
+                     if(typeof loadSharedFilesRoot === 'function') {
+                         setTimeout(() => loadSharedFilesRoot(), 300); 
+                     }
+                } else {
+                     // Modo Local (Atualiza a navegação normal)
+                     updateNavigationView(true);
+                }
+
+                // 5. Se a nota oculta for a que está aberta no editor, fecha o editor
+                if (selectedNoteId === itemContext.id) {
+                    console.log("🙈 A fechar editor pois a nota ativa foi ocultada.");
+                    resetEditor();
+                }
             }
         }
 
