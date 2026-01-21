@@ -11972,9 +11972,21 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
         // ============================================================
         // 5. REVELAÇÃO DA UI (Só após processar a navegação)
         // ============================================================
-        setTimeout(() => {
+     setTimeout(() => {
             if (container) {
+                // 1. Torna o site visível
                 container.style.setProperty('display', 'flex', 'important');
+                
+                // 2. CORREÇÃO CRÍTICA: Recalcular alturas agora que é visível
+                // Procura todos os títulos de caixas e força o ajuste
+                const textareas = document.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
+                textareas.forEach(el => {
+                    if (el.tagName === 'TEXTAREA' && typeof autoResizeTitle === 'function') {
+                        // Reseta a altura para ler o scrollHeight real
+                        el.style.height = 'auto'; 
+                        el.style.height = el.scrollHeight + 'px';
+                    }
+                });
             }
             
             if (loader) {
@@ -11983,7 +11995,7 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
                     loader.remove();
                 }, 500);
             }
-        }, 800); 
+        }, 800);
     }
 });
 
@@ -14546,13 +14558,11 @@ function syncVisualSelection(selectedId) {
     window.nextSelectedId = null; 
     document.body.classList.remove('show-fab');
     
-    // Limpa ouvinte anterior para evitar fugas de memória
     if (unsubscribeCurrentNote) { 
         unsubscribeCurrentNote(); 
         unsubscribeCurrentNote = null; 
     }
     
-    // 1. Reset de Variáveis Locais
     window.currentNoteHybridMode = false;
     activeNoteAnchorsIds = [];
     
@@ -14562,14 +14572,13 @@ function syncVisualSelection(selectedId) {
     const editorArea = document.getElementById('editor-area');
     const zoomSelect = document.getElementById('editor-zoom'); 
     
-    // Limpeza Visual Imediata
     if (noteTitleInput) noteTitleInput.value = ""; 
     if (noteContentEditor) noteContentEditor.innerHTML = ""; 
     
     selectedNoteId = noteId;
     isClosingNote = false;
 
-    // Gestão de Paineis (Esconder Placeholder / Arquivo, Mostrar Editor)
+    // Gestão de Paineis
     document.getElementById('editor-placeholder').style.setProperty('display', 'none', 'important');
     document.getElementById('archive-area').style.setProperty('display', 'none', 'important');
     if (editorArea) editorArea.style.setProperty('display', 'flex', 'important');
@@ -14583,42 +14592,58 @@ function syncVisualSelection(selectedId) {
             if (!noteSnap.exists()) return;
             const data = noteSnap.data();
 
-            // --- ATUALIZAÇÃO DO TIPO GLOBAL ---
+            // ... (Lógica de tipos e modos mantém-se) ...
             window.currentNoteType = data.tipo; 
-
-            // Ativa a toolbar do Jornal (ícones de cima) se necessário
-            if (typeof toggleJournalToolbar === 'function') {
-                toggleJournalToolbar(window.currentNoteType === 'jornal');
-            }
-            
-            // 2. Definir Variáveis Críticas
+            if (typeof toggleJournalToolbar === 'function') toggleJournalToolbar(window.currentNoteType === 'jornal');
             window.currentNoteHybridMode = (data.isHybridMode === true);
             activeNoteAnchorsIds = Object.keys(data.ancorasSelecionadas || {});
-
-            // ============================================================
-            // 3. ATUALIZAÇÃO VISUAL DA PARTILHA (CADEADO)
-            // ============================================================
-            // Carrega estado para memória global
             currentNoteShareData = data.shareSettings || { shared: false, shareId: null };
-            
-            // Atualiza o ícone na toolbar (🔓 ou 🔐)
-            if (typeof updateNoteSharingButtonUI === 'function') {
-                updateNoteSharingButtonUI(currentNoteShareData.shared);
-            }
-            // ============================================================
+            if (typeof updateNoteSharingButtonUI === 'function') updateNoteSharingButtonUI(currentNoteShareData.shared);
 
-            // 4. Atualizar HTML (Título e Conteúdo)
-            const serverTitle = data.nome || '';
-            const serverContent = data.conteudo || '';
+            // --- DEBUG DE CONTEÚDO ---
+            console.group("📝 [DISPLAY NOTE] Análise de Títulos");
             
-            noteTitleInput.value = serverTitle;
+            const serverContent = data.conteudo || '';
+            console.log("1. HTML recebido do servidor (primeiros 200 chars):", serverContent.substring(0, 200));
+
+            // Injeta o HTML
             noteContentEditor.innerHTML = serverContent;
 
-            // 5. APLICAR ZOOM GUARDADO
+            // ANALISA OS INPUTS APÓS INJEÇÃO
+            const inputs = noteContentEditor.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
+            console.log(`2. Inputs encontrados no DOM: ${inputs.length}`);
+
+            inputs.forEach((input, index) => {
+                const attrValue = input.getAttribute('value');
+                const domValue = input.value;
+                const textContent = input.textContent;
+                const tagName = input.tagName;
+
+                console.log(`   - Input #${index} [${tagName}]:`);
+                console.log(`     > Atributo 'value' no HTML: "${attrValue}"`);
+                console.log(`     > Propriedade .value (O que se vê): "${domValue}"`);
+                console.log(`     > .textContent: "${textContent}"`);
+
+                // APLICAÇÃO DA CORREÇÃO
+                if (attrValue && !domValue) {
+                    console.warn(`     ⚠️ CORREÇÃO: Forçando valor "${attrValue}" para o ecrã.`);
+                    input.value = attrValue;
+                    if (tagName === 'TEXTAREA') input.textContent = attrValue;
+                    
+                    // Verifica se resultou
+                    console.log(`     ✅ Novo valor visível: "${input.value}"`);
+                }
+                
+                // Ajuste de altura
+                if (tagName === 'TEXTAREA' && typeof autoResizeTitle === 'function') {
+                    autoResizeTitle(input);
+                }
+            });
+            console.groupEnd();
+
+            // Resto da função (Zoom, scripts, etc...)
             const savedZoom = data.zoomLevel || '100%'; 
-            
             if (zoomSelect) zoomSelect.value = savedZoom;
-            
             if (noteContentEditor) {
                 noteContentEditor.style.fontSize = savedZoom;
                 if (!savedZoom.includes('%')) { 
@@ -14629,28 +14654,17 @@ function syncVisualSelection(selectedId) {
                 }
             }
 
-            // Scripts de ajuste pós-carregamento
-            setTimeout(() => {
-                if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
-            }, 100);
-
+            setTimeout(() => { if (typeof refreshAllCalendars === 'function') refreshAllCalendars(); }, 100);
             if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
             if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
 
-            // 6. Forçar Router e Atualizações Visuais
             setTimeout(() => {
                 if (typeof refreshMiddlePanelTabIcon === 'function') refreshMiddlePanelTabIcon();
                 if (typeof initToolbarDropdowns === 'function') initToolbarDropdowns();
-
                 const tabsBar = document.querySelector('.middle-bottom-tabs');
                 if (tabsBar) tabsBar.style.display = 'flex';
-
                 if (typeof updateMiddlePanelViews === 'function') updateMiddlePanelViews(); 
-                
-                if (searchTerm && typeof scrollToAndHighlightText === 'function') {
-                    scrollToAndHighlightText(searchTerm);
-                }
-
+                if (searchTerm && typeof scrollToAndHighlightText === 'function') scrollToAndHighlightText(searchTerm);
                 updateSaveStatus('saved');
             }, 100);
         });
@@ -14658,7 +14672,6 @@ function syncVisualSelection(selectedId) {
         console.error("Erro ao carregar nota:", error); 
     }
     
-    // Força a transição de ecrã no Mobile
     if (window.innerWidth <= 768) {
         document.body.classList.remove('mobile-view-middle');
         document.body.classList.add('mobile-view-editor');
