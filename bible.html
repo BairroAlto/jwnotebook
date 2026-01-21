@@ -635,21 +635,27 @@ input:checked + .slider:before { transform: translateX(16px); }
 }
 
 /* --- ESTILO DO SUBLINHADO (PICOTADO) --- */
- .highlight-picotado {
-        border-bottom: none !important;
-        text-decoration: none !important;
-        display: inline;
-        cursor: pointer; /* Mantém o cursor de mão para indicar que é clicável */
-        
-        /* CORREÇÃO OBRIGATÓRIA PARA SELECIONAR */
-        -webkit-user-select: text !important;
-        -moz-user-select: text !important;
-        -ms-user-select: text !important;
-        user-select: text !important;
-        
-        /* Garante que o clique não bloqueia a seleção */
-        pointer-events: auto; 
-    }
+.highlight-picotado {
+    /* O gradiente pontilhado que já tínhamos */
+    background-image: linear-gradient(to right, var(--accent-color) 50%, transparent 50%); /* Cor será injetada via JS */
+    background-position: bottom;
+    background-size: 6px 3px;
+    background-repeat: repeat-x;
+    padding-bottom: 2px;
+    
+    /* CORREÇÃO PARA MOBILE E QUEBRA DE LINHAS */
+    /* Isto garante que o picotado continua perfeito se o texto mudar de linha */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    
+    text-decoration: none !important;
+    display: inline;
+    cursor: pointer;
+    
+    /* Garante que a seleção nativa funciona por cima */
+    position: relative;
+    z-index: 1;
+}
 
     /* Cor específica para o Pentateuco (Génesis a Deuteronómio) */
     .tile.tile-pentateuco {
@@ -1194,6 +1200,58 @@ input:checked + .slider:before { transform: translateX(16px); }
         overflow-y: auto !important;
         -webkit-overflow-scrolling: touch;
     }
+}
+
+/* ============================================================
+   BARRA DE SELEÇÃO DE TEXTO (AJUSTE MOBILE)
+   ============================================================ */
+
+/* Estilo Base (PC - Flutuante) */
+#selection-toolbar {
+    position: absolute;
+    z-index: 9999;
+    background-color: #252528;
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 5px;
+    display: none; 
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    gap: 10px;
+    align-items: center;
+}
+
+/* Estilo Mobile (Fixo no Fundo) */
+@media (max-width: 768px) {
+    #selection-toolbar {
+        position: fixed !important; /* Cola ao ecrã */
+        top: auto !important;       /* Ignora o cálculo de topo do JS */
+        bottom: 20px !important;    /* Fica no fundo */
+        left: 50% !important;       /* Centrado horizontalmente */
+        transform: translateX(-50%) !important;
+        
+        width: 90%;                 /* Largura confortável */
+        max-width: 350px;
+        justify-content: center;
+        
+        background-color: #1a1a1d !important;
+        border: 1px solid var(--accent-color);
+        box-shadow: 0 5px 20px rgba(0,0,0,0.8);
+        padding: 10px;
+        
+        /* Animação de entrada */
+        animation: slideUp 0.3s ease-out;
+    }
+    
+    /* Botões maiores no telemóvel para facilitar o toque */
+    #selection-toolbar button {
+        padding: 10px 15px !important;
+        font-size: 1rem !important;
+    }
+}
+
+@keyframes slideUp {
+    from { transform: translate(-50%, 100%); opacity: 0; }
+    to { transform: translate(-50%, 0); opacity: 1; }
 }
 
 </style>
@@ -4558,32 +4616,40 @@ window.refreshVisualHighlights = () => {
 function calculateVerseIntersection(verseText, fullSelection) {
     if (!verseText || !fullSelection) return null;
     
-    // Limpeza básica para maximizar compatibilidade
-    const vText = verseText.trim();
-    const sText = fullSelection.trim();
+    // Normaliza ambos para garantir que espaços e quebras de linha não estragam a comparação
+    const vText = verseText.replace(/\s+/g, ' ').trim();
+    const sText = fullSelection.replace(/\s+/g, ' ').trim();
 
-    // 1. Caso Perfeito: A seleção cabe toda neste versículo
+    // 1. A seleção cabe toda neste versículo?
     if (vText.includes(sText)) return sText;
 
-    // 2. O versículo está todo dentro da seleção (selecionou tudo e mais um pouco)
+    // 2. O versículo está todo dentro da seleção?
     if (sText.includes(vText)) return vText;
 
-    // 3. A seleção começa neste versículo e continua no próximo
-    // Procuramos o maior pedaço do INÍCIO da seleção que exista neste versículo
-    // (Otimizado para textos bíblicos curtos)
-    for (let i = sText.length; i > 5; i--) { // >5 para evitar coincidir palavras minúsculas como "e"
+    // 3. Cruzamento parcial (Início ou Fim)
+    // Estratégia de Janela Deslizante Simplificada para performance
+    
+    // A. Tenta encontrar o final da seleção no início do versículo (Vem do verso anterior)
+    // Ex: Sel: "...fim do 4. Inicio do 5..." -> Verso 5 começa com "Inicio do 5"
+    for (let i = sText.length; i > 5; i--) {
+        const chunk = sText.substring(sText.length - i);
+        if (vText.startsWith(chunk)) return chunk;
+    }
+
+    // B. Tenta encontrar o início da seleção no final do versículo (Vai para o verso seguinte)
+    for (let i = sText.length; i > 5; i--) {
+        const chunk = sText.substring(0, i);
+        if (vText.endsWith(chunk)) return chunk;
+    }
+    
+    // C. Fallback: Procura qualquer pedaço grande (ex: meio do verso para meio da seleção)
+    // Se a seleção for muito grande, isto ajuda a encontrar o pedaço certo
+    for (let i = sText.length; i > 10; i--) {
         const chunk = sText.substring(0, i);
         if (vText.includes(chunk)) return chunk;
     }
 
-    // 4. A seleção veio do anterior e termina neste versículo
-    // Procuramos o maior pedaço do FIM da seleção que exista neste versículo
-    for (let i = 0; i < sText.length - 5; i++) {
-        const chunk = sText.substring(i);
-        if (vText.includes(chunk)) return chunk;
-    }
-
-    return null; // Não encontrou interseção válida
+    return null; 
 }
 
 
@@ -5486,6 +5552,84 @@ window.closeSidePanel = () => {
     if (typeof highlightAnchorInText === 'function') highlightAnchorInText(null);
     if (originalClose) originalClose(); // Chama limpeza original se houver
 };
+
+// REFORÇO PARA MOBILE: Deteção de fim de seleção tátil
+document.addEventListener('touchend', () => {
+    // Pequeno delay para deixar o sistema nativo processar a seleção
+    setTimeout(() => {
+        const selection = window.getSelection();
+        
+        // Se houver texto selecionado
+        if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
+            
+            // 1. Recalcula os versículos envolvidos
+            const range = selection.getRangeAt(0);
+            identifyVersesInSelection(range); // A sua função existente
+            
+            // 2. Força a barra a aparecer
+            const toolbar = document.getElementById('selection-toolbar');
+            const btnCopy = document.getElementById('btn-copy-selection');
+            const btnNote = document.getElementById('btn-note-selection');
+
+            if (toolbar) {
+                // Atualiza o texto do botão para mostrar quantos versículos apanhou (Opcional, mas útil)
+                if (currentSelectionVerses.length > 1 && btnNote) {
+                    btnNote.innerHTML = `✍ Nota (${currentSelectionVerses.length} vs)`;
+                } else if (btnNote) {
+                    btnNote.innerHTML = `✍ Nota Flash`;
+                }
+
+                // Mostra a barra (o CSS @media trata da posição)
+                toolbar.style.display = 'flex';
+                toolbar.style.opacity = '1';
+            }
+        }
+    }, 100);
+});
+
+
+// Adicione esta função auxiliar
+function normalizeSelectionText(text) {
+    if (!text) return "";
+    // Substitui quebras de linha e múltiplos espaços por um espaço simples
+    return text.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// ATUALIZE o listener 'touchend' que criámos anteriormente:
+document.addEventListener('touchend', () => {
+    setTimeout(() => {
+        const selection = window.getSelection();
+        
+        if (selection && !selection.isCollapsed) {
+            const rawText = selection.toString();
+            
+            // 1. NORMALIZAÇÃO CRÍTICA PARA MULTI-VERSÍCULOS
+            // Isto une "Verso 4" + "Verso 5" num único fio de texto limpo
+            currentSelectionText = normalizeSelectionText(rawText);
+            
+            const range = selection.getRangeAt(0);
+            identifyVersesInSelection(range);
+
+            const toolbar = document.getElementById('selection-toolbar');
+            const btnNote = document.getElementById('btn-note-selection');
+
+            if (toolbar) {
+                if (currentSelectionVerses.length > 1 && btnNote) {
+                    // Feedback visual: Mostra que apanhou vários
+                    btnNote.innerHTML = `✍ Nota (${currentSelectionVerses.length} vs)`;
+                } else if (btnNote) {
+                    btnNote.innerHTML = `✍ Nota Flash`;
+                }
+                
+                // Posição para mobile (Fundo do ecrã)
+                if (window.innerWidth <= 768) {
+                     toolbar.style.display = 'flex'; // Flex para alinhar botões
+                }
+            }
+        }
+    }, 100);
+});
+
     </script>
 </body>
 </html>
