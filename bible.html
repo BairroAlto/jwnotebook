@@ -5215,13 +5215,13 @@ function highlightAnchorInText(term) {
         parent.removeChild(span);
     });
 
-    // Se não houver termo novo (apenas limpeza), normaliza e sai
-    if (!term) {
-        root.normalize(); // Junta nós de texto fragmentados
-        return;
-    }
+    // Normaliza o DOM após remover os spans para juntar os nós de texto partidos
+    root.normalize();
 
-    // 2. APLICAÇÃO: Usa TreeWalker para encontrar texto sem quebrar HTML
+    // Se não houver termo novo (apenas limpeza), sai
+    if (!term) return;
+
+    // 2. APLICAÇÃO: Usa TreeWalker
     const walker = document.createTreeWalker(
         root, 
         NodeFilter.SHOW_TEXT, 
@@ -5229,34 +5229,43 @@ function highlightAnchorInText(term) {
         false
     );
 
-    const regex = new RegExp(`\\b(${escapeRegExp(term)})\\b`, 'gi');
-    const matches = [];
+    // --- A MAGIA DA CORREÇÃO ---
+    // Em vez de \b, usamos Lookbehind (?<!) e Lookahead (?!).
+    // Dizemos: "Encontra a palavra, DESDE QUE o que está atrás não seja uma letra
+    // e o que está à frente também não seja uma letra (incluindo acentos)".
+    
+    // Intervalo de letras: \w (letras normais) + \u00C0-\u00FF (Acentos Latim-1: á, é, í, ó, ú, ç, ã, etc.)
+    const letterPattern = '[\\w\\u00C0-\\u00FF]';
+    
+    const regex = new RegExp(`(?<!${letterPattern})(${escapeRegExp(term)})(?!${letterPattern})`, 'gi');
+    
+    const nodesToProcess = [];
 
-    // Primeiro encontramos todos os nós de texto com a palavra
+    // Primeiro recolhemos todos os nós (para não baralhar o walker enquanto editamos)
     while (walker.nextNode()) {
         const node = walker.currentNode;
-        // Ignora se estiver dentro de tags de script ou style
+        // Ignora scripts e estilos
         if (node.parentNode.tagName === 'SCRIPT' || node.parentNode.tagName === 'STYLE') continue;
+        // Ignora se já estiver dentro de um highlight (segurança)
+        if (node.parentNode.classList.contains('anchor-highlight')) continue;
 
         if (node.nodeValue && regex.test(node.nodeValue)) {
-            matches.push(node);
+            nodesToProcess.push(node);
         }
     }
 
-    // Agora processamos os matches (de trás para a frente para não perder referências)
-    // Mas como vamos usar splitText, a ordem não é crítica se fizermos loop corretamente
-    matches.forEach(textNode => {
+    // Processa os nós encontrados
+    nodesToProcess.forEach(textNode => {
         const text = textNode.nodeValue;
         let match;
         
-        // Reset da regex
+        // Reset do índice da regex
         regex.lastIndex = 0;
         
-        // Como o texto pode ter a palavra várias vezes ("David disse a David"),
-        // precisamos de um loop, mas o splitText complica loops no mesmo nó.
-        // Simplificação: vamos focar na primeira ocorrência de cada nó de texto.
-        // Se houver muitas ocorrências no mesmo nó, o TreeWalker apanharia na próxima passagem se fosse recursivo.
-        // Aqui assumimos uma substituição simples por nó.
+        // Executa a regex. Nota: processamos apenas a primeira ocorrência por nó de texto 
+        // para manter a estabilidade do DOM. Se a palavra aparecer 2x no mesmo versículo,
+        // pode ser necessário recarregar a função ou fazer um loop while complexo.
+        // Para leitura bíblica, este método é geralmente suficiente e muito rápido.
         
         if ((match = regex.exec(text)) !== null) {
             const matchIndex = match.index;
