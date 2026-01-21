@@ -9439,6 +9439,59 @@ a.silent-link:hover {
     border: 1px solid var(--accent-color) !important; /* Garante que a borda existe */
 }
 
+/* Botão de Informação (i) no rodapé do Post */
+.post-info-btn {
+    background: transparent;
+    border: 1px solid var(--text-muted-color);
+    color: var(--text-muted-color);
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: serif; /* Estilo clássico para o 'i' */
+    transition: all 0.2s ease;
+}
+
+.post-info-btn:hover {
+    color: var(--accent-color);
+    border-color: var(--accent-color);
+    background-color: rgba(74, 144, 226, 0.1);
+}
+
+.info-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.95em;
+    color: var(--text-color);
+    padding: 8px;
+    background-color: var(--bg-color);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+}
+
+.info-icon {
+    font-size: 1.2em;
+    width: 24px;
+    text-align: center;
+}
+
+.info-data {
+    display: flex;
+    flex-direction: column;
+}
+
+.info-label {
+    font-size: 0.75em;
+    color: var(--text-muted-color);
+    text-transform: uppercase;
+    font-weight: bold;
+}
+
 </style>
 
 
@@ -11405,6 +11458,23 @@ a.silent-link:hover {
     </div>
 </div>
 
+<!-- MODAL DE DETALHES DO POST -->
+<div id="post-info-modal" class="modal-overlay" style="z-index: 20000;">
+    <div class="modal-content" style="max-width: 350px;">
+        <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-bottom: 15px;">
+            ℹ️ Detalhes do Post
+        </h3>
+        
+        <div id="p-info-grid" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
+            <!-- O conteúdo será injetado aqui via JS -->
+        </div>
+
+        <div class="modal-actions" style="justify-content: center;">
+            <button class="modal-btn primary" onclick="document.getElementById('post-info-modal').style.display='none'" style="width: 100%;">OK</button>
+        </div>
+    </div>
+</div>
+
 
 </body>
 
@@ -11737,7 +11807,7 @@ window.activeMiniNoteElement = null;
 window.activeWrapperForColor = null;
 window.htmlToAppend = "";
 window.activeStorePopups = window.activeStorePopups || [];
-
+window.livePostDraft = null;
 
 
 
@@ -12080,40 +12150,88 @@ function checkInitialConnection() {
  * @param {function} navigationAction A função a ser executada se a navegação for confirmada.
  */
 async function navigateWithUnsavedCheck(navigationAction) {
-    // Verifica se há algo por guardar
-    if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
-        const savingModal = document.getElementById('forcing-save-modal');
+    // 1. DETEÇÃO AGRESSIVA
+    // Verifica se há ID ativo OU se há rascunho na memória (RAM)
+    const draftId = window.livePostDraft ? window.livePostDraft.id : null;
+    const editingId = activeEditingPostId || window.activeEditingPostId || draftId;
+
+    console.log(`🚦 [PORTEIRO] Verificação: ID=${editingId} | Rascunho na RAM? ${!!window.livePostDraft}`);
+
+    if (editingId) {
+        console.group("🛑 [AUTO-SAVE] Saída detetada. A gravar...");
         
-        if (savingModal) {
-            console.log("⏳ Mostrando painel de gravação forçada...");
-            // MOVE PARA O TOPO E FORÇA VISIBILIDADE
-            document.body.appendChild(savingModal);
-            savingModal.style.setProperty('display', 'flex', 'important');
-            savingModal.style.zIndex = "9999999"; // O nível mais alto
-            savingModal.style.opacity = "1";
-            savingModal.style.visibility = "visible";
+        const statusEl = document.getElementById('archive-save-status');
+        if(statusEl) statusEl.textContent = "A gravar e sair...";
+
+        let capturedTitle = null;
+        let capturedContent = null;
+        let source = "";
+
+        // TENTATIVA 1: LER DA MEMÓRIA (Prioridade Máxima para evitar perdas)
+        if (window.livePostDraft && window.livePostDraft.id === editingId) {
+            source = "RAM (Memória Segura)";
+            capturedTitle = window.livePostDraft.title;
+            capturedContent = window.livePostDraft.content;
+        } 
+        // TENTATIVA 2: LER DO ECRÃ
+        else {
+            const editorEl = document.getElementById(`editor-${editingId}`);
+            const container = document.querySelector('.post-edit-container');
+            if (editorEl && container) {
+                source = "DOM (Ecrã)";
+                capturedContent = editorEl.innerHTML;
+                capturedTitle = container.querySelector('.post-title-input')?.value;
+            }
         }
+
+        console.log(`📊 Fonte dos dados: ${source}`);
 
         try {
-            // Executa a gravação e ESPERA (await) que o Firebase confirme
-            await saveNote(true); 
-
-            // Esconde o painel após o sucesso
-            if (savingModal) savingModal.style.display = 'none';
+            // Se tivermos conteúdo, forçamos a gravação
+            if (capturedContent !== null) {
+                await window.saveArchivePost(editingId, capturedContent, capturedTitle);
+            } else {
+                console.warn("⚠️ Dados não encontrados. Tentando gravação padrão...");
+                await window.saveArchivePost(editingId);
+            }
             
-            // Segue com a navegação que o utilizador queria fazer
-            navigationAction();
+            // LIMPEZA CRÍTICA
+            window.livePostDraft = null;
+            activeEditingPostId = null;
+            window.activeEditingPostId = null;
+            
+            console.log("✅ Gravação concluída. A permitir navegação...");
+            console.groupEnd();
+            
+            // Só agora permite mudar de ficheiro
+            if (navigationAction) navigationAction();
 
+        } catch (e) {
+            console.error("Erro fatal ao gravar:", e);
+            if(confirm("Erro ao gravar automaticamente. Sair e perder alterações?")) {
+                window.livePostDraft = null;
+                activeEditingPostId = null;
+                if (navigationAction) navigationAction();
+            }
+        }
+        return; 
+    }
+
+    // --- CÓDIGO PARA NOTAS NORMAIS (Mantém-se) ---
+    if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
+        // Se for nota normal (não arquivo)
+        try {
+            await saveNote(true); 
+            if (navigationAction) navigationAction();
         } catch (error) {
-            console.error("❌ Erro na gravação forçada:", error);
-            if (savingModal) savingModal.style.display = 'none';
-            alert("Não foi possível guardar as alterações. Verifique a sua ligação.");
+            if(confirm("Erro de conexão. Sair sem gravar?")) if (navigationAction) navigationAction();
         }
     } else {
-        // Se já estava tudo guardado, apenas navega
-        navigationAction();
+        // Nada para gravar, segue viagem
+        if (navigationAction) navigationAction();
     }
 }
+
 
 // --- 1. FUNÇÕES DE ABERTURA E RENDERIZAÇÃO (MODAL SELEÇÃO) ---
 
@@ -21560,98 +21678,80 @@ window.addEventListener('beforeunload', (event) => {
 
 
 // LISTENER ÚNICO DA COLUNA 2 (Unifica Logs, Navegação e Mobile)
-middlePanelList.addEventListener('click', async (e) => {
-    // 1. Identifica o item clicado
+middlePanelList.addEventListener('click', (e) => {
+    // 1. Identifica o item
     const item = e.target.closest('.list-item');
     if (!item) return;
 
-    // 2. Se clicou nos "três pontos", abre o menu e pára
-    const itemMenuBtn = e.target.closest('.item-menu-btn');
-    if (itemMenuBtn) {
+    // Ignora se for clique no menu (3 pontos)
+    if (e.target.closest('.item-menu-btn')) {
         showContextMenu(e);
         return;
     }
 
-    // 3. Captura dados
+    // 2. Prepara os dados do destino
     const id = item.getAttribute('data-id');
     const type = item.getAttribute('data-type');
     const name = item.getAttribute('data-name');
+    
+    console.log(`🖱️ [CLIQUE] Utilizador quer ir para: ${name} (${type})`);
 
-    // 4. LIMPEZA VISUAL FORÇADA (O Segredo da Correção)
-    // Removemos as classes de seleção de TODOS os itens da lista manualmente agora.
-    // Isto garante que o destaque muda instantaneamente, sem esperar pela lógica do servidor.
-    const allItems = middlePanelList.querySelectorAll('.list-item');
-    allItems.forEach(el => {
-        el.classList.remove('selected', 'selected-red');
-        el.style.backgroundColor = ""; // Limpa estilos inline se houver
-    });
+    // 3. Define a "Missão" (O que fazer DEPOIS de gravar)
+    const runNavigation = async () => {
+        console.log("🚀 [NAVEGAÇÃO] Autorizada. A trocar de ficheiro...");
 
-    // 5. APLICA O NOVO DESTAQUE IMEDIATAMENTE
-    const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
-    item.classList.add(selectionClass);
+        // A. Limpeza Visual
+        document.querySelectorAll('#file-list .list-item').forEach(el => {
+            el.classList.remove('selected', 'selected-red');
+        });
+        document.querySelectorAll('#left-panel-list .list-item').forEach(el => {
+            el.classList.remove('selected');
+        });
 
-    // 6. Define a variável de transição (para o onSnapshot não reverter a cor)
-    window.nextSelectedId = id; 
+        // B. Aplica Destaque Novo
+        const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+        item.classList.add(selectionClass);
+        window.nextSelectedId = id; 
 
-    // 7. Verificação de Proteção (Senha)
-    const canAccess = await checkItemProtection(id, name);
-    if (!canAccess) {
-        window.nextSelectedId = null; // Se falhar senha, cancela transição
-        item.classList.remove(selectionClass); // Remove o destaque
-        return;
-    }
+        // C. Verifica Senha (se houver)
+        const canAccess = await checkItemProtection(id, name);
+        if (!canAccess) {
+            window.nextSelectedId = null;
+            item.classList.remove(selectionClass);
+            return;
+        }
 
-    // 8. Definição da Ação de Navegação
-    const action = async () => {
-
-        // --- CASO A: NAVEGAR (PASTAS) ---
+        // D. Executa a Abertura Real
         if (type === 'pasta' || type === 'agregacao') {
             if (item.dataset.superpasta === "true") {
                 window.location.href = `note.html?rootId=${id}`;
-                return;
+            } else {
+                navigationStack.push({ id, name });
+                updateNavigationView(true);
+                if (window.innerWidth <= 768) document.body.classList.add('mobile-view-middle');
             }
-            navigationStack.push({ id, name });
-            updateNavigationView(true);
-            
-            if (window.innerWidth <= 768) {
-                document.body.classList.add('mobile-view-middle');
-            }
-        }
-
-        // --- CASO B: ABRIR CONTEÚDO ---
+        } 
         else if (['nota', 'arquivo', 'partilhado', 'jornal', 'aquario'].includes(type)) {
+            if (window.innerWidth <= 768) document.body.classList.add('mobile-view-editor');
 
-            // Mobile: Salta para o editor
-            if (window.innerWidth <= 768) {
-                document.body.classList.add('mobile-view-editor');
-            }
-
-            // Aquário
             if (type === 'aquario') {
-                try {
-                    const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-                    const docRef = doc(db, 'pastas', id);
-                    const snap = await getDoc(docRef);
-                    if (snap.exists()) {
-                        window.openAquariumEnvironment(id, { id: snap.id, ...snap.data() });
-                    }
-                } catch (err) { console.error(err); }
-            }
-            
-            // Notas e Jornais
+                const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+                const snap = await getDoc(doc(db, 'pastas', id));
+                if (snap.exists()) window.openAquariumEnvironment(id, { id: snap.id, ...snap.data() });
+            } 
             else if (type === 'nota' || type === 'jornal') {
                 displayNote(id, item);
-            }
-            
-            // Arquivos
+            } 
             else {
+                // ARQUIVO/PARTILHA
                 displayArchive(id, { id, nome: name, tipo: type }, item);
             }
         }
     };
 
-    // Executa a ação (com verificação de gravação pendente)
-    navigateWithUnsavedCheck(action);
+    // 4. CHAMA O PORTEIRO (E passa a missão)
+    // O porteiro vai ver se há rascunho na RAM. Se houver, grava primeiro.
+    navigateWithUnsavedCheck(runNavigation);
 });
 
 
@@ -27584,6 +27684,8 @@ function createPostElement(post) {
 
 // 5. Renderizar Modo Edição
 function renderPostEditMode(container, post) {
+    console.group(`✏️ [EDIÇÃO] Iniciando modo edição para Post: ${post.id}`);
+    
     const textToolbarHTML = `
         <div class="post-toolbar" style="margin-bottom:5px;">
             <button onclick="execCmdOnPost('bold')"><b>B</b></button>
@@ -27598,48 +27700,65 @@ function renderPostEditMode(container, post) {
     const isContainerEditable = isEntity ? "false" : "true";
     const editorStyle = isEntity ? "border:none; background:transparent; padding:0;" : "";
 
-   container.innerHTML = `
+    container.innerHTML = `
     <div class="post-edit-container">
         ${genericTitleInput}
         ${!isEntity ? textToolbarHTML : ''} 
-        
         <div class="post-editor-content" contenteditable="${isContainerEditable}" id="editor-${post.id}" style="${editorStyle}">
             ${post.content}
         </div>
-        
-        <!-- CONTENTOR COM A NOVA CLASSE post-edit-actions -->
         <div class="post-edit-actions">
-           <button class="modal-btn" style="background-color: var(--sidebar-color); color: var(--text-color);" 
-        onclick="window.openGavetaSelection('${post.id}'); event.stopPropagation();">📁 Gaveta</button>
-            
-            <button class="modal-btn" style="background-color:#c0392b; color:white;" 
-                    onclick="deleteArchivePost('${post.id}')">Eliminar</button>
-            
-            <button class="modal-btn secondary" 
-                    onclick="cancelArchiveEdit('${post.id}')">Cancelar</button>
-            
-            <button class="modal-btn primary" 
-                    onclick="saveArchivePost('${post.id}')">Salvar</button>
+           <button class="modal-btn" style="background-color: var(--sidebar-color); color: var(--text-color);" onclick="window.openGavetaSelection('${post.id}'); event.stopPropagation();">📁 Gaveta</button>
+            <button class="modal-btn" style="background-color:#c0392b; color:white;" onclick="deleteArchivePost('${post.id}')">Eliminar</button>
+            <button class="modal-btn secondary" onclick="cancelArchiveEdit('${post.id}')">Cancelar</button>
+            <button class="modal-btn primary" onclick="saveArchivePost('${post.id}')">Salvar</button>
         </div>
-    </div>
-`;
+    </div>`;
     
-    // PÓS-PROCESSAMENTO (IGUAL)
     setTimeout(() => {
         const editorDiv = container.querySelector('.post-editor-content');
         const titleInput = container.querySelector('.post-title-input');
 
-        const startAutoSaveTimer = () => {
+        // 1. INICIALIZAR O RASCUNHO VIVO
+        window.livePostDraft = {
+            id: post.id,
+            title: titleInput.value,
+            content: editorDiv.innerHTML
+        };
+        console.log("🧠 [RAM] Rascunho inicializado na memória.");
+
+        // 2. FUNÇÃO DE ATUALIZAÇÃO CONTÍNUA
+        const updateLiveDraft = () => {
+            // Sincroniza inputs internos
+            if (isEntity) {
+                 editorDiv.querySelectorAll('.mini-note-title-input').forEach(t => {
+                    if (t.tagName === 'TEXTAREA') t.textContent = t.value;
+                    else t.setAttribute('value', t.value);
+                });
+            }
+
+            // Guarda na variável global
+            window.livePostDraft = {
+                id: post.id,
+                title: titleInput.value,
+                content: editorDiv.innerHTML
+            };
+
+            // LOG DETALHADO DE ESCRITA
+            console.log(`✍️ [ESCRITA] Atualizando RAM... | Título: "${titleInput.value}" | Tamanho HTML: ${editorDiv.innerHTML.length} chars`);
+
             const statusEl = document.getElementById('archive-save-status');
-            if(statusEl) statusEl.textContent = "por guardar...";
+            if(statusEl) {
+                statusEl.textContent = "a escrever...";
+                statusEl.style.opacity = "0.7";
+            }
             currentSaveStatus = 'unsaved'; 
-            clearTimeout(archiveAutoSaveTimer);
-            archiveAutoSaveTimer = setTimeout(() => { saveCurrentPostInBackground(); }, 180000);
         };
 
-        if (editorDiv) editorDiv.addEventListener('input', startAutoSaveTimer);
-        if (titleInput) titleInput.addEventListener('input', startAutoSaveTimer);
+        if (editorDiv) editorDiv.addEventListener('input', updateLiveDraft);
+        if (titleInput) titleInput.addEventListener('input', updateLiveDraft);
 
+        // Foco e Configuração
         if (isEntity) {
             const toolbar = editorDiv.querySelector('.mini-note-toolbar');
             if (toolbar) toolbar.setAttribute('contenteditable', 'false');
@@ -27649,14 +27768,13 @@ function renderPostEditMode(container, post) {
             if (internalInput) {
                 internalInput.removeAttribute('readonly');
                 if(!internalInput.value) internalInput.focus();
-                internalInput.addEventListener('input', startAutoSaveTimer);
+                internalInput.addEventListener('input', updateLiveDraft);
             }
-       if (!post.title && titleInput) {
-                titleInput.focus();
-            } else if (editorDiv) {
-                editorDiv.focus();
-            }
+        } else {
+            if (!post.title && titleInput) titleInput.focus();
+            else if (editorDiv) editorDiv.focus();
         }
+        console.groupEnd();
     }, 50);
 }
 
@@ -27815,56 +27933,65 @@ window.editArchivePost = async (postId) => {
 };
 
 // F. Salvar Post (Fecha edição)
-window.saveArchivePost = async (postId) => {
-    console.log(`💾 [SAVE] Processando: ${postId}`);
-    
-    // Força a limpeza do estado de edição global
-    activeEditingPostId = null;
-    window.activeEditingPostId = null;
+window.saveArchivePost = async (postId, contentOverride = null, titleOverride = null) => {
+    console.group(`💾 [GRAVADOR] A processar ID: ${postId}`);
 
+    // Verifica se recebemos dados diretos (do Porteiro)
+    const hasOverride = (contentOverride !== null);
     const postDiv = document.getElementById(`post-${postId}`);
     
-    // Se o post não estiver no DOM, não podemos ler o texto, mas DEVEMOS desbloquear
-    if (!postDiv) {
-        console.warn(`"⚠️ [SAVE] Post ${postId} já não está no DOM. Apenas libertando bloqueio.`);
-        await unlockPost(postId);
-        return;
-    }
+    // 1. TENTA LER DO ECRÃ (Se for um clique no botão "Salvar" normal)
+    if (!hasOverride && postDiv) {
+        console.log("🖱️ [MODO MANUAL] Clique no botão Salvar detetado. Lendo do Ecrã...");
+        const titleInputGeneric = postDiv.querySelector('.post-title-input');
+        const contentEditor = postDiv.querySelector('.post-editor-content');
 
-    const titleInputGeneric = postDiv.querySelector('.post-title-input');
-    const contentEditor = postDiv.querySelector('.post-editor-content');
-
-    if (contentEditor && titleInputGeneric) {
-        const postIndex = currentArchiveData.posts.findIndex(p => p.id === postId);
-        if (postIndex > -1) {
-            // Sincronização de inputs internos
+        if (contentEditor && titleInputGeneric) {
             contentEditor.querySelectorAll('.mini-note-title-input').forEach(t => {
                 if (t.tagName === 'TEXTAREA') t.textContent = t.value;
                 else t.setAttribute('value', t.value);
             });
 
-            const finalTitle = titleInputGeneric.value.trim() || "Sem Título";
-            
-            // ATUALIZAÇÃO DOS DADOS NA MEMÓRIA
-            currentArchiveData.posts[postIndex].title = finalTitle;
-            currentArchiveData.posts[postIndex].content = contentEditor.innerHTML;
+            const postIndex = currentArchiveData.posts.findIndex(p => p.id === postId);
+            if (postIndex > -1) {
+                currentArchiveData.posts[postIndex].title = titleInputGeneric.value.trim() || "Sem Título";
+                currentArchiveData.posts[postIndex].content = contentEditor.innerHTML;
+                currentArchiveData.posts[postIndex].updatedAt = Date.now();
+                currentArchiveData.posts[postIndex].lastEditorId = auth.currentUser.uid;
+            }
+        }
+    } 
+    // 2. USA DADOS DO PORTEIRO (Se for navegação de saída)
+    else if (hasOverride) {
+        console.log("🤖 [MODO AUTO] Dados injetados pelo Porteiro. Ignorando Ecrã.");
+        const postIndex = currentArchiveData.posts.findIndex(p => p.id === postId);
+        if (postIndex > -1) {
+            currentArchiveData.posts[postIndex].title = titleOverride;
+            currentArchiveData.posts[postIndex].content = contentOverride;
             currentArchiveData.posts[postIndex].updatedAt = Date.now();
-            
-            // >>> NOVA LINHA CRÍTICA: GRAVA QUEM EDITOU <<<
             currentArchiveData.posts[postIndex].lastEditorId = auth.currentUser.uid;
-            
-            console.log(`📝 [DADOS] Título guardado: "${finalTitle}"`);
         }
     }
 
-    // Fecha visualmente o modo edição (volta ao modo leitura)
-    const postData = currentArchiveData.posts.find(p => p.id === postId);
-    if (postData) renderPostViewMode(postDiv, postData);
+    // LIMPEZA DE ESTADO GLOBAL
+    if (activeEditingPostId === postId) {
+        activeEditingPostId = null;
+        window.activeEditingPostId = null;
+        window.livePostDraft = null; 
+    }
 
-    // Grava tudo no Firebase e remove o cadeado
+    // GRAVAÇÃO REAL
+    console.log("☁️ Enviando para o Firebase...");
     await saveFullArchive();
     await unlockPost(postId);
-    console.log(`🔓 [LOCK] Post ${postId} totalmente libertado.`);
+    console.log("✅ Firebase atualizado e Cadeado libertado.");
+    
+    // RESTAURO VISUAL
+    if (postDiv) {
+        const postData = currentArchiveData.posts.find(p => p.id === postId);
+        if (postData) renderPostViewMode(postDiv, postData);
+    }
+    console.groupEnd();
 };
 
 
@@ -33529,26 +33656,56 @@ async function markArchiveAsRead(archiveId) {
 
 // 2. FUNÇÃO DISPLAY ARCHIVE (ATUALIZADA)
 window.displayArchive = async function(id, data, element = null) {
-    console.group(`📂 ABERTURA: ${data.nome}`);
+    console.group(`📂 [ABERTURA] A carregar Arquivo: "${data.nome}"`);
+    console.log(`   ID: ${id}`);
     
-    // 1. CONGELAR O TEMPO DA ÚLTIMA VISITA (Lock da sessão)
-    // Buscamos o que estava guardado na lista lateral antes de abrirmos
-    sessionStartTimeForArchive = userLastSeenArchives[id] || 0;
-    console.log("🕒 Tempo congelado para esta sessão:", sessionStartTimeForArchive);
+    // LOG DE CONTEÚDO MELHORADO
+    if (data.posts && data.posts.length > 0) {
+        console.log(`   📊 Total de Posts: ${data.posts.length}`);
+        
+        data.posts.slice(0, 5).forEach((post, index) => {
+            // Remove tags HTML E quebras de linha para o log ficar limpo numa linha só
+            let cleanText = post.content ? post.content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : "";
+            if (cleanText.length > 60) cleanText = cleanText.substring(0, 60) + "...";
+            if (!cleanText) cleanText = "[Conteúdo Vazio ou Apenas Formatação]";
+            
+            console.log(`   📄 Post #${index+1}: "${post.title}"`); 
+            console.log(`      ↳ Conteúdo: ${cleanText}`);
+        });
+    } else {
+        console.warn("   ⚠️ Este arquivo não tem posts.");
+    }
 
+    // ... (O RESTO DO CÓDIGO MANTÉM-SE IGUAL AO ANTERIOR) ...
+    sessionStartTimeForArchive = userLastSeenArchives[id] || 0;
     selectedNoteId = id; 
     window.nextSelectedId = null;
     currentArchiveId = id; 
     currentArchiveData = data;
 
-    // 2. Marcar como lido no Firebase (isso vai atualizar o userLastSeenArchives[id] para o tempo de AGORA)
-    // Mas como já congelamos o valor na variável 'sessionStartTimeForArchive', os pontos vão aparecer.
+    currentArchiveTab = 'prateleira';
+    window.activeGavetaId = null;
+    window.activeGavetaData = null;
+    
+    document.querySelectorAll('.archive-tab-btn').forEach(btn => {
+        if (btn.dataset.archiveTab === 'prateleira') btn.classList.add('active');
+        else btn.classList.remove('active');
+    });
+
+    const postBtn = document.getElementById('create-post-btn');
+    const drawerBtn = document.getElementById('create-drawer-trigger-btn');
+    const separatorBtn = document.getElementById('create-separator-btn');
+
+    if (postBtn) postBtn.style.display = 'block';
+    if (drawerBtn) drawerBtn.style.display = 'none';
+    if (separatorBtn) separatorBtn.style.display = 'none';
+
     markArchiveAsRead(id);
 
-    // Visibilidade da UI
     const placeholder = document.getElementById('editor-placeholder');
     const editorArea = document.getElementById('editor-area');
     const archiveArea = document.getElementById('archive-area');
+    
     if (placeholder) placeholder.style.setProperty('display', 'none', 'important');
     if (editorArea) editorArea.style.setProperty('display', 'none', 'important');
     if (archiveArea) archiveArea.style.display = 'flex';
@@ -33557,14 +33714,13 @@ window.displayArchive = async function(id, data, element = null) {
         document.getElementById('archive-title-input').value = data.nome || "";
     }
 
-    // Iniciar serviços
     if (typeof leaveArchivePresence === 'function') leaveArchivePresence(); 
     initRealtimeCollab(id);
     initPresenceSystem(id);
     
-    // Renderizar o feed usando o tempo congelado
     renderArchiveFeed();
     
+    console.log("✅ Arquivo renderizado com sucesso.");
     console.groupEnd();
 
     if (window.innerWidth <= 768) {
@@ -33575,9 +33731,18 @@ window.displayArchive = async function(id, data, element = null) {
 
 // 3. RENDERIZAR POST VIEW MODE (COM PONTOS)
 function renderPostViewMode(container, post) {
-    const getMs = (val) => val && val.toMillis ? val.toMillis() : Number(val || 0);
+    // LOG DE RENDERIZAÇÃO
+    // Só faz log se o post tiver sido editado recentemente (para não poluir a consola com tudo)
+    const now = Date.now();
+    const updatedAt = post.updatedAt && post.updatedAt.toMillis ? post.updatedAt.toMillis() : (post.updatedAt || 0);
+    
+    // Se foi editado nos últimos 2 minutos, destaca no log
+    if ((now - updatedAt) < 120000) {
+        console.log(`👀 [VISUAL] A desenhar post recente "${post.title}" com conteúdo:`, 
+            post.content ? post.content.substring(0, 30) + "..." : "[Vazio]");
+    }
 
-    // Usa a hora congelada da entrada na sessão
+    const getMs = (val) => val && val.toMillis ? val.toMillis() : Number(val || 0);
     const lastSeen = Number(sessionStartTimeForArchive || 0);
     const postCreated = getMs(post.createdAt);
     const postUpdated = getMs(post.updatedAt);
@@ -33585,26 +33750,13 @@ function renderPostViewMode(container, post) {
     
     let statusDotHTML = "";
     
-    // --- LÓGICA DE NOTIFICAÇÃO ---
-
-    // 1. É NOVO? (Vermelho)
-    // Condição: Criado depois da minha visita E não fui eu que criei
     if (postCreated > lastSeen && post.userId !== myUid) {
-        statusDotHTML = `<div class="post-status-dot dot-new" title="Novo Post de ${post.createdBy}"></div>`;
+        statusDotHTML = `<div class="post-status-dot dot-new" title="Novo Post"></div>`;
     } 
-    
-    // 2. FOI EDITADO? (Laranja)
-    // Condição:
-    // a) Atualizado depois da minha visita
-    // b) Não é um post acabado de criar (margem de 2s)
-    // c) O último a editar NÃO FUI EU (lastEditorId !== myUid) -> AQUI ESTAVA O ERRO
     else if (postUpdated > lastSeen && postUpdated > (postCreated + 2000)) { 
-        
-        // Verifica quem foi o último a mexer (se não existir lastEditorId, assume que foi outro)
         const lastEditor = post.lastEditorId || "unknown";
-        
         if (lastEditor !== myUid) {
-            statusDotHTML = `<div class="post-status-dot dot-edited" title="Editado recentemente"></div>`;
+            statusDotHTML = `<div class="post-status-dot dot-edited" title="Editado"></div>`;
         }
     }
 
@@ -33613,29 +33765,32 @@ function renderPostViewMode(container, post) {
 
     container.style.position = "relative";
     
+    let footerHTML = '';
+    if (currentArchiveData && currentArchiveData.tipo === 'partilhado') {
+        footerHTML = `
+            <div style="width: 100%; display: flex; justify-content: flex-end;">
+                <button class="post-info-btn" onclick="event.stopPropagation(); window.showPostDetails('${post.id}')" title="Ver Detalhes">
+                    ℹ️
+                </button>
+            </div>`;
+    } else {
+        footerHTML = `<span>Criado por: ${post.createdBy}</span><span>${createdDate}</span>`;
+    }
+
     container.innerHTML = `
         ${statusDotHTML}
-        
         <div class="post-controls" style="position: absolute; top: 10px; right: 10px; display: flex; align-items: center; gap: 5px; opacity: 0.6; z-index:10;">
             <button onclick="moveArchivePost('${post.id}', -1)" title="Subir" style="${btnStyle}">↑</button>
             <button onclick="moveArchivePost('${post.id}', 1)" title="Descer" style="${btnStyle}">↓</button>
             <button class="post-edit-btn" onclick="editArchivePost('${post.id}')" style="${btnStyle}">Editar</button>
         </div>
-
         <div class="post-view-title" style="padding-left: 25px; font-weight:bold; color:var(--accent-color); font-size:1.2em; margin-bottom:10px;">
             ${post.title || 'Sem Título'}
         </div>
-        
         <div class="post-view-content" style="padding-left: 5px;">${post.content}</div>
-        
-        <div class="post-footer">
-            <span>Criado por: ${post.createdBy}</span>
-            <span>${createdDate}</span>
-        </div>
+        <div class="post-footer">${footerHTML}</div>
     `;
 
-    // === ATIVAÇÃO DO OLHO DIGITAL ===
-    // Se desenhámos uma bola, ligamos o observador para ela desaparecer ao ler
     if (statusDotHTML !== "") {
         postObserver.observe(container);
     }
@@ -33653,40 +33808,40 @@ async function updateSharedListWithNotifs(resultsMap) {
 
     middlePanelList.innerHTML = '';
     
- resultsMap.forEach(item => {
-    const li = document.createElement('li');
-    li.className = 'list-item';
-    li.setAttribute('data-id', item.id);
-    
-    // LOG DE CRIAÇÃO (Para saber se o item está na lista)
-    console.log(`[LISTA] Gerando item: ${item.nome} (ID: ${item.id})`);
-
-    li.innerHTML = `<span>${item.userId === myUid ? '👑' : '🤝'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
-
-    li.onclick = (e) => {
-        if (e.target.closest('.item-menu-btn')) return;
+    resultsMap.forEach(item => {
+        const li = document.createElement('li');
+        li.className = 'list-item';
+        li.setAttribute('data-id', item.id);
         
-        // LOG DE CLIQUE
-        console.log(`%c🖱️ CLIQUE DETETADO: A tentar abrir o arquivo "${item.nome}"...`, "color: #3498db; font-weight: bold;");
+        // Log de depuração
+        // console.log(`[LISTA] Gerando item: ${item.nome} (ID: ${item.id})`);
+
+        li.innerHTML = `<span>${item.userId === myUid ? '👑' : '🤝'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+
+        // --- CORREÇÃO AQUI ---
+        li.onclick = (e) => {
+            if (e.target.closest('.item-menu-btn')) return;
+            
+            // Em vez de abrir direto, passamos pelo Porteiro de Segurança
+            navigateWithUnsavedCheck(() => {
+                console.log(`%c🖱️ [NAV] Abrindo arquivo partilhado: "${item.nome}"`, "color: #3498db;");
+                window.displayArchive(item.id, item, li);
+            });
+        };
+        // ---------------------
         
-        // Chama a abertura
-        window.displayArchive(item.id, item, li);
-    };
-    
-    middlePanelList.appendChild(li);
-});
+        middlePanelList.appendChild(li);
+    });
 }
 
 
 
- async function loadSharedFilesRoot() {
+async function loadSharedFilesRoot() {
     console.log("%c[SISTEMA] Iniciando renderização da Partilha...", "color: #e74c3c;");
     
-    // Limpeza de segurança inicial
     if (unsubscribeShared1) { unsubscribeShared1(); unsubscribeShared1 = null; }
     if (unsubscribeShared2) { unsubscribeShared2(); unsubscribeShared2 = null; }
 
-    // Define o visual inicial
     middlePanelTitle.textContent = "Arquivos Partilhados";
     middlePanelList.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A procurar arquivos...</span></div>';
 
@@ -33695,15 +33850,12 @@ async function updateSharedListWithNotifs(resultsMap) {
     let resultsMap = new Map();
 
     try {
-        // Carregar histórico de leitura
         const readsSnap = await getDocs(collection(db, 'users', myUid, 'archive_reads'));
-        
         if (currentViewMode !== 'shared') return;
-
         readsSnap.forEach(d => userLastSeenArchives[d.id] = d.data().lastSeen || 0);
     } catch(e) { console.warn("Aviso: Histórico de leitura inacessível."); }
 
-    // --- FUNÇÃO DE DESENHO INTELIGENTE ---
+    // --- FUNÇÃO DE DESENHO CORRIGIDA ---
     const renderUnifiedList = () => {
         if (currentViewMode !== 'shared') return;
 
@@ -33720,47 +33872,29 @@ async function updateSharedListWithNotifs(resultsMap) {
                 li.setAttribute('data-name', item.nome);
                 li.style.position = "relative"; 
 
-                // Seleção visual
                 if (item.id === selectedNoteId) li.classList.add('selected-red');
                 else li.style.borderLeft = "4px solid #e74c3c";
 
-                // --- LÓGICA DE DETEÇÃO DE NOTIFICAÇÃO (CRÍTICA) ---
+                // (Lógica de notificação mantém-se igual...)
                 const lastSeen = userLastSeenArchives[item.id] || 0;
                 const posts = item.posts || [];
-                
                 let hasNew = false;
                 let hasEdit = false;
 
-                // Percorre os posts para ver se há novidades
                 for (const post of posts) {
                     const created = post.createdAt?.toMillis ? post.createdAt.toMillis() : (post.createdAt || 0);
                     const updated = post.updatedAt?.toMillis ? post.updatedAt.toMillis() : (post.updatedAt || 0);
                     
-                    // 1. Verificar se é NOVO (Criado por outro depois da visita)
-                    if (created > lastSeen && post.userId !== myUid) {
-                        hasNew = true;
-                        break; // Se há novo, ganha prioridade máxima (Vermelho), paramos de procurar.
-                    }
-
-                    // 2. Verificar se foi EDITADO (Atualizado por outro depois da visita)
-                    // Ignora se foi acabado de criar (margem 2s)
+                    if (created > lastSeen && post.userId !== myUid) { hasNew = true; break; }
                     if (updated > lastSeen && updated > (created + 2000)) {
                         const lastEditor = post.lastEditorId || "unknown";
-                        if (lastEditor !== myUid) {
-                            hasEdit = true;
-                        }
+                        if (lastEditor !== myUid) hasEdit = true;
                     }
                 }
 
-                // Decide a cor da bola
                 let notifHTML = "";
-                if (hasNew) {
-                    // Bola Vermelha com Animação
-                    notifHTML = `<span class="notif-badge" style="background-color: #e74c3c; animation: pulse-dot 2s infinite;" title="Novos Posts">!</span>`;
-                } else if (hasEdit) {
-                    // Bola Laranja (Sem animação ou mais calma)
-                    notifHTML = `<span class="notif-badge" style="background-color: #f39c12;" title="Edições Recentes">!</span>`;
-                }
+                if (hasNew) notifHTML = `<span class="notif-badge" style="background-color: #e74c3c; animation: pulse-dot 2s infinite;" title="Novos Posts">!</span>`;
+                else if (hasEdit) notifHTML = `<span class="notif-badge" style="background-color: #f39c12;" title="Edições Recentes">!</span>`;
 
                 const isOwner = item.userId === myUid;
                 
@@ -33774,16 +33908,19 @@ async function updateSharedListWithNotifs(resultsMap) {
                 
                 middlePanelList.appendChild(li);
                 
-                // Configurar clique
+                // --- CORREÇÃO AQUI (CLIQUE) ---
                 li.onclick = (e) => {
                     if (e.target.closest('.item-menu-btn')) return;
-                    window.displayArchive(item.id, item, li);
+                    
+                    // Chama o porteiro antes de abrir
+                    navigateWithUnsavedCheck(() => {
+                        window.displayArchive(item.id, item, li);
+                    });
                 };
+                // ------------------------------
             });
-            console.log("✅ Lista de Partilha atualizada com estados precisos.");
     };
 
-    // Queries (Mantêm-se iguais)
     const q1 = query(foldersRef, where('userId', '==', myUid), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
     const q2 = query(foldersRef, where(`colaboradores.${myUid}`, '==', true), where('partilhado', '==', 'ativo'), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
 
@@ -43472,6 +43609,59 @@ if (shareToggleBtn) {
         await updateSharingSettings();
     });
 }
+
+// Função para mostrar detalhes do post (Data/Hora) ao clicar no 'i'
+window.showPostDetails = function(postId) {
+    if (!currentArchiveData || !currentArchiveData.posts) return;
+
+    const post = currentArchiveData.posts.find(p => p.id === postId);
+    if (!post) return;
+
+    // 1. Converter datas
+    const getMs = (val) => val && val.toMillis ? val.toMillis() : Number(val || 0);
+    const created = post.createdAt ? new Date(getMs(post.createdAt)).toLocaleString() : 'Desconhecido';
+    
+    // Verifica se foi editado (se a data de update for muito diferente da criação)
+    const updatedMs = getMs(post.updatedAt);
+    const createdMs = getMs(post.createdAt);
+    const wasEdited = updatedMs > (createdMs + 5000); // margem de 5s
+    const updated = wasEdited ? new Date(updatedMs).toLocaleString() : 'Nunca editado';
+
+    // 2. Preencher o HTML do Modal
+    const grid = document.getElementById('p-info-grid');
+    
+    grid.innerHTML = `
+        <div class="info-row">
+            <span class="info-icon">👤</span>
+            <div class="info-data">
+                <span class="info-label">Autor</span>
+                <span>${post.createdBy || 'Anónimo'}</span>
+            </div>
+        </div>
+
+        <div class="info-row">
+            <span class="info-icon">📅</span>
+            <div class="info-data">
+                <span class="info-label">Criado em</span>
+                <span>${created}</span>
+            </div>
+        </div>
+
+        <div class="info-row" style="${!wasEdited ? 'opacity: 0.5;' : ''}">
+            <span class="info-icon">🔄</span>
+            <div class="info-data">
+                <span class="info-label">Última Edição</span>
+                <span>${updated}</span>
+            </div>
+        </div>
+    `;
+
+    // 3. Mostrar o Modal
+    const modal = document.getElementById('post-info-modal');
+    document.body.appendChild(modal); // Garante topo
+    modal.style.display = 'flex';
+};
+
 
     </script>
 </body>
