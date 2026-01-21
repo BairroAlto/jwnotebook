@@ -21425,103 +21425,92 @@ middlePanelList.addEventListener('click', async (e) => {
     const item = e.target.closest('.list-item');
     if (!item) return;
 
-    // 2. Se clicou nos "três pontos", abre o menu de opções e pára aqui
+    // 2. Se clicou nos "três pontos", abre o menu e pára
     const itemMenuBtn = e.target.closest('.item-menu-btn');
     if (itemMenuBtn) {
-        console.log("🛠️ Abrindo menu para:", item.dataset.name);
         showContextMenu(e);
         return;
     }
 
-    // 3. Captura dados do item
+    // 3. Captura dados
     const id = item.getAttribute('data-id');
     const type = item.getAttribute('data-type');
     const name = item.getAttribute('data-name');
 
-    // --- CORREÇÃO DE TRANSIÇÃO VISUAL ---
-    // Define qual será o próximo item selecionado para a lista não saltar para trás
+    // 4. LIMPEZA VISUAL FORÇADA (O Segredo da Correção)
+    // Removemos as classes de seleção de TODOS os itens da lista manualmente agora.
+    // Isto garante que o destaque muda instantaneamente, sem esperar pela lógica do servidor.
+    const allItems = middlePanelList.querySelectorAll('.list-item');
+    allItems.forEach(el => {
+        el.classList.remove('selected', 'selected-red');
+        el.style.backgroundColor = ""; // Limpa estilos inline se houver
+    });
+
+    // 5. APLICA O NOVO DESTAQUE IMEDIATAMENTE
+    const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+    item.classList.add(selectionClass);
+
+    // 6. Define a variável de transição (para o onSnapshot não reverter a cor)
     window.nextSelectedId = id; 
 
-    // 4. Verificação de Proteção (Senha)
+    // 7. Verificação de Proteção (Senha)
     const canAccess = await checkItemProtection(id, name);
     if (!canAccess) {
-        window.nextSelectedId = null; // Se falhar senha, limpa transição
+        window.nextSelectedId = null; // Se falhar senha, cancela transição
+        item.classList.remove(selectionClass); // Remove o destaque
         return;
     }
 
-    // 5. Definição da Ação de Navegação
+    // 8. Definição da Ação de Navegação
     const action = async () => {
 
         // --- CASO A: NAVEGAR (PASTAS) ---
         if (type === 'pasta' || type === 'agregacao') {
-
-            // Se for Superpasta, redireciona para o isolamento de raiz
             if (item.dataset.superpasta === "true") {
                 window.location.href = `note.html?rootId=${id}`;
                 return;
             }
-
-            // Navegação normal
             navigationStack.push({ id, name });
             updateNavigationView(true);
-
-            // Mobile: Salta para a vista de lista
+            
             if (window.innerWidth <= 768) {
                 document.body.classList.add('mobile-view-middle');
             }
         }
 
-        // --- CASO B: ABRIR CONTEÚDO (NOTAS, ARQUIVOS, AQUÁRIOS, ETC) ---
-        else if (type === 'nota' || type === 'arquivo' || type === 'partilhado' || type === 'jornal' || type === 'aquario') {
+        // --- CASO B: ABRIR CONTEÚDO ---
+        else if (['nota', 'arquivo', 'partilhado', 'jornal', 'aquario'].includes(type)) {
 
-            // 1. Atualiza seleção visual na lista (azul ou vermelho)
-            document.querySelectorAll('#file-list .list-item').forEach(el => {
-                el.classList.remove('selected', 'selected-red');
-            });
-            const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
-            item.classList.add(selectionClass);
-
-            // 2. Mobile: Salta para o editor (que será tapado pelo Aquário se for o caso)
+            // Mobile: Salta para o editor
             if (window.innerWidth <= 768) {
                 document.body.classList.add('mobile-view-editor');
             }
 
-            // 3. DECISÃO DE ABERTURA
-
-            // >>> AQUÁRIO 🪸 (NOVO) <<<
+            // Aquário
             if (type === 'aquario') {
-                console.log("🌊 A carregar Aquário...");
                 try {
                     const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-                    
-                    // Busca os dados atualizados ao Firebase (Conteúdo dos blocos fantasmas)
                     const docRef = doc(db, 'pastas', id);
                     const snap = await getDoc(docRef);
-
                     if (snap.exists()) {
-                        // Abre o ambiente isolado com os dados carregados
-                        // A função 'window.openAquariumEnvironment' (a versão blindada) vai esconder a app principal
                         window.openAquariumEnvironment(id, { id: snap.id, ...snap.data() });
                     }
-                } catch (err) {
-                    console.error("Erro ao abrir Aquário:", err);
-                    window.nextSelectedId = null;
-                }
+                } catch (err) { console.error(err); }
             }
             
-            // --- NOTAS / JORNAIS ---
+            // Notas e Jornais
             else if (type === 'nota' || type === 'jornal') {
                 displayNote(id, item);
             }
             
-            // --- ARQUIVOS / PARTILHAS ---
+            // Arquivos
             else {
                 displayArchive(id, { id, nome: name, tipo: type }, item);
             }
         }
     };
 
-    // Executa a ação, verificando primeiro se há algo por gravar na nota atual
+    // Executa a ação (com verificação de gravação pendente)
     navigateWithUnsavedCheck(action);
 });
 
@@ -23236,10 +23225,10 @@ async function loadAppendList(parentId) {
     
     list.innerHTML = '<li style="padding:10px;">A carregar...</li>';
 
-    // Identifica o ponto de partida (Raiz Global ou ID da Superpasta)
+    // Identifica o ponto de partida
     const startRootId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
 
-    // Gestão de Títulos e Botão Voltar (Breadcrumbs)
+    // Gestão de Títulos e Botão Voltar
     if (parentId === "VIRTUAL_SHARED_ROOT") {
         pathLabel.textContent = "🤝 Partilha";
         backBtn.style.display = 'block';
@@ -23255,7 +23244,7 @@ async function loadAppendList(parentId) {
         const foldersRef = collection(db, 'pastas');
         let unifiedDocs = new Map();
 
-        // --- BLOCO A: BUSCAR ARQUIVOS PARTILHADOS (Se estivermos dentro da "pasta" Partilha) ---
+        // --- BLOCO A: BUSCAR ARQUIVOS PARTILHADOS ---
         if (parentId === "VIRTUAL_SHARED_ROOT") {
             const qOwner = query(foldersRef, 
                 where('tipo', '==', 'partilhado'), 
@@ -23272,23 +23261,22 @@ async function loadAppendList(parentId) {
             snapOwner.forEach(doc => unifiedDocs.set(doc.id, {id: doc.id, ...doc.data()}));
             snapCollab.forEach(doc => unifiedDocs.set(doc.id, {id: doc.id, ...doc.data()}));
         } 
-        // --- BLOCO B: BUSCAR PASTAS E NOTAS LOCAIS (Comportamento normal) ---
+        // --- BLOCO B: BUSCAR NORMAL (ORDENADO POR 'ORDEM') ---
         else {
             const qNormal = query(foldersRef,
                 where('parentId', '==', parentId),
                 where('estado', '==', 'ativa'),
                 where('userId', '==', myUid),
-                orderBy('tipo'),
-                orderBy('nome')
+                orderBy('ordem') // <--- AQUI ESTÁ O SEGREDO: Pede já ordenado ao Firebase
             );
             const snapNormal = await getDocs(qNormal);
             snapNormal.forEach(doc => unifiedDocs.set(doc.id, {id: doc.id, ...doc.data()}));
         }
 
-        // LIMPAR LISTA E COMEÇAR A RENDERIZAR
+        // LIMPAR LISTA E RENDERIZAR
         list.innerHTML = '';
 
-        // 1. INJETAR O ACESSO À PARTILHA (Apenas se estivermos no "início" da navegação)
+        // 1. Link para Partilha (se na raiz)
         if (parentId === startRootId) {
             const sharedLink = document.createElement('li');
             sharedLink.style.cssText = "display:flex; justify-content:space-between; padding:12px; border-bottom:2px solid var(--border-color); background: rgba(231, 76, 60, 0.05); cursor:pointer; color: #e74c3c; font-weight: bold;";
@@ -23297,27 +23285,39 @@ async function loadAppendList(parentId) {
             list.appendChild(sharedLink);
         }
 
-        // 2. RENDERIZAR AS PASTAS E NOTAS LOCAIS (O que tinha desaparecido)
+        // 2. Renderizar Itens
         if (unifiedDocs.size === 0 && parentId !== startRootId && parentId !== null) {
             list.innerHTML += '<li style="padding:20px; color:#888; text-align:center;">Vazio.</li>';
         }
 
+        // Converte para array e garante a ordenação JS (caso o Firebase falhe ou misture tipos)
         Array.from(unifiedDocs.values())
-        .sort((a, b) => (a.tipo === b.tipo) ? (a.nome || "").localeCompare(b.nome || "") : (a.tipo === 'pasta' ? -1 : 1))
+        .sort((a, b) => {
+            // Se ambos tiverem o campo ordem, usa-o.
+            // Se um não tiver (notas antigas), assume 0 ou ordem alfabética como fallback
+            const ordemA = (a.ordem !== undefined) ? a.ordem : 9999;
+            const ordemB = (b.ordem !== undefined) ? b.ordem : 9999;
+            return ordemA - ordemB;
+        })
         .forEach(item => {
             const li = document.createElement('li');
             li.className = "list-item";
             li.style.cssText = "display:flex; justify-content:space-between; padding:12px; border-bottom:1px solid var(--border-color); cursor:pointer;";
             
-            if (item.tipo === 'pasta') {
+            if (item.tipo === 'pasta' || item.tipo === 'agregacao') {
                 li.innerHTML = `<span>📁 ${item.nome}</span> <span>➔</span>`;
                 li.onclick = () => {
                     appendStack.push({ id: item.id, name: item.nome });
                     loadAppendList(item.id);
                 };
             } else {
+                // Notas, Arquivos, Jornais, Aquários
                 const isOwner = item.userId === myUid;
-                const icon = (item.tipo === 'partilhado' || item.tipo === 'arquivo') ? '🗄️' : '📄';
+                let icon = '📄';
+                if (item.tipo === 'partilhado' || item.tipo === 'arquivo') icon = '🗄️';
+                if (item.tipo === 'jornal') icon = '📰';
+                if (item.tipo === 'aquario') icon = '🪸';
+                
                 const collabIcon = (parentId === "VIRTUAL_SHARED_ROOT") ? (isOwner ? '👑' : '🤝') : '';
                 
                 li.innerHTML = `
@@ -23364,18 +23364,17 @@ newAppendBackBtn.addEventListener('click', () => {
 
 // 5. CONFIRMAR E GRAVAR
 window.confirmAppendToNote = async function(targetId, targetName, targetType) {
-    console.log(`📥 [CLONAR] A enviar para: ${targetName}`);
+    console.log(`📥 [CLONAR] A enviar para o FUNDO de: ${targetName}`);
 
     const confirmModal = document.getElementById('confirm-modal');
     const appendModal = document.getElementById('append-to-note-modal');
 
-    // 1. REBAIXAR O MODAL "ENVIAR PARA..."
-    // (Para o popup de "Tem a certeza?" ficar por cima dele)
+    // 1. Rebaixar o modal de lista
     if (appendModal) {
         appendModal.style.zIndex = '2147483640'; 
     }
 
-    // 2. ELEVAR O MODAL DE CONFIRMAÇÃO AO TOPO ABSOLUTO
+    // 2. Elevar o modal de confirmação (Pergunta Inicial)
     document.body.appendChild(confirmModal); 
     confirmModal.style.cssText = `
         display: flex !important;
@@ -23389,21 +23388,19 @@ window.confirmAppendToNote = async function(targetId, targetName, targetType) {
         top: 0; left: 0; width: 100vw; height: 100vh;
     `;
 
-    // 3. EXECUTAR A CONFIRMAÇÃO
+    // 3. Executar a confirmação (Sim/Não)
     const confirmed = await showConfirmation(
         "Confirmar Envio", 
-        `Deseja clonar este bloco para o Topo de "${targetName}"?`
+        `Deseja clonar este bloco para o FUNDO de "${targetName}"?`
     );
 
-    // 4. LÓGICA DE RETORNO OU SUCESSO
+    // 4. Se cancelar, sai
     if (!confirmed) {
-        // Se cancelar, restaura o modal de lista
         if (appendModal) appendModal.style.zIndex = '2147483647';
         confirmModal.style.display = 'none';
         return;
     }
 
-    // Se confirmou, processa a gravação
     try {
         const { doc, getDoc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', targetId);
@@ -23412,14 +23409,14 @@ window.confirmAppendToNote = async function(targetId, targetName, targetType) {
         if (docSnap.exists()) {
             const data = docSnap.data();
             
-            // Gravação para Arquivo ou Nota
+            // --- Gravação (Arquivo ou Nota) ---
             if (targetType === 'partilhado' || targetType === 'arquivo') {
                 const authorName = currentUserData?.nome || auth.currentUser.email.split('@')[0];
                 const newPost = {
                     id: 'post_' + Date.now(),
                     type: 'entity',
                     title: 'Recebido do Aquário',
-                    content: window.htmlToAppend, // Usa a variável global
+                    content: window.htmlToAppend, 
                     createdBy: authorName,
                     createdAt: Date.now(),
                     updatedAt: Date.now()
@@ -23428,21 +23425,28 @@ window.confirmAppendToNote = async function(targetId, targetName, targetType) {
                 await updateDoc(noteRef, { posts: updatedPosts, ultimaedicao: serverTimestamp() });
             } else {
                 const currentContent = data.conteudo || "";
+                // Adiciona ao FUNDO
+                const newContent = currentContent + "<p><br></p>" + window.htmlToAppend;
                 await updateDoc(noteRef, {
-                    conteudo: window.htmlToAppend + "<p><br></p>" + currentContent,
+                    conteudo: newContent,
                     ultimaedicao: serverTimestamp()
                 });
             }
 
-            // FECHO TOTAL APÓS SUCESSO
+            // 5. FECHO DOS MODAIS ANTERIORES
             confirmModal.style.display = 'none';
             if (appendModal) appendModal.style.display = 'none';
             
-            alert(`Enviado para "${targetName}" com sucesso!`);
+            // 6. >>> NOVA MENSAGEM DE SUCESSO (POPUP) <<<
+            await window.showSuccessAlert(
+                "Sucesso! ✅", 
+                `Enviado para "${targetName}" com sucesso!`
+            );
         }
     } catch (e) {
         console.error("Erro ao enviar:", e);
-        alert("Erro ao realizar o envio.");
+        // Também usamos o popup para o erro
+        await window.showSuccessAlert("Erro", "Falha ao realizar o envio.");
     }
 };
 
@@ -27639,11 +27643,23 @@ window.saveArchivePost = async (postId) => {
 
 // G. Apagar Post
 window.deleteArchivePost = async (postId) => {
-    if (!confirm("Tem a certeza que deseja apagar este post? (Ficará no Histórico)")) return;
+    
+    // 1. CHAMAR O POPUP PERSONALIZADO
+    const confirmed = await showConfirmation(
+        "Eliminar Post?", 
+        "Tem a certeza que deseja apagar este post? (Ficará no Histórico)"
+    );
 
+    // 2. SE CANCELAR, PÁRA TUDO
+    if (!confirmed) return;
+
+    // 3. LÓGICA DE ELIMINAÇÃO (Mantém-se igual)
     const postToDelete = currentArchiveData.posts.find(p => p.id === postId);
+    
     if (postToDelete) {
         if (!currentArchiveData.deletedPosts) currentArchiveData.deletedPosts = [];
+        
+        // Move para a lixeira local
         currentArchiveData.deletedPosts.unshift({
             ...postToDelete,
             deletedAt: Date.now(),
@@ -27651,13 +27667,31 @@ window.deleteArchivePost = async (postId) => {
         });
     }
 
+    // Remove da lista ativa
     currentArchiveData.posts = currentArchiveData.posts.filter(p => p.id !== postId);
-    activeEditingPostId = null;
     
+    // Limpa estado de edição se for o caso
+    if (activeEditingPostId === postId) {
+        activeEditingPostId = null;
+        window.activeEditingPostId = null;
+    }
+    
+    // 4. EFEITO VISUAL DE SAÍDA (Animação suave)
     const div = document.getElementById(`post-${postId}`);
-    if(div) div.remove();
-
-    await saveFullArchive();
+    if(div) {
+        div.style.transition = "all 0.3s ease";
+        div.style.opacity = "0";
+        div.style.transform = "scale(0.95)";
+        
+        setTimeout(() => {
+            div.remove();
+            // Grava apenas depois de remover do ecrã para ser rápido
+            saveFullArchive();
+        }, 300);
+    } else {
+        // Se não encontrar o div, grava logo
+        saveFullArchive();
+    }
 };
 
 // H. Cancelar Edição (Reverter)
@@ -28145,7 +28179,13 @@ window.restoreArchiveItem = async (index) => {
 
     if (!itemToRestore) return;
 
-    if (confirm(`Deseja restaurar "${itemToRestore.title}" para o topo do feed?`)) {
+    // --- NOVA CHAMADA AO POPUP ---
+    const confirmed = await showConfirmation(
+        "Restaurar Post?", 
+        `Deseja restaurar "${itemToRestore.title || 'Sem Título'}" para o topo do feed?`
+    );
+
+    if (confirmed) {
         
         // 2. Remove da lista de eliminados (memória local)
         const realIndex = currentArchiveData.deletedPosts.indexOf(itemToRestore);
@@ -28172,17 +28212,19 @@ window.restoreArchiveItem = async (index) => {
         renderArchiveFeed();
         
         // 7. GRAVAÇÃO NO FIREBASE
-        // Primeiro salvamos o estado do arquivo
         await saveFullArchive();
         
-        // GARANTIA: Removemos qualquer bloqueio (lock) que pudesse existir para este ID
-        // Assim o post volta totalmente livre para qualquer um clicar em "Editar"
+        // 8. GARANTIA: Desbloqueia o post
         await unlockPost(itemToRestore.id);
 
-        console.log(`♻️ Post ${itemToRestore.id} restaurado e desbloqueado.`);
+        console.log(`♻️ Post ${itemToRestore.id} restaurado.`);
         
-        // Feedback visual: faz scroll até ao post restaurado (que agora está no topo)
-        document.getElementById('archive-feed').scrollTop = 0;
+        // Feedback visual: faz scroll até ao topo
+        const feed = document.getElementById('archive-feed');
+        if(feed) feed.scrollTop = 0;
+        
+        // Popup de Sucesso (Opcional, mas agradável)
+        await window.showSuccessAlert("Restaurado!", "O post voltou para o topo do feed.");
     }
 };
 
@@ -32624,10 +32666,16 @@ document.getElementById('history-tabs').addEventListener('click', (e) => {
 
 // 2. Abrir o Modal (Função Global)
 window.openHistoryModal = async function() {
-    if (!selectedNoteId) return alert("Selecione uma nota primeiro.");
+    // Usa o ID da nota ou do arquivo atual
+    const targetId = selectedNoteId || currentArchiveId;
+    if (!targetId) return alert("Selecione um item primeiro.");
 
     const modal = document.getElementById('history-modal');
+    const titleEl = document.getElementById('history-modal-title');
     const backupBtn = document.getElementById('backup-now-btn');
+    
+    // Detetar se estamos em modo Arquivo ou Nota
+    const isArchiveMode = document.getElementById('archive-area').style.display !== 'none';
 
     if (!modal || !backupBtn) return;
 
@@ -32636,52 +32684,77 @@ window.openHistoryModal = async function() {
     modal.style.display = 'flex';
     modal.style.zIndex = "8000000";
 
-    // 2. Configurar o Botão de Backup (Limpa e cria novo evento)
-    backupBtn.onclick = async () => {
-        const originalText = backupBtn.textContent;
-        backupBtn.disabled = true;
-        backupBtn.textContent = 'A guardar versão...';
+    // Atualiza título do modal
+    titleEl.textContent = isArchiveMode ? "Histórico do Arquivo" : "Histórico da Nota";
+
+    // 2. Configurar o Botão de Backup (Lógica Dinâmica)
+    // Clonamos para remover listeners antigos
+    const newBackupBtn = backupBtn.cloneNode(true);
+    backupBtn.parentNode.replaceChild(newBackupBtn, backupBtn);
+
+    newBackupBtn.onclick = async () => {
+        const originalText = newBackupBtn.textContent;
+        newBackupBtn.disabled = true;
+        newBackupBtn.textContent = 'A guardar versão...';
 
         try {
-            const title = document.getElementById('note-title-input').value || "Sem Título";
-            // Sincroniza os títulos das caixas antes de extrair o HTML
-            document.querySelectorAll('.mini-note-title-input').forEach(t => {
-                if (t.tagName === 'TEXTAREA') t.textContent = t.value;
-                else t.setAttribute('value', t.value);
-            });
-            const content = document.getElementById('note-content-editor').innerHTML;
-
-            const backupsRef = collection(db, 'pastas', selectedNoteId, 'backups');
-            await addDoc(backupsRef, {
-                titulo: title,
-                conteudo: content,
+            const backupsRef = collection(db, 'pastas', targetId, 'backups');
+            let backupPayload = {
                 timestamp: serverTimestamp(),
                 isSafetyBackup: false
-            });
+            };
+
+            // --- LÓGICA DE DADOS ---
+            if (isArchiveMode) {
+                // BACKUP DE ARQUIVO (Guarda os posts)
+                const title = document.getElementById('archive-title-input').value || "Arquivo Sem Título";
+                backupPayload.titulo = title;
+                backupPayload.posts = currentArchiveData.posts || []; 
+                backupPayload.deletedPosts = currentArchiveData.deletedPosts || [];
+                backupPayload.type = 'archive_backup';
+            } else {
+                // BACKUP DE NOTA (Guarda o HTML)
+                const title = document.getElementById('note-title-input').value || "Nota Sem Título";
+                // Sincroniza inputs
+                document.querySelectorAll('.mini-note-title-input').forEach(t => {
+                    if (t.tagName === 'TEXTAREA') t.textContent = t.value;
+                    else t.setAttribute('value', t.value);
+                });
+                const content = document.getElementById('note-content-editor').innerHTML;
+                
+                backupPayload.titulo = title;
+                backupPayload.conteudo = content;
+                backupPayload.type = 'note_backup';
+            }
+
+            await addDoc(backupsRef, backupPayload);
 
             // Feedback de sucesso
-            backupBtn.textContent = '✅ Versão Guardada!';
-            backupBtn.style.backgroundColor = '#27ae60';
+            newBackupBtn.textContent = '✅ Versão Guardada!';
+            newBackupBtn.style.backgroundColor = '#27ae60';
 
-            // Recarregar a lista da aba Backup
+            // Recarregar a lista
             await loadHistoryData();
 
             setTimeout(() => {
-                backupBtn.disabled = false;
-                backupBtn.textContent = originalText;
-                backupBtn.style.backgroundColor = '';
+                newBackupBtn.disabled = false;
+                newBackupBtn.textContent = originalText;
+                newBackupBtn.style.backgroundColor = '';
             }, 2000);
 
         } catch (error) {
             console.error("Erro ao criar backup:", error);
             alert("Erro ao criar backup.");
-            backupBtn.disabled = false;
-            backupBtn.textContent = originalText;
+            newBackupBtn.disabled = false;
+            newBackupBtn.textContent = originalText;
         }
     };
 
     // 3. Resetar para a aba Backup e carregar dados
-    document.querySelector('[data-hist-tab="backup"]').click();
+    const tabBackup = document.querySelector('[data-hist-tab="backup"]');
+    if(tabBackup) tabBackup.click();
+    
+    // Chama a função de carregamento
     await loadHistoryData();
 };
 
@@ -32689,82 +32762,117 @@ window.openHistoryModal = async function() {
 async function loadHistoryData() {
     const backupList = document.getElementById('history-list-backups');
     const recyclingList = document.getElementById('history-list-recycling');
+    const timelineList = document.getElementById('history-list-timeline');
     
+    // Indicadores de carregamento
     backupList.innerHTML = '<li style="padding:10px;">A carregar...</li>';
     recyclingList.innerHTML = '<li style="padding:10px;">A carregar...</li>';
+    
+    // Detetar modo
+    const isArchiveMode = document.getElementById('archive-area').style.display !== 'none';
+    const targetId = selectedNoteId || currentArchiveId;
+
+    if (!targetId) return;
 
     try {
-        // A. BACKUPS (Código existente simplificado)
-        const backupsRef = collection(db, 'pastas', selectedNoteId, 'backups');
+        // =================================================================
+        // A. BACKUPS (Comum aos dois, muda apenas o conteúdo do botão "Ver")
+        // =================================================================
+        const backupsRef = collection(db, 'pastas', targetId, 'backups');
         const qB = query(backupsRef, orderBy('timestamp', 'desc'));
         const snapB = await getDocs(qB);
-        backupList.innerHTML = snapB.empty ? '<li style="color:#888;">Sem backups.</li>' : '';
-        snapB.forEach(doc => { /* ... código de renderização do backup ... */ });
-
-        // B. RECICLAGEM
-        const noteSnap = await getDoc(doc(db, 'pastas', selectedNoteId));
-        const hidden = noteSnap.exists() ? (noteSnap.data().subnotasocultas || {}) : {};
         
-        recyclingList.innerHTML = Object.keys(hidden).length === 0 ? '<li style="color:#888;">Lixeira vazia.</li>' : '';
+        backupList.innerHTML = snapB.empty ? '<li style="color:#888; padding:10px;">Nenhum backup encontrado.</li>' : '';
         
-      Object.values(hidden).sort((a,b) => (b.deletedAt?.seconds || 0) - (a.deletedAt?.seconds || 0)).forEach(item => {
+        snapB.forEach(doc => {
+            const data = { id: doc.id, ...doc.data() };
+            const date = data.timestamp ? new Date(data.timestamp.seconds * 1000).toLocaleString() : '---';
             const li = document.createElement('li');
             li.style.justifyContent = 'space-between';
-            li.style.alignItems = 'center';
             
-            // 1. DECLARAÇÃO INICIAL (Evita o ReferenceError)
-            let typeIcon = "📦 "; 
-            let displayTitle = item.titulo || 'Sem Título';
-
-            // 2. LÓGICA DE ÍCONES E TÍTULOS
-            if (item.type === 'sign') typeIcon = "🪧 "; 
-            else if (item.type === 'redator') typeIcon = "📓 "; 
-            else if (item.type === 'card') typeIcon = "🪪 "; 
-            else if (item.type === 'toggle') typeIcon = "☂ ";
-            else if (item.type === 'question') typeIcon = "📗 ";
-            else if (item.type === 'free') typeIcon = "📙 ";
-            
-            // --- BLOCO FANTASMA (AQUÁRIO) ---
-            else if (item.type === 'ghost') {
-                typeIcon = "🐠 "; 
-                
-                // Limpa o HTML para obter texto puro
-                const tempDiv = document.createElement('div');
-                tempDiv.innerHTML = item.conteudo || "";
-                
-                // Remove os botões de ação antes de ler o texto
-                const actions = tempDiv.querySelector('.ghost-actions');
-                if (actions) actions.remove();
-                
-                let cleanText = tempDiv.innerText.trim();
-                
-                // Remove quebras de linha extras
-                cleanText = cleanText.replace(/\n/g, ' ');
-
-                if (cleanText.length > 40) cleanText = cleanText.substring(0, 40) + "...";
-                
-                displayTitle = cleanText || "Texto Vazio";
-            }
-            // --------------------------------
-            
-            else if (item.type === 'default' || !item.type) typeIcon = "📘 ";
-            
-            const dateStr = item.deletedAt ? new Date(item.deletedAt.seconds * 1000).toLocaleDateString() : '';
+            // Botão de restauro inteligente
+            const restoreAction = isArchiveMode 
+                ? `alert('Restauro de Arquivo completo ainda em desenvolvimento. Copie os posts manualmente no botão Ver.')` 
+                : `restoreBackup('${data.id}')`;
 
             li.innerHTML = `
-                <div style="display:flex; flex-direction:column; max-width: 250px;">
-                    <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight:500;">
-                        ${typeIcon}${displayTitle}
-                    </span>
-                    <small style="color:#666; font-size:0.75em;">Apagado em: ${dateStr}</small>
+                <span>${data.isSafetyBackup ? '🚨' : '💾'} Versão ${date}</span>
+                <div style="display:flex; gap:5px;">
+                    <button class="modal-btn secondary" onclick="viewBackup('${data.id}')" style="padding:4px 8px; font-size:12px;">Ver</button>
+                    <button class="modal-btn primary" onclick="${restoreAction}" style="padding:4px 8px; font-size:12px;">Restaurar</button>
                 </div>
-                <button class="modal-btn primary" onclick="window.restoreHiddenMiniNote('${item.id}')" style="padding:4px 12px; font-size:12px;">Restaurar</button>
             `;
-            recyclingList.appendChild(li);
+            backupList.appendChild(li);
         });
 
+        // =================================================================
+        // B. RECICLAGEM (AQUI ESTÁ A CORREÇÃO)
+        // =================================================================
+        recyclingList.innerHTML = '';
+        let hasRecyclingItems = false;
+
+        if (isArchiveMode) {
+            // --- MODO ARQUIVO: Posts Eliminados ---
+            // Usa a variável global currentArchiveData.deletedPosts
+            const deletedPosts = currentArchiveData?.deletedPosts || [];
+            
+            if (deletedPosts.length > 0) {
+                deletedPosts.forEach((item, index) => {
+                    const dateStr = item.deletedAt ? new Date(item.deletedAt).toLocaleString() : '---';
+                    recyclingList.innerHTML += `
+                        <li class="list-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #333; padding:10px;">
+                            <div style="display:flex; justify-content:space-between; width:100%;">
+                                <strong>🗑️ ${item.title || 'Post Sem Título'}</strong>
+                                <button class="modal-btn primary" onclick="window.restoreArchiveItem(${index})" style="padding:2px 8px; font-size:0.8em;">Restaurar</button>
+                            </div>
+                            <small style="color:#888;">${dateStr}</small>
+                        </li>`;
+                });
+                hasRecyclingItems = true;
+            }
+
+        } else {
+            // --- MODO NOTA: Caixas Ocultas (Firebase) ---
+            const noteSnap = await getDoc(doc(db, 'pastas', targetId));
+            const hidden = noteSnap.exists() ? (noteSnap.data().subnotasocultas || {}) : {};
+            
+            const boxesArray = Object.values(hidden);
+            if (boxesArray.length > 0) {
+                boxesArray.sort((a,b) => (b.deletedAt?.seconds || 0) - (a.deletedAt?.seconds || 0)).forEach(item => {
+                    // Ícone baseado no tipo
+                    let typeIcon = "📦 ";
+                    if (item.tipo === 'question') typeIcon = "📗 ";
+                    else if (item.tipo === 'free') typeIcon = "📙 ";
+                    else if (item.tipo === 'card') typeIcon = "🪪 ";
+                    else if (item.tipo === 'redator') typeIcon = "📓 ";
+                    
+                    recyclingList.innerHTML += `
+                        <li class="list-item" style="justify-content:space-between; padding:10px; border-bottom:1px solid #333;">
+                            <span>${typeIcon} ${item.titulo || 'Item'}</span>
+                            <button class="modal-btn primary" onclick="window.restoreHiddenMiniNote('${item.id}')" style="padding:2px 8px; font-size:0.8em;">Restaurar</button>
+                        </li>`;
+                });
+                hasRecyclingItems = true;
+            }
+        }
+
+        if (!hasRecyclingItems) {
+            recyclingList.innerHTML = '<li style="padding:20px; text-align:center; color:#888;">Lixeira vazia.</li>';
+        }
+
+        // =================================================================
+        // C. TIMELINE (Esconde no Arquivo, Mostra na Nota)
+        // =================================================================
+        if (isArchiveMode) {
+             if(timelineList) timelineList.innerHTML = '<li style="padding:20px; color:#888;">Timeline não disponível para Arquivos.</li>';
+        } else {
+             // Se estiver na nota, chama a função original
+             if (typeof renderNoteTimeline === 'function') renderNoteTimeline();
+        }
+
     } catch (e) { 
-        console.error("Erro histórico:", e); 
+        console.error("Erro ao carregar histórico:", e); 
+        backupList.innerHTML = '<li style="color:#e74c3c; padding:10px;">Erro de ligação.</li>';
     }
 }
 
@@ -42880,6 +42988,60 @@ async function propagateUpdatesToBible(noteId, fullContent, noteTitle) {
     }
     console.groupEnd();
 }
+
+// ============================================================
+// FUNÇÃO DE ALERTA PERSONALIZADO (APENAS BOTÃO OK)
+// ============================================================
+window.showSuccessAlert = function(title, message) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('confirm-modal');
+        if (!modal) {
+            alert(message); // Fallback se o modal não existir
+            return resolve();
+        }
+
+        const titleEl = document.getElementById('confirm-title');
+        const messageEl = document.getElementById('confirm-message');
+        const confirmBtn = modal.querySelector('[data-action="confirm"]');
+        const cancelBtn = modal.querySelector('[data-action="cancel"]');
+
+        // 1. Configurar Texto
+        titleEl.textContent = title;
+        messageEl.textContent = message;
+
+        // 2. Configurar Botões (Esconder o Cancelar)
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        if (confirmBtn) confirmBtn.textContent = "OK";
+
+        // 3. Forçar Visibilidade e Topo
+        document.body.appendChild(modal);
+        modal.style.cssText = `
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            position: fixed !important;
+            z-index: 2147483647 !important;
+            background-color: rgba(0, 0, 0, 0.85) !important;
+            justify-content: center !important;
+            align-items: center !important;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+        `;
+
+        // 4. Lógica do Clique (Resetar ao fechar)
+        const newConfirmBtn = confirmBtn.cloneNode(true);
+        confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+        newConfirmBtn.onclick = () => {
+            modal.style.display = 'none';
+            
+            // RESET IMPORTANTE: Restaurar o modal para o estado original (para confirmações futuras)
+            if (cancelBtn) cancelBtn.style.display = ''; // Volta ao padrão (flex/inline)
+            if (confirmBtn) confirmBtn.textContent = "Confirmar";
+            
+            resolve();
+        };
+    });
+};
 
     </script>
 </body>
