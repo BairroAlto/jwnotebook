@@ -11798,8 +11798,6 @@ let scrollTimer = null;
 let aqAutoSaveTimer = null;
 let hasGlobalShareNotification = false;
 let globalFoldersCache = []; 
-let lockHeartbeatTimer = null;
-
 
 
 window.currentNoteHybridMode = false;
@@ -12152,93 +12150,87 @@ function checkInitialConnection() {
  * @param {function} navigationAction A função a ser executada se a navegação for confirmada.
  */
 async function navigateWithUnsavedCheck(navigationAction) {
-    // 1. DETEÇÃO AGRESSIVA DE EDIÇÃO ATIVA
-    const draftId = window.livePostDraft ? window.livePostDraft.id : null;
-    const editingId = activeEditingPostId || window.activeEditingPostId || draftId;
+    // Verifica se existe um ID de post ativo
+    const editingId = activeEditingPostId || window.activeEditingPostId;
 
-    console.log(`🚦 [PORTEIRO] Verificação: ID=${editingId} | Rascunho na RAM? ${!!window.livePostDraft}`);
-
-    // --- CENÁRIO: ESTAMOS A EDITAR UM POST DE ARQUIVO ---
     if (editingId) {
-        console.group("🛑 [AUTO-SAVE & UNLOCK] Saída detetada.");
+        console.group("🛑 [AUTO-SAVE] Saída detetada. A gravar...");
         
         const statusEl = document.getElementById('archive-save-status');
-        if(statusEl) statusEl.textContent = "A libertar post...";
+        if(statusEl) statusEl.textContent = "A gravar e sair...";
 
         let capturedTitle = null;
         let capturedContent = null;
+        let source = "";
 
-        // TENTATIVA 1: LER DA MEMÓRIA (Prioridade Máxima)
-        if (window.livePostDraft && window.livePostDraft.id === editingId) {
+        // 1. TENTATIVA PRINCIPAL: LER DIRETAMENTE DO ECRÃ (Mais Seguro)
+        // Procuramos o elemento físico no HTML pelo ID que definimos no render
+        const editorEl = document.getElementById(`editor-${editingId}`);
+        const container = document.querySelector('.post-edit-container');
+
+        if (editorEl && container) {
+            source = "DOM (Ecrã)";
+            capturedContent = editorEl.innerHTML;
+            capturedTitle = container.querySelector('.post-title-input')?.value;
+        } 
+        
+        // 2. PLANO B: LER DA MEMÓRIA (Se o ecrã já tiver mudado)
+        else if (window.livePostDraft && window.livePostDraft.id === editingId) {
+            source = "RAM (Memória)";
             capturedTitle = window.livePostDraft.title;
             capturedContent = window.livePostDraft.content;
-        } 
-        // TENTATIVA 2: LER DO ECRÃ (Fallback)
-        else {
-            const editorEl = document.getElementById(`editor-${editingId}`);
-            const container = document.querySelector('.post-edit-container');
-            if (editorEl && container) {
-                capturedContent = editorEl.innerHTML;
-                capturedTitle = container.querySelector('.post-title-input')?.value;
-            }
         }
 
+        console.log(`📊 Fonte dos dados: ${source}`);
+        console.log(`📝 Tamanho do conteúdo: ${capturedContent ? capturedContent.length : 0} caracteres`);
+
         try {
-            // PASSO 1: GRAVAR O CONTEÚDO
-            // Se tivermos conteúdo, forçamos a gravação. Se não, gravamos o estado atual.
-            // Nota: saveArchivePost já chama unlockPost internamente, mas vamos reforçar.
+            // Força a gravação com os dados capturados agora mesmo
             if (capturedContent !== null) {
                 await window.saveArchivePost(editingId, capturedContent, capturedTitle);
             } else {
+                console.warn("⚠️ Não foi possível recuperar o conteúdo. A gravar estado atual...");
                 await window.saveArchivePost(editingId);
             }
             
-            // PASSO 2: FORÇAR O DESBLOQUEIO (CRÍTICO)
-            // Isto garante que o outro utilizador vê o cadeado desaparecer imediatamente
-            if (typeof window.unlockPost === 'function') {
-                console.log(`🔓 [FORCE UNLOCK] A libertar cadeado do post ${editingId}...`);
-                await window.unlockPost(editingId);
-            }
-            
-            // PASSO 3: LIMPEZA DE VARIÁVEIS GLOBAIS
+            // Limpa o rascunho
             window.livePostDraft = null;
-            activeEditingPostId = null;
-            window.activeEditingPostId = null;
             
-            console.log("✅ Gravação e Desbloqueio concluídos. A navegar...");
+            console.log("✅ Gravação concluída. A mudar de página...");
             console.groupEnd();
             
-            // PASSO 4: EXECUTAR A NAVEGAÇÃO
-            if (navigationAction) navigationAction();
+            // Permite a navegação
+            navigationAction();
 
         } catch (e) {
-            console.error("Erro fatal ao gravar/desbloquear:", e);
-            if(confirm("Erro ao libertar o post. Sair mesmo assim?")) {
-                // Limpeza de emergência
-                window.livePostDraft = null;
+            console.error("Erro fatal ao gravar na saída:", e);
+            if(confirm("Erro ao gravar automaticamente. Sair e perder alterações?")) {
                 activeEditingPostId = null;
                 window.activeEditingPostId = null;
-                
-                // Tenta desbloquear mesmo com erro
-                if (typeof window.unlockPost === 'function') window.unlockPost(editingId).catch(() => {});
-                
-                if (navigationAction) navigationAction();
+                window.livePostDraft = null;
+                navigationAction();
             }
         }
         return; 
     }
 
-    // --- CENÁRIO: NOTAS NORMAIS (Não Arquivo) ---
+    // --- CENÁRIO NOTA NORMAL ---
     if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
+        const savingModal = document.getElementById('forcing-save-modal');
+        if (savingModal) {
+            document.body.appendChild(savingModal);
+            savingModal.style.setProperty('display', 'flex', 'important');
+        }
         try {
             await saveNote(true); 
-            if (navigationAction) navigationAction();
+            if (savingModal) savingModal.style.display = 'none';
+            navigationAction();
         } catch (error) {
-            if(confirm("Erro de conexão. Sair sem gravar?")) if (navigationAction) navigationAction();
+            if (savingModal) savingModal.style.display = 'none';
+            if(confirm("Erro de conexão. Sair sem gravar?")) navigationAction();
         }
     } else {
-        // Nada para gravar, segue viagem
-        if (navigationAction) navigationAction();
+        navigationAction();
     }
 }
 
@@ -21688,68 +21680,104 @@ window.addEventListener('beforeunload', (event) => {
 
 
 // LISTENER ÚNICO DA COLUNA 2 (Unifica Logs, Navegação e Mobile)
-middlePanelList.addEventListener('click', (e) => {
+middlePanelList.addEventListener('click', async (e) => {
+    // 1. Identifica o item clicado
     const item = e.target.closest('.list-item');
     if (!item) return;
 
-    // Ignora clique no menu de 3 pontos
-    if (e.target.closest('.item-menu-btn')) return;
+    // 2. Se clicou nos "três pontos", abre o menu e pára (não navega)
+    const itemMenuBtn = e.target.closest('.item-menu-btn');
+    if (itemMenuBtn) {
+        showContextMenu(e);
+        return;
+    }
 
+    // 3. Captura dados
     const id = item.getAttribute('data-id');
     const type = item.getAttribute('data-type');
     const name = item.getAttribute('data-name');
-    
-    // Evita recarregar se clicar no mesmo que já está aberto
-    if (id === selectedNoteId || id === currentArchiveId) return;
 
-    console.log(`🖱️ [NAVEGAÇÃO] Clicou em: ${name}`);
-
-    // --- AÇÃO QUE VAI ACONTECER DEPOIS DE GRAVAR ---
-    const runNavigation = async () => {
-        // 1. Limpeza Visual
-        document.querySelectorAll('#file-list .list-item').forEach(el => {
+    // ============================================================
+    // DEFINIÇÃO DA AÇÃO DE NAVEGAÇÃO (O QUE FAZER DEPOIS DE GRAVAR)
+    // ============================================================
+    const proceedWithNavigation = async () => {
+        
+        // 4. LIMPEZA VISUAL FORÇADA (Só acontece se a navegação for permitida)
+        const allItems = middlePanelList.querySelectorAll('.list-item');
+        allItems.forEach(el => {
             el.classList.remove('selected', 'selected-red');
+            el.style.backgroundColor = ""; 
         });
 
-        // 2. Aplica Seleção Visual no Novo Item
+        // 5. APLICA O NOVO DESTAQUE
         const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
         item.classList.add(selectionClass);
-        
-        // 3. Verifica Proteção (Senha)
+
+        // 6. Define a variável de transição
+        window.nextSelectedId = id; 
+
+        // 7. Verificação de Proteção (Senha)
         const canAccess = await checkItemProtection(id, name);
         if (!canAccess) {
-            item.classList.remove(selectionClass);
+            window.nextSelectedId = null; 
+            item.classList.remove(selectionClass); 
             return;
         }
 
-        // 4. Abre o novo ficheiro
-        if (['nota', 'arquivo', 'partilhado', 'jornal'].includes(type)) {
-            if (type === 'nota' || type === 'jornal') {
-                displayNote(id, item);
-            } else {
-                // Abre o Arquivo/Partilha
-                displayArchive(id, { id, nome: name, tipo: type }, item);
+        // 8. EXECUÇÃO DA ABERTURA
+        
+        // --- CASO A: NAVEGAR (PASTAS) ---
+        if (type === 'pasta' || type === 'agregacao') {
+            if (item.dataset.superpasta === "true") {
+                window.location.href = `note.html?rootId=${id}`;
+                return;
             }
+            navigationStack.push({ id, name });
+            updateNavigationView(true);
             
-            // Ajuste para Mobile
+            if (window.innerWidth <= 768) {
+                document.body.classList.add('mobile-view-middle');
+            }
+        }
+
+        // --- CASO B: ABRIR CONTEÚDO ---
+        else if (['nota', 'arquivo', 'partilhado', 'jornal', 'aquario'].includes(type)) {
+
+            // Mobile: Salta para o editor
             if (window.innerWidth <= 768) {
                 document.body.classList.add('mobile-view-editor');
             }
-        }
-        else if (type === 'pasta') {
-             // (Lógica de pasta...)
-             navigationStack.push({ id, name });
-             updateNavigationView(true);
+
+            // Aquário
+            if (type === 'aquario') {
+                try {
+                    const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+                    const docRef = doc(db, 'pastas', id);
+                    const snap = await getDoc(docRef);
+                    if (snap.exists()) {
+                        window.openAquariumEnvironment(id, { id: snap.id, ...snap.data() });
+                    }
+                } catch (err) { console.error(err); }
+            }
+            
+            // Notas e Jornais
+            else if (type === 'nota' || type === 'jornal') {
+                displayNote(id, item);
+            }
+            
+            // Arquivos (Aqui é que a gravação era crítica)
+            else {
+                displayArchive(id, { id, nome: name, tipo: type }, item);
+            }
         }
     };
 
-    // --- CHAMA O PORTEIRO ---
-    // Esta função (que configurámos na resposta anterior) vai:
-    // 1. Detetar que tem um post aberto.
-    // 2. Gravar o post.
-    // 3. Desbloquear o post.
-    // 4. Executar o 'runNavigation' acima.
-    navigateWithUnsavedCheck(runNavigation);
+    // ============================================================
+    // O GUARDIÃO: VERIFICA SE HÁ ALGO PARA GRAVAR ANTES DE IR
+    // ============================================================
+    // Passamos a função 'proceedWithNavigation' para o porteiro.
+    // Ele grava o que estiver pendente e só depois executa a função.
+    navigateWithUnsavedCheck(proceedWithNavigation);
 });
 
 
@@ -27934,74 +27962,61 @@ window.editArchivePost = async (postId) => {
 window.saveArchivePost = async (postId, contentOverride = null, titleOverride = null) => {
     console.group(`💾 [GRAVADOR] A processar ID: ${postId}`);
 
-    // Verifica se estamos a usar dados da memória (Rascunho) ou do Ecrã
-    // Se saiu do post, contentOverride virá preenchido pelo "navigateWithUnsavedCheck"
+    // Verifica se recebemos dados diretos (do Porteiro)
     const hasOverride = (contentOverride !== null);
     const postDiv = document.getElementById(`post-${postId}`);
     
-    let finalTitle = "";
-    let finalContent = "";
-    let dataFound = false;
-
-    // 1. TENTA LER DADOS (Prioridade: Override > Ecrã)
-    if (hasOverride) {
-        console.log("🤖 [MODO AUTO] Usando dados da memória (Seguro).");
-        finalTitle = titleOverride;
-        finalContent = contentOverride;
-        dataFound = true;
-    } 
-    else if (postDiv) {
-        console.log("🖱️ [MODO MANUAL] Lendo dados do ecrã.");
-        const titleInput = postDiv.querySelector('.post-title-input');
+    // 1. TENTA LER DO ECRÃ (Se for um clique no botão "Salvar" normal)
+    if (!hasOverride && postDiv) {
+        console.log("🖱️ [MODO MANUAL] Clique no botão Salvar detetado. Lendo do Ecrã...");
+        const titleInputGeneric = postDiv.querySelector('.post-title-input');
         const contentEditor = postDiv.querySelector('.post-editor-content');
-        if (titleInput && contentEditor) {
-            // Sincroniza inputs internos das subnotas antes de ler
+
+        if (contentEditor && titleInputGeneric) {
             contentEditor.querySelectorAll('.mini-note-title-input').forEach(t => {
                 if (t.tagName === 'TEXTAREA') t.textContent = t.value;
                 else t.setAttribute('value', t.value);
             });
-            finalTitle = titleInput.value.trim();
-            finalContent = contentEditor.innerHTML;
-            dataFound = true;
-        }
-    }
 
-    // 2. ATUALIZAÇÃO E DESBLOQUEIO
-    if (dataFound) {
+            const postIndex = currentArchiveData.posts.findIndex(p => p.id === postId);
+            if (postIndex > -1) {
+                currentArchiveData.posts[postIndex].title = titleInputGeneric.value.trim() || "Sem Título";
+                currentArchiveData.posts[postIndex].content = contentEditor.innerHTML;
+                currentArchiveData.posts[postIndex].updatedAt = Date.now();
+                currentArchiveData.posts[postIndex].lastEditorId = auth.currentUser.uid;
+            }
+        }
+    } 
+    // 2. USA DADOS DO PORTEIRO (Se for navegação de saída)
+    else if (hasOverride) {
+        console.log("🤖 [MODO AUTO] Dados injetados pelo Porteiro. Ignorando Ecrã.");
         const postIndex = currentArchiveData.posts.findIndex(p => p.id === postId);
-        
         if (postIndex > -1) {
-            // Atualiza Memória Local
-            currentArchiveData.posts[postIndex].title = finalTitle || "Sem Título";
-            currentArchiveData.posts[postIndex].content = finalContent;
+            currentArchiveData.posts[postIndex].title = titleOverride;
+            currentArchiveData.posts[postIndex].content = contentOverride;
             currentArchiveData.posts[postIndex].updatedAt = Date.now();
             currentArchiveData.posts[postIndex].lastEditorId = auth.currentUser.uid;
-
-            // Grava no Firebase (Aguarda a conclusão)
-            console.log("☁️ Enviando para o Firebase...");
-            await saveFullArchive(); 
-            
-            // --- O PASSO CRUCIAL: DESBLOQUEAR ---
-            // Assim que grava, chama o unlock imediatamente
-            console.log("🔓 Libertando o post para outros utilizadores...");
-            await unlockPost(postId);
         }
     }
 
-    // 3. LIMPEZA FINAL
+    // LIMPEZA DE ESTADO GLOBAL
     if (activeEditingPostId === postId) {
         activeEditingPostId = null;
         window.activeEditingPostId = null;
         window.livePostDraft = null; 
     }
+
+    // GRAVAÇÃO REAL
+    console.log("☁️ Enviando para o Firebase...");
+    await saveFullArchive();
+    await unlockPost(postId);
+    console.log("✅ Firebase atualizado e Cadeado libertado.");
     
-    // Restaura visual se o post ainda estiver no ecrã (não mudámos de página)
-    if (postDiv && !hasOverride) {
+    // RESTAURO VISUAL
+    if (postDiv) {
         const postData = currentArchiveData.posts.find(p => p.id === postId);
         if (postData) renderPostViewMode(postDiv, postData);
     }
-    
-    console.log("✅ Ciclo de Gravação e Desbloqueio concluído.");
     console.groupEnd();
 };
 
@@ -28664,56 +28679,33 @@ if (archiveTitleInput) {
 
 // 1. Ouvir mudanças no documento (Locks e Conteúdo)
 function initRealtimeCollab(docId) {
-    // Limpa ouvinte anterior se existir
-    if (collabUnsubscribe) collabUnsubscribe();
-
     const docRef = doc(db, 'pastas', docId);
 
     collabUnsubscribe = onSnapshot(docRef, (docSnap) => {
         if (!docSnap.exists()) return;
 
         const newData = docSnap.data();
-        
-        // 1. Atualiza a lista de bloqueios na memória
         currentLocks = newData.locks || {};
-        
-        cleanupStaleLocks(currentLocks); 
-        
-        // 2. FORÇA A ATUALIZAÇÃO VISUAL DOS CADEADOS IMEDIATAMENTE
-        // Isto acontece independentemente de estarmos a editar ou não.
-        // Assim, o user vê logo quem entrou e saiu.
         applyVisualLocks();
 
-        // 3. Verifica botão de partilha (Segurança)
+        // --- REAVALIAÇÃO DE SEGURANÇA DO CADEADO EM TEMPO REAL ---
         const shareBtn = document.querySelector('button[data-action="archive-share"]');
         if (shareBtn) {
             const isOwner = newData.userId === auth.currentUser.uid;
             const isSharedType = (newData.tipo === 'partilhado');
-            shareBtn.style.display = (isSharedType && !isOwner) ? 'none' : 'block';
-        }
-
-        // 4. Atualiza o Conteúdo (Texto dos posts)
-        // Só redesenhamos o feed se o utilizador NÃO estiver a escrever num post neste momento.
-        // Isto evita que o ecrã salte ou reinicie enquanto ele escreve.
-        if (!activeEditingPostId) {
-            // Verifica se houve mudança real nos posts para evitar "piscar" desnecessário
-            // (Opcional, mas boa prática)
-            const oldPostsJson = JSON.stringify(currentArchiveData?.posts);
-            const newPostsJson = JSON.stringify(newData.posts);
-
-            if (oldPostsJson !== newPostsJson) {
-                console.log("🔄 [SYNC] Conteúdo atualizado por outro utilizador.");
-                currentArchiveData.posts = newData.posts;
-                
-                // Redesenha a lista
-                renderArchiveFeed();
-                
-                // Reaplica os bloqueios porque o renderArchiveFeed criou elementos HTML novos
-                applyVisualLocks();
+            
+            if (isSharedType && !isOwner) {
+                shareBtn.style.display = 'none';
+            } else {
+                shareBtn.style.display = 'block';
             }
-        } else {
-            // Se estou a editar, atualizo apenas a memória em background para quando acabar
+        }
+        // -------------------------------------------------------
+
+        if (!activeEditingPostId) {
             currentArchiveData.posts = newData.posts;
+            renderArchiveFeed();
+            applyVisualLocks();
         }
     });
 }
@@ -28814,52 +28806,45 @@ async function initPresenceSystem(docId) {
 function applyVisualLocks() {
     const myUserId = auth.currentUser.uid;
 
-    // --- 1. LIMPEZA TOTAL (RESET) ---
-    // Percorre todos os posts no ecrã e remove qualquer sinal de bloqueio antigo
+    // 1. LIMPEZA: Remove bloqueios de todos os posts primeiro
     document.querySelectorAll('.archive-post').forEach(postDiv => {
-        // Remove estilos de bloqueio
         postDiv.classList.remove('is-locked');
         postDiv.style.opacity = "1";
         postDiv.style.pointerEvents = "auto";
-        
-        // Remove a etiqueta vermelha "A editar..."
         const badge = postDiv.querySelector('.locked-badge');
         if (badge) badge.remove();
         
-        // Mostra o botão de editar novamente
         const editBtn = postDiv.querySelector('.post-edit-btn');
         if (editBtn) {
             editBtn.disabled = false;
-            editBtn.style.display = "flex"; // Ou 'block' dependendo do seu CSS
+            editBtn.style.display = "flex";
         }
     });
 
-    // --- 2. APLICAÇÃO DE NOVOS BLOQUEIOS ---
+    // 2. APLICAÇÃO: Percorre a lista de locks do Firebase
     if (!currentLocks) return;
 
     Object.entries(currentLocks).forEach(([postId, lockData]) => {
-        // Só aplica se o lock NÃO for meu (eu vejo o meu próprio post como editável)
+        // Só aplica se o lock NÃO for meu
         if (lockData.userId !== myUserId) {
             
+            // Procura o elemento no HTML
             const postDiv = document.getElementById(`post-${postId}`);
             
             if (postDiv) {
-                // Aplica visual de bloqueado
                 postDiv.classList.add('is-locked');
-                postDiv.style.opacity = "0.6"; // Um pouco mais transparente
-                postDiv.style.pointerEvents = "none"; // Impede cliques
+                postDiv.style.opacity = "0.5";
+                postDiv.style.pointerEvents = "none";
 
-                // Adiciona a Badge Vermelha
+                // Badge vermelha
                 if (!postDiv.querySelector('.locked-badge')) {
                     const badge = document.createElement('div');
                     badge.className = 'locked-badge';
-                    // Mostra quem está a editar
-                    badge.innerHTML = `🔒 ${lockData.userName || 'Alguém'} está a escrever...`; 
-                    badge.style.cssText = "position:absolute; top:-10px; right:10px; background:#e74c3c; color:white; padding:4px 10px; border-radius:4px; font-size:12px; font-weight:bold; z-index:100; box-shadow:0 2px 5px rgba(0,0,0,0.3); animation: pulse-dot 2s infinite;";
+                    badge.innerHTML = `🔒 ${lockData.userName} está a editar...`;
+                    badge.style.cssText = "position:absolute; top:-10px; right:10px; background:#e74c3c; color:white; padding:4px 10px; border-radius:4px; font-size:12px; font-weight:bold; z-index:100; box-shadow:0 2px 5px rgba(0,0,0,0.3);";
                     postDiv.appendChild(badge);
                 }
 
-                // Esconde botão de editar para evitar conflitos
                 const editBtn = postDiv.querySelector('.post-edit-btn');
                 if (editBtn) editBtn.style.display = "none";
             }
@@ -28869,34 +28854,23 @@ function applyVisualLocks() {
 
 // 4. Bloquear Post (Chamar ao clicar em Editar)
 async function lockPost(postId) {
-    if (!currentArchiveId) return false;
+    if (!currentArchiveId) {
+        console.error("❌ Erro: ID do Arquivo não encontrado para bloquear.");
+        return false;
+    }
 
     const docRef = doc(db, 'pastas', currentArchiveId);
     const myName = currentUserData?.nome || auth.currentUser.email.split('@')[0];
 
-    // Função interna para atualizar o timestamp
-    const sendPulse = async () => {
-        try {
-            await updateDoc(docRef, {
-                [`locks.${postId}`]: {
-                    userId: auth.currentUser.uid,
-                    userName: myName,
-                    timestamp: Date.now() // Atualiza a hora para "Agora"
-                }
-            });
-            console.log("💓 [LOCK] Batimento enviado.");
-        } catch (e) {
-            console.warn("Falha no batimento do lock:", e);
-        }
-    };
-
     try {
-        // Envia o primeiro bloqueio imediatamente
-        await sendPulse();
-
-        // Inicia o "Coração" (atualiza a cada 60 segundos)
-        if (lockHeartbeatTimer) clearInterval(lockHeartbeatTimer);
-        lockHeartbeatTimer = setInterval(sendPulse, 60000); 
+        // Grava no campo 'locks' do documento pai
+        await updateDoc(docRef, {
+            [`locks.${postId}`]: {
+                userId: auth.currentUser.uid,
+                userName: myName,
+                timestamp: Date.now()
+            }
+        });
     
         return true;
     } catch (e) {
@@ -28906,25 +28880,18 @@ async function lockPost(postId) {
 }
 
 async function unlockPost(postId) {
-    // 1. PÁRA O BATIMENTO CARDÍACO
-    if (lockHeartbeatTimer) {
-        clearInterval(lockHeartbeatTimer);
-        lockHeartbeatTimer = null;
-    }
-
-    const targetArchiveId = currentArchiveId || selectedNoteId;
-    if (!targetArchiveId) return;
+    if (!currentArchiveId) return;
+    
+    const docRef = doc(db, 'pastas', currentArchiveId);
     
     try {
-        const { doc, updateDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        const docRef = doc(db, 'pastas', targetArchiveId);
-        
+        // Remove a entrada do objeto 'locks' no Firebase
         await updateDoc(docRef, {
             [`locks.${postId}`]: deleteField()
         });
         console.log(`🔓 [SISTEMA] Cadeado removido de: ${postId}`);
     } catch (e) {
-        console.error("❌ Falha ao desbloquear:", e);
+        console.error("❌ [ERRO] Falha ao remover cadeado na saída:", e);
     }
 }
 
@@ -33867,40 +33834,40 @@ async function updateSharedListWithNotifs(resultsMap) {
 
     middlePanelList.innerHTML = '';
     
-    resultsMap.forEach(item => {
-        const li = document.createElement('li');
-        li.className = 'list-item';
-        li.setAttribute('data-id', item.id);
-        
-        // Log de depuração
-        // console.log(`[LISTA] Gerando item: ${item.nome} (ID: ${item.id})`);
+ resultsMap.forEach(item => {
+    const li = document.createElement('li');
+    li.className = 'list-item';
+    li.setAttribute('data-id', item.id);
+    
+    // LOG DE CRIAÇÃO (Para saber se o item está na lista)
+    console.log(`[LISTA] Gerando item: ${item.nome} (ID: ${item.id})`);
 
-        li.innerHTML = `<span>${item.userId === myUid ? '👑' : '🤝'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+    li.innerHTML = `<span>${item.userId === myUid ? '👑' : '🤝'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
 
-        // --- CORREÇÃO AQUI ---
-        li.onclick = (e) => {
-            if (e.target.closest('.item-menu-btn')) return;
-            
-            // Em vez de abrir direto, passamos pelo Porteiro de Segurança
-            navigateWithUnsavedCheck(() => {
-                console.log(`%c🖱️ [NAV] Abrindo arquivo partilhado: "${item.nome}"`, "color: #3498db;");
-                window.displayArchive(item.id, item, li);
-            });
-        };
-        // ---------------------
+    li.onclick = (e) => {
+        if (e.target.closest('.item-menu-btn')) return;
         
-        middlePanelList.appendChild(li);
-    });
+        // LOG DE CLIQUE
+        console.log(`%c🖱️ CLIQUE DETETADO: A tentar abrir o arquivo "${item.nome}"...`, "color: #3498db; font-weight: bold;");
+        
+        // Chama a abertura
+        window.displayArchive(item.id, item, li);
+    };
+    
+    middlePanelList.appendChild(li);
+});
 }
 
 
 
-async function loadSharedFilesRoot() {
+ async function loadSharedFilesRoot() {
     console.log("%c[SISTEMA] Iniciando renderização da Partilha...", "color: #e74c3c;");
     
+    // Limpeza de segurança inicial
     if (unsubscribeShared1) { unsubscribeShared1(); unsubscribeShared1 = null; }
     if (unsubscribeShared2) { unsubscribeShared2(); unsubscribeShared2 = null; }
 
+    // Define o visual inicial
     middlePanelTitle.textContent = "Arquivos Partilhados";
     middlePanelList.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A procurar arquivos...</span></div>';
 
@@ -33909,12 +33876,15 @@ async function loadSharedFilesRoot() {
     let resultsMap = new Map();
 
     try {
+        // Carregar histórico de leitura
         const readsSnap = await getDocs(collection(db, 'users', myUid, 'archive_reads'));
+        
         if (currentViewMode !== 'shared') return;
+
         readsSnap.forEach(d => userLastSeenArchives[d.id] = d.data().lastSeen || 0);
     } catch(e) { console.warn("Aviso: Histórico de leitura inacessível."); }
 
-    // --- FUNÇÃO DE DESENHO CORRIGIDA ---
+    // --- FUNÇÃO DE DESENHO INTELIGENTE ---
     const renderUnifiedList = () => {
         if (currentViewMode !== 'shared') return;
 
@@ -33931,29 +33901,47 @@ async function loadSharedFilesRoot() {
                 li.setAttribute('data-name', item.nome);
                 li.style.position = "relative"; 
 
+                // Seleção visual
                 if (item.id === selectedNoteId) li.classList.add('selected-red');
                 else li.style.borderLeft = "4px solid #e74c3c";
 
-                // (Lógica de notificação mantém-se igual...)
+                // --- LÓGICA DE DETEÇÃO DE NOTIFICAÇÃO (CRÍTICA) ---
                 const lastSeen = userLastSeenArchives[item.id] || 0;
                 const posts = item.posts || [];
+                
                 let hasNew = false;
                 let hasEdit = false;
 
+                // Percorre os posts para ver se há novidades
                 for (const post of posts) {
                     const created = post.createdAt?.toMillis ? post.createdAt.toMillis() : (post.createdAt || 0);
                     const updated = post.updatedAt?.toMillis ? post.updatedAt.toMillis() : (post.updatedAt || 0);
                     
-                    if (created > lastSeen && post.userId !== myUid) { hasNew = true; break; }
+                    // 1. Verificar se é NOVO (Criado por outro depois da visita)
+                    if (created > lastSeen && post.userId !== myUid) {
+                        hasNew = true;
+                        break; // Se há novo, ganha prioridade máxima (Vermelho), paramos de procurar.
+                    }
+
+                    // 2. Verificar se foi EDITADO (Atualizado por outro depois da visita)
+                    // Ignora se foi acabado de criar (margem 2s)
                     if (updated > lastSeen && updated > (created + 2000)) {
                         const lastEditor = post.lastEditorId || "unknown";
-                        if (lastEditor !== myUid) hasEdit = true;
+                        if (lastEditor !== myUid) {
+                            hasEdit = true;
+                        }
                     }
                 }
 
+                // Decide a cor da bola
                 let notifHTML = "";
-                if (hasNew) notifHTML = `<span class="notif-badge" style="background-color: #e74c3c; animation: pulse-dot 2s infinite;" title="Novos Posts">!</span>`;
-                else if (hasEdit) notifHTML = `<span class="notif-badge" style="background-color: #f39c12;" title="Edições Recentes">!</span>`;
+                if (hasNew) {
+                    // Bola Vermelha com Animação
+                    notifHTML = `<span class="notif-badge" style="background-color: #e74c3c; animation: pulse-dot 2s infinite;" title="Novos Posts">!</span>`;
+                } else if (hasEdit) {
+                    // Bola Laranja (Sem animação ou mais calma)
+                    notifHTML = `<span class="notif-badge" style="background-color: #f39c12;" title="Edições Recentes">!</span>`;
+                }
 
                 const isOwner = item.userId === myUid;
                 
@@ -33967,19 +33955,16 @@ async function loadSharedFilesRoot() {
                 
                 middlePanelList.appendChild(li);
                 
-                // --- CORREÇÃO AQUI (CLIQUE) ---
+                // Configurar clique
                 li.onclick = (e) => {
                     if (e.target.closest('.item-menu-btn')) return;
-                    
-                    // Chama o porteiro antes de abrir
-                    navigateWithUnsavedCheck(() => {
-                        window.displayArchive(item.id, item, li);
-                    });
+                    window.displayArchive(item.id, item, li);
                 };
-                // ------------------------------
             });
+            console.log("✅ Lista de Partilha atualizada com estados precisos.");
     };
 
+    // Queries (Mantêm-se iguais)
     const q1 = query(foldersRef, where('userId', '==', myUid), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
     const q2 = query(foldersRef, where(`colaboradores.${myUid}`, '==', true), where('partilhado', '==', 'ativo'), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
 
@@ -43721,65 +43706,6 @@ window.showPostDetails = function(postId) {
     modal.style.display = 'flex';
 };
 
-document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-        // Verifica se há um post a ser editado
-        const idToSave = activeEditingPostId || window.activeEditingPostId;
-        
-        if (idToSave) {
-            console.log("📱 [SAÍDA DE EMERGÊNCIA] App escondida. Gravando e libertando...");
-            
-            // Captura dados da memória (Rascunho) se existirem, é mais seguro
-            let title = null;
-            let content = null;
-            
-            if (window.livePostDraft && window.livePostDraft.id === idToSave) {
-                title = window.livePostDraft.title;
-                content = window.livePostDraft.content;
-            }
-
-            // Grava e Desbloqueia (O saveArchivePost agora faz os dois)
-            // Usamos 'await' mas o browser pode não esperar muito tempo, 
-            // porém o saveFullArchive e unlockPost são disparados imediatamente.
-            if (content) {
-                window.saveArchivePost(idToSave, content, title);
-            } else {
-                window.saveArchivePost(idToSave);
-            }
-        }
-    }
-});
-
-// Adicione esta função nova
-async function cleanupStaleLocks(locksData) {
-    if (!locksData || Object.keys(locksData).length === 0) return;
-
-    const now = Date.now();
-    const TIMEOUT_LIMIT = 3 * 60 * 1000; // 3 Minutos de tolerância
-    let hasStaleLocks = false;
-    let updates = {};
-
-    Object.entries(locksData).forEach(([postId, lockInfo]) => {
-        // Se a última atualização foi há muito tempo...
-        if (now - lockInfo.timestamp > TIMEOUT_LIMIT) {
-            console.warn(`💀 [LOCK ZUMBI] O bloqueio do post ${postId} expirou. Removendo...`);
-            // Prepara para apagar do Firebase
-            updates[`locks.${postId}`] = deleteField();
-            hasStaleLocks = true;
-        }
-    });
-
-    // Se encontrou bloqueios velhos, limpa-os na base de dados
-    if (hasStaleLocks && currentArchiveId) {
-        try {
-            const { doc, updateDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-            const docRef = doc(db, 'pastas', currentArchiveId);
-            await updateDoc(docRef, updates);
-        } catch (e) {
-            console.error("Erro ao limpar locks antigos:", e);
-        }
-    }
-}
 
     </script>
 </body>
