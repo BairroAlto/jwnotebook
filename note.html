@@ -35009,42 +35009,118 @@ async function fetchPublicBibleText(verseName) {
 }
 
 // 3. FUNÇÃO PRINCIPAL: GERAR ABA TEXTOS
+function getFlexibleRegexStr(str) {
+    return str
+        .replace(/[aáàâãAÁÀÂÃ]/g, '[aáàâãAÁÀÂÃ]')
+        .replace(/[eéèêEÉÈÊ]/g, '[eéèêEÉÈÊ]')
+        .replace(/[iíìIÍÌ]/g, '[iíìIÍÌ]')
+        .replace(/[oóòôõOÓÒÔÕ]/g, '[oóòôõOÓÒÔÕ]')
+        .replace(/[uúùUÚÙ]/g, '[uúùUÚÙ]')
+        .replace(/[cçCÇ]/g, '[cçCÇ]');
+}
+
+// Função Auxiliar: Remove acentos para comparação (Normalização)
+function normalizeStr(str) {
+    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
 async function generateNoteTexts() {
     const list = document.getElementById('note-texts-view');
     const editor = document.getElementById('note-content-editor');
     
     if (!editor || !list) return;
 
-    // 1. Obtém o texto do corpo e dos inputs (Títulos) para analisar
-    let textContent = editor.innerText;
-    const titles = editor.querySelectorAll('.redator-input, .mini-note-title-input, .card-title-input, .sign-title-input');
-    titles.forEach(input => {
-        if (input.value) textContent += " " + input.value;
+    // --- 1. PREPARAÇÃO INTELIGENTE DA REGEX ---
+    
+    // A. Criar um mapa de tradução: "exodo" -> "Êxodo"
+    // Isto serve para que, se encontrarmos "Exodo", o sistema saiba pedir "Êxodo" ao Firebase
+    const canonicalBookMap = {};
+    const flexiblePatterns = [];
+
+    // Ordenar por tamanho (maior para menor) para evitar que "Judeus" dê match em "Judas"
+    const sortedBooks = [...BIBLICAL_BOOKS].sort((a, b) => b.length - a.length);
+
+    sortedBooks.forEach(book => {
+        // 1. Cria a chave normalizada (ex: "exodo")
+        const normalized = normalizeStr(book);
+        canonicalBookMap[normalized] = book; // Guarda o nome oficial ("Êxodo")
+
+        // 2. Cria o padrão flexível para a regex
+        flexiblePatterns.push(getFlexibleRegexStr(book));
     });
 
-    // 2. Prepara a Regex para encontrar livros da Bíblia
-    const sortedBooks = [...BIBLICAL_BOOKS].sort((a, b) => b.length - a.length);
-    const booksPattern = sortedBooks.join('|');
+    // B. Montar a Regex Gigante
+    // Procura: (Início|Espaço|Aspas) + (NomeFlexivel) + (Cap:Vers)
+    const booksPattern = flexiblePatterns.join('|');
+    const regex = new RegExp(`(?:^|[\\s"'(])((?:${booksPattern})\\s+\\d+:\\d+(?:\\s*[-–,;]\\s*\\d+)*)`, 'gi');
 
-    // === CORREÇÃO AQUI ===
-    // Explicação: \d+:\d+ (Cap:Verso) ... seguido de (hífen/vírgula + digito) repetidas vezes
-    const regex = new RegExp(`\\b((?:${booksPattern})\\s+\\d+:\\d+(?:\\s*[-–,;]\\s*\\d+)*)`, 'gi');
-    // =====================
+
+    // --- 2. EXTRAÇÃO DE TEXTO LINEAR (DOM Walker) ---
+    // Lê o texto na ordem exata da página
+    let textContent = "";
     
-    const rawMatches = textContent.match(regex) || [];
-    const currentRefs = [...new Set(rawMatches.map(r => r.trim()))]; // .trim() limpa espaços nas pontas
+    const walker = document.createTreeWalker(
+        editor, 
+        NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, 
+        {
+            acceptNode: (node) => {
+                if (node.nodeType === 3) return NodeFilter.FILTER_ACCEPT;
+                if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') return NodeFilter.FILTER_ACCEPT;
+                return NodeFilter.FILTER_SKIP;
+            }
+        }
+    );
 
-    // Lógica para detetar se apareceu uma referência nova para fazer scroll automático
+    let currentNode;
+    while (currentNode = walker.nextNode()) {
+        if (currentNode.nodeType === 3) {
+            textContent += currentNode.textContent + " ";
+        } else {
+            textContent += currentNode.value + " ";
+        }
+    }
+    
+    // --- 3. CAPTURA E NORMALIZAÇÃO ---
+    const rawMatches = textContent.match(regex) || [];
+    
+    // Processa os resultados encontrados
+    const currentRefs = [...new Set(rawMatches.map(r => {
+        // A. Limpa a pontuação inicial
+        let foundText = r.replace(/^[ "((]+/, '').trim();
+        
+        // B. Separa o Livro dos Números (ex: "Exodo" de "20:1")
+        // Usa regex para encontrar onde começam os números
+        const splitMatch = foundText.match(/^(.+?)\s+(\d+:.*)$/);
+        
+        if (splitMatch) {
+            const foundBookName = splitMatch[1]; // "Exodo"
+            const numbers = splitMatch[2];       // "20:1"
+            
+            // C. Corrige o nome do livro usando o mapa
+            const normalizedFound = normalizeStr(foundBookName);
+            const officialName = canonicalBookMap[normalizedFound];
+            
+            if (officialName) {
+                // Retorna o nome corrigido + números (ex: "Êxodo 20:1")
+                return `${officialName} ${numbers}`;
+            }
+        }
+        
+        return foundText; // Fallback se falhar
+    }))];
+
+    // Detetar novos para scroll
     const prevRefsJSON = list.getAttribute('data-prev-refs') || "[]";
     const prevRefs = JSON.parse(prevRefsJSON);
     const newRefFound = currentRefs.find(ref => !prevRefs.includes(ref));
 
+    // --- 4. RENDERIZAÇÃO ---
     if (currentRefs.length === 0) {
         list.innerHTML = `
             <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:#888; text-align:center; padding:20px;">
                 <span style="font-size:30px;">📖</span>
                 <p>Nenhum texto detetado.</p>
-                <small style="opacity:0.5;">Escreva ex: "João 3:16"</small>
+                <small style="opacity:0.5;">Suporta: "Exodo 1:1", "Joao 3:16"</small>
             </div>`;
         list.setAttribute('data-prev-refs', "[]");
         return;
@@ -35053,21 +35129,17 @@ async function generateNoteTexts() {
     list.innerHTML = ''; 
     let elementToScrollTo = null;
 
-    // 3. PROCESSAR CADA REFERÊNCIA ENCONTRADA
     for (const cleanRef of currentRefs) {
         
         const itemDiv = document.createElement('div');
         itemDiv.style.cssText = "padding: 0 15px 15px 15px; border-bottom: 1px solid var(--border-color); text-align: left; position: relative;";
         
-        // Se este for o novo versículo, guarda a referência para o scroll
         if (newRefFound && cleanRef === newRefFound) {
             elementToScrollTo = itemDiv;
         }
 
         const title = document.createElement('div');
         title.className = 'bible-ref-title';
-        
-        // Estilo Sticky: O título fica preso no topo enquanto se lê o texto
         title.style.cssText = `
             font-weight: bold; 
             color: var(--accent-color); 
@@ -35086,9 +35158,14 @@ async function generateNoteTexts() {
         
         title.textContent = cleanRef;
         
-        // Clique no título faz scroll no editor até à referência
+        // ScrollSpy Inverso (Clique no título -> Scroll no Texto)
         title.onclick = () => {
             if (typeof scrollToAndHighlightText === 'function') {
+                // Aqui podemos passar a parte numérica se o nome tiver mudado muito, 
+                // mas geralmente scrollToAndHighlightText deve ser esperto.
+                // Como corrigimos o nome para "Êxodo", se o texto original for "Exodo",
+                // a pesquisa exata pode falhar.
+                // Idealmente, a scrollToAndHighlightText também deveria ser "Insensitive".
                 scrollToAndHighlightText(cleanRef);
             }
         };
@@ -35101,10 +35178,10 @@ async function generateNoteTexts() {
         itemDiv.appendChild(contentDiv);
         list.appendChild(itemDiv);
 
-        // 4. Expandir e Buscar Texto na API/Firebase
-        // (Lida com intervalos como "João 3:1-5")
+        // Busca o texto na base de dados (usando o nome oficial "Êxodo")
         const individualVerses = expandVerseReference(cleanRef);
         const textPromises = individualVerses.map(v => fetchPublicBibleText(v));
+        
         const texts = await Promise.all(textPromises);
         
         const fullText = texts.filter(t => t).join(" ");
@@ -35115,7 +35192,6 @@ async function generateNoteTexts() {
         }
     }
 
-    // 5. Scroll Automático se houver novidade
     if (elementToScrollTo) {
         setTimeout(() => {
             elementToScrollTo.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -37130,38 +37206,36 @@ async function generateHybridView() {
     // 1. Indicador de Carregamento
     list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar Misto...</span></div>';
 
-    // 2. PREPARAÇÃO DO TEXTO
+    // 2. EXTRAÇÃO DE TEXTO (Método Rápido para Misto)
     let textContent = editor.innerText;
     // Adiciona texto dos inputs (títulos)
     editor.querySelectorAll('input, textarea').forEach(el => {
         if (el.value) textContent += " " + el.value;
     });
     
+    // Normaliza espaços
+    textContent = textContent.replace(/\s+/g, ' '); 
     const textContentLower = textContent.toLowerCase();
 
     // ============================================================
-    // FASE A: DETEÇÃO DE ÂNCORAS (ENTIDADES)
+    // FASE A: DETEÇÃO DE ÂNCORAS (MANTÉM-SE IGUAL)
     // ============================================================
     let anchorItems = [];
     
-    // Só procura âncoras se houver algumas ativas na nota
     if (activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0) {
         const allCandidates = Object.values(allEntities).flat();
-        const addedNames = new Set(); // Evita duplicados
+        const addedNames = new Set();
         
         allCandidates.forEach(entity => {
-            // A. Verifica se a entidade tem uma das âncoras ativas
             const entityAnchors = entity.ancorasAssociadas || {};
             const hasMatchingAnchor = activeNoteAnchorsIds.some(id => entityAnchors[id]);
 
             if (!hasMatchingAnchor) return;
 
-            // B. Verifica se o nome está no texto
             if (textContentLower.includes(entity.nome.toLowerCase())) {
                 if (addedNames.has(entity.nome)) return;
                 addedNames.add(entity.nome);
 
-                // Define Ícone
                 let icon = entity.emoji || "🔹"; 
                 if (!entity.emoji) {
                     if (entity.tipo === 'personagem') icon = "👤";
@@ -37183,21 +37257,53 @@ async function generateHybridView() {
     }
 
     // ============================================================
-    // FASE B: DETEÇÃO BÍBLICA (CORRIGIDA)
+    // FASE B: DETEÇÃO BÍBLICA (COM CORREÇÃO DE ACENTOS)
     // ============================================================
     let bibleItems = [];
     
     if (typeof BIBLICAL_BOOKS !== 'undefined' && BIBLICAL_BOOKS.length > 0) {
-        // Ordena por comprimento para evitar que "Judeus" dê match em "Judas" antes do tempo
+        
+        // 1. Configurar Mapa Canónico e Regex Flexível (Igual à aba Textos)
+        const canonicalBookMap = {};
+        const flexiblePatterns = [];
         const sortedBooks = [...BIBLICAL_BOOKS].sort((a, b) => b.length - a.length);
-        const booksPattern = sortedBooks.join('|');
-        
-        // Regex robusta igual à aba Textos
-        const regex = new RegExp(`\\b((?:${booksPattern})\\s+\\d+:\\d+(?:\\s*[-–,;]\\s*\\d+)*)`, 'gi');
-        
-        const rawMatches = textContent.match(regex) || [];
-        const uniqueRefs = [...new Set(rawMatches.map(r => r.trim()))];
 
+        sortedBooks.forEach(book => {
+            const normalized = normalizeStr(book); // ex: "exodo"
+            canonicalBookMap[normalized] = book;   // ex: "exodo" -> "Êxodo"
+            flexiblePatterns.push(getFlexibleRegexStr(book));
+        });
+
+        // 2. Regex Poderosa (Aceita acentos errados e pontuação antes)
+        const booksPattern = flexiblePatterns.join('|');
+        const regex = new RegExp(`(?:^|[\\s"'(])((?:${booksPattern})\\s+\\d+:\\d+(?:\\s*[-–,;]\\s*\\d+)*)`, 'gi');
+        
+        // 3. Captura
+        const rawMatches = textContent.match(regex) || [];
+
+        // 4. Processamento e Normalização
+        const uniqueRefs = [...new Set(rawMatches.map(r => {
+            // A. Limpa lixo do início
+            let foundText = r.replace(/^[ "((]+/, '').trim();
+
+            // B. Tenta corrigir o nome do livro (Exodo -> Êxodo)
+            const splitMatch = foundText.match(/^(.+?)\s+(\d+:.*)$/);
+            
+            if (splitMatch) {
+                const foundBookName = splitMatch[1]; 
+                const numbers = splitMatch[2];       
+                
+                const normalizedFound = normalizeStr(foundBookName);
+                const officialName = canonicalBookMap[normalizedFound];
+                
+                if (officialName) {
+                    return `${officialName} ${numbers}`; // Devolve nome corrigido
+                }
+            }
+            return foundText;
+        }))];
+
+        // 5. Adicionar à lista
         uniqueRefs.forEach(ref => {
             bibleItems.push({ 
                 type: 'bible', 
@@ -37214,21 +37320,18 @@ async function generateHybridView() {
     list.innerHTML = '';
 
     if (anchorItems.length === 0 && bibleItems.length === 0) {
-        list.innerHTML = '<div style="padding:40px 20px; color:#888; text-align:center;">Nenhuma referência (Tema ou Bíblia) encontrada no texto.</div>';
+        list.innerHTML = '<div style="padding:40px 20px; color:#888; text-align:center;">Nenhuma referência encontrada.</div>';
         return;
     }
 
-    // Função para criar a linha visual
     const createRow = (item) => {
         const div = document.createElement('div');
         div.style.cssText = "padding: 12px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px; position: relative;";
         
-        // Borda: Azul para Temas, Laranja para Bíblia
         const borderSide = item.type === 'anchor' ? '4px solid var(--accent-color)' : '4px solid #e67e22';
         div.style.borderLeft = borderSide;
         div.style.paddingLeft = "10px";
 
-        // Título (Clique = Scroll)
         const titleDiv = document.createElement('div');
         titleDiv.style.cssText = "font-weight: bold; color: var(--text-color); cursor: pointer; font-size: 0.95em;";
         titleDiv.innerHTML = `${item.icon} ${item.name}`;
@@ -37238,13 +37341,12 @@ async function generateHybridView() {
             if (typeof scrollToAndHighlightText === 'function') scrollToAndHighlightText(item.name);
         };
 
-        // Descrição (Clique = Painel Referências)
         const descDiv = document.createElement('div');
         descDiv.style.cssText = "font-size: 0.85em; color: var(--text-muted-color); cursor: pointer; line-height: 1.4;";
         
-        // Se for Bíblia, dá um ID único para injetarmos o texto depois
         if (item.type === 'bible') {
-            // Remove caracteres especiais para o ID do HTML
+            // ID seguro para injetar o texto depois
+            // Remove espaços e dois pontos para o ID do HTML
             const safeId = item.name.replace(/[^a-zA-Z0-9]/g, '');
             descDiv.id = `hybrid-preview-${safeId}`;
         }
@@ -37254,7 +37356,6 @@ async function generateHybridView() {
         descDiv.onclick = (e) => {
             e.stopPropagation();
             const targetType = item.type === 'bible' ? 'textobiblico' : item.entityType;
-            // Se for bíblia, passamos null no ID para ele buscar pelo nome
             const targetId = item.type === 'bible' ? null : item.id;
             
             showReferencesPanel(targetId, item.name, targetType);
@@ -37265,7 +37366,7 @@ async function generateHybridView() {
         return div;
     };
 
-    // 1. Renderiza Âncoras
+    // Renderizar Âncoras
     if (anchorItems.length > 0) {
         const header = document.createElement('div');
         header.innerHTML = "TEMAS";
@@ -37274,7 +37375,7 @@ async function generateHybridView() {
         anchorItems.forEach(item => list.appendChild(createRow(item)));
     }
 
-    // 2. Renderiza Bíblia
+    // Renderizar Bíblia
     if (bibleItems.length > 0) {
         const header = document.createElement('div');
         header.innerHTML = "BÍBLIA";
@@ -37283,16 +37384,15 @@ async function generateHybridView() {
         
         bibleItems.forEach(item => list.appendChild(createRow(item)));
 
-        // --- CARREGAMENTO DE TEXTOS EM BACKGROUND ---
+        // Buscar textos em background
         for (const item of bibleItems) {
-            // Expande referências (ex: João 3:16-18)
             const verses = typeof expandVerseReference === 'function' ? expandVerseReference(item.name) : [item.name];
             
-            // Busca textos
             const textPromises = verses.map(v => fetchPublicBibleText(v));
             
             Promise.all(textPromises).then(texts => {
                 const fullText = texts.filter(t => t).join(" ");
+                // Usa o mesmo ID seguro gerado acima
                 const safeId = item.name.replace(/[^a-zA-Z0-9]/g, '');
                 const el = document.getElementById(`hybrid-preview-${safeId}`);
                 
