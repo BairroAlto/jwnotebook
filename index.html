@@ -11,6 +11,7 @@
             --panel-color: #252528;
             --accent-color: #4a90e2;
             --text-color: #f0f0f0;
+            --warning-color: #f39c12;
         }
 
         body { 
@@ -25,7 +26,7 @@
             overflow: hidden;
         }
 
-        /* 2. O ESCUDO (Aparece instantaneamente) */
+        /* 2. O ESCUDO (Loader inicial) */
         #auth-shield {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -48,9 +49,9 @@
 
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* 3. O CONTENTOR DE LOGIN (Escondido por padrão via display:none) */
-        .login-container { 
-            display: none; /* BLOQUEIO FÍSICO */
+        /* 3. CAIXAS (Login e Pendente) */
+        .auth-box { 
+            display: none; /* Escondido por padrão */
             background-color: var(--panel-color); 
             padding: 40px; 
             border-radius: 12px; 
@@ -66,6 +67,20 @@
 
         h2 { margin-bottom: 25px; color: var(--accent-color); font-weight: 600; }
         
+        /* Estilos específicos para a tela de espera */
+        .status-icon {
+            font-size: 48px;
+            color: var(--warning-color);
+            margin-bottom: 20px;
+        }
+        
+        .status-text {
+            color: #ccc;
+            line-height: 1.6;
+            margin-bottom: 30px;
+        }
+
+        /* Inputs e Botões */
         input { 
             width: 100%; 
             padding: 14px; 
@@ -98,6 +113,17 @@
         button:hover { background-color: #357abd; }
         button:disabled { opacity: 0.5; }
 
+        /* Botão secundário (Logout na tela de espera) */
+        .btn-outline {
+            background-color: transparent;
+            border: 1px solid #444;
+            color: #aaa;
+        }
+        .btn-outline:hover {
+            background-color: #333;
+            color: white;
+        }
+
         .toggle-link { margin-top: 20px; font-size: 0.9em; color: #888; cursor: pointer; }
         .toggle-link span { color: var(--accent-color); text-decoration: underline; }
 
@@ -107,14 +133,14 @@
 </head>
 <body>
 
-    <!-- PAINEL DE CARREGAMENTO (Única coisa que o anónimo vê) -->
+    <!-- 1. PAINEL DE CARREGAMENTO -->
     <div id="auth-shield">
         <div class="spinner"></div>
-        <p style="color: #666; font-style: italic; margin-top: 20px; letter-spacing: 1px;">NotaBook</p>
+        <p style="color: #666; font-style: italic; margin-top: 20px; letter-spacing: 1px;">A verificar conta...</p>
     </div>
 
-    <!-- FORMULÁRIO (Protegido por display: none) -->
-    <div class="login-container" id="login-box">
+    <!-- 2. FORMULÁRIO DE LOGIN / REGISTO -->
+    <div class="auth-box" id="login-box">
         <h2 id="form-title">Login</h2>
         
         <input type="text" id="name" placeholder="Seu Nome" class="hidden">
@@ -127,13 +153,28 @@
         <p id="error-msg"></p>
     </div>
 
+    <!-- 3. TELA DE ESPERA (CONVITE PENDENTE) -->
+    <div class="auth-box" id="pending-box">
+        <div class="status-icon">⏳</div>
+        <h2>Análise Pendente</h2>
+        <p class="status-text">
+            O seu convite está a ser revisto pela nossa equipa. <br>
+            Agradecemos a sua espera.
+        </p>
+        <button id="logout-btn" class="btn-outline">Sair / Voltar</button>
+    </div>
+
     <script type="module">
         import { auth, db } from './js/firebase-config.js';
-        import { signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
-        import { doc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
+        import { signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
+        import { doc, setDoc, getDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
 
+        // Elementos UI
         const shield = document.getElementById('auth-shield');
         const loginBox = document.getElementById('login-box');
+        const pendingBox = document.getElementById('pending-box');
+        
+        // Elementos do Form
         const title = document.getElementById('form-title');
         const nameInput = document.getElementById('name');
         const emailInput = document.getElementById('email');
@@ -141,23 +182,68 @@
         const submitBtn = document.getElementById('submit-btn');
         const toggleBtn = document.getElementById('toggle-mode');
         const errorMsg = document.getElementById('error-msg');
+        const logoutBtn = document.getElementById('logout-btn');
 
         let isRegistering = false;
 
         // ============================================================
-        // 🛡️ O VERDADEIRO GUARDIÃO
+        // 🛡️ LÓGICA DE AUTENTICAÇÃO E VERIFICAÇÃO DE "ACEITE"
         // ============================================================
-        onAuthStateChanged(auth, (user) => {
+        onAuthStateChanged(auth, async (user) => {
             if (user) {
-                // Se detetar login, salta logo. O login-box nunca sai de display:none
-                window.location.href = "note.html";
+                // Utilizador autenticado -> Verificar Firestore
+                try {
+                    const docRef = doc(db, "users", user.uid);
+                    const docSnap = await getDoc(docRef);
+
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        
+                        if (data.aceite === "on") {
+                            // SUCESSO: Redirecionar
+                            window.location.href = "note.html";
+                        } else {
+                            // PENDENTE: Mostrar tela de espera
+                            showScreen('pending');
+                        }
+                    } else {
+                        // Documento não encontrado (pode acontecer milissegundos após o registo antes da gravação)
+                        // Nestes casos, esperamos que o fluxo de registo trate, ou mostramos pendente por segurança
+                        console.log("Perfil ainda a ser criado...");
+                    }
+                } catch (error) {
+                    console.error("Erro ao verificar perfil:", error);
+                    alert("Erro ao verificar permissões.");
+                }
             } else {
-                // SÓ AQUI é que o formulário ganha vida
-                shield.style.display = 'none';
-                loginBox.style.display = 'block';
+                // Ninguém logado -> Mostrar Login
+                showScreen('login');
             }
         });
 
+        // Função auxiliar para trocar de telas
+        function showScreen(screenName) {
+            shield.style.display = 'none';
+            loginBox.style.display = 'none';
+            pendingBox.style.display = 'none';
+
+            if (screenName === 'login') loginBox.style.display = 'block';
+            if (screenName === 'pending') pendingBox.style.display = 'block';
+            if (screenName === 'loading') shield.style.display = 'flex';
+        }
+
+        // ============================================================
+        // INTERAÇÕES
+        // ============================================================
+
+        // Botão de Logout na tela de espera
+        logoutBtn.addEventListener('click', () => {
+            signOut(auth).then(() => {
+                window.location.reload();
+            });
+        });
+
+        // Alternar entre Login e Registo
         toggleBtn.addEventListener('click', () => {
             isRegistering = !isRegistering;
             errorMsg.style.display = 'none';
@@ -174,6 +260,7 @@
             }
         });
 
+        // Submissão do Formulário
         submitBtn.addEventListener('click', async () => {
             const email = emailInput.value.trim();
             const password = passwordInput.value;
@@ -188,24 +275,37 @@
             try {
                 if (isRegistering) {
                     if(!name) throw new Error("O nome é obrigatório.");
+                    
+                    // 1. Criar Auth
                     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                    
+                    // 2. Criar Documento no Firestore com "aceite: off"
                     await setDoc(doc(db, "users", userCredential.user.uid), {
                         nome: name,
                         email: email,
                         ativo: true,
+                        aceite: "off", // <--- NOVO CAMPO REQUISITADO
                         createdAt: serverTimestamp()
                     });
+                    
+                    // O onAuthStateChanged vai disparar automaticamente e mostrar a tela de pendente
+
                 } else {
+                    // Login normal
                     await signInWithEmailAndPassword(auth, email, password);
+                    // O onAuthStateChanged vai verificar se é 'on' ou 'off'
                 }
+
             } catch (error) {
                 console.error(error);
                 submitBtn.disabled = false;
                 submitBtn.textContent = isRegistering ? "Registar" : "Entrar";
                 errorMsg.style.display = 'block';
                 
-                let message = "Dados incorretos.";
+                let message = "Ocorreu um erro.";
                 if(error.code === 'auth/email-already-in-use') message = "Este email já está em uso.";
+                if(error.code === 'auth/wrong-password') message = "Senha incorreta.";
+                if(error.code === 'auth/user-not-found') message = "Utilizador não encontrado.";
                 if(error.code === 'auth/weak-password') message = "A senha deve ter 6+ caracteres.";
                 errorMsg.textContent = message;
             }
