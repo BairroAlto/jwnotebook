@@ -11981,28 +11981,66 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
     const container = document.querySelector('.notebook-container');
 
     if (!user) {
-        // 🛡️ SEGURO: Se não há login, redireciona para login.
         window.location.href = "index.html";
         return; 
     } else {
         console.log("🔐 Login confirmado. A preparar dados...");
 
-        // --- 1. CAPTURA DE PARÂMETROS URL ---
         const params = new URLSearchParams(window.location.search);
-        const urlRootId = params.get('rootId');
-        const openFolderId = params.get('openFolder'); // <--- CRÍTICO: ID da pasta onde guardou
-        const targetNoteId = params.get('noteId');     // <--- CRÍTICO: ID da nota nova
-        const redirectSearch = params.get('search');
-        const viewParam = params.get('view');
         const openArchiveId = params.get('openArchive'); 
         const modeParam = params.get('mode');           
+        const urlRootId = params.get('rootId');
+        const openFolderId = params.get('openFolder'); 
+        const targetNoteId = params.get('noteId');     
+        const redirectSearch = params.get('search');
+        const viewParam = params.get('view');
 
-        // Configuração de variáveis globais base
         SUPERFOLDER_ID = urlRootId || null; 
-        if (viewParam === 'shared' || modeParam === 'collab') currentViewMode = 'shared';
+
+        // --- 1. LÓGICA DE ABA INICIAL ---
+        // Se vier de um link de arquivo ou convite, a aba é SEMPRE 'shared'
+        if (openArchiveId || viewParam === 'shared' || modeParam === 'collab') {
+            console.log("🚀 Modo Partilha forçado pelo URL.");
+            currentViewMode = 'shared';
+            // Chama a função global que configura a UI para modo Partilha
+            if (typeof window.switchFolderView === 'function') {
+                window.switchFolderView('shared');
+            }
+        }
 
         try {
-            // --- 2. CARREGAR DADOS DE UTILIZADOR ---
+            // --- 2. PROCESSADOR DE CONVITES (AUTO-JOIN) ---
+            if (modeParam === 'collab' && openArchiveId) {
+                console.log("🤝 [CONVITE] A processar acesso ao arquivo:", openArchiveId);
+                const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+                const archiveRef = doc(db, 'pastas', openArchiveId);
+                
+                const archiveSnap = await getDoc(archiveRef);
+                if (archiveSnap.exists()) {
+                    const data = archiveSnap.data();
+                    if (data.partilhado === 'ativo') {
+                        const myUid = user.uid;
+                        if (!data.colaboradores || !data.colaboradores[myUid]) {
+                            await updateDoc(archiveRef, { [`colaboradores.${myUid}`]: true });
+                            console.log("✅ Colaborador registado com sucesso!");
+                        }
+                    } else {
+                        alert("Convite inválido.");
+                        window.location.href = "note.html";
+                        return;
+                    }
+                }
+            }
+
+            // --- 3. LIMPEZA DE URL (IMPORTANTE) ---
+            // Se entrou por convite/link direto, limpa o URL para parecer navegação normal
+            if (openArchiveId) {
+                const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+                window.history.replaceState({ path: cleanUrl }, '', cleanUrl);
+                console.log("🧹 URL limpo.");
+            }
+
+            // Carrega dados do user
             const userDocRef = doc(db, "users", user.uid);
             const userDoc = await getDoc(userDocRef);
             if (userDoc.exists()) currentUserData = userDoc.data();
@@ -12011,93 +12049,97 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
             const configSnap = await getDoc(configRef);
             if (configSnap.exists()) appSettings = { ...appSettings, ...configSnap.data() };
 
-            // Inicia notificações globais (Bola Vermelha)
-            if (typeof startGlobalNotificationListener === 'function') {
-                startGlobalNotificationListener();
+            if (typeof startGlobalNotificationListener === 'function') startGlobalNotificationListener();
+
+            // --- 4. ABERTURA DE CONTEÚDO ---
+            
+            // CASO A: ARQUIVO (Aba Share)
+           if (openArchiveId) {
+    console.log(`📂 [ROUTER] Abertura de Arquivo: ${openArchiveId}`);
+    
+    // 1. FORÇAR MUDANÇA VISUAL (Separadores da Esquerda)
+    const folderModeContainer = document.querySelector('.folder-mode-container');
+    if (folderModeContainer) {
+        // Remove 'active' de todos
+        folderModeContainer.querySelectorAll('.folder-mode-item').forEach(el => {
+            el.classList.remove('active', 'mode-shared', 'mode-pins', 'mode-flash');
+        });
+        
+        // Encontra e ativa o botão "Share"
+        const shareTab = Array.from(folderModeContainer.querySelectorAll('.folder-mode-item'))
+                              .find(el => el.textContent.includes('Share') || el.textContent.includes('Partilha'));
+        
+        if (shareTab) {
+            shareTab.classList.add('active', 'mode-shared');
+        }
+    }
+    
+    // 2. FORÇAR CARREGAMENTO DA LISTA (Coluna 2)
+    // Chamamos explicitamente a função que busca os arquivos partilhados
+    if (typeof loadSharedFilesRoot === 'function') {
+        loadSharedFilesRoot();
+    }
+
+    // 3. CARREGAR E EXIBIR O CONTEÚDO (Coluna 3)
+    const arcSnap = await getDoc(doc(db, 'pastas', openArchiveId));
+    if (arcSnap.exists()) {
+        // Exibe o arquivo no painel principal
+        displayArchive(openArchiveId, { id: openArchiveId, ...arcSnap.data() });
+        
+        // 4. SELEÇÃO VISUAL NA LISTA (Retry Loop)
+        // Como a lista demora a carregar do Firebase, tentamos selecionar o item repetidamente
+        let attempts = 0;
+        const trySelect = setInterval(() => {
+            attempts++;
+            const listItem = document.querySelector(`.list-item[data-id="${openArchiveId}"]`);
+            
+            if (listItem) {
+                // Limpa seleções anteriores
+                document.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
+                // Aplica a seleção correta
+                listItem.classList.add('selected-red');
+                // Faz scroll para o item
+                listItem.scrollIntoView({ block: 'center' });
+                clearInterval(trySelect);
             }
-
-            // ============================================================
-            // 3. LÓGICA DE ABERTURA INTELIGENTE (ROUTING)
-            // ============================================================
             
-            // CASO 1: Temos Pasta E Nota (Vindo do Sharenote ou Link específico)
-            if (openFolderId && targetNoteId) {
-                console.log(`📂 [ROUTER] Abertura Direta: Pasta ${openFolderId} -> Nota ${targetNoteId}`);
-                
-                // A. Reconstrói o caminho visual (breadcrumbs) até à pasta e carrega a lista do meio
-                // Isto garante que a lista lateral mostra a pasta certa e seleciona a nota a azul
+            // Pára de tentar após 5 segundos (50 tentativas * 100ms)
+            if (attempts > 50) clearInterval(trySelect);
+        }, 100);
+    }
+}
+            
+            // Outros casos (Nota, Pasta)...
+            else if (openFolderId && targetNoteId) {
                 await reconstructFolderNavigation(openFolderId, targetNoteId);
-                
-                // B. Abre o conteúdo da nota na direita
                 displayNote(targetNoteId, null, redirectSearch);
-
-                // C. Ajuste Mobile: Se estiver em telemóvel, vai direto para o editor
-                if (window.innerWidth <= 768) {
-                    document.body.classList.remove('mobile-view-middle');
-                    document.body.classList.add('mobile-view-editor');
-                }
             } 
-            
-            // CASO 2: Apenas Nota (Link direto sem contexto de pasta, usa Smart Nav)
-            else if (targetNoteId && !openFolderId) {
-                console.log("🔍 [ROUTER] Link direto de nota. A calcular caminho...");
+            else if (targetNoteId) {
                 await navigateToNoteSmart(targetNoteId, redirectSearch);
             }
-
-            // CASO 3: Apenas Pasta (Navegação normal)
             else if (openFolderId) {
-                console.log("📂 [ROUTER] Abertura de pasta.");
                 await reconstructFolderNavigation(openFolderId);
-                if (window.innerWidth <= 768) document.body.classList.add('mobile-view-middle');
             } 
-            
-            // CASO 4: Superpasta
-            else if (SUPERFOLDER_ID) {
-                const rootSnap = await getDoc(doc(db, 'pastas', SUPERFOLDER_ID));
-                if (rootSnap.exists()) {
-                    currentSuperfolderName = rootSnap.data().nome;
-                    updateNavigationView(false);
-                }
-            } 
-            
-            // CASO 5: Raiz Padrão (Sem parâmetros)
             else {
-                updateNavigationView(false); 
+                // Se não houver nada para abrir, garante que a UI reflete o modo atual
+                if (currentViewMode === 'local') updateNavigationView(false);
             }
 
-            // --- CASOS ESPECIAIS (ARQUIVOS) ---
-            if (openArchiveId) {
-                const arcSnap = await getDoc(doc(db, 'pastas', openArchiveId));
-                if (arcSnap.exists()) displayArchive(openArchiveId, arcSnap.data());
-            }
-
-            // --- 4. CACHES DE FUNDO ---
             fetchAllEntities();
             fetchAllTags();
             loadUserHighlights();
 
-        } catch (e) { 
-            console.error("Erro no carregamento inicial:", e); 
-        }
+        } catch (e) { console.error("Erro inicial:", e); }
 
-        // ============================================================
-        // 5. REVELAÇÃO DA UI (Só após processar a navegação)
-        // ============================================================
         setTimeout(() => {
-            if (container) {
-                container.style.setProperty('display', 'flex', 'important');
-            }
-            
+            if (container) container.style.setProperty('display', 'flex', 'important');
             if (loader) {
                 loader.style.opacity = '0';
-                setTimeout(() => {
-                    loader.remove();
-                }, 500);
+                setTimeout(() => loader.remove(), 500);
             }
         }, 800); 
     }
 });
-
 
      
 
@@ -21857,32 +21899,32 @@ function setLeftPanelTitle(text, isBackAction = false) {
     // REGRA 2: ABA NOTE (SELETOR SEMPRE VISÍVEL)
     // ============================================================
     // Aqui forçamos o seletor mesmo que isBackAction seja true.
-    if (currentTab === 'note') {
-        titleEl.className = 'folder-mode-container';
-        titleEl.style.display = 'flex';
-        titleEl.onclick = null;
+   if (currentTab === 'note') {
+    titleEl.className = 'folder-mode-container';
+    titleEl.style.display = 'flex';
+    titleEl.onclick = null;
 
-        const localActive = currentViewMode === 'local' ? 'active' : '';
-        const sharedActive = currentViewMode === 'shared' ? 'active mode-shared' : '';
-        const pinsActive = currentViewMode === 'pins' ? 'active mode-pins' : '';
-        const flashActive = currentViewMode === 'flash' ? 'active mode-flash' : ''; 
+    const localActive = currentViewMode === 'local' ? 'active' : '';
+    const sharedActive = currentViewMode === 'shared' ? 'active mode-shared' : '';
+    const pinsActive = currentViewMode === 'pins' ? 'active mode-pins' : '';
+    const flashActive = currentViewMode === 'flash' ? 'active mode-flash' : ''; // <--- ESTE FALTAVA NO VISUAL AO RECARREGAR
 
-        titleEl.innerHTML = `
-            <span class="folder-mode-item ${localActive}" onclick="window.switchFolderView('local')">Local</span>
-            <span class="folder-mode-separator">|</span>
-            <span class="folder-mode-item ${sharedActive}" onclick="window.switchFolderView('shared')">Share</span>
-            <span class="folder-mode-separator">|</span>
-            <span class="folder-mode-item ${pinsActive}" onclick="window.switchFolderView('pins')">Pins</span>
-            <span class="folder-mode-separator">|</span>
-            <span class="folder-mode-item ${flashActive}" onclick="window.switchFolderView('flash')">Flash</span>
-        `;
+    titleEl.innerHTML = `
+        <span class="folder-mode-item ${localActive}" onclick="window.switchFolderView('local')">Local</span>
+        <span class="folder-mode-separator">|</span>
+        <span class="folder-mode-item ${sharedActive}" onclick="window.switchFolderView('shared')">Partilha</span>
+        <span class="folder-mode-separator">|</span>
+        <span class="folder-mode-item ${pinsActive}" onclick="window.switchFolderView('pins')">Pins</span>
+        <span class="folder-mode-separator">|</span>
+        <span class="folder-mode-item ${flashActive}" onclick="window.switchFolderView('flash')">Flash</span>
+    `;
 
-        // >>> ATUALIZAÇÃO DA NOTIFICAÇÃO GLOBAL <<<
-        // Chamamos a função para redesenhar a bolinha vermelha no novo HTML
-        setTimeout(() => {
-            if (typeof updateShareTabDot === 'function') updateShareTabDot();
-        }, 50);
-    }
+    // >>> ATUALIZAÇÃO DA NOTIFICAÇÃO GLOBAL <<<
+    // Chamamos a função para redesenhar a bolinha vermelha no novo HTML
+    setTimeout(() => {
+        if (typeof updateShareTabDot === 'function') updateShareTabDot();
+    }, 50);
+}
     // ============================================================
     // REGRA 3: OUTRAS ABAS (Lists, etc - Mantém comportamento de voltar)
     // ============================================================
