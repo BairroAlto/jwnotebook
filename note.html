@@ -19017,28 +19017,19 @@ async function openReferenceSelectionPopup() {
         return;
     }
 
-    // ============================================================
-    // CORREÇÃO DE HIERARQUIA (AQUÁRIO FIX)
-    // ============================================================
-    document.body.appendChild(modal); // Move para o topo do DOM
-    
+    // A. FORÇA HIERARQUIA
+    document.body.appendChild(modal);
     modal.style.cssText = `
         display: flex !important;
         position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100vw !important;
-        height: 100vh !important;
+        top: 0 !important; left: 0 !important; width: 100vw; height: 100vh !important;
         background-color: rgba(0, 0, 0, 0.85) !important;
-        z-index: 2147483647 !important; /* MÁXIMO ABSOLUTO */
-        justify-content: center !important;
-        align-items: center !important;
-        visibility: visible !important;
-        opacity: 1 !important;
+        z-index: 2147483647 !important;
+        justify-content: center !important; align-items: center !important;
+        visibility: visible !important; opacity: 1 !important;
     `;
-    // ============================================================
 
-    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar notas e categorias anexadas...</span></div>';
+    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar clones e originais...</span></div>';
 
     allFoundReferenceBoxes = [];
     currentReferencePageIndex = 0;
@@ -19049,6 +19040,46 @@ async function openReferenceSelectionPopup() {
     const hexToFind = isHighlightSearch ? id.toUpperCase() : null;
 
     try {
+        // 1. CARREGAR O ESTADO ATUAL DO QUADRO (Para saber o que já lá está)
+        // Precisamos saber se o ID Original já existe neste quadro específico
+        const activeTabBtn = document.querySelector('#ref-tabs button.active');
+        const activeTab = activeTabBtn ? activeTabBtn.dataset.refTab : 'puzzle';
+        
+        let currentBoardItems = []; // Lista de IDs (snippets) que já estão no quadro
+
+        if (activeTab === 'dossie' && window.activeMicaId) {
+            // Se for Mica, busca no HTML da Mica atual (é mais rápido que ir à BD)
+            // (Ou melhor, busca no objeto global se tivermos, mas vamos simplificar lendo do DOM se estiver renderizado)
+            // Como o DOM pode não estar renderizado, vamos buscar ao Firebase para segurança
+            const col = getCollectionFromType(type);
+            const docRef = doc(db, col, id);
+            const docSnap = await getDoc(docRef);
+            if(docSnap.exists()) {
+                const dossie = docSnap.data().dossie || [];
+                const mica = dossie.find(m => m.id === window.activeMicaId);
+                if(mica && mica.items) currentBoardItems = mica.items;
+            }
+        } else {
+            // Se for Puzzle, busca no documento principal
+            const col = getCollectionFromType(type);
+            const docRef = doc(db, col, id);
+            const docSnap = await getDoc(docRef);
+            if(docSnap.exists()) {
+                currentBoardItems = docSnap.data().puzzleBoard || [];
+            }
+        }
+
+        // Criar um Set com todos os IDs que já estão no quadro
+        // O ID está escondido dentro do snippet HTML: <div id="mn_12345"...
+        const existingIDs = new Set();
+        currentBoardItems.forEach(item => {
+            if(item.snippet) {
+                const match = decodeURIComponent(item.snippet).match(/id="([^"]+)"/);
+                if(match) existingIDs.add(match[1]);
+            }
+        });
+
+        // 2. PESQUISA GLOBAL (Igual à anterior)
         let q = query(collection(db, 'pastas'), 
             where('estado', '==', 'ativa'), 
             where('userId', '==', auth.currentUser.uid),
@@ -19080,6 +19111,7 @@ async function openReferenceSelectionPopup() {
                 const allWrappers = docHTML.querySelectorAll('.mini-note-wrapper, details.toggle-section');
                 
                 allWrappers.forEach((w) => {
+                    // ... (Lógica de match mantém-se igual) ...
                     let boxTitle = "";
                     let boxContentOnly = "";
 
@@ -19098,18 +19130,12 @@ async function openReferenceSelectionPopup() {
                     const boxFullText = (boxTitle + " " + boxContentOnly).toLowerCase();
                     let match = false;
 
-                    // 1. Match por Cor
                     if (isHighlightSearch) {
                         const elColor = w.getAttribute('data-highlight');
                         if (elColor && elColor.toUpperCase() === hexToFind) match = true;
                     } 
-                    
-                    // 2. Match por Texto
-                    if (!match && boxFullText.includes(searchTerm)) {
-                        match = true;
-                    }
+                    if (!match && boxFullText.includes(searchTerm)) match = true;
 
-                    // 3. Match por Categorias Anexadas
                     const boxLinksRaw = w.getAttribute('data-box-links');
                     if (!match && boxLinksRaw) {
                         try {
@@ -19124,6 +19150,21 @@ async function openReferenceSelectionPopup() {
                     }
 
                     if (match) {
+                        // --- NOVA LÓGICA DE CLONES ---
+                        // 1. Ler ID atual e ID de Origem
+                        const currentId = w.id;
+                        const originId = w.getAttribute('data-origin-id');
+
+                        // 2. Verificar Estados
+                        const isClone = !!originId; // É um clone se tiver pai
+                        
+                        // 3. Verificar se o ORIGINAL já está no quadro
+                        // (Se eu sou clone, e o meu pai já lá está)
+                        const originalIsPresent = isClone && existingIDs.has(originId);
+                        
+                        // 4. Verificar se EU já estou no quadro
+                        const selfIsPresent = existingIDs.has(currentId);
+
                         let boxType = "Bloco"; let boxIcon = "📦";
                         if (w.tagName === 'DETAILS') { boxType = "Secção"; boxIcon = "☂️"; }
                         else if (w.classList.contains('question-mode')) { boxType = "Questão"; boxIcon = "📗"; }
@@ -19131,9 +19172,7 @@ async function openReferenceSelectionPopup() {
                         else { boxType = "SubNota"; boxIcon = "📘"; }
 
                         let displayTitle = boxTitle.trim();
-                        if (!displayTitle) {
-                            displayTitle = boxContentOnly.trim().substring(0, 40) + "...";
-                        }
+                        if (!displayTitle) displayTitle = boxContentOnly.trim().substring(0, 40) + "...";
 
                         allFoundReferenceBoxes.push({
                             id: docSnap.id, 
@@ -19142,7 +19181,13 @@ async function openReferenceSelectionPopup() {
                             displaySnippet: displayTitle,
                             typeName: boxType, 
                             typeIcon: boxIcon, 
-                            updatedTime: updatedTime
+                            updatedTime: updatedTime,
+                            
+                            // NOVOS DADOS PARA O RENDERIZADOR
+                            isClone: isClone,
+                            originalIsPresent: originalIsPresent,
+                            selfIsPresent: selfIsPresent,
+                            originId: originId // Para debug se necessário
                         });
                     }
                 });
@@ -19179,13 +19224,37 @@ function renderReferenceBoxesPage() {
         const li = document.createElement('li');
         li.className = 'puzzle-ref-item';
         
+        // --- LÓGICA DE ÍCONES DE CLONE ---
+        let cloneBadge = "";
+        let warningText = "";
+        let opacityStyle = "";
+
+        if (item.isClone) {
+            // Se é clone, mostra o alambique
+            cloneBadge = `<span title="Esta caixa é uma cópia (Clone)" style="margin-left:5px; font-size:1.1em;">⚗️</span>`;
+            
+            if (item.originalIsPresent) {
+                // Se o original já está no quadro, avisa!
+                warningText = `<div style="color:#e74c3c; font-size:0.75em; font-weight:bold; margin-top:2px;">⚠️ O original já está neste quadro!</div>`;
+                // Opcional: Deixar o item ligeiramente transparente para indicar redundância
+                // opacityStyle = "opacity: 0.7;"; 
+            }
+        }
+        
+        if (item.selfIsPresent) {
+             warningText += `<div style="color:#f39c12; font-size:0.75em; font-weight:bold; margin-top:2px;">⚠️ Este item já foi adicionado.</div>`;
+        }
+
+        li.style.cssText = opacityStyle;
+
         li.innerHTML = `
             <div class="puzzle-ref-header">
                 <span class="puzzle-ref-type" style="color: var(--accent-color)">
-                    ${item.typeIcon} ${item.typeName}
+                    ${item.typeIcon} ${item.typeName} ${cloneBadge}
                 </span>
                 <span class="puzzle-ref-note">em ${item.name}</span>
             </div>
+            ${warningText}
             <div class="puzzle-ref-snippet">
                 ${item.displaySnippet}
             </div>
@@ -19194,6 +19263,13 @@ function renderReferenceBoxesPage() {
         li.onclick = async (e) => {
             e.preventDefault();
             e.stopPropagation();
+
+            // Se o original já lá está, pede confirmação extra
+            if (item.originalIsPresent) {
+                if (!confirm("O original desta cópia já está no quadro. Deseja adicionar o clone na mesma?")) {
+                    return;
+                }
+            }
 
             // --- 1. DETETAR QUAL A ABA QUE ESTÁ REALMENTE ATIVA NO PAINEL ---
             const activeTabBtn = document.querySelector('#ref-tabs button.active');
@@ -20457,54 +20533,58 @@ leftPanelList.addEventListener('click', (e) => {
 
 
 
-// 3. Botão VOLTAR (Correção: Referência Global + Clique Único)
-// Certifique-se que não apaga a linha 'const backBtn = ...' no início do script
+// ============================================================
+// 3. BOTÃO VOLTAR (CORRIGIDO: SEM CLONAR ELEMENTO)
+// ============================================================
+const activeBackBtn = document.getElementById('back-btn');
 
-if (backBtn) {
-    backBtn.onclick = () => {
-        // Ação encapsulada para verificar alterações não guardadas antes de retroceder
+if (activeBackBtn) {
+    // Em vez de substituir o botão (o que quebrava a referência), 
+    // atribuímos diretamente o novo comportamento ao onclick.
+    activeBackBtn.onclick = (e) => {
+        if (e) e.preventDefault();
+
+        // Ação a executar DEPOIS de gravar (Navegar para trás)
         const goBackAction = () => {
             
-            // CASO 1: Navegação Profunda (Pastas ou Bíblia)
+            // CASO 1: Navegação Profunda (Pastas ou Listas/Bíblia)
             if (navigationStack.length > 0) {
-                // Remove o último nível da pilha (ex: sai do Capítulo para o Livro)
+                // Remove o último nível da pilha
                 navigationStack.pop();
                 
-                // Limpa a nota selecionada para resetar o estado visual do editor
-                selectedNoteId = null;
+                // Se estivermos na aba 'note' (Pastas), sair da pasta fecha a nota.
+                // Na aba 'lists' (Bíblia), a nota pode ficar aberta.
+                if (currentTab === 'note') {
+                    selectedNoteId = null;
+                }
                 
-                // No Mobile: Se a pilha ficar vazia, voltamos ao Painel Esquerdo (Pastas/Categorias)
+                // Mobile: Se a pilha ficar vazia, voltamos ao Painel Esquerdo
                 if (navigationStack.length === 0 && window.innerWidth <= 768) {
                     document.body.classList.remove('mobile-view-middle');
                     document.body.classList.remove('mobile-view-editor');
                 }
                 
-                // Atualiza a vista dos painéis com base no novo estado da stack
-                // O parâmetro 'true' mantém o editor aberto se houver conteúdo
+                // Atualiza a vista mantendo o editor aberto ('true')
                 updateNavigationView(true);
             } 
             
             // CASO 2: Sair do modo "Partilha" para o modo "Local"
-            // Se estivermos na raiz da partilha, o botão voltar regressa às pastas locais
             else if (currentViewMode === 'shared') {
-                
-                // Função global que já limpa ouvintes e reseta a stack
                 if (typeof window.switchFolderView === 'function') {
                     window.switchFolderView('local');
                 }
-                
-                // No Mobile: Garante que volta para a visão da barra lateral esquerda
                 if (window.innerWidth <= 768) {
                     document.body.classList.remove('mobile-view-middle');
                 }
             }
         };
 
-        // Executa o Gatekeeper de gravação antes de realizar a navegação
+        // --- O GUARDIÃO ---
+        // Verifica se há algo por gravar. Se houver, grava e depois executa o goBackAction.
         if (typeof navigateWithUnsavedCheck === 'function') {
             navigateWithUnsavedCheck(goBackAction);
         } else {
-            // Fallback caso a função de proteção não esteja disponível
+            // Fallback se a função de segurança não existir
             goBackAction();
         }
     };
@@ -23836,7 +23916,7 @@ window.confirmAppendToNote = async function(targetId, targetName, targetType) {
             const data = docSnap.data();
             
             // ============================================================
-            // 🆕 CORREÇÃO DE ID: REGENERAR IDENTIDADE
+            // 🆕 CORREÇÃO DE ID: REGENERAR IDENTIDADE E GUARDAR ORIGEM
             // ============================================================
             // Criamos um elemento temporário para manipular o HTML antes de gravar
             const tempDiv = document.createElement('div');
@@ -23846,22 +23926,32 @@ window.confirmAppendToNote = async function(targetId, targetName, targetType) {
             const wrapper = tempDiv.firstElementChild;
             
             if (wrapper) {
-                // 1. Gera um novo ID único
+                // 1. Guarda o ID Original (O Pai)
                 const oldId = wrapper.id;
+                
+                // 2. Gera o Novo ID
                 const prefix = oldId.split('_')[0] || 'mn'; // Mantém o tipo (mn, red, sign, etc.)
                 const newId = `${prefix}_${Date.now()}_clone`; // Ex: mn_1712345678_clone
                 
-                // 2. Aplica o novo ID
+                // 3. Aplica o novo ID
                 wrapper.id = newId;
                 
-                // 3. Limpa atributos que não devem ser clonados (Opcional)
+                // 4. >>> O SEGREDO <<< : Grava o ID do pai num atributo de dados
+                // Se o pai já era um clone, mantemos o "Avô" (o original primário) ou atualizamos para o pai imediato?
+                // Lógica: Se já tem origin-id, mantemos esse (preserva a fonte original). Se não, usa o oldId.
+                const existingOrigin = wrapper.getAttribute('data-origin-id');
+                const finalOriginId = existingOrigin || oldId;
+                
+                wrapper.setAttribute('data-origin-id', finalOriginId);
+                
+                // 5. Limpa atributos que não devem ser clonados (Opcional)
                 // Se a caixa original estava "selecionada" (borda azul), removemos isso na cópia
                 wrapper.classList.remove('active-selection', 'active-store-target', 'locked-popup');
                 wrapper.style.border = "";
                 wrapper.style.boxShadow = "";
                 wrapper.style.backgroundColor = "";
 
-                // 4. Se for um Redator, precisamos atualizar também o ID nos botões internos
+                // 6. Se for um Redator, precisamos atualizar também o ID nos botões internos
                 // (O botão 'T' e o botão 'Menu' usam o ID para saber o que abrir)
                 if (wrapper.classList.contains('redator-wrapper')) {
                     const reopenBtn = wrapper.querySelector('.redator-reopen-btn');
@@ -23884,7 +23974,7 @@ window.confirmAppendToNote = async function(targetId, targetName, targetType) {
                 // Atualiza a variável com o HTML limpo e com ID novo
                 window.htmlToAppend = tempDiv.innerHTML;
                 
-                console.log(`🧬 ID Regenerado: ${oldId} -> ${newId}`);
+                console.log(`🧬 ID Regenerado: ${oldId} -> ${newId} (Origem: ${finalOriginId})`);
             }
             // ============================================================
 
@@ -23895,7 +23985,7 @@ window.confirmAppendToNote = async function(targetId, targetName, targetType) {
                     id: 'post_' + Date.now(),
                     type: 'entity',
                     title: 'Recebido (Clonado)',
-                    content: window.htmlToAppend, // Já com o ID novo
+                    content: window.htmlToAppend, // Já com o ID novo e OriginID
                     createdBy: authorName,
                     createdAt: Date.now(),
                     updatedAt: Date.now()
@@ -27305,31 +27395,58 @@ window.openBoxLinkManager = async function(wrapper) {
 async function checkIfBoxIsLinked(boxId, modalElement) {
     if (!auth.currentUser) return;
     
-    // 1. Identifica a caixa de conteúdo do modal
     const content = modalElement.querySelector('.modal-content');
     if (!content) return;
-
-    // --- CORREÇÃO DE POSICIONAMENTO ---
     content.style.position = 'relative';
 
-    // 2. INJETAR SPINNER DE CARGA (Feedback Imediato)
+    // 1. GARANTIR QUE O CSS DA ANIMAÇÃO EXISTE
+    if (!document.getElementById('sat-style')) {
+        const style = document.createElement('style');
+        style.id = 'sat-style';
+        style.innerHTML = `
+            @keyframes satelliteFloat {
+                0% { transform: translateY(0) rotate(0deg); text-shadow: 0 0 5px rgba(74, 144, 226, 0.5); }
+                50% { transform: translateY(-3px) rotate(10deg); text-shadow: 0 0 15px rgba(74, 144, 226, 1); }
+                100% { transform: translateY(0) rotate(0deg); text-shadow: 0 0 5px rgba(74, 144, 226, 0.5); }
+            }
+            /* Classe da Onda Azul */
+            .electromagnetic-wave {
+                box-shadow: 0 0 0 0 rgba(74, 144, 226, 0.7);
+                animation: wavePulse 2s infinite;
+                border: 2px solid #4a90e2 !important; /* Borda azul pulsante */
+            }
+            @keyframes wavePulse {
+                0% { box-shadow: 0 0 0 0 rgba(74, 144, 226, 0.4); }
+                70% { box-shadow: 0 0 0 20px rgba(74, 144, 226, 0); }
+                100% { box-shadow: 0 0 0 0 rgba(74, 144, 226, 0); }
+            }
+            @keyframes spin { to { transform: rotate(360deg); } }
+        `;
+        document.head.appendChild(style);
+    }
+
+    // 2. RESET VISUAL (LIMPEZA TOTAL)
+    const oldIcons = content.querySelectorAll('#satellite-indicator, #clone-indicator, .sat-loader');
+    oldIcons.forEach(el => el.remove());
+    
+    content.classList.remove('electromagnetic-wave'); // Remove a classe da onda
+    content.style.boxShadow = '';
+    content.style.borderColor = '';
+
+    const liveBox = document.getElementById(boxId);
+    let originId = liveBox ? liveBox.getAttribute('data-origin-id') : null;
+    if (originId === boxId) originId = null; 
+
+    // SPINNER
     const loaderId = 'sat-loader-' + Date.now();
     const loader = document.createElement('div');
     loader.id = loaderId;
-    loader.title = "A verificar ligações externas...";
-    
-    // Estilo: Pequena roda giratória no canto superior direito
+    loader.className = 'sat-loader';
     loader.style.cssText = `
-        position: absolute;
-        top: 20px;
-        right: 60px;
-        width: 20px;
-        height: 20px;
-        border: 2px solid rgba(255, 255, 255, 0.1);
-        border-top: 2px solid var(--accent-color);
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-        z-index: 100;
+        position: absolute; top: 20px; right: 60px;
+        width: 20px; height: 20px; border: 2px solid rgba(255, 255, 255, 0.1);
+        border-top: 2px solid var(--accent-color); border-radius: 50%; 
+        animation: spin 0.8s linear infinite; z-index: 100;
     `;
     content.appendChild(loader);
 
@@ -27338,105 +27455,98 @@ async function checkIfBoxIsLinked(boxId, modalElement) {
     try {
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        // Coleções onde procurar
+        let directLinks = [];
         const collectionsToCheck = ['textosbiblicos', 'topicos', 'personagens', 'locais', 'cosmos', 'subcosmos'];
-        let foundLinks = [];
-
-        // 3. EXECUTA A PESQUISA (Isto pode demorar um pouco)
-        // Usamos Promise.all para ser mais rápido (paralelo) em vez de loop sequencial
+        
         const promises = collectionsToCheck.map(async (colName) => {
             const q = query(collection(db, colName), where('userId', '==', myUid));
             const snap = await getDocs(q);
-            
             snap.forEach(doc => {
                 const data = doc.data();
                 if (data.puzzleBoard && Array.isArray(data.puzzleBoard)) {
-                    // Verifica se o HTML guardado contém o ID desta caixa
-                    const hasRef = data.puzzleBoard.some(item => 
-                        item.snippet && decodeURIComponent(item.snippet).includes(`id="${boxId}"`)
-                    );
-
+                    const hasRef = data.puzzleBoard.some(item => item.snippet && decodeURIComponent(item.snippet).includes(`id="${boxId}"`));
                     if (hasRef) {
-                        foundLinks.push({ 
-                            id: doc.id, 
-                            name: data.nome, 
-                            type: colName,
-                            icon: getIconForCollection(colName)
-                        });
+                        directLinks.push({ id: doc.id, name: data.nome, type: colName, icon: getIconForCollection(colName) });
                     }
                 }
             });
         });
 
+        let originalLocationItem = null;
+        if (originId) {
+            originalLocationItem = await findOriginalNoteLocation(originId);
+        }
+
         await Promise.all(promises);
 
-        // 4. REMOVE O SPINNER (A pesquisa acabou)
-        const loaderEl = document.getElementById(loaderId);
-        if (loaderEl) loaderEl.remove();
+        if (document.getElementById(loaderId)) document.getElementById(loaderId).remove();
 
-        // 5. RESULTADO: SATÉLITE OU NADA
-        if (foundLinks.length > 0) {
+        // 3. APLICAÇÃO FINAL
+        const isSatellite = directLinks.length > 0;
+        const isClone = !!originId;
+
+        // A. SATÉLITE 🛰️
+        if (isSatellite) {
+            // APLICAÇÃO FORÇADA DA CLASSE
+            content.classList.add('electromagnetic-wave'); 
             
-            // A. Ativa efeito de onda na borda
-            content.classList.add('electromagnetic-wave');
-
-            // B. Cria o botão Satélite
-            const satBtn = document.createElement('div');
-            satBtn.id = 'satellite-indicator';
-            satBtn.textContent = '🛰️';
-            satBtn.title = "Esta caixa está a ser transmitida para a 4ª Coluna";
-            
-            satBtn.style.cssText = `
-                position: absolute;
-                top: 15px;
-                right: 60px;
-                font-size: 24px;
-                cursor: pointer;
-                z-index: 100;
-                animation: satelliteFloat 3s infinite ease-in-out;
-            `;
-
-            // Garante que o CSS da animação existe
-            if (!document.getElementById('sat-style')) {
-                const style = document.createElement('style');
-                style.id = 'sat-style';
-                style.innerHTML = `
-                    @keyframes satelliteFloat {
-                        0% { transform: translateY(0) rotate(0deg); text-shadow: 0 0 5px rgba(74, 144, 226, 0.5); }
-                        50% { transform: translateY(-3px) rotate(10deg); text-shadow: 0 0 15px rgba(74, 144, 226, 1); }
-                        100% { transform: translateY(0) rotate(0deg); text-shadow: 0 0 5px rgba(74, 144, 226, 0.5); }
-                    }
-                    .electromagnetic-wave {
-                        box-shadow: 0 0 0 0 rgba(74, 144, 226, 0.7);
-                        animation: wavePulse 2s infinite;
-                        border: 2px solid #4a90e2 !important;
-                    }
-                    @keyframes wavePulse {
-                        0% { box-shadow: 0 0 0 0 rgba(74, 144, 226, 0.4); }
-                        70% { box-shadow: 0 0 0 20px rgba(74, 144, 226, 0); }
-                        100% { box-shadow: 0 0 0 0 rgba(74, 144, 226, 0); }
-                    }
-                    @keyframes spin { to { transform: rotate(360deg); } }
-                `;
-                document.head.appendChild(style);
-            }
-
-            // C. Clique para ver detalhes
-            satBtn.onclick = (e) => {
-                e.stopPropagation();
-                showSatelliteLinksPopup(foundLinks, satBtn);
+            const satBtn = createStatusIcon('🛰️', 60, "Ligações diretas.");
+            satBtn.id = "satellite-indicator";
+            satBtn.onclick = (e) => { 
+                e.stopPropagation(); 
+                showSatelliteLinksPopup(directLinks, satBtn, "LIGAÇÕES DIRETAS"); 
             };
-
             content.appendChild(satBtn);
         }
 
+        // B. CLONE ⚗️
+        if (isClone) {
+            const rightPos = isSatellite ? 100 : 60;
+            
+            if (!isSatellite) {
+                content.style.boxShadow = "0 0 0 2px #9b59b6"; 
+            }
+
+            if (originalLocationItem) {
+                const cloneBtn = createStatusIcon('⚗️', rightPos, "Ver nota original.");
+                cloneBtn.id = "clone-indicator";
+                cloneBtn.style.textShadow = "0 0 10px #9b59b6";
+                cloneBtn.onclick = (e) => { 
+                    e.stopPropagation(); 
+                    showSatelliteLinksPopup([originalLocationItem], cloneBtn, "LOCALIZAÇÃO DO ORIGINAL"); 
+                };
+                content.appendChild(cloneBtn);
+            } else {
+                const cloneBtn = createStatusIcon('⚗️', rightPos, "Original não encontrado.");
+                cloneBtn.id = "clone-indicator";
+                cloneBtn.style.opacity = "0.3";
+                cloneBtn.style.cursor = "default";
+                content.appendChild(cloneBtn);
+            }
+        }
+
     } catch (e) {
-        console.error("Erro na verificação de satélite:", e);
-        // Em caso de erro, remove o loader para não ficar a girar para sempre
-        const loaderEl = document.getElementById(loaderId);
-        if (loaderEl) loaderEl.remove();
+        console.error("Erro checks:", e);
+        if(document.getElementById(loaderId)) document.getElementById(loaderId).remove();
     }
 }
+
+// Função Auxiliar para Criar os Ícones
+function createStatusIcon(emoji, rightPos, title) {
+    const btn = document.createElement('div');
+    btn.textContent = emoji;
+    btn.title = title;
+    btn.style.cssText = `
+        position: absolute; top: 15px; right: ${rightPos}px;
+        font-size: 24px; cursor: pointer; z-index: 100;
+        animation: satelliteFloat 3s infinite ease-in-out;
+        transition: transform 0.2s;
+    `;
+    btn.onmouseover = () => btn.style.transform = "scale(1.2)";
+    btn.onmouseout = () => btn.style.transform = "scale(1)";
+    return btn;
+}
+
 
 // Helper para Ícones
 function getIconForCollection(col) {
@@ -27450,39 +27560,48 @@ function getIconForCollection(col) {
 }
 
 // 3. MOSTRAR LISTA DE LIGAÇÕES (POPUP SECUNDÁRIO)
-function showSatelliteLinksPopup(links, targetElement) {
-    // Remove anterior se existir
+function showSatelliteLinksPopup(links, targetElement, titleText = "A TRANSMITIR PARA:") {
     const oldPop = document.getElementById('sat-links-popup');
     if (oldPop) oldPop.remove();
 
     const popup = document.createElement('div');
     popup.id = 'sat-links-popup';
     popup.style.cssText = `
-        position: absolute;
-        background: var(--sidebar-color);
-        border: 1px solid var(--accent-color);
-        padding: 10px;
-        border-radius: 8px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.8);
-        z-index: 2147483650; /* Acima do modal de links */
-        width: 250px;
-        animation: fadeIn 0.2s;
+        position: absolute; background: var(--sidebar-color); border: 1px solid var(--accent-color);
+        padding: 10px; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.9);
+        z-index: 2147483650; width: 260px; animation: fadeIn 0.2s;
     `;
 
     const rect = targetElement.getBoundingClientRect();
     popup.style.top = (rect.bottom + 10) + 'px';
-    popup.style.right = (window.innerWidth - rect.right) + 'px'; // Alinha à direita
+    popup.style.right = (window.innerWidth - rect.right) + 'px';
 
-    let html = `<div style="font-size:0.8em; color:#888; margin-bottom:8px; border-bottom:1px solid #444; padding-bottom:5px;">A TRANSMITIR PARA:</div>`;
+    let html = `<div style="font-size:0.75em; color:#ccc; margin-bottom:8px; border-bottom:1px solid #444; padding-bottom:5px; font-weight:bold; letter-spacing:0.5px;">${titleText}</div>`;
     
-    links.forEach(link => {
+    // Remove duplicados
+    const uniqueLinks = links.filter((v,i,a) => a.findIndex(t => (t.id === v.id)) === i);
+
+    uniqueLinks.forEach(link => {
+        
+        // --- DECISÃO DE AÇÃO ---
+        let onclickAction = "";
+        
+        if (link.type === 'source') {
+            // É o ORIGINAL: Navega para a nota e faz scroll para a caixa (boxId)
+            // Fecha o modal de links primeiro para limpar o ecrã
+            onclickAction = `document.getElementById('link-modal').style.display='none'; this.parentElement.remove(); window.handleGoToNote('${link.id}', '${link.boxId}');`;
+        } else {
+            // É UMA ENTIDADE: Abre a 4ª Coluna
+            onclickAction = `window.goToEntityFromSat('${link.id}', '${link.name}', '${link.type}')`;
+        }
+
         html += `
             <div style="padding:8px; border-radius:4px; margin-bottom:4px; cursor:pointer; background:rgba(255,255,255,0.05); display:flex; align-items:center; gap:8px;"
                  onmouseover="this.style.background='var(--hover-color)'"
                  onmouseout="this.style.background='rgba(255,255,255,0.05)'"
-                 onclick="window.goToEntityFromSat('${link.id}', '${link.name}', '${link.type}')">
+                 onclick="${onclickAction}">
                 <span>${link.icon}</span>
-                <span style="font-weight:bold; color:var(--text-color);">${link.name}</span>
+                <span style="font-weight:bold; color:var(--text-color); font-size:0.9em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px;">${link.name}</span>
             </div>
         `;
     });
@@ -30252,55 +30371,93 @@ async function renderListCategoryItems(categoryId) {
         // ==========================================
         // 3. CAMINHO: BÍBLIA
         // ==========================================
-        if (origin === 'biblia-root') {
+     if (origin === 'biblia-root') {
+            
+            // A. LISTA DE LIVROS
             if (lastNav.type === 'list-category') {
                 middlePanelTitle.textContent = "Bíblia: Livros";
                 updateAddButtonState(false);
                 listElement.innerHTML = '';
+                
                 BIBLE_DATA.forEach(book => {
                     const li = document.createElement('li');
                     li.className = 'list-item';
                     li.innerHTML = `<span>📖 ${book.nome}</span>`;
+                    
                     li.onclick = () => {
-                        navigationStack.push({ id: book.nome, name: book.nome, type: 'bible-book', caps: book.caps });
-                        updateNavigationView(true);
+                        // >>> PROTEÇÃO DE GRAVAÇÃO AQUI <<<
+                        navigateWithUnsavedCheck(() => {
+                            navigationStack.push({ id: book.nome, name: book.nome, type: 'bible-book', caps: book.caps });
+                            updateNavigationView(true);
+                        });
                     };
                     listElement.appendChild(li);
                 });
-            } else if (lastNav.type === 'bible-book') {
+            } 
+            
+            // B. LISTA DE CAPÍTULOS (Onde você clica no número)
+            else if (lastNav.type === 'bible-book') {
                 middlePanelTitle.textContent = lastNav.name;
                 listElement.innerHTML = '<div class="bible-grid"></div>';
                 const grid = listElement.querySelector('.bible-grid');
+                
                 for (let i = 1; i <= lastNav.caps; i++) {
                     const btn = document.createElement('div');
                     btn.className = 'bible-grid-btn';
                     btn.textContent = i;
+                    
                     btn.onclick = () => {
-                        navigationStack.push({ id: `${lastNav.name} ${i}`, name: `Cap. ${i}`, type: 'bible-chapter', book: lastNav.name, chapter: i });
-                        updateNavigationView(true);
+                        // >>> PROTEÇÃO DE GRAVAÇÃO AQUI (A QUE PEDIU) <<<
+                        navigateWithUnsavedCheck(() => {
+                            navigationStack.push({ 
+                                id: `${lastNav.name} ${i}`, 
+                                name: `Cap. ${i}`, 
+                                type: 'bible-chapter', 
+                                book: lastNav.name, 
+                                chapter: i 
+                            });
+                            updateNavigationView(true);
+                        });
                     };
                     grid.appendChild(btn);
                 }
-            } else if (lastNav.type === 'bible-chapter') {
+            } 
+            
+            // C. LISTA DE VERSÍCULOS
+            else if (lastNav.type === 'bible-chapter') {
                 const bookData = BIBLE_DATA.find(b => b.nome === lastNav.book);
                 const prefix = `${lastNav.book} ${lastNav.chapter}:`;
                 middlePanelTitle.textContent = prefix.replace(':', '');
                 listElement.innerHTML = '<div class="bible-grid"></div>';
                 const grid = listElement.querySelector('.bible-grid');
+                
                 const totalV = bookData?.versiculos?.[lastNav.chapter - 1] || 50;
+                
+                // Usamos o cache para saber quais pintar de verde
                 const existingVerses = allEntities['textobiblico'] || [];
+                
                 for (let v = 1; v <= totalV; v++) {
                     const fullVerse = `${prefix}${v}`;
                     const exists = existingVerses.some(e => e.nome === fullVerse);
                     const isActive = fullVerse === currentlyOpenVerseName;
+                    
                     const btn = document.createElement('div');
                     btn.className = `bible-grid-btn ${exists ? 'exists' : ''} ${isActive ? 'active-verse' : ''}`;
                     btn.textContent = v;
+                    
                     btn.onclick = () => {
-                        currentlyOpenVerseName = fullVerse;
-                        grid.querySelectorAll('.bible-grid-btn').forEach(b => b.classList.remove('active-verse'));
-                        btn.classList.add('active-verse');
-                        showReferencesPanel(null, fullVerse, 'textobiblico');
+                        // >>> PROTEÇÃO TAMBÉM AQUI <<<
+                        // Se clicar num versículo, também deve gravar o que estava a fazer antes de abrir a 4ª coluna
+                        navigateWithUnsavedCheck(() => {
+                            currentlyOpenVerseName = fullVerse;
+                            
+                            // Atualiza visualmente a grelha
+                            grid.querySelectorAll('.bible-grid-btn').forEach(b => b.classList.remove('active-verse'));
+                            btn.classList.add('active-verse');
+                            
+                            // Abre a 4ª Coluna
+                            showReferencesPanel(null, fullVerse, 'textobiblico');
+                        });
                     };
                     grid.appendChild(btn);
                 }
@@ -43919,25 +44076,25 @@ if (directEditorListener) {
 // SISTEMA DE PROPAGAÇÃO DE ATUALIZAÇÕES PARA MICAS
 // ============================================================
 async function propagateUpdatesToMicas(noteId, fullContent) {
+    console.group("📂 [MICAS SYNC] A propagar alterações (Modo Cirúrgico)...");
 
     try {
         const { collection, query, where, getDocs, doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const myUid = auth.currentUser.uid;
 
-        // 1. CAPTURAR O HTML VIVO
+        // 1. MAPEAR O CONTEÚDO VIVO (O que está no editor agora)
         const parser = new DOMParser();
         const docDOM = parser.parseFromString(fullContent, 'text/html');
         
+        // Seleciona TODOS os tipos de caixas possíveis
         const wrappers = docDOM.querySelectorAll('.mini-note-wrapper, .redator-wrapper, details.toggle-section, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, .jwn-timeline-wrapper, .jwn-table-wrapper');
         
         const liveBlocksMap = {};
         wrappers.forEach(el => {
             if (el.id) liveBlocksMap[el.id] = el.outerHTML;
         });
-        
 
-
-        // 2. LISTA DE COLEÇÕES
+        // 2. LISTA DE COLEÇÕES ONDE PODEM EXISTIR MICAS
         const collectionsToCheck = [
             'textosbiblicos', 'topicos', 'personagens', 'locais', 
             'marcadores', 'cosmos', 'subcosmos'
@@ -43945,10 +44102,7 @@ async function propagateUpdatesToMicas(noteId, fullContent) {
 
         let totalUpdates = 0;
 
-        // 3. VARREDURA (SEM FILTRO DE REFERÊNCIAS - MAIS LENTO MAS GARANTIDO)
-        // Nota: Para otimizar, só buscamos documentos que tenham o campo 'dossie' preenchido
-        // Mas o Firestore não permite query por "campo existe", então buscamos tudo do user.
-        
+        // 3. VARREDURA GLOBAL
         for (const colName of collectionsToCheck) {
             const q = query(
                 collection(db, colName),
@@ -43960,46 +44114,50 @@ async function propagateUpdatesToMicas(noteId, fullContent) {
             const updatePromises = snapshot.docs.map(async (docSnap) => {
                 const entityData = docSnap.data();
                 
-                // Se não tem dossiê, ignora
+                // Se não tem dossiê, passa à frente
                 if (!entityData.dossie || !Array.isArray(entityData.dossie) || entityData.dossie.length === 0) return;
 
                 let dossieChanged = false;
                 let needsReferenceFix = false;
                 const dossie = entityData.dossie;
 
-                // Loop pelas Micas
+                // Loop pelas Micas (Pastas dentro da entidade)
                 dossie.forEach(mica => {
                     if (!mica.items || !Array.isArray(mica.items)) return;
 
-                    // Loop pelos Itens
+                    // Loop pelos Itens dentro da Mica
                     mica.items.forEach(item => {
-                        // Verifica se pertence a esta nota
+                        // Verifica se este item pertence à nota que estamos a editar
                         if (item.noteId === noteId) {
                             
-                            // Se encontrámos um item desta nota, significa que a referência DEVERIA existir
+                            // Se encontrámos um item desta nota, o vínculo de referência deve existir
                             if (!entityData.referencias || !entityData.referencias[noteId]) {
                                 needsReferenceFix = true;
                             }
 
-                            // Tenta ler o ID guardado
+                            // --- A CORREÇÃO ESTÁ AQUI: ENCONTRAR O ID ESPECÍFICO ---
                             let savedID = null;
                             try {
                                 const decodedSnippet = decodeURIComponent(item.snippet);
                                 const tempDiv = document.createElement('div');
                                 tempDiv.innerHTML = decodedSnippet;
-                                const savedWrapper = tempDiv.firstElementChild;
-                                if (savedWrapper) savedID = savedWrapper.id;
+                                // Encontra o primeiro elemento com ID no HTML guardado
+                                const savedWrapper = tempDiv.firstElementChild; 
+                                // (Ou usa querySelector('[id]') para ser mais genérico)
+                                if (savedWrapper && savedWrapper.id) savedID = savedWrapper.id;
                             } catch(e) { }
 
+                            // Só atualiza se o ID guardado na Mica existir na Nota atual
                             if (savedID && liveBlocksMap[savedID]) {
                                 const newHTML = liveBlocksMap[savedID];
                                 const encodedNewHTML = encodeURIComponent(newHTML);
 
+                                // Se o conteúdo mudou
                                 if (item.snippet !== encodedNewHTML) {
-                                    console.log(`   🔄 ATUALIZANDO: ${savedID} em ${entityData.nome} > ${mica.name}`);
+                                    console.log(`   🔄 Atualizando Mica [${mica.name}] Item [${savedID}]`);
                                     item.snippet = encodedNewHTML;
                                     
-                                    // Atualiza título se possível
+                                    // Atualiza título se possível (para a lista ficar bonita)
                                     const tempLive = document.createElement('div');
                                     tempLive.innerHTML = newHTML;
                                     const titleInput = tempLive.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
@@ -44024,9 +44182,7 @@ async function propagateUpdatesToMicas(noteId, fullContent) {
                     
                     if (dossieChanged) updatePayload.dossie = dossie;
                     
-                    // AUTO-CORREÇÃO: Cria o vínculo que faltava
                     if (needsReferenceFix) {
-                        console.log(`   🔗 Reparando vínculo em falta para: ${entityData.nome}`);
                         updatePayload[`referencias.${noteId}`] = true;
                     }
                     
@@ -44037,12 +44193,15 @@ async function propagateUpdatesToMicas(noteId, fullContent) {
             await Promise.all(updatePromises);
         }
 
+        // Se o painel Dossié estiver aberto no ecrã, atualiza-o visualmente
         if (totalUpdates > 0) {
-            // Atualiza visual se aberto
-            if (document.getElementById('ref-content-dossie').style.display !== 'none' && window.activeMicaId) {
+            const dossiePanel = document.getElementById('ref-content-dossie');
+            if (dossiePanel && dossiePanel.style.display !== 'none' && window.activeMicaId) {
+                console.log("✨ Atualizando vista do Dossié em tempo real...");
                 if (typeof window.renderDossie === 'function') window.renderDossie();
             }
         } else {
+            console.log("ℹ️ Nenhuma alteração necessária nas Micas.");
         }
 
     } catch (e) {
@@ -44051,37 +44210,30 @@ async function propagateUpdatesToMicas(noteId, fullContent) {
     console.groupEnd();
 }
 
+
 // ============================================================
 // SISTEMA DE PROPAGAÇÃO DE ATUALIZAÇÕES PARA A BÍBLIA (TEXTOS)
 // ============================================================
 async function propagateUpdatesToBible(noteId, fullContent, noteTitle) {
-    console.group("📖 [BIBLE SYNC] A propagar alterações para os versículos...");
+    console.group("📖 [BIBLE SYNC] A propagar alterações (Modo Cirúrgico)...");
     
     try {
         const { collection, query, where, getDocs, doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const myUid = auth.currentUser.uid;
 
-        // 1. PREPARAR O SNIPPET (HTML Limpo da Nota)
-        // A Bíblia guarda o "snippet" codificado. Temos de extrair o wrapper principal.
+        // 1. MAPEAMENTO DO CONTEÚDO VIVO (ID -> HTML)
         const parser = new DOMParser();
         const docDOM = parser.parseFromString(fullContent, 'text/html');
         
-        // Procura o elemento principal da nota (Wrapper ou Redator)
-        const wrapper = docDOM.querySelector('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card');
+        // Encontra TODAS as caixas na nota atual
+        const wrappers = docDOM.querySelectorAll('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, details.toggle-section');
         
-        let finalSnippetEncoded = "";
-        
-        if (wrapper) {
-            // Se encontrou uma caixa estruturada, usa o HTML dela
-            finalSnippetEncoded = encodeURIComponent(wrapper.outerHTML);
-        } else {
-            // Se for texto livre, usa o conteúdo todo
-            finalSnippetEncoded = encodeURIComponent(fullContent);
-        }
+        const liveBlocksMap = {};
+        wrappers.forEach(el => {
+            if (el.id) liveBlocksMap[el.id] = el.outerHTML;
+        });
 
-        // 2. PROCURAR VERSÍCULOS QUE TENHAM ESTA NOTA NO PUZZLE
-        // Nota: Como o Firestore não pesquisa bem dentro de arrays de objetos complexos sem índices,
-        // vamos buscar os textos do utilizador e filtrar no cliente (seguro para volume pessoal).
+        // 2. BUSCAR VERSÍCULOS QUE REFERENCIAM ESTA NOTA
         const q = query(
             collection(db, 'textosbiblicos'),
             where('userId', '==', myUid)
@@ -44100,20 +44252,48 @@ async function propagateUpdatesToBible(noteId, fullContent, noteTitle) {
             
             // Percorre o quadro para encontrar referências a esta nota
             const newBoard = data.puzzleBoard.map(item => {
-                // Se encontrar o item correspondente ao ID da nota atual
+                // Se encontrar um item que vem desta nota
                 if (item.noteId === noteId) {
-                    // Verifica se houve mudança real para evitar escritas desnecessárias
-                    if (item.snippet !== finalSnippetEncoded || item.noteName !== noteTitle) {
-                        console.log(`   🔄 Atualizando versículo: ${data.nome}`);
+                    
+                    // --- CORREÇÃO: TENTAR ENCONTRAR O ID DA CAIXA NO SNIPPET ANTIGO ---
+                    let savedID = null;
+                    try {
+                        const decodedSnippet = decodeURIComponent(item.snippet);
+                        const tempDiv = document.createElement('div');
+                        tempDiv.innerHTML = decodedSnippet;
+                        const savedWrapper = tempDiv.firstElementChild;
+                        if (savedWrapper) savedID = savedWrapper.id;
+                    } catch(e) { }
+
+                    // --- LÓGICA DE DECISÃO ---
+                    let newSnippetEncoded = item.snippet; // Por defeito mantém o antigo
+
+                    if (savedID && liveBlocksMap[savedID]) {
+                        // CASO A: Encontrámos a caixa exata pelo ID! Atualiza com o conteúdo dessa caixa.
+                        newSnippetEncoded = encodeURIComponent(liveBlocksMap[savedID]);
+                    } 
+                    else if (!savedID) {
+                        // CASO B: O item antigo não era uma caixa (era texto solto da nota toda).
+                        // Se a nota agora tem caixas, talvez devêssemos manter o texto antigo ou atualizar tudo.
+                        // Para segurança, se não identificamos o ID, mantemos o texto antigo para não estragar.
+                        // (Ou opcionalmente: newSnippetEncoded = encodeURIComponent(fullContent));
+                    }
+
+                    // Verifica se houve mudança real
+                    if (item.snippet !== newSnippetEncoded || item.noteName !== noteTitle) {
+                        console.log(`   🔄 Atualizando referência exata [${savedID}] em: ${data.nome}`);
                         
-                        // Atualiza os dados
-                        item.snippet = finalSnippetEncoded;
+                        item.snippet = newSnippetEncoded;
                         item.noteName = noteTitle;
                         
-                        // Atualiza a cor se existir na caixa
-                        if (wrapper && wrapper.getAttribute('data-highlight')) {
-                            item.noteColor = wrapper.getAttribute('data-highlight');
-                            item.cor = wrapper.getAttribute('data-highlight'); // Compatibilidade
+                        // Atualiza a cor se possível
+                        if (savedID && liveBlocksMap[savedID]) {
+                            const tempDOM = document.createElement('div');
+                            tempDOM.innerHTML = liveBlocksMap[savedID];
+                            const wrapper = tempDOM.firstElementChild;
+                            if (wrapper && wrapper.getAttribute('data-highlight')) {
+                                item.noteColor = wrapper.getAttribute('data-highlight');
+                            }
                         }
 
                         boardChanged = true;
@@ -44133,7 +44313,9 @@ async function propagateUpdatesToBible(noteId, fullContent, noteTitle) {
         await Promise.all(updatePromises);
         
         if (updatesCount > 0) {
+            console.log(`✅ ${updatesCount} referências sincronizadas com sucesso.`);
         } else {
+            console.log("ℹ️ Nenhuma alteração necessária nas referências.");
         }
 
     } catch (e) {
@@ -44141,6 +44323,53 @@ async function propagateUpdatesToBible(noteId, fullContent, noteTitle) {
     }
     console.groupEnd();
 }
+
+// ============================================================
+// EXTRA: PROTEÇÃO CONTRA IDs DUPLICADOS NO COLAR (CRÍTICO)
+// ============================================================
+// Se copiar e colar uma caixa, o ID vem igual. Isso baralha o sistema.
+// Este listener regenera IDs ao colar HTML.
+
+document.getElementById('note-content-editor').addEventListener('paste', (e) => {
+    // Atraso para processar depois do conteúdo entrar
+    setTimeout(() => {
+        const editor = document.getElementById('note-content-editor');
+        const wrappers = editor.querySelectorAll('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper');
+        
+        const seenIds = new Set();
+        let changed = false;
+
+        wrappers.forEach(wrapper => {
+            if (seenIds.has(wrapper.id)) {
+                // ID Duplicado detetado! Regenerar.
+                const oldId = wrapper.id;
+                const prefix = oldId.split('_')[0] || 'box';
+                const newId = `${prefix}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+                
+                wrapper.id = newId;
+                
+                // Atualiza também os botões internos que usam o ID (ex: Redator)
+                if (wrapper.classList.contains('redator-wrapper')) {
+                    const header = wrapper.querySelector('.redator-header');
+                    if (header) header.id = `header-${newId}`;
+                    const btn = wrapper.querySelector('.redator-reopen-btn');
+                    if (btn) btn.setAttribute('onclick', `window.toggleRedatorHeader('${newId}', true)`);
+                    const content = wrapper.querySelector('.redator-content');
+                    if (content) content.setAttribute('oninput', `window.checkRedatorFocus(this, '${newId}')`);
+                }
+                
+                console.log(`🔧 ID duplicado corrigido: ${oldId} -> ${newId}`);
+                changed = true;
+            } else {
+                seenIds.add(wrapper.id);
+            }
+        });
+
+        if (changed && typeof saveNote === 'function') {
+            saveNote();
+        }
+    }, 100);
+});
 
 // ============================================================
 // FUNÇÃO DE ALERTA PERSONALIZADO (APENAS BOTÃO OK)
@@ -44431,6 +44660,88 @@ window.addEventListener('pagehide', () => {
         // mesmo que isto falhe, o post ficará livre após 5 minutos.
     }
 });
+
+// --- FUNÇÃO DE BUSCA DO PAI (ORIGINAL) ---
+async function findOriginalNoteLocation(originId) {
+    if (!auth.currentUser || !originId) return null;
+    
+    // 1. VERIFICAÇÃO VISUAL (No Ecrã Atual)
+    // Procuramos se o elemento com o ID original existe fisicamente nesta página.
+    const originalElement = document.getElementById(originId);
+    
+    if (originalElement) {
+        // TRUQUE DE SEGURANÇA:
+        // Se o elemento que encontrámos TAMBÉM tem um 'data-origin-id', então ele é um clone mal formatado 
+        // ou uma cópia local. Não é o "Verdadeiro Original". Ignoramos.
+        // Se NÃO tiver 'data-origin-id', então é o original puro e duro.
+        if (!originalElement.hasAttribute('data-origin-id')) {
+            console.log("📍 Original encontrado visualmente nesta nota!");
+            return {
+                id: selectedNoteId, 
+                name: "📍 ESTA NOTA (Clique para ir)", 
+                type: 'source',
+                boxId: originId,
+                icon: '🎯'
+            };
+        }
+    }
+
+    // 2. VERIFICAÇÃO NA BASE DE DADOS (Excluindo a nota atual)
+    const myUid = auth.currentUser.uid;
+    try {
+        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const q = query(
+            collection(db, 'pastas'),
+            where('userId', '==', myUid),
+            where('estado', '==', 'ativa'),
+            where('tipo', 'in', ['nota', 'arquivo', 'partilhado', 'jornal', 'aquario'])
+        );
+
+        const snapshot = await getDocs(q);
+        
+        for (const doc of snapshot.docs) {
+            
+            // >>> A CORREÇÃO ESTÁ AQUI <<<
+            // Se o ID do documento for igual à nota onde estamos agora, PULA.
+            // Nós já verificámos a nota atual visualmente no passo 1. 
+            // Se não estava lá, não vale a pena ver no texto guardado da mesma nota.
+            if (doc.id === selectedNoteId) continue; 
+            // -----------------------------
+
+            const data = doc.data();
+            const content = data.conteudo || "";
+            
+            // Procura o ID no HTML: id="mn_12345..."
+            if (content.includes(`id="${originId}"`)) {
+                return {
+                    id: doc.id,
+                    name: data.nome || "Sem Título",
+                    type: 'source', 
+                    boxId: originId,
+                    icon: '📄'
+                };
+            }
+            
+            // Se for arquivo/partilhado, procurar nos posts
+            if (data.posts && Array.isArray(data.posts)) {
+                const foundPost = data.posts.find(p => p.content && p.content.includes(`id="${originId}"`));
+                if (foundPost) {
+                    return {
+                        id: doc.id,
+                        name: `${data.nome} (Post: ${foundPost.title})`,
+                        type: 'source',
+                        boxId: originId,
+                        icon: '🗄️'
+                    };
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Erro ao procurar original:", e);
+    }
+    return null;
+}
 
 
 
