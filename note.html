@@ -12043,41 +12043,64 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
     const loader = document.getElementById('app-loader');
     const container = document.querySelector('.notebook-container');
 
+    // 1. VERIFICAÇÃO: UTILIZADOR NÃO AUTENTICADO
     if (!user) {
-        window.location.href = "index.html";
+        console.warn("⛔ Acesso não autorizado. Redirecionando para 404...");
+        window.location.href = "404.html";
         return; 
-    } else {
-        console.log("🔐 Login confirmado. A preparar dados...");
-
-        const params = new URLSearchParams(window.location.search);
-        const openArchiveId = params.get('openArchive'); 
-        const modeParam = params.get('mode');           
-        const urlRootId = params.get('rootId');
-        const openFolderId = params.get('openFolder'); 
-        const targetNoteId = params.get('noteId');     
-        const redirectSearch = params.get('search');
-        const viewParam = params.get('view');
-
-        SUPERFOLDER_ID = urlRootId || null; 
-
-        // --- 1. LÓGICA DE ABA INICIAL ---
-        // Se vier de um link de arquivo ou convite, a aba é SEMPRE 'shared'
-        if (openArchiveId || viewParam === 'shared' || modeParam === 'collab') {
-            console.log("🚀 Modo Partilha forçado pelo URL.");
-            currentViewMode = 'shared';
-            // Chama a função global que configura a UI para modo Partilha
-            if (typeof window.switchFolderView === 'function') {
-                window.switchFolderView('shared');
-            }
-        }
-
+    } 
+    
+    // 2. VERIFICAÇÃO: UTILIZADOR AUTENTICADO
+    else {
         try {
-            // --- 2. PROCESSADOR DE CONVITES (AUTO-JOIN) ---
+            // Consulta o perfil do utilizador na base de dados
+            const userDocRef = doc(db, "users", user.uid);
+            const userDoc = await getDoc(userDocRef);
+
+            // Se o documento não existe ou o campo 'aceite' não é 'on'
+            if (!userDoc.exists() || userDoc.data().aceite !== "on") {
+                console.warn("⏳ Conta pendente ou inválida. Redirecionando para espera...");
+                window.location.href = "index.html"; // Volta para a tela de "Pendente"
+                return;
+            }
+
+            // --- SUCESSO: CONTA APROVADA (aceite = "on") ---
+            console.log("🔐 Acesso Confirmado. A carregar aplicação...");
+            
+            // Carrega dados globais do utilizador
+            currentUserData = userDoc.data();
+
+            // =========================================================
+            // AQUI COMEÇA O CARREGAMENTO NORMAL DA APP (O SEU CÓDIGO ANTIGO)
+            // =========================================================
+            
+            const params = new URLSearchParams(window.location.search);
+            const openArchiveId = params.get('openArchive'); 
+            const modeParam = params.get('mode');           
+            const urlRootId = params.get('rootId');
+            const openFolderId = params.get('openFolder'); 
+            const targetNoteId = params.get('noteId');     
+            const redirectSearch = params.get('search');
+            const viewParam = params.get('view');
+
+            SUPERFOLDER_ID = urlRootId || null; 
+
+            // Carrega Configurações
+            const configRef = doc(db, "configuracoes", user.uid);
+            const configSnap = await getDoc(configRef);
+            if (configSnap.exists()) appSettings = { ...appSettings, ...configSnap.data() };
+
+            // --- 1. LÓGICA DE ABA INICIAL ---
+            if (openArchiveId || viewParam === 'shared' || modeParam === 'collab') {
+                currentViewMode = 'shared';
+                if (typeof window.switchFolderView === 'function') {
+                    window.switchFolderView('shared');
+                }
+            }
+
+            // --- 2. PROCESSADOR DE CONVITES ---
             if (modeParam === 'collab' && openArchiveId) {
-                console.log("🤝 [CONVITE] A processar acesso ao arquivo:", openArchiveId);
-                const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
                 const archiveRef = doc(db, 'pastas', openArchiveId);
-                
                 const archiveSnap = await getDoc(archiveRef);
                 if (archiveSnap.exists()) {
                     const data = archiveSnap.data();
@@ -12085,94 +12108,44 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
                         const myUid = user.uid;
                         if (!data.colaboradores || !data.colaboradores[myUid]) {
                             await updateDoc(archiveRef, { [`colaboradores.${myUid}`]: true });
-                            console.log("✅ Colaborador registado com sucesso!");
                         }
                     } else {
-                        alert("Convite inválido.");
+                        alert("Convite inválido ou expirado.");
                         window.location.href = "note.html";
                         return;
                     }
                 }
             }
 
-            // --- 3. LIMPEZA DE URL (IMPORTANTE) ---
-            // Se entrou por convite/link direto, limpa o URL para parecer navegação normal
             if (openArchiveId) {
                 const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
                 window.history.replaceState({ path: cleanUrl }, '', cleanUrl);
-                console.log("🧹 URL limpo.");
             }
-
-            // Carrega dados do user
-            const userDocRef = doc(db, "users", user.uid);
-            const userDoc = await getDoc(userDocRef);
-            if (userDoc.exists()) currentUserData = userDoc.data();
-            
-            const configRef = doc(db, "configuracoes", user.uid);
-            const configSnap = await getDoc(configRef);
-            if (configSnap.exists()) appSettings = { ...appSettings, ...configSnap.data() };
 
             if (typeof startGlobalNotificationListener === 'function') startGlobalNotificationListener();
 
             // --- 4. ABERTURA DE CONTEÚDO ---
-            
-            // CASO A: ARQUIVO (Aba Share)
-           if (openArchiveId) {
-    console.log(`📂 [ROUTER] Abertura de Arquivo: ${openArchiveId}`);
-    
-    // 1. FORÇAR MUDANÇA VISUAL (Separadores da Esquerda)
-    const folderModeContainer = document.querySelector('.folder-mode-container');
-    if (folderModeContainer) {
-        // Remove 'active' de todos
-        folderModeContainer.querySelectorAll('.folder-mode-item').forEach(el => {
-            el.classList.remove('active', 'mode-shared', 'mode-pins', 'mode-flash');
-        });
-        
-        // Encontra e ativa o botão "Share"
-        const shareTab = Array.from(folderModeContainer.querySelectorAll('.folder-mode-item'))
-                              .find(el => el.textContent.includes('Share') || el.textContent.includes('Partilha'));
-        
-        if (shareTab) {
-            shareTab.classList.add('active', 'mode-shared');
-        }
-    }
-    
-    // 2. FORÇAR CARREGAMENTO DA LISTA (Coluna 2)
-    // Chamamos explicitamente a função que busca os arquivos partilhados
-    if (typeof loadSharedFilesRoot === 'function') {
-        loadSharedFilesRoot();
-    }
-
-    // 3. CARREGAR E EXIBIR O CONTEÚDO (Coluna 3)
-    const arcSnap = await getDoc(doc(db, 'pastas', openArchiveId));
-    if (arcSnap.exists()) {
-        // Exibe o arquivo no painel principal
-        displayArchive(openArchiveId, { id: openArchiveId, ...arcSnap.data() });
-        
-        // 4. SELEÇÃO VISUAL NA LISTA (Retry Loop)
-        // Como a lista demora a carregar do Firebase, tentamos selecionar o item repetidamente
-        let attempts = 0;
-        const trySelect = setInterval(() => {
-            attempts++;
-            const listItem = document.querySelector(`.list-item[data-id="${openArchiveId}"]`);
-            
-            if (listItem) {
-                // Limpa seleções anteriores
-                document.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
-                // Aplica a seleção correta
-                listItem.classList.add('selected-red');
-                // Faz scroll para o item
-                listItem.scrollIntoView({ block: 'center' });
-                clearInterval(trySelect);
+            if (openArchiveId) {
+                if (typeof loadSharedFilesRoot === 'function') loadSharedFilesRoot();
+                
+                const arcSnap = await getDoc(doc(db, 'pastas', openArchiveId));
+                if (arcSnap.exists()) {
+                    displayArchive(openArchiveId, { id: openArchiveId, ...arcSnap.data() });
+                    // Lógica de retry para seleção visual
+                    let attempts = 0;
+                    const trySelect = setInterval(() => {
+                        attempts++;
+                        const listItem = document.querySelector(`.list-item[data-id="${openArchiveId}"]`);
+                        if (listItem) {
+                            document.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
+                            listItem.classList.add('selected-red');
+                            listItem.scrollIntoView({ block: 'center' });
+                            clearInterval(trySelect);
+                        }
+                        if (attempts > 50) clearInterval(trySelect);
+                    }, 100);
+                }
             }
-            
-            // Pára de tentar após 5 segundos (50 tentativas * 100ms)
-            if (attempts > 50) clearInterval(trySelect);
-        }, 100);
-    }
-}
-            
-            // Outros casos (Nota, Pasta)...
             else if (openFolderId && targetNoteId) {
                 await reconstructFolderNavigation(openFolderId, targetNoteId);
                 displayNote(targetNoteId, null, redirectSearch);
@@ -12184,7 +12157,6 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
                 await reconstructFolderNavigation(openFolderId);
             } 
             else {
-                // Se não houver nada para abrir, garante que a UI reflete o modo atual
                 if (currentViewMode === 'local') updateNavigationView(false);
             }
 
@@ -12192,15 +12164,21 @@ async function reconstructFolderNavigation(targetFolderId, targetNoteId = null) 
             fetchAllTags();
             loadUserHighlights();
 
-        } catch (e) { console.error("Erro inicial:", e); }
+            // REMOVE O ECRÃ DE CARREGAMENTO (Shield)
+            setTimeout(() => {
+                if (container) container.style.setProperty('display', 'flex', 'important');
+                if (loader) {
+                    loader.style.opacity = '0';
+                    setTimeout(() => loader.remove(), 500);
+                }
+            }, 800); 
 
-        setTimeout(() => {
-            if (container) container.style.setProperty('display', 'flex', 'important');
-            if (loader) {
-                loader.style.opacity = '0';
-                setTimeout(() => loader.remove(), 500);
-            }
-        }, 800); 
+        } catch (e) { 
+            console.error("Erro crítico na inicialização:", e); 
+            // Em caso de erro grave (ex: falha de rede ao verificar permissão),
+            // por segurança mandamos para o Index.
+            window.location.href = "index.html";
+        }
     }
 });
 
