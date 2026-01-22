@@ -1724,6 +1724,7 @@ let activeHighlightContext = null;
 let startY = 0;
 let startHeight = 0;
 let isDragging = false;
+let verseObserver = null;
 
         // --- REFERÊNCIAS DOM ---
         const viewBooks = document.getElementById('view-books');
@@ -1769,25 +1770,24 @@ const HIGHLIGHT_COLORS = [
         // --- AUTENTICAÇÃO E INICIALIZAÇÃO ---
         const globalShield = document.getElementById('global-auth-shield');
 
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                currentUser = user;
-                
-                // 1. Carregar Configurações do Utilizador (Await para esperar que carregue)
-                await loadUserConfig(); 
-                
-                // 2. (Opcional) Pequeno delay para garantir que o DOM (livros) estabilizou
-                // Isto dá uma sensação mais suave do que aparecer de repente
-                setTimeout(() => {
-                    // Remove o escudo suavemente
-                    globalShield.classList.add('fade-out');
-                }, 500);
+  onAuthStateChanged(auth, async (user) => {
+    if (user) {
+        currentUser = user;
+        
+        await loadUserConfig(); 
+        
+        // >>> LINHA NOVA: Verifica se há link para abrir direto
+        await loadStateFromUrl(); 
+        // ----------------------------------------------------
 
-            } else {
-                // SE NÃO ESTIVER LOGADO -> VAI PARA 404
-                window.location.href = "404.html";
-            }
-        });
+        setTimeout(() => {
+            globalShield.classList.add('fade-out');
+        }, 500);
+
+    } else {
+        window.location.href = "404.html";
+    }
+});
 
         // --- LÓGICA DE CONFIGURAÇÕES ---
         async function loadUserConfig() {
@@ -1940,18 +1940,21 @@ function renderBooks() {
     updateUI('books');
 }
 
-        function openChapters(book) {
-            selectedBook = book; 
-            chaptersGrid.innerHTML = '';
-            for (let i = 1; i <= book.caps; i++) {
-                const tile = document.createElement('div'); 
-                tile.className = 'tile'; 
-                tile.innerText = i;
-                tile.onclick = () => openVerses(i); 
-                chaptersGrid.appendChild(tile);
-            }
-            updateUI('chapters');
-        }
+      function openChapters(book) {
+    selectedBook = book; 
+    chaptersGrid.innerHTML = '';
+    
+    for (let i = 1; i <= book.caps; i++) {
+        const tile = document.createElement('div'); 
+        tile.className = 'tile'; 
+        tile.innerText = i;
+        tile.onclick = () => openVerses(i); 
+        chaptersGrid.appendChild(tile);
+    }
+    
+    // Chama a UI atualizada
+    updateUI('chapters');
+}
 
 async function openVerses(chapter) {
     // --- NOVO: Forçar o scroll do contentor para o topo ---
@@ -1985,6 +1988,8 @@ async function openVerses(chapter) {
             const row = document.createElement('div'); 
             row.className = 'verse-item';
             
+  row.setAttribute('data-vnum', i);
+
             const spanId = `vtext-${i}`; 
             const numId = `vnum-${i}`;
             
@@ -2001,6 +2006,8 @@ async function openVerses(chapter) {
         // Muda a vista para Versículos (o loader ainda está por cima a tapar tudo)
         updateUI('verses');
 
+           setupScrollObserver(); 
+           
         // 2. ESPERA QUE TODO O TEXTO BÍBLICO CHEGUE
         await Promise.all(textLoadPromises);
 
@@ -2164,6 +2171,12 @@ window.openModalForVerse = async (num) => {
     currentSelectionText = ""; 
     selectedColorHex = null;
 
+    // >>> ATUALIZAÇÃO URL: Guarda o estado no link (Ex: ?b=Genesis&c=1&v=5)
+    if (typeof updateUrlParams === 'function') {
+        updateUrlParams(selectedBook.nome, selectedChapter, num);
+    }
+    // ---------------------------------------------------------------------
+
     activeVerseFullName = `${selectedBook.nome} ${selectedChapter}:${num}`;
     const isDesktop = window.innerWidth >= 768;
     
@@ -2217,8 +2230,6 @@ window.openModalForVerse = async (num) => {
         
         titleEl.innerHTML = titleHTML;
 
-        // >>> CORREÇÃO DO BUG AQUI <<<
-
         // A. Remove o botão "+ Nota no Trecho" se ele tiver sobrado
         const customBtn = document.getElementById('btn-custom-highlight');
         if (customBtn) customBtn.remove();
@@ -2234,7 +2245,7 @@ window.openModalForVerse = async (num) => {
             if (headerActions) headerActions.appendChild(btnContainer);
         }
 
-        // C. FORÇA A VISIBILIDADE (Caso o 'openHighlightDetails' o tenha escondido com display:none)
+        // C. FORÇA A VISIBILIDADE
         btnContainer.style.display = 'flex';
         
         // D. Atualiza o conteúdo com os botões normais
@@ -2245,7 +2256,7 @@ window.openModalForVerse = async (num) => {
         if (oldDefault) oldDefault.style.display = 'none';
     }
     
-    // 5. Carregar Conteúdo
+    // 5. Carregar Conteúdo (Spinner)
     contentDiv.innerHTML = `
         <div class="spinner-container" style="padding: 40px; text-align: center; color: #888;">
             <div class="spinner"></div><br>A carregar notas...
@@ -2663,6 +2674,7 @@ setTimeout(() => {
 
         // --- NAVEGAÇÃO UI ---
 function updateUI(view) {
+    // Fecha painéis laterais ao mudar de vista
     window.closeSidePanel(); 
     document.getElementById('verse-details-modal').style.display = 'none';
 
@@ -2671,56 +2683,77 @@ function updateUI(view) {
     viewChapters.classList.add('hidden'); 
     viewVerses.classList.add('hidden');
     
-    // --- NOVO: Referência ao botão de Âncoras ---
     const anchorBtn = document.getElementById('bible-anchors-btn');
     
     if (view === 'books') { 
         viewBooks.classList.remove('hidden'); 
         pageTitle.innerText = "BÍBLIA"; 
         backBtn.style.display = 'none'; 
-        
-        // ESCONDER BOTÃO
         if(anchorBtn) anchorBtn.style.display = 'none';
+
+        // ATUALIZA URL: Limpa tudo na Home
+        if (typeof updateUrlParams === 'function') {
+            updateUrlParams(null, null, null);
+        }
 
     } else if (view === 'chapters') { 
         viewChapters.classList.remove('hidden'); 
-        pageTitle.innerText = selectedBook.nome; 
-        backBtn.style.display = 'block'; 
         
-        // ESCONDER BOTÃO
+        // PROTEÇÃO: Só tenta ler o nome se o livro existir
+        if (selectedBook) {
+            pageTitle.innerText = selectedBook.nome;
+            
+            // ATUALIZA URL: Apenas Livro
+            if (typeof updateUrlParams === 'function') {
+                updateUrlParams(selectedBook.nome, null, null);
+            }
+        }
+        
+        backBtn.style.display = 'block'; 
         if(anchorBtn) anchorBtn.style.display = 'none';
 
     } else if (view === 'verses') { 
         viewVerses.classList.remove('hidden'); 
-            
-            // --- TÍTULO ATUALIZADO (SEM A SETA) ---
+        
+        if (selectedBook && selectedChapter) {
+            // ATUALIZA URL: Livro e Capítulo (usa selectedChapter, não 'chapter')
+            if (typeof updateUrlParams === 'function') {
+                updateUrlParams(selectedBook.nome, selectedChapter, null);
+            }
+
             pageTitle.innerHTML = `
                 <button class="nav-arrow" onclick="window.changeChapter(-1)">❮</button>
-                
                 <span id="page-title-span" 
                       onclick="window.toggleChapterNav(event)" 
                       style="margin: 0 8px; cursor:pointer; border-bottom: 1px dotted #666; padding-bottom: 2px; user-select: none;"
                       title="Mudar Capítulo">
                     ${selectedBook.nome} ${selectedChapter}
                 </span>
-                
                 <button class="nav-arrow" onclick="window.changeChapter(1)">❯</button>
             `;
-            
-            backBtn.style.display = 'block'; 
-             if(anchorBtn) anchorBtn.style.display = 'inline-block';
         }
-            window.scrollTo(0, 0);
-        }
+        
+        backBtn.style.display = 'block'; 
+        if(anchorBtn) anchorBtn.style.display = 'inline-block';
+    }
+    
+    window.scrollTo(0, 0);
+}
 
-        backBtn.addEventListener('click', () => {
-              window.hideSelectionToolbar(); 
-            if (currentView === 'verses') updateUI('chapters'); 
-            else if (currentView === 'chapters') { 
-                selectedBook = null; 
-                updateUI('books'); 
-            }
-        });
+     backBtn.addEventListener('click', () => {
+    window.hideSelectionToolbar(); 
+    
+    if (currentView === 'verses') { 
+        // Voltar para capítulos: O selectedBook mantém-se, selectedChapter deixa de importar
+        updateUI('chapters'); 
+    } 
+    else if (currentView === 'chapters') { 
+        // Voltar para Home: É CRUCIAL limpar o selectedBook ANTES ou DEPOIS corretamente
+        selectedBook = null; 
+        selectedChapter = null;
+        updateUI('books'); 
+    }
+});
 
         window.onclick = function(event) { 
             if (event.target === verseModal) verseModal.style.display = "none";
@@ -5597,25 +5630,40 @@ const originalClose = window.closeSidePanel;
 window.closeSidePanel = () => {
     const panel = document.getElementById('side-panel');
     
+    // 1. Limpeza de Modos Especiais (ex: Modo Leitura de Entidades)
+    panel.classList.remove('read-only-mode');
+    
+    // Limpa sublinhados verdes das âncoras (se a função existir)
+    if (typeof highlightAnchorInText === 'function') {
+        highlightAnchorInText(null);
+    }
+
+    // 2. Lógica de Fecho Visual (Mobile vs PC)
     if (window.innerWidth <= 768) {
-        // No mobile, desliza para baixo
+        // No mobile, desliza para baixo usando transform
         panel.style.transform = "translateY(100%)";
         
-        // Espera a animação acabar para resetar a altura (opcional)
+        // Espera a animação (300ms) acabar para resetar a altura e a classe
         setTimeout(() => {
             panel.classList.remove('open');
             panel.style.height = "0"; 
-            panel.style.transform = ""; // Limpa estilo inline
+            panel.style.transform = ""; // Limpa estilo inline para não bloquear futuras aberturas
         }, 300);
     } else {
-        // No PC mantém o comportamento original
+        // No PC apenas remove a classe open
         panel.classList.remove('open');
     }
 
-    // Limpa sublinhados e outras coisas
-    if (typeof highlightAnchorInText === 'function') highlightAnchorInText(null);
-    if (originalClose) originalClose(); // Chama limpeza original se houver
+    // 3. Remove destaque visual do número do versículo (se houver algum ativo)
+    document.querySelectorAll('.verse-number.active-selection').forEach(el => el.classList.remove('active-selection'));
+
+    // 4. ATUALIZAÇÃO URL: Volta para o nível do Capítulo (remove o &v=...)
+    // Se estivermos dentro de um livro e capítulo, atualizamos o URL para mostrar apenas isso
+    if (selectedBook && selectedChapter && typeof updateUrlParams === 'function') {
+        updateUrlParams(selectedBook.nome, selectedChapter, null);
+    }
 };
+
 
 // REFORÇO PARA MOBILE: Deteção de fim de seleção tátil
 document.addEventListener('touchend', () => {
@@ -5693,6 +5741,118 @@ document.addEventListener('touchend', () => {
         }
     }, 100);
 });
+
+// --- GESTÃO DE URL (DEEP LINKING) ---
+
+// Atualizar o URL
+function updateUrlParams(bookName, chapter, verse, replace = false) {
+    const url = new URL(window.location);
+    
+    // Limpar parâmetros antigos
+    url.searchParams.delete('b');
+    url.searchParams.delete('c');
+    url.searchParams.delete('v');
+
+    if (bookName) url.searchParams.set('b', bookName);
+    if (chapter) url.searchParams.set('c', chapter);
+    if (verse) url.searchParams.set('v', verse);
+
+    const state = { book: bookName, chapter: chapter, verse: verse };
+
+    // SE for scroll (replace=true), substitui o URL atual (não cria histórico)
+    // SE for navegação (replace=false), cria novo histórico
+    if (replace) {
+        window.history.replaceState(state, '', url);
+    } else {
+        window.history.pushState(state, '', url);
+    }
+}
+
+// 2. Ler o URL e abrir o local correto (Chamado ao iniciar)
+async function loadStateFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const bName = params.get('b');
+    const cNum = params.get('c') ? parseInt(params.get('c')) : null;
+    const vNum = params.get('v') ? parseInt(params.get('v')) : null;
+
+    if (!bName) return; // Se não houver livro no URL, fica na Home
+
+    // 1. Encontrar o Livro nos dados
+    // Normaliza para comparar sem problemas de maiúsculas/minúsculas
+    const foundBook = BIBLE_DATA.find(b => b.nome.toLowerCase() === bName.toLowerCase() || b.abrev.toLowerCase() === bName.toLowerCase());
+
+    if (foundBook) {
+        selectedBook = foundBook;
+        
+        // Se tiver Capítulo
+        if (cNum) {
+            // Abre o Capítulo (espera carregar o texto)
+            await openVerses(cNum);
+            
+            // Se tiver Versículo
+            if (vNum) {
+                // Espera um pouco para o DOM renderizar
+                setTimeout(() => {
+                    // Rola até ao versículo
+                    const verseEl = document.getElementById(`vnum-${vNum}`);
+                    if (verseEl) {
+                        verseEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        // Abre o Modal/Sidebar do versículo
+                        window.openModalForVerse(vNum);
+                    }
+                }, 500);
+            }
+        } else {
+            // Se só tiver o livro, mostra a lista de capítulos
+            openChapters(foundBook);
+        }
+    }
+}
+
+// 3. Lidar com o botão "Voltar" do navegador
+window.onpopstate = function(event) {
+    // Quando o utilizador clica na seta de voltar do browser, recarregamos o estado
+    if (event.state) {
+        // Se houver estado, tentamos restaurar (simplificado: recarrega a vista URL)
+        loadStateFromUrl();
+    } else {
+        // Se voltou ao início
+        selectedBook = null;
+        updateUI('books');
+    }
+};
+
+function setupScrollObserver() {
+    // Se já existir um observador, desliga-o para não duplicar
+    if (verseObserver) verseObserver.disconnect();
+
+    // Configurações: O 'rootMargin' define uma linha imaginária a 30% do topo do ecrã
+    // Quando um versículo cruza essa linha, o URL atualiza.
+    const options = {
+        root: document.querySelector('.container'), // O elemento que faz scroll
+        rootMargin: '-30% 0px -70% 0px', 
+        threshold: 0
+    };
+
+    verseObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                // O versículo entrou na "zona de leitura"
+                const verseNum = entry.target.getAttribute('data-vnum');
+                
+                if (selectedBook && selectedChapter && verseNum) {
+                    // Atualiza o URL silenciosamente (replace = true)
+                    updateUrlParams(selectedBook.nome, selectedChapter, verseNum, true);
+                }
+            }
+        });
+    }, options);
+
+    // Manda o observador vigiar todos os versículos
+    document.querySelectorAll('.verse-item').forEach(item => {
+        verseObserver.observe(item);
+    });
+}
 
     </script>
 </body>
