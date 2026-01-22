@@ -11902,6 +11902,8 @@ let globalFoldersCache = [];
 let presenceRef = null;
 let presenceHeartbeat = null;
 let lockHeartbeatInterval = null;
+let lastRenderedLeftParentId = 'INIT';
+
 
 
 window.currentNoteHybridMode = false;
@@ -13432,17 +13434,12 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
 
 async function updateNavigationView(keepEditorOpen = false, targetSelectId = null) {
-    // 1. PRIMEIRA COISA: Atualizar a visibilidade dos botões flutuantes
     updateMobileFABVisibility();
-
-    // 2. Remove qualquer estado colapsado ao navegar
     notebookContainer.classList.remove('left-panel-collapsed');
 
-    // 1. Limpeza de Ouvintes (Listeners) ativos para evitar fugas de memória
-    if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
+    // Limpeza de Ouvintes (Apenas do painel do MEIO sempre)
     if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
     
-    // 2. Reset do Editor se não for solicitado manter aberto
     if (!keepEditorOpen) {
         resetEditor();
     }
@@ -13450,94 +13447,10 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
     const depth = navigationStack.length;
     const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
-    // ============================================================
-    // CASO A: ABA DE LISTAS (Tópicos, Bíblia, Personagens, etc)
-    // ============================================================
-   if (currentTab === 'lists') {
-        const activeCategory = navigationStack.length > 0 ? navigationStack[0].id : null;
-
-        // Gerar categorias dinamicamente
-        const categories = [
-            { id: 'topico', icon: '📑', name: 'Tópicos' },
-            { id: 'destaque', icon: '🎨', name: 'Destaques' },
-            { separator: true },
-            { id: 'biblia-root', icon: '📖', name: 'Bíblia' }, // <--- O botão será adicionado aqui
-            { id: 'textobiblico', icon: '📜', name: 'Textos Bíblicos' },
-            { id: 'marcadores', icon: '🔖', name: 'Marcadores' },
-            { separator: true },
-            { id: 'personagem', icon: '👤', name: 'Personagens' },
-            { id: 'local', icon: '📍', name: 'Locais' },
-            { id: 'data', icon: '📅', name: 'Datas' },
-            { id: 'cosmos', icon: '🪐', name: 'Cosmos' },
-            { id: 'tag', icon: '🏷️', name: 'Tags' }
-        ];
-
-        let categoriesHTML = '';
-        categories.forEach(cat => {
-            if (cat.separator) {
-                categoriesHTML += `<hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">`;
-            } else {
-                const isSelected = activeCategory === cat.id ? 'selected' : '';
-                
-                // --- LÓGICA DO BOTÃO EXTERNO ---
-                let extraAction = '';
-                if (cat.id === 'biblia-root') {
-                    // event.stopPropagation() impede que o clique abra a lista da Bíblia no painel
-                    extraAction = `<button class="external-open-btn" title="Abrir Leitura em Nova Janela" onclick="event.stopPropagation(); window.open('bible.html', '_blank');">↗️</button>`;
-                }
-                
-                // Note o style="flex-grow:1" no span para empurrar o botão para a direita
-                categoriesHTML += `
-                <li class="list-item ${isSelected}" data-type="list-category" data-id="${cat.id}">
-                    <span style="flex-grow: 1;">${cat.icon} ${cat.name}</span>
-                    ${extraAction}
-                </li>`;
-            }
-        });
-
-        leftPanelList.innerHTML = categoriesHTML;
-
-        if (depth === 0) {
-            addItemBtn.style.display = 'none';
-            setLeftPanelTitle('Categorias'); 
-            middlePanelTitle.textContent = 'Selecione uma categoria';
-            middlePanelList.innerHTML = '';
-            backBtn.style.display = 'none';
-        } else {
-            const currentContext = navigationStack[depth - 1];
-            setLeftPanelTitle('Categorias', true); 
-            middlePanelTitle.textContent = currentContext.name;
-            backBtn.style.display = 'flex';
-            
-            const rootCategoryId = navigationStack[0].id;
-            const validYellowCategories = ['topico', 'personagem', 'local', 'data', 'marcadores', 'cosmos']; 
-            updateAddButtonState(validYellowCategories.includes(rootCategoryId), true);
-            renderListCategoryItems(currentContext.id);
-        }
-        return; 
-    }
-
-    // ============================================================
-    // CASO B: MODO PINS (NOVO)
-    // ============================================================
-    if (currentViewMode === 'pins' && currentTab === 'note') {
-        addItemBtn.style.display = 'none'; 
-        backBtn.style.display = 'none';
-        setLeftPanelTitle('Pins'); 
-        
-        // FORÇA O CARREGAMENTO DA COLUNA 1 SEMPRE QUE ENTRA/VOLTA
-        loadPinsView(); 
-        
-        return; 
-    }
-
-    // ============================================================
-    // CASO C: MODO NOTE (LOCAL OU PARTILHA)
-    // ============================================================
+    // --- LÓGICA DE TÍTULO ---
     addItemBtn.style.display = 'flex';
     addItemBtn.classList.remove('yellow-mode');
 
-    // 1. Definir Título da Esquerda (Coluna 1)
     if (depth === 0) {
         setLeftPanelTitle(currentViewMode === 'local' ? 'Pastas' : 'Partilha'); 
     } else {
@@ -13546,16 +13459,16 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
         setLeftPanelTitle(parentName, true);
     }
 
-    let leftPanelParentId = null;
+    let newLeftPanelParentId = null;
     let middlePanelParentId = null;
 
-    // 2. Definir o que mostrar em cada coluna baseando-se na profundidade
+    // --- CÁLCULO DOS PAIS ---
     if (depth === 0) {
         // RAIZ
         if (currentViewMode === 'shared') {
-            leftPanelParentId = "EMPTY_SIDEBAR_FOR_SHARED"; // A coluna 1 fica limpa para focar na lista
+            newLeftPanelParentId = "EMPTY_SIDEBAR_FOR_SHARED";
         } else {
-            leftPanelParentId = isSuperContext ? SUPERFOLDER_ID : null;
+            newLeftPanelParentId = isSuperContext ? SUPERFOLDER_ID : null;
         }
         middlePanelTitle.textContent = 'Selecione';
         middlePanelList.innerHTML = '';
@@ -13570,18 +13483,44 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
         backBtn.style.display = 'flex';
         
         if (depth === 1) {
-            leftPanelParentId = (currentViewMode === 'local') ? (isSuperContext ? SUPERFOLDER_ID : null) : "EMPTY_SIDEBAR_FOR_SHARED";
+            newLeftPanelParentId = (currentViewMode === 'local') ? (isSuperContext ? SUPERFOLDER_ID : null) : "EMPTY_SIDEBAR_FOR_SHARED";
         } else {
-            leftPanelParentId = navigationStack[depth - 2].id;
+            newLeftPanelParentId = navigationStack[depth - 2].id;
         }
     }
     
-    // 3. Disparar a renderização das listas via onSnapshot
-    unsubscribeLeftPanel = fetchAndDisplayItems(leftPanelParentId, leftPanelList, null);
+    // ============================================================
+    // AQUI ESTÁ A LÓGICA INTELIGENTE (COLUNA 1)
+    // ============================================================
+    
+    // Se o conteúdo da esquerda for DIFERENTE do que já lá está: Carrega com Spinner
+    if (newLeftPanelParentId !== lastRenderedLeftParentId) {
+        console.log("🔄 [COL 1] Contexto mudou. A carregar dados...");
+        
+        // Limpa ouvinte antigo
+        if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
+        
+        // Carrega (Isto mostra o Spinner)
+        unsubscribeLeftPanel = fetchAndDisplayItems(newLeftPanelParentId, leftPanelList, null);
+        
+        // Atualiza a memória
+        lastRenderedLeftParentId = newLeftPanelParentId;
+    } 
+    else {
+        console.log("⚡ [COL 1] Contexto igual. Apenas atualizando seleção visual.");
+        
+        // Não recarrega dados. Apenas muda o azul (Highlight).
+        // Se estivermos numa pasta (depth > 0), o item selecionado é a pasta atual.
+        const activeId = (depth > 0) ? navigationStack[depth - 1].id : null;
+        highlightLeftPanelItem(activeId);
+    }
+
+    // ============================================================
+    // COLUNA 2 (MEIO) - CARREGA SEMPRE (Como pedido)
+    // ============================================================
     if (middlePanelParentId) {
         unsubscribeMiddlePanel = fetchAndDisplayItems(middlePanelParentId, middlePanelList, targetSelectId);
     }
-    updateMobileFABVisibility();
 }
 
 
@@ -28054,7 +27993,7 @@ async function switchFolderView(mode) {
         }
     }
 
-    // 4. LIMPEZA TOTAL DE ESTADO E OUVINTES (Snapshot Cleanup)
+    // 4. LIMPEZA TOTAL DE ESTADO E OUVINTES
     col1SelectedId = null;
     if (unsubscribeShared1) { unsubscribeShared1(); unsubscribeShared1 = null; }
     if (unsubscribeShared2) { unsubscribeShared2(); unsubscribeShared2 = null; }
@@ -28063,6 +28002,11 @@ async function switchFolderView(mode) {
     
     // Reseta o editor e limpa seleção visual da Coluna 2
     resetEditor();             
+
+    // >>> CRÍTICO: FORÇA O RESET DO CACHE VISUAL DA COLUNA 1 <<<
+    // Isto garante que o updateNavigationView vai mostrar a roda de carregamento
+    // porque o contexto mudou completamente (ex: de Local para Partilha).
+    lastRenderedLeftParentId = 'FORCE_RESET';
 
     // 5. ATUALIZA O MODO E ESTADO DE NAVEGAÇÃO
     currentViewMode = mode;    
@@ -28085,12 +28029,11 @@ async function switchFolderView(mode) {
         if (addItemBtn) addItemBtn.style.display = 'none';
     } 
     
-    // --- MODO FLASH (NOVO - LARANJA) ---
+    // --- MODO FLASH (LARANJA) ---
     else if (mode === 'flash') {
         console.log("⚡ [SISTEMA] Modo Flash Ativado.");
         
         // 1. Configura botão "+"
-        const addItemBtn = document.getElementById('add-item-btn');
         if (addItemBtn) {
             addItemBtn.style.display = 'flex';
             addItemBtn.className = ''; 
@@ -28102,25 +28045,15 @@ async function switchFolderView(mode) {
         if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
 
         // 3. COLUNA 1 (ESQUERDA): Lista de Itens Flash
-        // Aqui vamos carregar a lista de itens Flash na esquerda também, ou um menu específico
         loadFlashListLeftPanel(); 
 
-        // 4. COLUNA 2 (MEIO): Detalhes ou Lista Secundária (depende da sua preferência)
-        // Se quiser que a Coluna 2 mostre o conteúdo do item clicado na esquerda, 
-        // ou se quiser que a Coluna 2 seja a lista principal e a esquerda fique vazia/estática.
-        
-        // OPÇÃO A: A esquerda mostra a lista de itens Flash. O meio fica vazio até clicar.
+        // 4. COLUNA 2 (MEIO): Limpa para não confundir
         const midList = document.getElementById('file-list');
         midList.innerHTML = '<li style="padding:40px; text-align:center; color:#e67e22; opacity:0.5;">⚡<br>Selecione um item Flash<br>ou crie um novo.</li>';
         
-        // OPÇÃO B (O que pediu): "só podem aparecer notas e jornais com oque=flash"
-        // Se a ideia é ter a lista na ESQUERDA, use a função abaixo.
-        
-        // No mobile, salta para a lista (agora na esquerda)
+        // No mobile, garante que a esquerda está visível
         if (window.innerWidth <= 768) {
             document.body.classList.remove('mobile-view-editor');
-            // Nota: No seu CSS mobile, a esquerda é 'mobile-view-middle' ou normal?
-            // Geralmente esquerda é default. Vamos garantir que a esquerda está visível.
             document.body.classList.remove('mobile-view-middle'); 
         }
     }
@@ -28133,7 +28066,7 @@ async function switchFolderView(mode) {
         if (addItemBtn) {
             addItemBtn.style.display = 'flex';
             addItemBtn.classList.remove('flash-mode', 'yellow-mode');
-            addItemBtn.classList.add('shared-mode'); // Adiciona estilo Vermelho
+            addItemBtn.classList.add('shared-mode');
         }
 
         if (window.innerWidth <= 768) {
@@ -44735,6 +44668,24 @@ async function findOriginalNoteLocation(originId) {
     return null;
 }
 
+
+function highlightLeftPanelItem(activeId) {
+    const list = document.getElementById('left-panel-list');
+    if (!list) return;
+
+    // 1. Remove seleção de todos
+    list.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected'));
+
+    // 2. Se houver um ID ativo, adiciona a seleção
+    if (activeId) {
+        const target = list.querySelector(`.list-item[data-id="${activeId}"]`);
+        if (target) {
+            target.classList.add('selected');
+            // Garante que está visível se a lista for longa
+            target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+}
 
 
     </script>
