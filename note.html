@@ -13434,6 +13434,7 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
 
 async function updateNavigationView(keepEditorOpen = false, targetSelectId = null) {
+    // 1. Atualizações Globais
     updateMobileFABVisibility();
     notebookContainer.classList.remove('left-panel-collapsed');
 
@@ -13445,12 +13446,109 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
     }
 
     const depth = navigationStack.length;
-    const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
-    // --- LÓGICA DE TÍTULO ---
+    // ============================================================
+    // CASO A: ABA "LISTS" (Tópicos, Bíblia, Personagens...)
+    // ============================================================
+    if (currentTab === 'lists') {
+        // Marca o cache como 'LISTS' para forçar recarregamento se voltar à aba 'note' depois
+        lastRenderedLeftParentId = 'LISTS_MODE';
+
+        const activeCategory = navigationStack.length > 0 ? navigationStack[0].id : null;
+
+        // 1. Gerar categorias (Raiz da Aba Lists)
+        // Nota: O HTML é gerado manualmente aqui, não vem do fetchAndDisplayItems
+        const categories = [
+            { id: 'topico', icon: '📑', name: 'Tópicos' },
+            { id: 'destaque', icon: '🎨', name: 'Destaques' },
+            { separator: true },
+            { id: 'biblia-root', icon: '📖', name: 'Bíblia' }, 
+            { id: 'textobiblico', icon: '📜', name: 'Textos Bíblicos' },
+            { id: 'marcadores', icon: '🔖', name: 'Marcadores' },
+            { separator: true },
+            { id: 'personagem', icon: '👤', name: 'Personagens' },
+            { id: 'local', icon: '📍', name: 'Locais' },
+            { id: 'data', icon: '📅', name: 'Datas' },
+            { id: 'cosmos', icon: '🪐', name: 'Cosmos' },
+            { id: 'tag', icon: '🏷️', name: 'Tags' }
+        ];
+
+        let categoriesHTML = '';
+        categories.forEach(cat => {
+            if (cat.separator) {
+                categoriesHTML += `<hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">`;
+            } else {
+                const isSelected = activeCategory === cat.id ? 'selected' : '';
+                
+                // Botão extra para abrir Bíblia em nova janela
+                let extraAction = '';
+                if (cat.id === 'biblia-root') {
+                    extraAction = `<button class="external-open-btn" title="Abrir Leitura em Nova Janela" onclick="event.stopPropagation(); window.open('bible.html', '_blank');">↗️</button>`;
+                }
+                
+                categoriesHTML += `
+                <li class="list-item ${isSelected}" data-type="list-category" data-id="${cat.id}">
+                    <span style="flex-grow: 1;">${cat.icon} ${cat.name}</span>
+                    ${extraAction}
+                </li>`;
+            }
+        });
+
+        // 2. Renderizar Coluna 1
+        leftPanelList.innerHTML = categoriesHTML;
+
+        // 3. Configurar Títulos e Coluna 2
+        if (depth === 0) {
+            // Estarmos na Raiz das Listas
+            addItemBtn.style.display = 'none';
+            setLeftPanelTitle('Categorias'); 
+            middlePanelTitle.textContent = 'Selecione uma categoria';
+            middlePanelList.innerHTML = '';
+            backBtn.style.display = 'none';
+        } else {
+            // Entrámos numa categoria (Ex: Clicou em "Personagens")
+            const currentContext = navigationStack[depth - 1];
+            setLeftPanelTitle('Categorias', true); 
+            middlePanelTitle.textContent = currentContext.name;
+            backBtn.style.display = 'flex';
+            
+            // Lógica do botão "+" (Amarelo)
+            const rootCategoryId = navigationStack[0].id;
+            const validYellowCategories = ['topico', 'personagem', 'local', 'data', 'marcadores', 'cosmos']; 
+            
+            // Só mostra o "+" se for uma categoria editável
+            if (validYellowCategories.includes(rootCategoryId)) {
+                updateAddButtonState(true, true);
+            } else {
+                updateAddButtonState(false);
+            }
+
+            // Carrega o conteúdo da Coluna 2
+            renderListCategoryItems(currentContext.id);
+        }
+        return; // SAI DA FUNÇÃO AQUI (Não executa lógica de pastas)
+    }
+
+    // ============================================================
+    // CASO B: ABA "NOTE" (Pastas, Arquivos, Notas)
+    // ============================================================
+    
+    // --- MODO PINS (Opcional, se usar) ---
+    if (currentViewMode === 'pins') {
+        addItemBtn.style.display = 'none'; 
+        backBtn.style.display = 'none';
+        setLeftPanelTitle('Pins'); 
+        loadPinsView(); 
+        return; 
+    }
+
+    // --- MODO NORMAL (Local, Partilha, Flash) ---
     addItemBtn.style.display = 'flex';
     addItemBtn.classList.remove('yellow-mode');
 
+    const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
+
+    // 1. Títulos
     if (depth === 0) {
         setLeftPanelTitle(currentViewMode === 'local' ? 'Pastas' : 'Partilha'); 
     } else {
@@ -13459,10 +13557,10 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
         setLeftPanelTitle(parentName, true);
     }
 
+    // 2. Determinar IDs para as Colunas
     let newLeftPanelParentId = null;
     let middlePanelParentId = null;
 
-    // --- CÁLCULO DOS PAIS ---
     if (depth === 0) {
         // RAIZ
         if (currentViewMode === 'shared') {
@@ -13490,34 +13588,32 @@ async function updateNavigationView(keepEditorOpen = false, targetSelectId = nul
     }
     
     // ============================================================
-    // AQUI ESTÁ A LÓGICA INTELIGENTE (COLUNA 1)
+    // APLICAÇÃO DA LÓGICA DE CACHE (Só para pastas)
     // ============================================================
     
-    // Se o conteúdo da esquerda for DIFERENTE do que já lá está: Carrega com Spinner
+    // COLUNA 1 (ESQUERDA) - Cache Inteligente
     if (newLeftPanelParentId !== lastRenderedLeftParentId) {
         console.log("🔄 [COL 1] Contexto mudou. A carregar dados...");
         
-        // Limpa ouvinte antigo
         if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
         
-        // Carrega (Isto mostra o Spinner)
-        unsubscribeLeftPanel = fetchAndDisplayItems(newLeftPanelParentId, leftPanelList, null);
+        // Se for modo partilhado na raiz, não carrega pastas normais na esquerda
+        if (newLeftPanelParentId !== "EMPTY_SIDEBAR_FOR_SHARED") {
+            unsubscribeLeftPanel = fetchAndDisplayItems(newLeftPanelParentId, leftPanelList, null);
+        } else {
+            leftPanelList.innerHTML = ''; // Limpa se for partilha raiz
+        }
         
-        // Atualiza a memória
         lastRenderedLeftParentId = newLeftPanelParentId;
     } 
     else {
         console.log("⚡ [COL 1] Contexto igual. Apenas atualizando seleção visual.");
-        
-        // Não recarrega dados. Apenas muda o azul (Highlight).
-        // Se estivermos numa pasta (depth > 0), o item selecionado é a pasta atual.
+        // Apenas muda o destaque azul
         const activeId = (depth > 0) ? navigationStack[depth - 1].id : null;
         highlightLeftPanelItem(activeId);
     }
 
-    // ============================================================
-    // COLUNA 2 (MEIO) - CARREGA SEMPRE (Como pedido)
-    // ============================================================
+    // COLUNA 2 (MEIO) - Carrega Sempre
     if (middlePanelParentId) {
         unsubscribeMiddlePanel = fetchAndDisplayItems(middlePanelParentId, middlePanelList, targetSelectId);
     }
