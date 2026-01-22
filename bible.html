@@ -1398,6 +1398,90 @@ input:checked + .slider:before { transform: translateX(16px); }
         }
     }
 
+/* Estilos para o Modal de Fontes */
+.source-section-header {
+    font-size: 0.8rem;
+    font-weight: bold;
+    color: var(--accent-color);
+    text-transform: uppercase;
+    border-bottom: 1px solid #444;
+    margin-bottom: 10px;
+    padding-bottom: 5px;
+    margin-top: 15px;
+}
+.source-section-header:first-child { margin-top: 0; }
+
+.source-view-item {
+    background: rgba(255,255,255,0.05);
+    padding: 10px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+    font-size: 0.9rem;
+    border-left: 3px solid #666;
+    
+    /* Garante que o conteúdo não estica o cartão */
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.source-view-item div, 
+.source-view-item a {
+    /* Esta é a propriedade mágica para URLs: */
+    word-break: break-all; 
+    
+    /* Alternativas para compatibilidade: */
+    overflow-wrap: break-word;
+    white-space: normal;
+    
+    /* Garante que a cor e o estilo se mantêm */
+    display: block; 
+    line-height: 1.4;
+}
+
+/* Permitir seleção de texto no modal de fontes */
+#view-sources-content, 
+.source-view-item,
+.source-view-item a,
+.source-view-item strong,
+.source-view-item div {
+    user-select: text !important;
+    -webkit-user-select: text !important; /* Essencial para iPhone/iPad */
+    cursor: text;
+    pointer-events: auto;
+}
+
+/* ============================================================
+   PERMITIR COPIAR TEXTO NOS CARTÕES (PC & MOBILE)
+   ============================================================ */
+
+/* 1. Define que o texto é selecionável nos contentores dos cartões */
+.detail-card,                 /* Cartão Genérico */
+.dossie-content-wrapper,      /* Texto dentro das Micas */
+.post-view-content,           /* Texto dos Posts/Notas */
+.ref-card-content,            /* Texto do Puzzle/Referências */
+.bible-collapsible-content,   /* Texto Bíblico expandido */
+.detail-card div,             /* Divs internos */
+.detail-card strong {         /* Negritos internos */
+    
+    /* Habilita seleção para Webkit (Chrome/Safari/iOS) */
+    -webkit-user-select: text !important;
+    
+    /* Habilita seleção Padrão (Firefox/Edge/PC) */
+    user-select: text !important;
+    
+    /* Muda o cursor para o "I" de texto no PC */
+    cursor: text !important;
+    
+    /* Garante que os eventos de clique/toque chegam ao texto */
+    pointer-events: auto !important;
+}
+
+/* 2. Opcional: Remove a cor de "toque" cinzenta no mobile ao selecionar */
+.detail-card,
+.dossie-content-wrapper {
+    -webkit-tap-highlight-color: transparent;
+}
+
 </style>
 
 </head>
@@ -1808,6 +1892,19 @@ input:checked + .slider:before { transform: translateX(16px); }
     </div>
 </div>
 
+<!-- MODAL DE VISUALIZAÇÃO DE FONTES (LINKS/CODEX) -->
+<div id="view-sources-modal" class="modal-overlay" style="z-index: 15000;">
+    <div class="modal-content" style="max-width: 400px; max-height: 80vh;">
+        <div class="modal-header">
+            <h3>📎 Fontes & Referências</h3>
+            <button class="modal-close" onclick="document.getElementById('view-sources-modal').style.display='none'">×</button>
+        </div>
+        <div class="details-body" id="view-sources-content" style="padding: 15px;">
+            <!-- Conteúdo injetado via JS -->
+        </div>
+    </div>
+</div>
+
 
 
   <script type="module">
@@ -1815,7 +1912,8 @@ input:checked + .slider:before { transform: translateX(16px); }
         import { db, auth } from './js/firebase-config.js';
         import { doc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, arrayUnion, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
         import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
-        
+        import { SIGLAS_PUBLICACOES } from './js/siglas-data.js'; 
+
 
         // --- ESTADO GLOBAL ---
         let currentView = 'books';
@@ -2475,30 +2573,24 @@ window.openModalForVerse = async (num) => {
 
         // --- FUNÇÃO AUXILIAR DE RENDERIZAÇÃO (Para evitar código duplicado) ---
  function buildVerseHTML(data, num) {
-    // 1. Contagens de dados
     const puzzleCount = data?.puzzleBoard?.length || 0;
     const dossieCount = data?.dossie?.length || 0;
     const linksCount  = data?.panelLinks?.length || 0;
-    
-    // Contagem total para a aba universal
     const totalCount = puzzleCount + dossieCount + linksCount;
 
-    // Se não houver nada, mostra mensagem simples
     if (totalCount === 0) {
         return '<p class="empty-msg" style="padding:20px; text-align:center;">Sem registos.</p>';
     }
 
-    // 2. Inicializar variáveis de HTML
     let puzzleHtml = "";
     let dossieHtml = "";
     let linksHtml  = "";
 
-    // --- A. GERAR HTML DO PUZZLE ---
+    // --- A. PUZZLE (CARTÕES DE NOTAS) ---
     if (puzzleCount > 0) {
         data.puzzleBoard.forEach((item, index) => {
             const displayHtml = cleanMicaContent(item.snippet || item.content);
             
-            // Lógica de cores da borda
             let borderColor = item.noteColor || item.cor || "#3498db"; 
             let raw = decodeURIComponent(item.snippet || "");
             if (!item.noteColor) {
@@ -2506,12 +2598,23 @@ window.openModalForVerse = async (num) => {
                 else if (raw.includes("free-mode")) borderColor = "#e67e22";
             }
 
-            // Menu de 2 pontinhos
+            // 1. Verificar Fontes
+            const boxLinks = window.extractBoxLinksFromSnippet(item.snippet);
+            let btnSources = "";
+            
+            if (boxLinks) {
+                const safeJson = encodeURIComponent(JSON.stringify(boxLinks));
+                // Cria o botão para o menu
+                btnSources = `<button onclick="window.viewCardSources('${safeJson}')" style="color:var(--accent-color); font-weight:bold;">📎 Fontes</button>`;
+            }
+
+            // 2. Menu com Editar, Fontes (Opcional) e Remover
             const menuHtml = `
                 <div class="card-menu-container">
                     <div class="card-menu-btn" onclick="window.toggleCardMenu(this)">••</div>
                     <div class="card-dropdown">
                         <button onclick="window.openEditCard('${num}', ${index})">✏️ Editar</button>
+                        ${btnSources}
                         <button class="btn-remove-card" onclick="window.deletePuzzleItem('${num}', ${index})">🗑️ Remover</button>
                     </div>
                 </div>`;
@@ -2523,25 +2626,35 @@ window.openModalForVerse = async (num) => {
         });
     }
 
-    // --- B. GERAR HTML DO DOSSIÉ (VERSÃO "ZERO GAP") ---
- if (dossieCount > 0) {
+    // --- B. DOSSIÉ (MICAS) ---
+    if (dossieCount > 0) {
         data.dossie.forEach((mica) => {
             let itemsList = "";
-            
-            // Tenta encontrar a cor da mica, se não existir usa o vermelho (#e74c3c) como padrão
             const micaColor = mica.cor || mica.color || mica.noteColor || '#e74c3c';
 
             if(mica.items && mica.items.length > 0) {
                 mica.items.forEach((mi) => {
+                    
+                    // 1. Verifica Fontes na Mica
+                    const boxLinks = window.extractBoxLinksFromSnippet(mi.snippet);
+                    let micaMenuHtml = "";
+
+                    // 2. Se houver fontes, CRIA O MENU "••" APENAS PARA FONTES
+                    if (boxLinks) {
+                        const safeJson = encodeURIComponent(JSON.stringify(boxLinks));
+                        
+                        micaMenuHtml = `
+                        <div class="card-menu-container" style="top:5px; right:5px;">
+                            <div class="card-menu-btn" onclick="window.toggleCardMenu(this)" style="font-size:12px; padding:0 4px; background:rgba(0,0,0,0.6);">••</div>
+                            <div class="card-dropdown">
+                                <button onclick="window.viewCardSources('${safeJson}')" style="color:var(--accent-color); font-weight:bold;">📎 Fontes</button>
+                            </div>
+                        </div>`;
+                    }
+
                     itemsList += `
-                    <div style="
-                        background-color: #2b2b2e; 
-                        border: 1px solid #3d3d40; 
-                        border-radius: 6px; 
-                        margin: 10px; 
-                        padding: 12px; 
-                        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
-                    ">
+                    <div style="background-color: #2b2b2e; border: 1px solid #3d3d40; border-radius: 6px; margin: 10px; padding: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); position: relative;">
+                        ${micaMenuHtml}
                         <div class="dossie-content-wrapper" style="color:#cecece; font-size:0.9em; line-height:1.5;">
                              ${cleanMicaContent(mi.snippet)}
                         </div>
@@ -2552,18 +2665,12 @@ window.openModalForVerse = async (num) => {
             }
 
             const safeName = mica.name ? mica.name.trim() : "Sem Nome";
-            
-            // AQUI ESTÁ A MUDANÇA: border-left usa ${micaColor}
             dossieHtml += `
                 <div class="detail-card" style="border-left: 3px solid ${micaColor}; padding: 0; margin-bottom: 12px; border-radius: 4px; overflow: hidden; background: transparent;">
-                    
-                    <!-- CABEÇALHO DA PASTA (MICA) -->
                     <div style="padding: 10px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; background: #1e1e20; border-bottom: 1px solid #000;" onclick="this.nextElementSibling.classList.toggle('hidden')">
                         <span style="font-weight:bold; font-size:0.9rem; color:#fff;">📂 ${safeName}</span>
                         <span style="font-size:0.8rem; color:#888;">▼</span>
                     </div>
-
-                    <!-- CORPO -->
                     <div class="hidden" style="display:flex; flex-direction:column; background: #141416; padding-bottom: 5px;">
                         ${itemsList}
                     </div>
@@ -2571,7 +2678,7 @@ window.openModalForVerse = async (num) => {
         });
     }
 
-    // --- C. GERAR HTML DE LINKS ---
+    // --- C. LINKS (MANTÉM-SE IGUAL) ---
     if (linksCount > 0) {
         data.panelLinks.forEach(link => {
             if (link.type === 'codex') {
@@ -2585,53 +2692,25 @@ window.openModalForVerse = async (num) => {
         });
     }
 
-    // 3. Montar o Conteúdo da Aba Universal (Tudo junto com títulos)
+    // [O RESTO MANTÉM-SE IGUAL: MONTAGEM DA ABA UNIVERSAL E NAVEGAÇÃO]
     const universalContent = 
         (puzzleHtml ? `<div class="section-label" style="color:#888; font-size:0.7rem; font-weight:bold; margin:15px 0 5px 2px;">PUZZLE</div>${puzzleHtml}` : '') +
         (dossieHtml ? `<div class="section-label" style="color:#888; font-size:0.7rem; font-weight:bold; margin:20px 0 5px 2px;">DOSSIÉ</div>${dossieHtml}` : '') +
         (linksHtml  ? `<div class="section-label" style="color:#888; font-size:0.7rem; font-weight:bold; margin:20px 0 5px 2px;">LINKS</div>${linksHtml}` : '');
 
-    // 4. Construir a Barra de Navegação (Abas)
     let navHtml = '<div class="verse-tabs-nav">';
-    
-    // Aba Universal (Sempre presente e ativa por defeito)
-    navHtml += `
-        <button id="btn-tab-all" class="verse-tab-btn active" onclick="window.switchDetailTab('all')">
-            <span>♾️</span> <span class="tab-badge">${totalCount}</span>
-        </button>`;
+    navHtml += `<button id="btn-tab-all" class="verse-tab-btn active" onclick="window.switchDetailTab('all')"><span>♾️</span> <span class="tab-badge">${totalCount}</span></button>`;
+    if (puzzleCount > 0) navHtml += `<button id="btn-tab-puzzle" class="verse-tab-btn" onclick="window.switchDetailTab('puzzle')"><span>🧩</span> <span class="tab-badge">${puzzleCount}</span></button>`;
+    if (dossieCount > 0) navHtml += `<button id="btn-tab-dossie" class="verse-tab-btn" onclick="window.switchDetailTab('dossie')"><span>📼</span> <span class="tab-badge">${dossieCount}</span></button>`;
+    if (linksCount > 0) navHtml += `<button id="btn-tab-links" class="verse-tab-btn" onclick="window.switchDetailTab('links')"><span>⚡</span> <span class="tab-badge">${linksCount}</span></button>`;
+    navHtml += '</div>';
 
-    // Abas individuais (só aparecem se tiverem conteúdo)
-    if (puzzleCount > 0) {
-        navHtml += `
-        <button id="btn-tab-puzzle" class="verse-tab-btn" onclick="window.switchDetailTab('puzzle')">
-            <span>🧩</span> <span class="tab-badge">${puzzleCount}</span>
-        </button>`;
-    }
-    if (dossieCount > 0) {
-        navHtml += `
-        <button id="btn-tab-dossie" class="verse-tab-btn" onclick="window.switchDetailTab('dossie')">
-            <span>📼</span> <span class="tab-badge">${dossieCount}</span>
-        </button>`;
-    }
-    if (linksCount > 0) {
-        navHtml += `
-        <button id="btn-tab-links" class="verse-tab-btn" onclick="window.switchDetailTab('links')">
-            <span>⚡</span> <span class="tab-badge">${linksCount}</span>
-        </button>`;
-    }
-
-    navHtml += '</div>'; // Fechar nav
-
-    // 5. Construir os Painéis de Conteúdo
-    // 'pane-all' começa ativo (display: block)
-    let panesHtml = `
+    return navHtml + `
         <div id="pane-all" class="tab-pane active">${universalContent}</div>
-        <div id="pane-puzzle" class="tab-pane">${puzzleHtml || '<p class="empty-msg" style="padding:10px;">Vazio</p>'}</div>
-        <div id="pane-dossie" class="tab-pane">${dossieHtml || '<p class="empty-msg" style="padding:10px;">Vazio</p>'}</div>
-        <div id="pane-links" class="tab-pane">${linksHtml || '<p class="empty-msg" style="padding:10px;">Vazio</p>'}</div>
+        <div id="pane-puzzle" class="tab-pane">${puzzleHtml || '<p class="empty-msg">Vazio</p>'}</div>
+        <div id="pane-dossie" class="tab-pane">${dossieHtml || '<p class="empty-msg">Vazio</p>'}</div>
+        <div id="pane-links" class="tab-pane">${linksHtml || '<p class="empty-msg">Vazio</p>'}</div>
     `;
-
-    return navHtml + panesHtml;
 }
 
         // --- FLASH NOTE ---
@@ -3120,38 +3199,82 @@ window.deletePuzzleItem = async (vNum, index) => {
 
         // 3. Abrir Modal de Edição
  window.openEditCard = (vNum, index) => {
+    console.group(`🔍 [DEBUG] A abrir cartão para edição (Verso: ${vNum}, Index: ${index})`);
+
     const data = existingUserData[vNum];
-    if (!data || !data.puzzleBoard[index]) return;
+    if (!data || !data.puzzleBoard[index]) {
+        console.error("❌ Dados não encontrados na memória.");
+        console.groupEnd();
+        return;
+    }
 
     const item = data.puzzleBoard[index];
-    const rawSnippet = decodeURIComponent(item.snippet || "");
+    console.log("1. Item Raw do Firebase:", item);
+
+    let rawSnippet = "";
+    try {
+        rawSnippet = decodeURIComponent(item.snippet || "");
+    } catch(e) {
+        console.warn("⚠️ Erro ao descodificar URI, usando raw:", e);
+        rawSnippet = item.snippet || "";
+    }
+    // console.log("2. HTML Descodificado:", rawSnippet);
+
     const parser = new DOMParser();
     const docHTML = parser.parseFromString(rawSnippet, 'text/html');
     
-    // 1. Recuperar Título e Conteúdo
+    // --- 1. Recuperar Título e Conteúdo ---
     let title = "";
-    const titleInput = docHTML.querySelector('.mini-note-title-input');
+    const titleInput = docHTML.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
     const h2 = docHTML.querySelector('h2');
+    
     if (titleInput) title = titleInput.value || titleInput.getAttribute('value') || "";
     else if (h2) title = h2.textContent;
 
     let content = "";
-    const contentDiv = docHTML.querySelector('.mini-note-content');
+    const contentDiv = docHTML.querySelector('.mini-note-content, .redator-content, .sign-content, .card-desc-content, .cube-content');
     if (contentDiv) content = contentDiv.innerHTML;
 
-    // 2. RECUPERAR DADOS EXTRA (Tópicos e Links)
-    // Isto é crucial: carrega os dados do HTML escondido para as variáveis globais
-    const wrapper = docHTML.querySelector('.mini-note-wrapper');
+    // --- 2. RECUPERAR DADOS EXTRA (CORREÇÃO DE SELETOR + LOGS) ---
+    
+    // CORREÇÃO: Adicionei todos os tipos de classes possíveis (.redator-wrapper, .journal-sign-wrapper, etc.)
+    // Se o seletor for apenas '.mini-note-wrapper', os links dos Redatores não aparecem.
+    const wrapper = docHTML.querySelector('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
+    
     if (wrapper) {
-        try { 
-            currentFlashTopics = JSON.parse(wrapper.getAttribute('data-topics') || '{}'); 
-        } catch(e) { currentFlashTopics = {}; }
+        console.log("✅ Wrapper encontrado. Classe:", wrapper.className);
         
+        // TÓPICOS
+        const rawTopics = wrapper.getAttribute('data-topics');
         try { 
-            currentFlashLinks = JSON.parse(wrapper.getAttribute('data-box-links') || '{}'); 
-        } catch(e) { currentFlashLinks = {}; }
+            currentFlashTopics = JSON.parse(rawTopics || '{}'); 
+        } catch(e) { currentFlashTopics = {}; }
+
+        // LINKS (O PONTO CRÍTICO)
+        const rawLinks = wrapper.getAttribute('data-box-links');
+        console.log("3. Atributo 'data-box-links' encontrado:", rawLinks);
+
+        try { 
+            // Tenta parsear. Se for 'null' string ou vazio, cria objeto vazio
+            if (!rawLinks || rawLinks === "null" || rawLinks === "{}") {
+                console.log("ℹ️ JSON de links vazio ou nulo.");
+                currentFlashLinks = {};
+            } else {
+                currentFlashLinks = JSON.parse(rawLinks);
+                console.log("✅ JSON de Links carregado com sucesso para memória global:", currentFlashLinks);
+                
+                // Verificar conteúdo
+                const urlCount = currentFlashLinks.urls ? Object.keys(currentFlashLinks.urls).length : 0;
+                const codexCount = currentFlashLinks.codex ? currentFlashLinks.codex.length : 0;
+                console.log(`   ↳ URLs: ${urlCount}, Codex: ${codexCount}`);
+            }
+        } catch(e) { 
+            console.error("❌ Erro ao fazer JSON.parse dos links:", e);
+            currentFlashLinks = {}; 
+        }
+
     } else {
-        // Se for uma nota antiga sem wrapper
+        console.warn("⚠️ AVISO: Nenhum wrapper (.mini-note-wrapper ou similar) encontrado no HTML. É uma nota antiga?");
         currentFlashTopics = {};
         currentFlashLinks = {};
     }
@@ -3167,13 +3290,12 @@ window.deletePuzzleItem = async (vNum, index) => {
 
     document.getElementById('edit-card-modal').style.display = 'flex';
 
-    // 5. Configurar Botões da Toolbar de Edição
+    // 5. Configurar Botões da Toolbar
     const btnTopics = document.getElementById('btn-edit-topics');
     const btnLinks = document.getElementById('btn-edit-links');
 
     if (btnTopics) {
         btnTopics.onclick = () => {
-            // Define o contexto global para que a lista de tópicos saiba qual selecionar
             activeTopicIdForFlash = null; 
             window.openTopicsModal();
         };
@@ -3185,6 +3307,8 @@ window.deletePuzzleItem = async (vNum, index) => {
                         (currentFlashLinks.codex && currentFlashLinks.codex.length > 0) || 
                         (currentFlashLinks.categories && currentFlashLinks.categories.length > 0);
         
+        console.log("4. Botão Links deve ficar amarelo?", hasData);
+
         if (hasData) {
             btnLinks.style.color = "#f1c40f"; 
             btnLinks.style.borderColor = "#f1c40f";
@@ -3198,18 +3322,17 @@ window.deletePuzzleItem = async (vNum, index) => {
         };
     }
 
-    // 6. Injeções Finais (Colar Texto Limpo e Seletor de Cores)
+    // 6. Injeções Finais
     setTimeout(() => {
         if (typeof window.injectColorPickerIntoEditModal === 'function') {
             window.injectColorPickerIntoEditModal();
         }
-
-        // Forçar colar como texto simples
+        
+        // Configuração de colar texto simples (mantém-se igual)
         const editEditor = document.getElementById('edit-card-content');
         if (editEditor) {
             const newEditEditor = editEditor.cloneNode(true);
             editEditor.parentNode.replaceChild(newEditEditor, editEditor);
-            
             newEditEditor.addEventListener('paste', (e) => {
                 e.preventDefault();
                 const text = (e.clipboardData || window.clipboardData).getData('text');
@@ -3217,7 +3340,11 @@ window.deletePuzzleItem = async (vNum, index) => {
             });
         }
     }, 50);
+
+    console.groupEnd();
 };
+
+
         // 4. Gravar Edição
  document.getElementById('btn-confirm-edit-card').onclick = async () => {
     const btn = document.getElementById('btn-confirm-edit-card');
@@ -3521,18 +3648,37 @@ window.openFlashLinkManager = function() {
     if(modal) {
         modal.style.display = 'flex';
         
-        // Inicialização básica (limpar e carregar)
+        // 1. LIMPEZA DOS CONTENTORES
         document.getElementById('flash-urls-list').innerHTML = '';
         document.getElementById('flash-codex-rows-container').innerHTML = ''; 
         document.getElementById('flash-cat-selected').innerHTML = '';
         document.getElementById('flash-cat-results').innerHTML = '';
+        
+        // 2. RESTAURAR TÍTULO E TOGGLE
         document.getElementById('flash-link-title').value = currentFlashLinks.title || "";
-
-        // Toggle Bíblia
         const bibleToggle = document.getElementById('flash-bible-toggle');
         if (bibleToggle) bibleToggle.checked = currentFlashLinks.bibleMode === true;
 
-        // Se não houver links, inicializa o array de categorias
+        // ============================================================
+        // 3. POPULAR DADOS EXISTENTES (A CORREÇÃO ESTÁ AQUI)
+        // ============================================================
+
+        // A. Restaurar URLs
+        if (currentFlashLinks.urls && Object.keys(currentFlashLinks.urls).length > 0) {
+            Object.values(currentFlashLinks.urls).forEach(url => window.addFlashUrlField(url));
+        }
+
+        // B. Restaurar Codex (O que estava a falhar)
+        if (currentFlashLinks.codex && Array.isArray(currentFlashLinks.codex) && currentFlashLinks.codex.length > 0) {
+            console.log("📚 Restaurando linhas Codex:", currentFlashLinks.codex);
+            currentFlashLinks.codex.forEach(row => {
+                // Passamos os dados ('row') para a função criar a linha preenchida
+                window.createFlashCodexRow(row);
+            });
+        }
+        // ============================================================
+
+        // 4. CATEGORIAS E VERSÍCULO ATUAL
         if (!currentFlashLinks.categories) currentFlashLinks.categories = [];
         
         // Garante que o versículo atual está na lista
@@ -3547,11 +3693,32 @@ window.openFlashLinkManager = function() {
             });
         }
 
-        // Renderiza
+        // Renderiza Chips
         currentFlashLinks.categories.forEach(c => renderFlashCategoryChip(c));
         
-        // Abre na primeira aba
-        window.switchFlashLinkTab('refs');
+        // 5. DECIDIR QUAL A ABA A ABRIR
+        // Se tiver Codex mas não tiver URLs, abre logo na aba Codex
+        const hasCodex = currentFlashLinks.codex && currentFlashLinks.codex.length > 0;
+        const hasUrls = currentFlashLinks.urls && Object.keys(currentFlashLinks.urls).length > 0;
+
+        if (hasCodex && !hasUrls) {
+            window.switchFlashLinkTab('codex');
+            // Simula clique no botão para atualizar o visual da aba
+            const btnCodex = document.querySelector(".store-tab-btn[onclick*='codex']");
+            if(btnCodex) {
+                document.querySelectorAll('.store-tab-btn').forEach(b => b.classList.remove('active'));
+                btnCodex.classList.add('active');
+            }
+        } else {
+            window.switchFlashLinkTab('refs');
+             // Reset visual aba
+            const btnRefs = document.querySelector(".store-tab-btn[onclick*='refs']");
+            if(btnRefs) {
+                 document.querySelectorAll('.store-tab-btn').forEach(b => b.classList.remove('active'));
+                 btnRefs.classList.add('active');
+            }
+        }
+        
     } else {
         console.error("Erro: Modal 'flash-links-modal' não encontrado no HTML.");
     }
@@ -3783,14 +3950,18 @@ window.createFlashCodexRow = function(data = null) {
     const row = document.createElement('div');
     row.className = 'codex-row';
     
-    // HTML Complexo da Linha
+    // --- ALTERAÇÃO AQUI: Mudámos o onclick para chamar a função de remoção segura ---
     row.innerHTML = `
-        <button class="remove-codex-row" onclick="this.parentElement.remove()">×</button>
+        <button class="remove-codex-row" onclick="window.removeCodexRow(this)">×</button>
         <div class="codex-header-grid">
             <div class="serie-wrapper">
                 <label class="codex-label">SÉRIE / PUBLICAÇÃO</label>
                 <input type="text" class="codex-input-modern serie-main" placeholder="Ex: w24 05" value="${data ? data.serie : ''}">
+                
+                <!-- AQUI APARECE O NOME -->
+                <div class="serie-fullname" style="font-size: 11px; color: var(--accent-color); margin-top: 4px; height: 14px; font-weight: 500; font-style: italic;"></div>
             </div>
+            
             <div class="manual-controls">
                 <label class="codex-label">OPÇÕES</label>
                 <div style="display:flex; gap:2px;">
@@ -3818,26 +3989,61 @@ window.createFlashCodexRow = function(data = null) {
         </div>
     `;
 
+    // --- LÓGICA DE DETEÇÃO USANDO O TEU FICHEIRO ---
+    const inputSerie = row.querySelector('.serie-main');
+    const displayFullName = row.querySelector('.serie-fullname');
+
+    const updateFullName = (val) => {
+        if (!val) {
+            displayFullName.textContent = "";
+            return;
+        }
+
+        const valorBaixo = val.toLowerCase().trim();
+        
+        // Regex para capturar 'w', 'it-1', 'lff', etc., ignorando o resto
+        const match = valorBaixo.match(/^[a-z]+(?:-[0-9])?/);
+        
+        if (match) {
+            const sigla = match[0];
+            const nomeCompleto = (typeof SIGLAS_PUBLICACOES !== 'undefined') ? SIGLAS_PUBLICACOES[sigla] : null;
+
+            if (nomeCompleto) {
+                displayFullName.textContent = `📚 ${nomeCompleto}`;
+            } else {
+                displayFullName.textContent = "";
+            }
+        } else {
+            displayFullName.textContent = "";
+        }
+    };
+
+    // Ativa o ouvinte
+    inputSerie.addEventListener('input', (e) => updateFullName(e.target.value));
+
     container.appendChild(row);
 
-    // Se estivermos a editar (carregar dados existentes)
+    // Se estiver a carregar dados existentes, preenche logo o nome
     if (data) {
+        updateFullName(data.serie);
+        
         const pContainer = row.querySelector('.pages-container');
         const pgContainer = row.querySelector('.paragraphs-container');
         
         if (data.paginas) data.paginas.forEach(p => window.addFlashCodexUnit(pContainer, 'Pág', p));
         if (data.paragrafos) data.paragrafos.forEach(p => window.addFlashCodexUnit(pgContainer, 'Par', p));
         
-        // Ativar botões manuais se existirem dados
-        if (data.manualYear) window.toggleFlashManual(row.querySelector("button[onclick*='A']"), 'A', data.manualYear);
-        if (data.manualMonth) window.toggleFlashManual(row.querySelector("button[onclick*='M']"), 'M', data.manualMonth);
-        if (data.capitulo) window.toggleFlashManual(row.querySelector("button[onclick*='C']"), 'C', data.capitulo);
-        if (data.tempo) window.toggleFlashManual(row.querySelector("button[onclick*='T']"), 'T', data.tempo);
+        setTimeout(() => {
+            if (data.manualYear) window.toggleFlashManual(row.querySelector("button[onclick*='A']"), 'A', data.manualYear);
+            if (data.manualMonth) window.toggleFlashManual(row.querySelector("button[onclick*='M']"), 'M', data.manualMonth);
+            if (data.capitulo) window.toggleFlashManual(row.querySelector("button[onclick*='C']"), 'C', data.capitulo);
+            if (data.tempo) window.toggleFlashManual(row.querySelector("button[onclick*='T']"), 'T', data.tempo);
+        }, 10);
     } else {
-        // Se for novo, adiciona uma pílula vazia para facilitar
         window.addFlashCodexUnit(row.querySelector('.pages-container'), 'Pág');
     }
 };
+
 
 // Adiciona uma "Pílula" (Pagina ou Parágrafo)
 window.addFlashCodexUnit = function(container, placeholder, value = '') {
@@ -4665,11 +4871,22 @@ function renderHighlightContentConsolidated(container, notes, contextColor) {
             // Usamos o sourceVerse para saber onde editar
             const vToEdit = item.sourceVerse || activeVerseFullName.split(':')[1].trim().split('-')[0];
 
+            // --- CORREÇÃO: VERIFICAR SE EXISTEM FONTES ---
+            const boxLinks = window.extractBoxLinksFromSnippet(item.snippet);
+            let btnSources = "";
+            
+            if (boxLinks) {
+                const safeJson = encodeURIComponent(JSON.stringify(boxLinks));
+                btnSources = `<button onclick="window.viewCardSources('${safeJson}')" style="color:var(--accent-color); font-weight:bold;">📎 Fontes</button>`;
+            }
+            // ----------------------------------------------
+
             const menuHtml = `
                 <div class="card-menu-container">
                     <div class="card-menu-btn" onclick="window.toggleCardMenu(this)">••</div>
                     <div class="card-dropdown">
                         <button onclick="window.openEditCard('${vToEdit}', ${item.originalIndex})">✏️ Editar</button>
+                        ${btnSources} <!-- INSERIR O BOTÃO AQUI -->
                         <button class="btn-remove-card" onclick="window.deletePuzzleItem('${vToEdit}', ${item.originalIndex})">🗑️ Remover</button>
                     </div>
                 </div>
@@ -6111,6 +6328,205 @@ function scrollToVerse(verseNum) {
     }, 100); // Tenta a cada 100ms
 }
 
+window.removeCodexRow = async function(btn) {
+    const row = btn.closest('.codex-row');
+    // Verifica se tem ID do Firestore (caso seja uma linha já salva num documento)
+    const firestoreId = row.getAttribute('data-firestore-id');
+    const confirmModal = document.getElementById('confirm-modal');
+
+    // --- CORREÇÃO DE SOBREPOSIÇÃO (Z-INDEX) ---
+    if (confirmModal) {
+        // Move o modal para o final do body para garantir que ganha a guerra de Z-Index
+        document.body.appendChild(confirmModal);
+        // Define o valor máximo permitido pelos navegadores (Max 32-bit Integer)
+        confirmModal.style.setProperty('z-index', '2147483647', 'important');
+    }
+
+    const confirmed = await showConfirmation(
+        "Eliminar Referência?", 
+        "Deseja remover esta linha do Codex? Esta ação é permanente."
+    );
+
+    // Se o modal existir, limpamos o z-index manual para não afetar outros usos
+    if (confirmModal) {
+        // Ocultar via style.display é feito dentro do showConfirmation, 
+        // mas aqui resetamos a prioridade
+        confirmModal.style.zIndex = "";
+    }
+
+    if (confirmed) {
+        // 1. ELIMINAÇÃO NO FIREBASE (Se tiver ID associado)
+        if (firestoreId) {
+            try {
+                const { doc, deleteDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+                await deleteDoc(doc(db, 'codex', firestoreId));
+                console.log("🔥 Documento Codex apagado da BD.");
+            } catch (e) {
+                console.error("❌ Erro ao apagar no Firebase:", e);
+                alert("Erro ao apagar no servidor.");
+                return; 
+            }
+        }
+
+        // 2. ELIMINAÇÃO NO ECRÃ (Animação de saída)
+        row.style.transition = 'all 0.3s ease';
+        row.style.opacity = '0';
+        row.style.transform = 'translateX(30px)';
+        
+        setTimeout(() => {
+            row.remove();
+            // Se estiver numa nota normal, tenta gravar o estado
+            if (typeof saveNote === 'function') saveNote(true); 
+        }, 300);
+    }
+};
+
+// 1. Função Auxiliar para extrair dados JSON do HTML da nota (Snippet)
+window.extractBoxLinksFromSnippet = function(snippetHtml) {
+    if (!snippetHtml) return null;
+    
+    let content = snippetHtml;
+    try {
+        if (content.includes('%3C') || content.includes('%7B')) {
+            content = decodeURIComponent(content);
+        }
+    } catch (e) { }
+
+    // --- MUDANÇA: USAR DOMPARSER EM VEZ DE REGEX ---
+    // A Regex falha quando o JSON tem objetos aninhados (como o Codex que tem {})
+    try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(content, 'text/html');
+        
+        // Procura o elemento wrapper que guarda os dados
+        const wrapper = doc.querySelector('[data-box-links]');
+        
+        if (wrapper) {
+            const rawLinks = wrapper.getAttribute('data-box-links');
+            if (rawLinks && rawLinks !== "null" && rawLinks !== "{}") {
+                const data = JSON.parse(rawLinks);
+                
+                // Verifica se tem conteúdo real
+                const hasUrls = data.urls && Object.keys(data.urls).length > 0;
+                const hasCodex = data.codex && Array.isArray(data.codex) && data.codex.length > 0;
+
+                if (hasUrls || hasCodex) {
+                    return data; 
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("Erro ao extrair links:", e);
+    }
+    return null;
+};
+
+// 2. Função para Abrir o Modal de Visualização
+window.viewCardSources = function(encodedJson) {
+    const data = JSON.parse(decodeURIComponent(encodedJson));
+    const modal = document.getElementById('view-sources-modal');
+    const content = document.getElementById('view-sources-content');
+    
+    document.body.appendChild(modal); // Garante z-index correto
+    modal.style.display = 'flex';
+    content.innerHTML = '';
+
+    let hasContent = false;
+
+    // --- SECÇÃO LINKS (URLs) ---
+    if (data.urls && Object.keys(data.urls).length > 0) {
+        hasContent = true;
+        content.innerHTML += `<div class="source-section-header">🌐 Links Web</div>`;
+        
+        Object.values(data.urls).forEach(url => {
+            let domain = url;
+            try { domain = new URL(url).hostname.replace('www.',''); } catch(e){}
+            
+            content.innerHTML += `
+                <div class="source-view-item" style="border-left-color: #3498db;">
+                    <a href="${url}" target="_blank">🔗 ${domain}</a>
+                    <div style="font-size:0.8em; color:#888; margin-top:2px;">${url}</div>
+                </div>`;
+        });
+    }
+
+    // --- SECÇÃO CODEX ---
+    if (data.codex && data.codex.length > 0) {
+        hasContent = true;
+        content.innerHTML += `<div class="source-section-header">📚 Codex</div>`;
+        
+        data.codex.forEach(c => {
+            const displayTitle = c.codiceshow || `${c.serie} ${c.capitulo ? 'cap.'+c.capitulo : ''}`;
+            content.innerHTML += `
+                <div class="source-view-item" style="border-left-color: #e67e22;">
+                    <strong>${displayTitle}</strong>
+                    ${c.paginas && c.paginas.length ? `<div style="font-size:0.8em; color:#ccc;">Pág: ${c.paginas.join(', ')}</div>` : ''}
+                    ${c.paragrafos && c.paragrafos.length ? `<div style="font-size:0.8em; color:#ccc;">Par: ${c.paragrafos.join(', ')}</div>` : ''}
+                </div>`;
+        });
+    }
+
+    if (!hasContent) {
+        content.innerHTML = '<p style="text-align:center; color:#888;">Erro: Dados vazios.</p>';
+    }
+};
+
+// 2. Função para Abrir o Modal de Visualização
+window.viewCardSources = function(encodedJson) {
+    const data = JSON.parse(decodeURIComponent(encodedJson));
+    const modal = document.getElementById('view-sources-modal');
+    const content = document.getElementById('view-sources-content');
+    
+    // Força hierarquia visual
+    document.body.appendChild(modal);
+    modal.style.display = 'flex';
+    content.innerHTML = '';
+
+    let hasContent = false;
+
+    // --- SECÇÃO LINKS (URLs) ---
+    if (data.urls && Object.keys(data.urls).length > 0) {
+        hasContent = true;
+        content.innerHTML += `<div class="source-section-header">🌐 Links Web</div>`;
+        
+        Object.values(data.urls).forEach(url => {
+            let domain = url;
+            try { domain = new URL(url).hostname.replace('www.',''); } catch(e){}
+            
+            content.innerHTML += `
+                <div class="source-view-item" style="border-left-color: #3498db;">
+                    <a href="${url}" target="_blank">🔗 ${domain}</a>
+                    <div style="font-size:0.8em; color:#888; margin-top:2px;">${url}</div>
+                </div>`;
+        });
+    }
+
+    // --- SECÇÃO CODEX (Bibliogafia) ---
+    if (data.codex && data.codex.length > 0) {
+        hasContent = true;
+        content.innerHTML += `<div class="source-section-header">📚 Codex (Publicações)</div>`;
+        
+        data.codex.forEach(c => {
+            // Usa o campo formatado 'codiceshow' ou constrói um fallback
+            const displayTitle = c.codiceshow || `${c.serie} ${c.capitulo ? 'cap.'+c.capitulo : ''}`;
+            
+            content.innerHTML += `
+                <div class="source-view-item" style="border-left-color: #e67e22;">
+                    <strong>${displayTitle}</strong>
+                    ${c.paginas && c.paginas.length ? `<div style="font-size:0.8em; color:#ccc;">Pág: ${c.paginas.join(', ')}</div>` : ''}
+                    ${c.paragrafos && c.paragrafos.length ? `<div style="font-size:0.8em; color:#ccc;">Par: ${c.paragrafos.join(', ')}</div>` : ''}
+                </div>`;
+        });
+    }
+
+    // [REMOVIDO] O bloco que mostrava "Categorias Vinculadas" foi apagado aqui.
+
+    if (!hasContent) {
+        content.innerHTML = '<p style="text-align:center; color:#888; padding:20px;">Nenhuma fonte encontrada (apenas Categorias ocultas).</p>';
+    }
+};
+
+  
     </script>
 </body>
 </html>
