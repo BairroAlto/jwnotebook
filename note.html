@@ -9759,6 +9759,55 @@ button[data-command="boldBlue"].active-tool {
     border-color: #4a90e2 !important;
 }
 
+/* Estilo para o Contentor de Pesquisa Fixa na Lista */
+.list-search-sticky-header {
+    /* Ativa a fixação */
+    position: -webkit-sticky !important; /* Para Safari */
+    position: sticky !important;
+    top: 0 !important;
+    
+    /* Garante que fica por cima dos outros itens */
+    z-index: 50 !important; 
+    
+    /* Fundo Sólido (CRÍTICO: Sem isto o texto mistura-se) */
+    background-color: var(--panel-color) !important;
+    
+    /* Estética */
+    padding: 10px 5px !important;
+    margin-bottom: 5px !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    box-shadow: 0 4px 10px -2px rgba(0, 0, 0, 0.2) !important; /* Sombra para dar profundidade */
+}
+
+/* 2. O Input dentro da caixa */
+.list-search-sticky-header input {
+    width: 100% !important;
+    padding: 10px 12px !important;
+    border-radius: 6px !important;
+    border: 1px solid var(--border-color) !important;
+    background-color: var(--bg-color) !important;
+    color: var(--text-color) !important;
+    outline: none !important;
+    font-size: 14px !important;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.2) !important;
+}
+
+.list-search-sticky-header input:focus {
+    border-color: var(--accent-color) !important;
+}
+
+/* 3. CORREÇÃO CRÍTICA DE SCROLL */
+/* O #file-list não pode ter overflow, quem faz scroll é o #middle-views-container */
+#file-list {
+    overflow: visible !important; 
+    height: auto !important;
+}
+
+#middle-views-container {
+    overflow-y: auto !important;
+    position: relative !important;
+}
+
 </style>
 
 
@@ -12132,6 +12181,7 @@ let lockHeartbeatInterval = null;
 let lastRenderedLeftParentId = 'INIT';
 let globalSearchResults = []; // Variável crítica para a pesquisa
 let currentSearchPage = 0;    // Variável para a paginação da pesquisa
+let listSearchTimer = null;
 
 
 window.currentNoteHybridMode = false;
@@ -16450,78 +16500,77 @@ async function openMoveModal(itemContext) {
     const newConfirmBtn = confirmBtn.cloneNode(true);
     confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
 
-     newConfirmBtn.onclick = async () => {
+  newConfirmBtn.onclick = async () => {
         let targetId = selectedDestFolderId;
         
-        // Se não selecionou nada, assume a pasta atual da navegação do modal
+        // Se não selecionou nada (apenas navegou), assume a pasta atual da navegação do modal
         if (targetId === null) {
             const currentViewId = moveStack.length > 0 ? moveStack[moveStack.length - 1].id : startRootId;
             
-            // --- ALTERAÇÃO: SUBSTITUI O CONFIRM NATIVO PELO MODAL PERSONALIZADO ---
-            
-            // 1. Força o modal de confirmação a ficar acima do modal de mover (que tem z-index alto)
+            // 1. Z-Index fix para o modal de confirmação
             const confirmModalElement = document.getElementById('confirm-modal');
             if (confirmModalElement) {
-                // O modal de mover tem 20000000, colocamos este no máximo possível
                 confirmModalElement.style.setProperty('z-index', '2147483647', 'important');
             }
 
-            // 2. Chama o popup bonito
             const confirmed = await showConfirmation(
                 "Confirmar Movimento", 
                 `Mover "${itemContext.name}" para a pasta que está a ver agora?`
             );
             
-            // 3. Restaura o Z-Index (opcional, mas boa prática)
-            if (confirmModalElement) {
-                confirmModalElement.style.zIndex = "";
-            }
+            if (confirmModalElement) confirmModalElement.style.zIndex = "";
 
-            // Se o utilizador clicar em Cancelar, paramos aqui
             if (!confirmed) return;
             
-            // -----------------------------------------------------------------------
-
             targetId = currentViewId;
         }
 
-          if (targetId === itemContext.id) {
+        if (targetId === itemContext.id) {
             alert("Não pode mover uma pasta para dentro de si mesma.");
             return;
         }
 
         try {
-            // Importar deleteField se necessário (ou use 'deleteField()' direto se já importado no topo)
             const { doc, updateDoc, serverTimestamp, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
             
             const itemRef = doc(db, 'pastas', itemContext.id);
             
-            // Dados base da atualização
             const updateData = {
                 parentId: targetId, 
                 ultimaedicao: serverTimestamp()
             };
 
-            // --- LÓGICA DE REMOÇÃO DO FLASH ---
-            // Se estamos no modo Flash OU se o item tem o marcador 'flash'
+            // Lógica Flash (mantém-se igual)
             if (currentViewMode === 'flash' || itemContext.oque === 'flash') {
-                console.log("⚡ Removendo estado 'Flash' ao mover para pasta normal.");
-                // Remove o campo 'oque' do documento no Firebase
                 updateData.oque = deleteField();
             }
-            // ----------------------------------
 
+            // GRAVAR NO FIREBASE
             await updateDoc(itemRef, updateData);
             
             modal.style.display = 'none';
             
-            // Atualiza a vista para refletir que o item saiu daqui
-            // Se estivermos em Flash, o item vai desaparecer da lista
+            // ============================================================
+            // CORREÇÃO: NAVEGAR PARA O DESTINO
+            // ============================================================
             if (currentViewMode === 'flash') {
                  loadFlashListLeftPanel();
             } else {
-                 updateNavigationView(true);
+                 // Feedback visual enquanto carrega
+                 const middleList = document.getElementById('file-list');
+                 if(middleList) middleList.innerHTML = '<div class="panel-loader"><div class="spinner"></div><span>A ir para a pasta...</span></div>';
+
+                 if (targetId) {
+                     // Reconstrói o caminho (breadcrumbs) até à pasta de destino
+                     // e abre essa pasta no painel
+                     await reconstructFolderNavigation(targetId);
+                 } else {
+                     // Se moveu para a Raiz, limpa a navegação e atualiza
+                     navigationStack = [];
+                     updateNavigationView(true);
+                 }
             }
+            // ============================================================
             
         } catch (error) {
             console.error("Erro ao mover:", error);
@@ -17246,26 +17295,52 @@ async function saveLinkToEntity(linkObj) {
 }
 
 window.deletePanelLink = async function(index) {
-    if (!confirm("Remover este item?")) return;
-    
-    const { id, type } = activeReferenceEntity;
-    const collectionName = getCollectionFromType(type);
-    const docRef = doc(db, collectionName, id);
-    
-    const docSnap = await getDoc(docRef);
-    const links = docSnap.data().panelLinks || [];
-    
-    const itemToRemove = links[index];
-    
-    // Se for codex, opcionalmente podes apagar também da coleção 'codex'
-    if (itemToRemove.type === 'codex' && itemToRemove.id) {
-        await deleteDoc(doc(db, 'codex', itemToRemove.id));
-    }
+    // --- 1. POPUP PERSONALIZADO ---
+    const confirmed = await showConfirmation(
+        "Remover Link?", 
+        "Tem a certeza que deseja remover este item da lista?"
+    );
 
-    links.splice(index, 1);
-    await updateDoc(docRef, { panelLinks: links });
-    renderPanelLinks();
-    await checkAndCleanVerseState(activeReferenceEntity.id);
+    if (!confirmed) return; // Se cancelar, sai da função
+
+    try {
+        const { doc, getDoc, updateDoc, deleteDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const { id, type } = activeReferenceEntity;
+        const collectionName = getCollectionFromType(type);
+        const docRef = doc(db, collectionName, id);
+        
+        const docSnap = await getDoc(docRef);
+        if (!docSnap.exists()) return;
+
+        const links = docSnap.data().panelLinks || [];
+        
+        const itemToRemove = links[index];
+        
+        // Se for do tipo 'codex', apaga também da coleção 'codex' para não deixar lixo
+        if (itemToRemove && itemToRemove.type === 'codex' && itemToRemove.id) {
+            await deleteDoc(doc(db, 'codex', itemToRemove.id));
+        }
+
+        // Remove do array
+        links.splice(index, 1);
+        
+        // Grava no Firebase
+        await updateDoc(docRef, { panelLinks: links });
+        
+        // Atualiza a vista
+        renderPanelLinks();
+        
+        // Limpeza opcional de versículos vazios
+        if (typeof checkAndCleanVerseState === 'function') {
+            await checkAndCleanVerseState(activeReferenceEntity.id);
+        }
+
+    } catch (e) {
+        console.error("Erro ao apagar link:", e);
+        // Fallback apenas se der erro técnico
+        alert("Erro de conexão ao apagar.");
+    }
 };
 
 
@@ -18844,6 +18919,8 @@ document.getElementById('add-ref-btn').addEventListener('click', () => openRefer
 function createBoardItem(type, data = {}, shouldScroll = false) {
     const container = document.getElementById('puzzle-board-container');
     const emptyMsg = document.getElementById('puzzle-empty-msg');
+    
+    // Esconde a mensagem de "vazio"
     if (emptyMsg) emptyMsg.style.display = 'none';
 
     const card = document.createElement('div');
@@ -18864,71 +18941,44 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
         card.style.borderLeft = "3px solid var(--accent-color)"; 
     }
 
-    // --- TIPO 2: REFERÊNCIA (Importado ou Nota Flash) ---
+    // --- TIPO 2: REFERÊNCIA ---
     else if (type === 'ref') {
         card.dataset.noteId = data.noteId;
         card.dataset.noteName = data.noteName || "Nota";
 
         let rawSnippet = data.snippet || '';
-        
-        // >>> CORREÇÃO CRÍTICA: DESCODIFICAR O HTML <<<
         try {
-            // Se estiver codificado (com %20, %3C, etc), descodifica
             if (rawSnippet.includes('%3C') || rawSnippet.includes('%20')) {
                 rawSnippet = decodeURIComponent(rawSnippet);
             }
-        } catch (e) { console.warn("Erro ao descodificar snippet:", e); }
+        } catch (e) { console.warn("Erro decode snippet:", e); }
         
-        // Guarda a versão codificada no dataset para segurança ao gravar de volta
         card.dataset.snippet = encodeURIComponent(rawSnippet);
 
-        // --- PARSING DO HTML PARA EXTRAIR TEXTO LIMPO ---
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = rawSnippet;
 
         // 1. Extração de Título
-        const titleEl = tempDiv.querySelector('.mini-note-title-input');
-        const h2El = tempDiv.querySelector('h2');
-        const ideaEl = tempDiv.querySelector('.idea-span');
+        const titleEl = tempDiv.querySelector('.mini-note-title-input') || tempDiv.querySelector('h2') || tempDiv.querySelector('.idea-span');
+        let extractedTitle = titleEl ? (titleEl.textContent || titleEl.value || "") : "";
         
-        let extractedTitle = "";
-        if (titleEl) {
-            extractedTitle = titleEl.textContent || titleEl.value || titleEl.getAttribute('value') || "";
-        } else if (h2El) {
-            extractedTitle = h2El.textContent;
-        } else if (ideaEl) {
-            extractedTitle = ideaEl.textContent;
-        }
+        let finalDisplayTitle = extractedTitle.trim() || data.noteName || "Sem Título";
 
-        let finalDisplayTitle = extractedTitle.trim();
-        if (!finalDisplayTitle || finalDisplayTitle === "Texto da Nota") {
-            finalDisplayTitle = data.noteName || "Sem Título";
-        }
-
-        // 2. Definição de Ícone e Cor
-        let icon = "📄"; 
-        let color = "#95a5a6"; 
-        
+        // 2. Ícone e Cor
+        let icon = "📄"; let color = "#95a5a6"; 
         if (rawSnippet.includes('question-mode')) { icon = "📗"; color = "#2ecc71"; }
         else if (rawSnippet.includes('free-mode')) { icon = "📙"; color = "#e67e22"; }
         else if (rawSnippet.includes('toggle-section')) { icon = "☂"; color = "#9b59b6"; }
         else if (rawSnippet.includes('idea-span')) { icon = "💡"; color = "#e74c3c"; }
-        else if (rawSnippet.includes('mini-note-wrapper')) { icon = "📘"; color = "#3498db"; } // Subnota (Flash)
+        else if (rawSnippet.includes('mini-note-wrapper')) { icon = "📘"; color = "#3498db"; }
 
         card.style.borderLeft = `4px solid ${color}`;
 
-        // 3. Extração de Conteúdo (Body)
+        // 3. Extração de Conteúdo
         const contentDiv = tempDiv.querySelector('.mini-note-content') || tempDiv.querySelector('.toggle-content') || tempDiv;
-        
-        // Limpa o texto (remove quebras excessivas)
-        let bodyText = contentDiv.innerText.replace(/\s+/g, ' ').trim();
-        
-        // Remove lixo de botões se tiver ficado no innerText
-        bodyText = bodyText.replace(/🔐|🔺|🔻|⚡|🧬|🎨|📋|🗑️/g, '');
-
+        let bodyText = contentDiv.innerText.replace(/\s+/g, ' ').trim().replace(/🔐|🔺|🔻|⚡|🧬|🎨|📋|🗑️/g, '');
         if (bodyText.length > 250) bodyText = bodyText.substring(0, 250) + "...";
 
-        // Montagem do HTML Visual
         headerHtml = `
             <div style="padding-left: 5px; margin-bottom: 5px;">
                 <div style="font-weight:bold; font-size:1em; cursor:pointer; color:var(--text-color); display: flex; align-items: center; gap: 8px;" 
@@ -18938,13 +18988,10 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
                     <span style="font-size: 1.2em;">${icon}</span> ${finalDisplayTitle}
                 </div>
             </div>`;
-
         displayHtml = `<div style="font-size:0.9em; color:var(--text-muted-color); padding-left: 8px; line-height:1.4;">${bodyText}</div>`;
-
         innerHTML = `<div class="ref-card-content">${headerHtml}${displayHtml}</div>`;
     }
 
-    // Adiciona controlos (Lixo, Setas)
     innerHTML += `
         <div class="card-controls"> 
             ${type === 'text' ? '<button class="add-board-link" title="Gerir Links" style="margin-right: auto;">🌐</button>' : ''}
@@ -18956,7 +19003,7 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
 
     card.innerHTML = innerHTML;
 
-    // --- RECONFIGURAÇÃO DOS LISTENERS ---
+    // --- LISTENERS DOS BOTÕES ---
     const linkBtn = card.querySelector('.add-board-link');
     if (linkBtn) {
         linkBtn.onclick = (e) => {
@@ -18972,8 +19019,6 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
         const confirmed = await showConfirmation("Remover Item", "Deseja remover este item do quadro?");
         if (confirmed) { 
             card.remove(); 
-            const container = document.getElementById('puzzle-board-container');
-            const emptyMsg = document.getElementById('puzzle-empty-msg');
             if(container.querySelectorAll('.board-card').length === 0 && emptyMsg) emptyMsg.style.display = 'block';
             if(isEditMode) savePuzzleData(); 
         }
@@ -18988,10 +19033,22 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
         if (n && n.classList.contains('board-card')) container.insertBefore(n, card);
     };
 
-    container.appendChild(card);
-
+    // ============================================================
+    // CORREÇÃO: ADICIONAR NO TOPO VS FUNDO
+    // ============================================================
+    
     if (shouldScroll) {
+        // Se 'shouldScroll' é true, significa que foi o utilizador que clicou no botão.
+        // Adicionamos no TOPO (prepend) para aparecer logo.
+        container.prepend(card);
+        
+        // Scroll suave para garantir visibilidade
         setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+        
+    } else {
+        // Se 'shouldScroll' é false, é um carregamento da base de dados.
+        // Adicionamos no FUNDO (append) para respeitar a ordem guardada.
+        container.appendChild(card);
     }
 }
 
@@ -19237,20 +19294,14 @@ function renderReferenceBoxesPage() {
         const li = document.createElement('li');
         li.className = 'puzzle-ref-item';
         
-        // --- LÓGICA DE ÍCONES DE CLONE ---
         let cloneBadge = "";
         let warningText = "";
         let opacityStyle = "";
 
         if (item.isClone) {
-            // Se é clone, mostra o alambique
             cloneBadge = `<span title="Esta caixa é uma cópia (Clone)" style="margin-left:5px; font-size:1.1em;">⚗️</span>`;
-            
             if (item.originalIsPresent) {
-                // Se o original já está no quadro, avisa!
                 warningText = `<div style="color:#e74c3c; font-size:0.75em; font-weight:bold; margin-top:2px;">⚠️ O original já está neste quadro!</div>`;
-                // Opcional: Deixar o item ligeiramente transparente para indicar redundância
-                // opacityStyle = "opacity: 0.7;"; 
             }
         }
         
@@ -19277,19 +19328,15 @@ function renderReferenceBoxesPage() {
             e.preventDefault();
             e.stopPropagation();
 
-            // Se o original já lá está, pede confirmação extra
             if (item.originalIsPresent) {
                 if (!confirm("O original desta cópia já está no quadro. Deseja adicionar o clone na mesma?")) {
                     return;
                 }
             }
 
-            // --- 1. DETETAR QUAL A ABA QUE ESTÁ REALMENTE ATIVA NO PAINEL ---
             const activeTabBtn = document.querySelector('#ref-tabs button.active');
             const activeTab = activeTabBtn ? activeTabBtn.dataset.refTab : 'puzzle';
 
-            // --- 2. LÓGICA DE DESTINO ---
-            
             // CASO A: Aba DOSSIÉ selecionada e temos uma Mica aberta
             if (activeTab === 'dossie' && window.activeMicaId) {
                 try {
@@ -19303,29 +19350,36 @@ function renderReferenceBoxesPage() {
                         
                         if (mica) {
                             if (!mica.items) mica.items = [];
-                            mica.items.push({
+                            
+                            // =========================================================
+                            // MUDANÇA AQUI: UNSHIFT (TOPO) EM VEZ DE PUSH (FIM)
+                            // =========================================================
+                            mica.items.unshift({
                                 noteId: item.id,
                                 noteName: item.name,
                                 snippet: encodeURIComponent(item.snippet)
                             });
+                            
                             await updateDoc(docRef, { dossie: dossie });
                             window.renderDossie(); 
+                            
+                            // Faz scroll para o topo da lista para ver o item novo
+                            const listContainer = document.getElementById('dossie-list-container');
+                            if(listContainer) listContainer.scrollTop = 0;
                         }
                     }
                 } catch (err) { console.error("Erro Mica:", err); }
             } 
-            // CASO B: Aba QUADRO (ou qualquer outra) -> Vai para o Quadro (Puzzle)
+            // CASO B: Aba QUADRO (ou qualquer outra)
             else {
                 if (typeof createBoardItem === 'function') {
-                    // Adiciona ao container lateral do Quadro
                     createBoardItem('ref', {
                         noteId: item.id,
                         noteName: item.name,
                         snippet: item.snippet,
                         isClone: true
-                    }, true);
+                    }, true); // 'true' força scroll e prepend
 
-                    // Se o Quadro estiver em modo edição (azul), grava logo no Firebase
                     const puzzleContainer = document.getElementById('ref-content-puzzle');
                     if (puzzleContainer && puzzleContainer.classList.contains('edit-mode-active')) {
                         savePuzzleData();
@@ -19333,7 +19387,6 @@ function renderReferenceBoxesPage() {
                 }
             }
             
-            // Fecha o modal após a seleção
             document.getElementById('puzzle-ref-selection-modal').style.display = 'none';
         };
         list.appendChild(li);
@@ -30488,143 +30541,41 @@ function convertToTextarea(inputEl) {
 // ============================================================
 // FUNÇÃO: RENDERIZAR ITENS DA CATEGORIA (COLUNA DO MEIO)
 // ============================================================
-async function renderListCategoryItems(categoryId) {
+async function renderListCategoryItems(categoryId, filterText = '') {
     const listElement = middlePanelList;
     const myUid = auth.currentUser.uid;
     
-    // 1. ESTADO DE CARREGAMENTO
-    listElement.innerHTML = `
-        <div class="spinner-container" style="margin-top:50px;">
-            <div class="spinner"></div>
-            <span>A processar categoria...</span>
-        </div>`;
-    
     // Identifica onde estamos na navegação
-    const lastNav = navigationStack[navigationStack.length - 1];
+    // Se navigationStack estiver vazio, estamos na raiz da categoria
+    const lastNav = navigationStack.length > 0 ? navigationStack[navigationStack.length - 1] : null;
     const origin = navigationStack[0]?.id || categoryId;
 
+    // Categorias que têm barra de pesquisa e limite de 50
+    const specialCategories = ['personagem', 'local', 'data', 'cosmos', 'tag', 'topico', 'marcadores'];
+    const isSpecialCategory = specialCategories.includes(categoryId);
+
+    // 1. Limpeza inicial (apenas se não for pesquisa ativa)
+    if (!filterText) {
+        listElement.innerHTML = `
+            <div class="panel-loader">
+                <div class="spinner"></div>
+                <span>A carregar ${lastNav ? lastNav.name : categoryId}...</span>
+            </div>`;
+    }
+
     try {
-        // Importações necessárias
-        const { collection, query, where, orderBy, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { collection, query, where, orderBy, getDocs, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        let items = [];
+        let htmlBuffer = '';
 
         // ==========================================
-        // 1. NÍVEL PROFUNDO: DENTRO DE UM MARCADOR (Listar Versículos)
+        // 1. NAVEGAÇÃO DA BÍBLIA (RESTAURADO)
         // ==========================================
-        if (lastNav && lastNav.type === 'marcadores') {
-            middlePanelTitle.textContent = `🔖 ${lastNav.name}`;
-            updateAddButtonState(false); 
-
-            const q = query(
-                collection(db, 'textosbiblicos'),
-                where(`marcadoresAssociados.${lastNav.id}`, '==', true),
-                where('userId', '==', myUid)
-            );
-
-            const snap = await getDocs(q);
-            listElement.innerHTML = '';
-
-            if (snap.empty) {
-                listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum texto com este marcador.</li>';
-                return;
-            }
-
-            snap.forEach(docSnap => {
-                const item = { id: docSnap.id, ...docSnap.data() };
-                const li = document.createElement('li');
-                li.className = 'list-item';
-                
-                if (activeReferenceEntity && activeReferenceEntity.id === item.id) {
-                    li.classList.add(currentViewMode === 'shared' ? 'selected-red' : 'selected');
-                }
-
-                li.innerHTML = `<span>📜 ${item.nome}</span>`;
-
-                li.onclick = () => {
-                    listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
-                    const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
-                    li.classList.add(selectionClass);
-                    showReferencesPanel(item.id, item.nome, 'textobiblico');
-                };
-                listElement.appendChild(li);
-            });
-            return; 
-        }
-
-        // ==========================================
-        // 2. CAMINHO: COSMOS (TEMAS E SUBTEMAS)
-        // ==========================================
-        if (origin === 'cosmos') {
-            if (lastNav.type === 'list-category') {
-                middlePanelTitle.textContent = "💼 Cosmos: Temas";
-                updateAddButtonState(true, true);
-
-                const q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('nome'));
-                const snap = await getDocs(q);
-                listElement.innerHTML = '';
-
-                if (snap.empty) {
-                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum tema criado. Clique no + para começar.</li>';
-                    return;
-                }
-
-                snap.forEach(docSnap => {
-                    const item = { id: docSnap.id, ...docSnap.data() };
-                    if (item.estado === 'desativa') return;
-
-                    const li = document.createElement('li');
-                    li.className = 'list-item';
-                    li.innerHTML = `<span>${item.emoji || '💼'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
-                    
-                    li.onclick = (e) => {
-                        if (e.target.closest('.item-menu-btn')) return;
-                        navigationStack.push({ id: item.id, name: item.nome, type: 'cosmos-parent', emoji: item.emoji || '💼' });
-                        updateNavigationView(true);
-                    };
-                    listElement.appendChild(li);
-                });
-            }
-            else if (lastNav.type === 'cosmos-parent') {
-                middlePanelTitle.textContent = `${lastNav.emoji} ${lastNav.name}`;
-                updateAddButtonState(true, true);
-
-                const q = query(collection(db, 'subcosmos'), where('cosmosId', '==', lastNav.id), where('userId', '==', myUid), orderBy('nome'));
-                const snap = await getDocs(q);
-                listElement.innerHTML = '';
-
-                if (snap.empty) {
-                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Esta pasta está vazia.</li>';
-                    return;
-                }
-
-                snap.forEach(docSnap => {
-                    const item = { id: docSnap.id, ...docSnap.data() };
-                    if (item.estado === 'desativa') return;
-
-                    const li = document.createElement('li');
-                    li.className = 'list-item';
-                    if (activeReferenceEntity && activeReferenceEntity.id === item.id) li.classList.add('selected');
-
-                    li.innerHTML = `<span>${item.emoji || '🔹'} ${item.nome}</span><button class="item-menu-btn">…</button>`;
-                    
-                    li.onclick = (e) => {
-                        if (e.target.closest('.item-menu-btn')) return;
-                        listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected'));
-                        li.classList.add('selected');
-                        showReferencesPanel(item.id, item.nome, 'subcosmos');
-                    };
-                    listElement.appendChild(li);
-                });
-            }
-            return;
-        }
-
-        // ==========================================
-        // 3. CAMINHO: BÍBLIA
-        // ==========================================
-     if (origin === 'biblia-root') {
+        if (origin === 'biblia-root') {
             
-            // A. LISTA DE LIVROS
-            if (lastNav.type === 'list-category') {
+            // A. LISTA DE LIVROS (Raiz)
+            if (!lastNav || lastNav.type === 'list-category') {
                 middlePanelTitle.textContent = "Bíblia: Livros";
                 updateAddButtonState(false);
                 listElement.innerHTML = '';
@@ -30635,7 +30586,6 @@ async function renderListCategoryItems(categoryId) {
                     li.innerHTML = `<span>📖 ${book.nome}</span>`;
                     
                     li.onclick = () => {
-                        // >>> PROTEÇÃO DE GRAVAÇÃO AQUI <<<
                         navigateWithUnsavedCheck(() => {
                             navigationStack.push({ id: book.nome, name: book.nome, type: 'bible-book', caps: book.caps });
                             updateNavigationView(true);
@@ -30645,7 +30595,7 @@ async function renderListCategoryItems(categoryId) {
                 });
             } 
             
-            // B. LISTA DE CAPÍTULOS (Onde você clica no número)
+            // B. LISTA DE CAPÍTULOS
             else if (lastNav.type === 'bible-book') {
                 middlePanelTitle.textContent = lastNav.name;
                 listElement.innerHTML = '<div class="bible-grid"></div>';
@@ -30657,7 +30607,6 @@ async function renderListCategoryItems(categoryId) {
                     btn.textContent = i;
                     
                     btn.onclick = () => {
-                        // >>> PROTEÇÃO DE GRAVAÇÃO AQUI (A QUE PEDIU) <<<
                         navigateWithUnsavedCheck(() => {
                             navigationStack.push({ 
                                 id: `${lastNav.name} ${i}`, 
@@ -30683,7 +30632,7 @@ async function renderListCategoryItems(categoryId) {
                 
                 const totalV = bookData?.versiculos?.[lastNav.chapter - 1] || 50;
                 
-                // Usamos o cache para saber quais pintar de verde
+                // Verifica cache local para pintar de verde os existentes
                 const existingVerses = allEntities['textobiblico'] || [];
                 
                 for (let v = 1; v <= totalV; v++) {
@@ -30696,155 +30645,247 @@ async function renderListCategoryItems(categoryId) {
                     btn.textContent = v;
                     
                     btn.onclick = () => {
-                        // >>> PROTEÇÃO TAMBÉM AQUI <<<
-                        // Se clicar num versículo, também deve gravar o que estava a fazer antes de abrir a 4ª coluna
                         navigateWithUnsavedCheck(() => {
                             currentlyOpenVerseName = fullVerse;
-                            
-                            // Atualiza visualmente a grelha
                             grid.querySelectorAll('.bible-grid-btn').forEach(b => b.classList.remove('active-verse'));
                             btn.classList.add('active-verse');
-                            
-                            // Abre a 4ª Coluna
                             showReferencesPanel(null, fullVerse, 'textobiblico');
                         });
                     };
                     grid.appendChild(btn);
                 }
             }
+            return; // Sai da função, pois a Bíblia tem renderização própria
+        }
+
+        // ==========================================
+        // 2. DESTAQUES / CORES (RESTAURADO)
+        // ==========================================
+        if (categoryId === 'destaque') {
+            middlePanelTitle.textContent = "Destaques (Cores)";
+            updateAddButtonState(false); 
+            listElement.innerHTML = '';
+            
+            DEFAULT_HIGHLIGHTS.forEach(colorObj => {
+                const displayName = userCustomHighlights[colorObj.code] || colorObj.name;
+                const li = document.createElement('li');
+                li.className = 'list-item';
+                
+                const colorDot = `<span style="display:inline-block; width:16px; height:16px; min-width:16px; background:${colorObj.code}; border-radius:50%; margin-right:10px; border:1px solid rgba(255,255,255,0.3); flex: none !important;"></span>`;
+                
+                li.innerHTML = `${colorDot} <span>${displayName}</span>`;
+                
+                li.onclick = () => {
+                    listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
+                    const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+                    li.classList.add(selectionClass);
+                    showHighlightReferencesPanel(colorObj.code, displayName);
+                };
+                
+                listElement.appendChild(li);
+            });
             return;
         }
 
         // ==========================================
-        // 4. LISTAS PRINCIPAIS (RAIZ)
+        // 3. BARRA DE PESQUISA (PARA CATEGORIAS ESPECIAIS)
         // ==========================================
-        if (!lastNav || lastNav.type === 'list-category') {
-            let items = [];
-            
-            // --- MARCADORES ---
-            if (categoryId === 'marcadores') {
-                middlePanelTitle.textContent = "Marcadores";
-                updateAddButtonState(true, true); 
-                const q = query(collection(db, 'marcadores'), where('userId', '==', myUid), orderBy('nome'));
-                const snap = await getDocs(q);
-                listElement.innerHTML = '';
-                if (snap.empty) {
-                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum marcador criado.</li>';
-                    return;
-                }
-                snap.forEach(docSnap => {
-                    const data = docSnap.data();
-                    const li = document.createElement('li');
-                    li.className = 'list-item';
-                    li.innerHTML = `<span>🔖 ${data.nome}</span>`;
-                    li.onclick = () => {
-                        navigationStack.push({ id: docSnap.id, name: data.nome, type: 'marcadores' });
-                        updateNavigationView(true);
-                    };
-                    listElement.appendChild(li);
-                });
-                return;
-            }
+        if (isSpecialCategory) {
+            htmlBuffer += `
+            <li class="list-search-sticky-header">
+                <input type="text" 
+                       id="category-list-search" 
+                       placeholder="🔍 Pesquisar em ${categoryId}..." 
+                       value="${filterText}" 
+                       oninput="window.handleListSearch(this.value, '${categoryId}')"
+                       autocomplete="off">
+            </li>`;
+        }
 
-            // --- DESTAQUES (CORES) - AQUI ESTAVA A FALTA ---
-         else if (categoryId === 'destaque') {
-                middlePanelTitle.textContent = "Destaques (Cores)";
-                updateAddButtonState(false); 
-                listElement.innerHTML = '';
-                
-                // Itera sobre as cores globais
-                DEFAULT_HIGHLIGHTS.forEach(colorObj => {
-                    // Verifica se o user deu um nome personalizado
-                    const displayName = userCustomHighlights[colorObj.code] || colorObj.name;
-                    
-                    const li = document.createElement('li');
-                    li.className = 'list-item';
-                    
-                    // CORREÇÃO VISUAL:
-                    // 1. 'flex: none !important' impede a bola de esticar.
-                    // 2. 'min-width' garante que não encolhe.
-                    // 3. Envolvemos o nome num <span> para ele ficar com o 'flex: 1' do CSS global.
-                    const colorDot = `<span style="display:inline-block; width:16px; height:16px; min-width:16px; background:${colorObj.code}; border-radius:50%; margin-right:10px; border:1px solid rgba(255,255,255,0.3); flex: none !important;"></span>`;
-                    
-                    li.innerHTML = `${colorDot} <span>${displayName}</span>`;
-                    
-                    li.onclick = () => {
-                        // Limpa seleção visual
-                        listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
-                        
-                        // Aplica seleção
-                        const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
-                        li.classList.add(selectionClass);
-                        
-                        // Abre a 4ª coluna com as referências desta cor
-                        showHighlightReferencesPanel(colorObj.code, displayName);
-                    };
-                    
-                    listElement.appendChild(li);
-                });
-                return;
-            }
+        // ==========================================
+        // 4. LOGICA DE DADOS (COM LIMITE E PESQUISA)
+        // ==========================================
 
-            // --- TÓPICOS ---
-            else if (categoryId === 'topico') {
-                middlePanelTitle.textContent = "Tópicos";
-                updateAddButtonState(true, true);
-                const q = query(collection(db, 'topicos'), where('userId', '==', myUid), orderBy('nome'));
-                const snap = await getDocs(q);
-                snap.forEach(doc => {
-                    const data = doc.data();
-                    if (data.estado !== 'desativa') items.push({ id: doc.id, nome: data.nome, type: 'topico', desc: data.descricao });
-                });
-            } 
+        // --- MARCADORES ---
+        if (categoryId === 'marcadores') {
+            middlePanelTitle.textContent = "Marcadores";
+            updateAddButtonState(true, true);
+            let q = query(collection(db, 'marcadores'), where('userId', '==', myUid), orderBy('nome'));
             
-            // --- TAGS ---
-            else if (categoryId === 'tag') {
-                middlePanelTitle.textContent = "Tags (#)";
-                updateAddButtonState(false);
-                const q = query(collection(db, 'pastas'), where('tipo', '==', 'nota'), where('userId', '==', myUid));
-                const snap = await getDocs(q);
-                const tagSet = new Set();
-                snap.forEach(doc => { if(doc.data().tags) doc.data().tags.forEach(t => tagSet.add(t)); });
-                items = Array.from(tagSet).sort().map(t => ({ id: t, nome: t, type: 'tag' }));
-            }
-            
-            // --- GENÉRICOS (Personagens, Locais, etc) ---
-      else {
-                const config = ENTITY_CONFIG[categoryId];
-                if (config) {
-                    middlePanelTitle.textContent = config.displayName;
-                    
-                    // --- CORREÇÃO AQUI ---
-                    // Se for Texto Bíblico, ESCONDE o botão "+".
-                    // Para os outros (Personagem, Local, etc), mostra o botão amarelo.
-                    if (categoryId === 'textobiblico') {
-                        updateAddButtonState(false);
-                    } else {
-                        updateAddButtonState(true, true);
-                    }
-                    // ---------------------
+            if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
+            q = query(q, limit(50));
 
-                    const q = query(collection(db, config.collection), where('userId', '==', myUid), orderBy('nome'));
-                    const snap = await getDocs(q);
-                    
-                    snap.forEach(doc => {
-                        const data = doc.data();
-                        if (data.estado !== 'desativa') {
-                            items.push({ id: doc.id, nome: data.nome, type: categoryId });
-                        }
+            const snap = await getDocs(q);
+            snap.forEach(docSnap => items.push({ id: docSnap.id, nome: docSnap.data().nome, type: 'marcadores' }));
+        }
+
+        // --- TÓPICOS ---
+        else if (categoryId === 'topico') {
+            middlePanelTitle.textContent = "Tópicos";
+            updateAddButtonState(true, true);
+            let q = query(collection(db, 'topicos'), where('userId', '==', myUid), orderBy('nome'));
+            
+            if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
+            q = query(q, limit(50));
+
+            const snap = await getDocs(q);
+            snap.forEach(docSnap => {
+                if (docSnap.data().estado !== 'desativa') items.push({ id: docSnap.id, nome: docSnap.data().nome, type: 'topico' });
+            });
+        }
+
+        // --- COSMOS (TEMAS) ---
+        else if (categoryId === 'cosmos' && (!lastNav || lastNav.type === 'list-category')) {
+            middlePanelTitle.textContent = "💼 Cosmos: Temas";
+            updateAddButtonState(true, true);
+            let q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('nome'));
+            
+            if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
+            q = query(q, limit(50));
+
+            const snap = await getDocs(q);
+            snap.forEach(docSnap => {
+                const item = docSnap.data();
+                if (item.estado !== 'desativa') {
+                    items.push({ 
+                        id: docSnap.id, 
+                        nome: item.nome, 
+                        type: 'cosmos-parent', 
+                        emoji: item.emoji,
+                        customHtml: `<span>${item.emoji || '💼'} ${item.nome}</span><button class="item-menu-btn">…</button>`
                     });
                 }
-            }
+            });
+        }
+
+        // --- TAGS ---
+        else if (categoryId === 'tag') {
+            middlePanelTitle.textContent = "Tags (#)";
+            updateAddButtonState(false);
             
-            // Renderiza para os casos padrão (Tópicos, Tags, Entidades)
-            renderStandardList(items);
+            const q = query(collection(db, 'pastas'), where('tipo', '==', 'nota'), where('userId', '==', myUid));
+            const snap = await getDocs(q);
+            const tagSet = new Set();
+            snap.forEach(doc => { if(doc.data().tags) doc.data().tags.forEach(t => tagSet.add(t)); });
+            
+            let allTagsArray = Array.from(tagSet).sort();
+            if (filterText) allTagsArray = allTagsArray.filter(t => t.toLowerCase().includes(filterText.toLowerCase()));
+            
+            // Aplica limite manual para tags
+            items = allTagsArray.slice(0, 50).map(t => ({ id: t, nome: t, type: 'tag' }));
+        }
+
+        // --- ENTIDADES GENÉRICAS E TEXTOS BÍBLICOS (RESTAURADO) ---
+        else {
+            // Verifica se é uma das categorias configuradas (Inclui textobiblico)
+            const config = ENTITY_CONFIG[categoryId];
+            
+            if (config) {
+                middlePanelTitle.textContent = config.displayName;
+                
+                // Texto bíblico não tem botão "+", os outros têm
+                if (categoryId === 'textobiblico') updateAddButtonState(false);
+                else updateAddButtonState(true, true);
+                
+                let q = query(collection(db, config.collection), where('userId', '==', myUid), orderBy('nome'));
+                
+                // Aplica filtro e limite APENAS se for uma das categorias especiais
+                if (isSpecialCategory) {
+                    if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
+                    q = query(q, limit(50));
+                }
+
+                const snap = await getDocs(q);
+                snap.forEach(docSnap => {
+                    const data = docSnap.data();
+                    if (data.estado !== 'desativa') {
+                        items.push({ id: docSnap.id, nome: data.nome, type: categoryId });
+                    }
+                });
+            }
+        }
+
+        // ==========================================
+        // RENDERIZAÇÃO FINAL DA LISTA
+        // ==========================================
+        
+        if (items.length === 0) {
+            htmlBuffer += `<li style="padding:20px; color:#888; text-align:center;">Nada encontrado.</li>`;
+        } 
+        
+        listElement.innerHTML = htmlBuffer;
+
+        items.forEach(item => {
+            const li = document.createElement('li');
+            li.className = 'list-item';
+            
+            // Verifica seleção
+            if (activeReferenceEntity && activeReferenceEntity.id === item.id) {
+                const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+                li.classList.add(selectionClass);
+            }
+
+            let icon = '🔹';
+            if (item.type === 'topico') icon = '📑';
+            if (item.type === 'tag') icon = '🏷️';
+            if (item.type === 'marcadores') icon = '🔖';
+            if (item.type === 'personagem') icon = '👤';
+            if (item.type === 'local') icon = '📍';
+            if (item.type === 'data') icon = '📅';
+            if (item.type === 'textobiblico') icon = '📜'; // Restaurado
+
+            if (item.customHtml) {
+                li.innerHTML = item.customHtml;
+            } else {
+                li.innerHTML = `<span>${icon} ${item.nome}</span>`;
+            }
+
+            li.onclick = (e) => {
+                if (e.target.closest('.item-menu-btn')) return;
+
+                // Lógica de navegação para pastas (Cosmos Pai)
+                if (item.type === 'cosmos-parent') {
+                    navigationStack.push({ id: item.id, name: item.nome, type: 'cosmos-parent', emoji: item.emoji });
+                    updateNavigationView(true);
+                    return;
+                }
+
+                // Lógica padrão: Abrir Referências
+                listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
+                const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
+                li.classList.add(selectionClass);
+
+                if (item.type === 'topico') showTopicReferencesPanel(item.id, item.nome, item.desc, 'topico');
+                else if (item.type === 'tag') showTagReferencesPanel(item.nome);
+                else if (item.type === 'marcadores') showMarkerReferencesPanel(item.id, item.nome); 
+                else showReferencesPanel(item.id, item.nome, item.type);
+            };
+
+            listElement.appendChild(li);
+        });
+
+        // Focar no input se foi uma pesquisa
+        if (filterText) {
+            const input = document.getElementById('category-list-search');
+            if (input) {
+                input.focus();
+                const val = input.value; input.value = ''; input.value = val;
+            }
         }
 
     } catch (e) {
-        console.error("Erro ao renderizar lista de categorias:", e);
+        console.error("Erro ao renderizar lista:", e);
         listElement.innerHTML = '<li style="color:red; padding:20px; text-align:center;">Erro ao ligar à base de dados.</li>';
     }
 }
+
+// 3. Função Global para o evento oninput do HTML
+window.handleListSearch = function(text, categoryId) {
+    clearTimeout(listSearchTimer);
+    listSearchTimer = setTimeout(() => {
+        renderListCategoryItems(categoryId, text);
+    }, 500); // 500ms de espera antes de pesquisar
+};
 
 
 // Função auxiliar para não repetir código de renderização
@@ -31375,7 +31416,6 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
 
         // Ativar pílulas se estiver em modo edição
         if (existingData) {
-            // Pequeno delay para o DOM criar a linha
             setTimeout(() => {
                 const row = codexContainer.querySelector('.codex-row');
                 if(row) {
@@ -31423,7 +31463,6 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
                 const valorBaixo = rowData.serie.toLowerCase().trim();
                 const siglaMatch = valorBaixo.match(/^[a-z]+(?:-[0-9])?/);
                 const sigla = siglaMatch ? siglaMatch[0] : "";
-                // Usa o dicionário SIGLAS_PUBLICACOES se existir, senão usa o texto original
                 const pubNome = (typeof SIGLAS_PUBLICACOES !== 'undefined' && SIGLAS_PUBLICACOES[sigla]) ? SIGLAS_PUBLICACOES[sigla] : rowData.serie;
 
                 // 2. Obter Data Automática ou Manual
@@ -31432,16 +31471,11 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
                 const finalMonth = rowData.manualMonth || auto.mes || "";
                 const finalCap = rowData.capitulo || "";
 
-                // 3. CONSTRUIR STRING VISUAL (AQUI ESTÁ A CORREÇÃO "de")
+                // 3. CONSTRUIR STRING VISUAL
                 let codiceShow = pubNome;
                 
-                if (finalMonth && finalYear) {
-                    // MUDANÇA: de '/' para ' de '
-                    codiceShow += ` ${finalMonth} de ${finalYear}`; 
-                } 
-                else if (finalYear) {
-                    codiceShow += ` ${finalYear}`;
-                }
+                if (finalMonth && finalYear) codiceShow += ` ${finalMonth} de ${finalYear}`; 
+                else if (finalYear) codiceShow += ` ${finalYear}`;
                 
                 if (finalCap) codiceShow += `, capítulo ${finalCap}`;
                 if (rowData.paginas.length > 0) codiceShow += `, página ${rowData.paginas.join(', ')}`;
@@ -31452,7 +31486,7 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
                     ...rowData, 
                     type: 'codex', 
                     publicacaonome: pubNome, 
-                    codiceshow: codiceShow, // Guarda a string formatada correta
+                    codiceshow: codiceShow, 
                     createdAt: existingData?.createdAt || Date.now() 
                 };
             }
@@ -31463,14 +31497,24 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
             const docSnap = await getDoc(docRef);
             let currentLinks = docSnap.exists() ? (docSnap.data().panelLinks || []) : [];
 
-            if (editingIndex !== null) currentLinks[editingIndex] = dataToSave;
-            else currentLinks.push(dataToSave);
+            if (editingIndex !== null) {
+                // MODO EDIÇÃO: Atualiza na mesma posição
+                currentLinks[editingIndex] = dataToSave;
+            } else {
+                // =========================================================
+                // MODO CRIAÇÃO: UNSHIFT (ADICIONA AO TOPO DO ARRAY)
+                // =========================================================
+                currentLinks.unshift(dataToSave); 
+            }
 
             await updateDoc(docRef, { panelLinks: currentLinks });
             modal.style.display = 'none';
             
-            // Atualiza a vista da 4ª coluna
-            renderPanelLinks(); 
+            // Atualiza a vista e faz scroll para o topo
+            await renderPanelLinks();
+            
+            const listContainer = document.getElementById('panel-links-list');
+            if(listContainer) listContainer.scrollTop = 0;
 
         } catch (e) {
             console.error("Erro ao gravar:", e);
@@ -31697,11 +31741,16 @@ div.innerHTML = `
         ${mica.description ? `<p style="margin:2px 0 0 0; font-size:0.82em; color:var(--text-muted-color);">${mica.description}</p>` : ''}
     </div>
     ${window.isDossieEditMode ? `
-       <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px; border-top:1px solid var(--border-color); padding-top:8px;">
-        <button onclick="event.stopPropagation(); window.changeMicaColor(event, '${mica.id}')" style="font-size:12px; cursor:pointer;">🎨</button>
-        <button onclick="event.stopPropagation(); window.moveMica('${mica.id}', -1)" style="font-size:12px; cursor:pointer;">↑</button>
-        <button onclick="event.stopPropagation(); window.moveMica('${mica.id}', 1)" style="font-size:12px; cursor:pointer;">↓</button>
-        <button onclick="event.stopPropagation(); window.deleteMica('${mica.id}')" style="color:#e74c3c; font-size:12px; cursor:pointer;">🗑️</button>
+       <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:8px; border-top:1px solid var(--border-color); padding-top:8px;">
+        
+        <!-- NOVO BOTÃO DE RENOMEAR (À ESQUERDA) -->
+        <button onclick="event.stopPropagation(); window.renameMica('${mica.id}', '${mica.name}')" style="font-size:14px; cursor:pointer; background:none; border:none; opacity:0.8;" title="Renomear">✏️</button>
+        
+        <!-- BOTÕES EXISTENTES -->
+        <button onclick="event.stopPropagation(); window.changeMicaColor(event, '${mica.id}')" style="font-size:14px; cursor:pointer; background:none; border:none;" title="Mudar Cor">🎨</button>
+        <button onclick="event.stopPropagation(); window.moveMica('${mica.id}', -1)" style="font-size:14px; cursor:pointer; background:none; border:none;">↑</button>
+        <button onclick="event.stopPropagation(); window.moveMica('${mica.id}', 1)" style="font-size:14px; cursor:pointer; background:none; border:none;">↓</button>
+        <button onclick="event.stopPropagation(); window.deleteMica('${mica.id}')" style="color:#e74c3c; font-size:14px; cursor:pointer; background:none; border:none;">🗑️</button>
     </div>
     ` : ''}`;
 
@@ -31754,13 +31803,32 @@ window.moveMica = async function(id, dir) {
 };
 
 window.deleteMica = async function(id) {
-    if (!confirm("Apagar esta Mica e todo o seu conteúdo?")) return;
-    const col = getCollectionFromType(activeReferenceEntity.type);
-    const docRef = doc(db, col, activeReferenceEntity.id);
-    const snap = await getDoc(docRef);
-    const dossie = (snap.data().dossie || []).filter(m => m.id !== id);
-    await updateDoc(docRef, { dossie });
-    window.renderDossie();
+    // AQUI ESTÁ A MUDANÇA: Usa o popup personalizado em vez do nativo
+    const confirmed = await showConfirmation(
+        "Apagar Mica?", 
+        "Tem a certeza que deseja apagar esta Mica e todo o seu conteúdo? Esta ação é irreversível."
+    );
+
+    if (!confirmed) return; // Se cancelar, pára aqui
+
+    try {
+        const col = getCollectionFromType(activeReferenceEntity.type);
+        const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const docRef = doc(db, col, activeReferenceEntity.id);
+        const snap = await getDoc(docRef);
+        
+        // Filtra para remover a mica com o ID selecionado
+        const dossie = (snap.data().dossie || []).filter(m => m.id !== id);
+        
+        await updateDoc(docRef, { dossie });
+        
+        // Atualiza a vista
+        window.renderDossie();
+    } catch (e) {
+        console.error("Erro ao apagar mica:", e);
+        alert("Erro ao apagar.");
+    }
 };
 
 window.removeItemFromMica = async function(itemIdx) {
@@ -32014,7 +32082,7 @@ document.getElementById('confirm-mica-bible-save').onclick = async () => {
     const fullName = `${book} ${chapter}:${parts.join(',')}`;
 
     try {
-        // Verifica se já existe no Firebase (textosbiblicos)
+        // Verifica se já existe no Firebase
         const q = query(collection(db, 'textosbiblicos'), where('userId', '==', myUid), where('nome', '==', fullName));
         const snap = await getDocs(q);
         if (snap.empty) {
@@ -32023,7 +32091,7 @@ document.getElementById('confirm-mica-bible-save').onclick = async () => {
             });
         }
 
-        // Adiciona ao Dossié da Mica ativa
+        // Adiciona ao Dossié
         const col = getCollectionFromType(activeReferenceEntity.type);
         const docRef = doc(db, col, activeReferenceEntity.id);
         const docSnap = await getDoc(docRef);
@@ -32036,16 +32104,31 @@ document.getElementById('confirm-mica-bible-save').onclick = async () => {
                     ${title ? `<div style="font-weight:bold; color:var(--accent-color); margin-bottom:4px;">${title}</div>` : ''}
                     <div style="font-size: 1.1em; color:var(--text-color);">📜 ${fullName}</div>
                 </div>`;
+            
             if (!mica.items) mica.items = [];
-            mica.items.push({
-                noteId: 'bible_internal', noteName: fullName, title: title, snippet: encodeURIComponent(bibleSnippet)
+            
+            // =========================================================
+            // MUDANÇA AQUI: UNSHIFT (TOPO) EM VEZ DE PUSH (FIM)
+            // =========================================================
+            mica.items.unshift({
+                noteId: 'bible_internal', 
+                noteName: fullName, 
+                title: title, 
+                snippet: encodeURIComponent(bibleSnippet)
             });
+
             await updateDoc(docRef, { dossie });
+            
             document.getElementById('mica-bible-modal').style.display = 'none';
-            window.renderDossie(); // Atualiza a vista da Mica
+            window.renderDossie();
+            
+            // Faz scroll para o topo da lista
+            const listContainer = document.getElementById('dossie-list-container');
+            if(listContainer) listContainer.scrollTop = 0;
         }
     } catch (e) { console.error(e); alert("Erro ao gravar."); }
 };
+
 
 async function renderUniversalTextSearch(name) {
     const listElement = document.getElementById('references-list');
@@ -45350,6 +45433,43 @@ if (protectedEditor) {
     });
 }
 
+window.renameMica = async function(id, currentName) {
+    // Usa o seu modal bonito de input
+    const result = await showCustomInput("Renomear Mica", "Novo nome...", currentName);
+    
+    // Se o utilizador confirmar e houver um nome válido
+    if (result && result.name && result.name.trim() !== "") {
+        try {
+            const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            
+            const col = getCollectionFromType(activeReferenceEntity.type);
+            const docRef = doc(db, col, activeReferenceEntity.id);
+            const snap = await getDoc(docRef);
+
+            if (snap.exists()) {
+                let dossie = snap.data().dossie || [];
+                const index = dossie.findIndex(m => m.id === id);
+
+                if (index > -1) {
+                    // Atualiza o nome
+                    dossie[index].name = result.name.trim();
+                    
+                    // Se quiser permitir editar a descrição também, adicione esta linha:
+                    if (result.description !== undefined) dossie[index].description = result.description.trim();
+
+                    // Grava no Firebase
+                    await updateDoc(docRef, { dossie });
+                    
+                    // Atualiza a lista visualmente
+                    window.renderDossie();
+                }
+            }
+        } catch (e) {
+            console.error("Erro ao renomear mica:", e);
+            alert("Erro ao gravar o novo nome.");
+        }
+    }
+};
 
     </script>
 </body>
