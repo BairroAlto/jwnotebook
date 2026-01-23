@@ -18727,7 +18727,7 @@ function renderEntityTab(container, type, onPageNames) {
 
 
 
-async function openEditEntityModal(entityId, entityType) {
+window.openEditEntityModal = async function(entityId, entityType) {
     const modal = document.getElementById('edit-entity-modal');
     const modalContent = modal.querySelector('.modal-content'); 
     const title = document.getElementById('edit-entity-title');
@@ -18762,6 +18762,7 @@ async function openEditEntityModal(entityId, entityType) {
     nameInput.value = 'A carregar...';
     descriptionInput.value = 'A carregar...';
     
+    // Mostra o campo de Emoji apenas se for Subcosmos
     if (entityType === 'subcosmos') {
         emojiContainer.style.display = 'block';
     } else {
@@ -18811,10 +18812,8 @@ async function openEditEntityModal(entityId, entityType) {
 
         // --- LÓGICA DO BOTÃO OCULTAR ---
         hideBtn.onclick = async () => {
-            // A. Trazemos o modal de confirmação para a frente deste modal
             const confirmModal = document.getElementById('confirm-modal');
             if (confirmModal) {
-                // Truque: remove e readiciona ao body para garantir que é o último elemento
                 document.body.appendChild(confirmModal); 
                 confirmModal.style.setProperty('z-index', '2147483647', 'important'); 
             }
@@ -18831,9 +18830,10 @@ async function openEditEntityModal(entityId, entityType) {
                 if (typeof hideReferencesPanel === 'function') hideReferencesPanel();
                 if (typeof fetchAllEntities === 'function') fetchAllEntities();
                 
-                // Se estiver no modo lista, atualiza
-                if (currentTab === 'lists' && navigationStack.length > 0) {
-                    renderListCategoryItems(navigationStack[0].id);
+                // Atualiza a lista atual
+                const lastNav = navigationStack.length > 0 ? navigationStack[navigationStack.length - 1] : null;
+                if (lastNav) {
+                    renderListCategoryItems(lastNav.id); // Refresh da lista
                 }
             }
         };
@@ -18866,13 +18866,9 @@ async function openEditEntityModal(entityId, entityType) {
 
             modal.style.display = 'none';
             
-            // Atualiza UI
-            if (activeReferenceEntity && activeReferenceEntity.id === entityId) {
-                activeReferenceEntity.name = newName;
-                const tEl = document.getElementById('references-panel-title');
-                const dEl = document.getElementById('references-panel-description');
-                if (tEl) tEl.textContent = `Referências: ${newName}`;
-                if (dEl) dEl.textContent = newDescription;
+            // Recarrega a lista do painel do meio
+            if (navigationStack.length > 0) {
+                renderListCategoryItems(navigationStack[navigationStack.length - 1].id);
             }
         };
 
@@ -18880,7 +18876,7 @@ async function openEditEntityModal(entityId, entityType) {
         console.error("Erro ao editar:", error);
         modal.style.display = 'none';
     }
-}
+};
 
 // ====================================================================
 // CÓDIGO ATUALIZADO COM LOGS
@@ -30638,7 +30634,7 @@ async function renderListCategoryItems(categoryId, filterText = '') {
     const specialCategories = ['personagem', 'local', 'data', 'cosmos', 'tag', 'topico', 'marcadores'];
     const isSpecialCategory = specialCategories.includes(categoryId);
 
-    // 1. Limpeza inicial (apenas se não for pesquisa ativa)
+    // 1. Limpeza inicial (apenas se não for pesquisa ativa para não piscar)
     if (!filterText) {
         listElement.innerHTML = `
             <div class="panel-loader">
@@ -30654,7 +30650,7 @@ async function renderListCategoryItems(categoryId, filterText = '') {
         let htmlBuffer = '';
 
         // ==========================================
-        // 1. NAVEGAÇÃO DA BÍBLIA (RESTAURADO)
+        // 1. NAVEGAÇÃO DA BÍBLIA
         // ==========================================
         if (origin === 'biblia-root') {
             
@@ -30715,8 +30711,6 @@ async function renderListCategoryItems(categoryId, filterText = '') {
                 const grid = listElement.querySelector('.bible-grid');
                 
                 const totalV = bookData?.versiculos?.[lastNav.chapter - 1] || 50;
-                
-                // Verifica cache local para pintar de verde os existentes
                 const existingVerses = allEntities['textobiblico'] || [];
                 
                 for (let v = 1; v <= totalV; v++) {
@@ -30739,11 +30733,11 @@ async function renderListCategoryItems(categoryId, filterText = '') {
                     grid.appendChild(btn);
                 }
             }
-            return; // Sai da função, pois a Bíblia tem renderização própria
+            return; 
         }
 
         // ==========================================
-        // 2. DESTAQUES / CORES (RESTAURADO)
+        // 2. DESTAQUES / CORES
         // ==========================================
         if (categoryId === 'destaque') {
             middlePanelTitle.textContent = "Destaques (Cores)";
@@ -30787,23 +30781,69 @@ async function renderListCategoryItems(categoryId, filterText = '') {
         }
 
         // ==========================================
-        // 4. LOGICA DE DADOS (COM LIMITE E PESQUISA)
+        // 4. LOGICA DE DADOS (AGORA COM SUB-COSMOS)
         // ==========================================
 
-        // --- MARCADORES ---
-        if (categoryId === 'marcadores') {
-            middlePanelTitle.textContent = "Marcadores";
-            updateAddButtonState(true, true);
-            let q = query(collection(db, 'marcadores'), where('userId', '==', myUid), orderBy('nome'));
+        // --- A. COSMOS NÍVEL 1: TEMAS (RAIZ) ---
+        if (categoryId === 'cosmos' && (!lastNav || lastNav.type === 'list-category')) {
+            middlePanelTitle.textContent = "💼 Cosmos: Temas";
+            updateAddButtonState(true, true); // Botão Amarelo
+
+            let q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('nome'));
             
             if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
             q = query(q, limit(50));
 
             const snap = await getDocs(q);
-            snap.forEach(docSnap => items.push({ id: docSnap.id, nome: docSnap.data().nome, type: 'marcadores' }));
+            
+            snap.forEach(docSnap => {
+                const item = docSnap.data();
+                if (item.estado !== 'desativa') {
+                    // Botão de editar (lápis) no menu
+                    const editHtml = `<button class="item-menu-btn" onclick="event.stopPropagation(); window.openCosmosEditPopup('${docSnap.id}', '${item.nome}', '${item.emoji}', 'cosmos-parent')">✏️</button>`;
+                    
+                    items.push({ 
+                        id: docSnap.id, 
+                        nome: item.nome, 
+                        type: 'cosmos-parent', // Importante para saber que é pai
+                        emoji: item.emoji,
+                        customHtml: `<span>${item.emoji || '💼'} ${item.nome}</span>${editHtml}`
+                    });
+                }
+            });
         }
 
-        // --- TÓPICOS ---
+        // --- B. COSMOS NÍVEL 2: SUB-COSMOS (FILHOS) --- [A CORREÇÃO ESTÁ AQUI]
+        else if (lastNav && lastNav.type === 'cosmos-parent') {
+            middlePanelTitle.textContent = `${lastNav.emoji || '💼'} ${lastNav.name}`;
+            updateAddButtonState(true, true); // Permite adicionar filhos
+
+            // Procura na coleção 'subcosmos' onde 'cosmosId' é igual ao ID do pai
+            let q = query(collection(db, 'subcosmos'), where('cosmosId', '==', lastNav.id), where('userId', '==', myUid), orderBy('nome'));
+            
+            if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
+            q = query(q, limit(50));
+
+            const snap = await getDocs(q);
+            
+            snap.forEach(docSnap => {
+                const item = docSnap.data();
+                if (item.estado !== 'desativa') {
+                    // Botão de editar subtema
+                    const editHtml = `<button class="item-menu-btn" onclick="event.stopPropagation(); window.openEditEntityModal('${docSnap.id}', 'subcosmos')">✏️</button>`;
+                    
+                    items.push({ 
+                        id: docSnap.id, 
+                        nome: item.nome, 
+                        type: 'subcosmos', // Importante para abrir a 4ª coluna
+                        emoji: item.emoji,
+                        customHtml: `<span>${item.emoji || '🧬'} ${item.nome}</span>${editHtml}`
+                    });
+                }
+            });
+        }
+
+        // --- C. TÓPICOS NÍVEL 1 ---
         else if (categoryId === 'topico') {
             middlePanelTitle.textContent = "Tópicos";
             updateAddButtonState(true, true);
@@ -30818,31 +30858,20 @@ async function renderListCategoryItems(categoryId, filterText = '') {
             });
         }
 
-        // --- COSMOS (TEMAS) ---
-        else if (categoryId === 'cosmos' && (!lastNav || lastNav.type === 'list-category')) {
-            middlePanelTitle.textContent = "💼 Cosmos: Temas";
-            updateAddButtonState(true, true);
-            let q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('nome'));
-            
-            if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
-            q = query(q, limit(50));
+        // --- D. MARCADORES ---
+        else if (categoryId === 'marcadores') {
+             middlePanelTitle.textContent = "Marcadores";
+             updateAddButtonState(true, true);
+             let q = query(collection(db, 'marcadores'), where('userId', '==', myUid), orderBy('nome'));
+             
+             if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
+             q = query(q, limit(50));
 
-            const snap = await getDocs(q);
-            snap.forEach(docSnap => {
-                const item = docSnap.data();
-                if (item.estado !== 'desativa') {
-                    items.push({ 
-                        id: docSnap.id, 
-                        nome: item.nome, 
-                        type: 'cosmos-parent', 
-                        emoji: item.emoji,
-                        customHtml: `<span>${item.emoji || '💼'} ${item.nome}</span><button class="item-menu-btn">…</button>`
-                    });
-                }
-            });
+             const snap = await getDocs(q);
+             snap.forEach(docSnap => items.push({ id: docSnap.id, nome: docSnap.data().nome, type: 'marcadores' }));
         }
 
-        // --- TAGS ---
+        // --- E. TAGS ---
         else if (categoryId === 'tag') {
             middlePanelTitle.textContent = "Tags (#)";
             updateAddButtonState(false);
@@ -30859,9 +30888,8 @@ async function renderListCategoryItems(categoryId, filterText = '') {
             items = allTagsArray.slice(0, 50).map(t => ({ id: t, nome: t, type: 'tag' }));
         }
 
-        // --- ENTIDADES GENÉRICAS E TEXTOS BÍBLICOS (RESTAURADO) ---
+        // --- F. RESTO (Personagens, Locais, Datas) ---
         else {
-            // Verifica se é uma das categorias configuradas (Inclui textobiblico)
             const config = ENTITY_CONFIG[categoryId];
             
             if (config) {
@@ -30873,7 +30901,6 @@ async function renderListCategoryItems(categoryId, filterText = '') {
                 
                 let q = query(collection(db, config.collection), where('userId', '==', myUid), orderBy('nome'));
                 
-                // Aplica filtro e limite APENAS se for uma das categorias especiais
                 if (isSpecialCategory) {
                     if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
                     q = query(q, limit(50));
@@ -30916,7 +30943,7 @@ async function renderListCategoryItems(categoryId, filterText = '') {
             if (item.type === 'personagem') icon = '👤';
             if (item.type === 'local') icon = '📍';
             if (item.type === 'data') icon = '📅';
-            if (item.type === 'textobiblico') icon = '📜'; // Restaurado
+            if (item.type === 'textobiblico') icon = '📜'; 
 
             if (item.customHtml) {
                 li.innerHTML = item.customHtml;
@@ -30925,23 +30952,25 @@ async function renderListCategoryItems(categoryId, filterText = '') {
             }
 
             li.onclick = (e) => {
+                // Se clicou no botão de editar (✏️), não navega
                 if (e.target.closest('.item-menu-btn')) return;
 
-                // Lógica de navegação para pastas (Cosmos Pai)
+                // --- 1. SE FOR PAI (COSMOS NÍVEL 1) -> ENTRA ---
                 if (item.type === 'cosmos-parent') {
                     navigationStack.push({ id: item.id, name: item.nome, type: 'cosmos-parent', emoji: item.emoji });
-                    updateNavigationView(true);
+                    updateNavigationView(true); // Isto vai chamar esta função de novo e cair no bloco B
                     return;
                 }
 
-                // Lógica padrão: Abrir Referências
+                // --- 2. SE FOR FILHO OU OUTRO -> ABRE 4ª COLUNA ---
                 listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
                 const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
                 li.classList.add(selectionClass);
 
                 if (item.type === 'topico') showTopicReferencesPanel(item.id, item.nome, item.desc, 'topico');
                 else if (item.type === 'tag') showTagReferencesPanel(item.nome);
-                else if (item.type === 'marcadores') showMarkerReferencesPanel(item.id, item.nome); 
+                else if (item.type === 'marcadores') showMarkerReferencesPanel(item.id, item.nome);
+                else if (item.type === 'subcosmos') showReferencesPanel(item.id, item.nome, 'subcosmos'); // <--- AQUI
                 else showReferencesPanel(item.id, item.nome, item.type);
             };
 
@@ -30959,7 +30988,7 @@ async function renderListCategoryItems(categoryId, filterText = '') {
 
     } catch (e) {
         console.error("Erro ao renderizar lista:", e);
-        listElement.innerHTML = '<li style="color:red; padding:20px; text-align:center;">Erro ao ligar à base de dados.</li>';
+        listElement.innerHTML = '<li style="color:red; padding:20px; text-align:center;">Erro ao carregar dados.</li>';
     }
 }
 
@@ -33726,7 +33755,7 @@ if (customEmojiBtn) {
 }
 
 
-function openCosmosEditPopup(id, currentName, currentEmoji, type) {
+window.openCosmosEditPopup = function(id, currentName, currentEmoji, type) {
     const modal = document.getElementById('custom-emoji-modal');
     const nameInput = document.getElementById('custom-theme-name-input');
     const emojiInput = document.getElementById('custom-emoji-input');
@@ -33746,15 +33775,19 @@ function openCosmosEditPopup(id, currentName, currentEmoji, type) {
 
     setTimeout(() => nameInput.focus(), 150);
 
+    // Clonagem para limpar eventos antigos
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
     // 3. Gravação
-    confirmBtn.onclick = async () => {
+    newConfirmBtn.onclick = async () => {
         const newName = nameInput.value.trim();
         const newEmoji = emojiInput.value.trim();
 
         if (!newName) return alert("Nome é obrigatório.");
 
-        confirmBtn.disabled = true;
-        confirmBtn.textContent = "...";
+        newConfirmBtn.disabled = true;
+        newConfirmBtn.textContent = "...";
 
         try {
             const collectionName = type === 'cosmos-parent' ? 'cosmos' : 'subcosmos';
@@ -33766,15 +33799,22 @@ function openCosmosEditPopup(id, currentName, currentEmoji, type) {
             });
 
             modal.style.display = 'none';
-            renderListCategoryItems('cosmos'); // Atualiza a lista lateral
+            // Recarrega a lista
+            renderListCategoryItems('cosmos'); 
         } catch (e) {
             console.error(e);
         } finally {
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = "Confirmar";
+            newConfirmBtn.disabled = false;
+            newConfirmBtn.textContent = "Confirmar";
         }
     };
-}
+    
+    // Botão cancelar (opcional, mas recomendado verificar se existe)
+    const cancelBtn = modal.querySelector('.secondary');
+    if (cancelBtn) {
+        cancelBtn.onclick = () => { modal.style.display = 'none'; };
+    }
+};
 
 async function checkItemProtection(itemId, itemName) {
     // Se o ID for nulo ou inválido, não faz nada
