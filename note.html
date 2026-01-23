@@ -9808,6 +9808,33 @@ button[data-command="boldBlue"].active-tool {
     position: relative !important;
 }
 
+.post-like-btn.active-like {
+    border-color: #e74c3c !important;
+    background-color: rgba(231, 76, 60, 0.1) !important;
+    color: #e74c3c !important;
+}
+
+.post-like-btn:hover {
+    transform: scale(1.05);
+    border-color: var(--accent-color);
+}
+
+/* Partícula da Explosão */
+.like-particle {
+    position: fixed;
+    width: 6px;
+    height: 6px;
+    background-color: #e74c3c; /* Vermelho coração */
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 99999;
+}
+
+/* Transição suave de cor no botão */
+.post-like-btn {
+    transition: background-color 0.2s, border-color 0.2s, color 0.2s, transform 0.1s !important;
+}
+
 </style>
 
 
@@ -10122,6 +10149,7 @@ button[data-command="boldBlue"].active-tool {
     <div class="archive-tabs" style="padding: 0 20px; margin-bottom: 15px; display: flex; align-items: center; gap: 20px; border-bottom: 1px solid var(--border-color);">
         <button class="archive-tab-btn active" data-archive-tab="prateleira">Prateleira</button>
         <button class="archive-tab-btn" data-archive-tab="gavetões">Gavetão</button>
+        <button class="archive-tab-btn" data-archive-tab="favoritos">Favoritos</button> 
         <button id="create-post-btn" class="archive-inline-create-btn">+ Post</button>
         <button id="create-drawer-trigger-btn" class="archive-inline-create-btn" style="display: none;">+ Gavetão</button>
         <button id="create-separator-btn" class="archive-inline-create-btn" style="display: none; background-color: #2ecc71;">+ Separador</button>
@@ -21923,7 +21951,7 @@ middlePanelList.addEventListener('click', async (e) => {
         }
 
         // --- CASO B: ABRIR CONTEÚDO ---
-        else if (['nota', 'arquivo', 'partilhado', 'jornal', 'aquario'].includes(type)) {
+ else if (['nota', 'arquivo', 'partilhado', 'jornal', 'aquario'].includes(type)) {
 
             // Mobile: Salta para o editor
             if (window.innerWidth <= 768) {
@@ -21947,9 +21975,48 @@ middlePanelList.addEventListener('click', async (e) => {
                 displayNote(id, item);
             }
             
-            // Arquivos (Aqui é que a gravação era crítica)
-            else {
-                displayArchive(id, { id, nome: name, tipo: type }, item);
+            // Arquivos e Partilhas (AQUI ESTÁ A CORREÇÃO DE LOADING)
+          else {
+                // 1. Prepara a área da direita
+                const archiveArea = document.getElementById('archive-area');
+                const editorArea = document.getElementById('editor-area');
+                const placeholder = document.getElementById('editor-placeholder');
+                
+                // Esconde as outras áreas
+                if(editorArea) editorArea.style.setProperty('display', 'none', 'important');
+                if(placeholder) placeholder.style.setProperty('display', 'none', 'important');
+                
+                // 2. Mostra a área do arquivo
+                if(archiveArea) {
+                    archiveArea.style.display = 'flex';
+                    
+                    // --- O SEGREDO: OCULTAR TUDO DENTRO E MOSTRAR SPINNER ---
+                    // Esconde os filhos normais (Input, Toolbar, Tabs, Feed)
+                    Array.from(archiveArea.children).forEach(child => {
+                        if (child.id !== 'archive-loader-overlay') {
+                            child.style.display = 'none';
+                        }
+                    });
+                    
+                    // Cria ou mostra o overlay de carregamento
+                    let loader = document.getElementById('archive-loader-overlay');
+                    if (!loader) {
+                        loader = document.createElement('div');
+                        loader.id = 'archive-loader-overlay';
+                        loader.style.cssText = "flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; width: 100%;";
+                        loader.innerHTML = `
+                            <div class="spinner" style="width: 40px; height: 40px; border-width: 3px;"></div>
+                            <span style="margin-top: 15px; font-size: 1.1em; font-style: italic; color: var(--text-muted-color);">A abrir arquivo...</span>
+                        `;
+                        archiveArea.appendChild(loader);
+                    }
+                    loader.style.display = 'flex';
+                }
+
+                // 3. Carrega os dados (o displayArchive vai restaurar a visibilidade)
+                setTimeout(() => {
+                    displayArchive(id, { id, nome: name, tipo: type }, item);
+                }, 50);
             }
         }
     };
@@ -28268,19 +28335,39 @@ window.renderArchiveFeed = async function() {
         return; 
     }
 
-    // --- CASO 2: ABA PRATELEIRA ---
+    // --- CASO 2: ABA PRATELEIRA (TODOS OS POSTS) ---
     if (currentArchiveTab === 'prateleira') {
         if (postBtn) postBtn.style.display = 'block';
 
         feed.innerHTML = '';
         const posts = currentArchiveData?.posts || [];
+        
         if (posts.length === 0) {
             feed.innerHTML = '<div style="text-align:center; color:#888; padding:40px;">Nenhum post criado.</div>';
             return;
         }
         posts.forEach(post => feed.appendChild(createPostElement(post)));
     } 
-    // --- CASO 3: ABA GAVETÃO ---
+    
+    // --- CASO 3: ABA FAVORITOS (NOVO) ---
+    else if (currentArchiveTab === 'favoritos') {
+        feed.innerHTML = '';
+        const myUid = auth.currentUser.uid;
+        const allPosts = currentArchiveData?.posts || [];
+        
+        // Filtra: Só posts onde o meu ID está no array 'likes'
+        const likedPosts = allPosts.filter(p => p.likes && p.likes.includes(myUid));
+
+        if (likedPosts.length === 0) {
+            feed.innerHTML = '<div style="text-align:center; color:#888; padding:40px;">Ainda não deu like em nenhum post.<br><span style="font-size:20px;">🤍</span></div>';
+            return;
+        }
+        
+        // Renderiza os posts filtrados
+        likedPosts.forEach(post => feed.appendChild(createPostElement(post)));
+    }
+
+    // --- CASO 4: ABA GAVETÃO ---
     else if (currentArchiveTab === 'gavetões') {
         if (drawerBtn) drawerBtn.style.display = 'block';
 
@@ -28300,7 +28387,7 @@ window.renderArchiveFeed = async function() {
             }
         } catch (e) { console.error(e); }
     }
-}
+};
 
 
 window.toggleGavetaViewMode = async () => {
@@ -30061,7 +30148,8 @@ document.querySelectorAll('.archive-tab-btn').forEach(btn => {
         await forceUnlockAndSaveOnExit();
 
         // 2. Lógica de Navegação
-        if (targetTab === 'prateleira') {
+        // Se sair de uma gaveta aberta, limpa a seleção
+        if (targetTab === 'prateleira' || targetTab === 'favoritos') {
             window.activeGavetaId = null;
             window.activeGavetaData = null;
         }
@@ -30071,16 +30159,22 @@ document.querySelectorAll('.archive-tab-btn').forEach(btn => {
         btn.classList.add('active');
         currentArchiveTab = targetTab;
         
-        // Gere botões
+        // Gere botões de criação (Esconde tudo nos Favoritos e Gavetões)
         const postBtn = document.getElementById('create-post-btn');
         const drawerBtn = document.getElementById('create-drawer-trigger-btn');
+        const separatorBtn = document.getElementById('create-separator-btn');
+        
+        // Reset inicial
+        if(postBtn) postBtn.style.display = 'none';
+        if(drawerBtn) drawerBtn.style.display = 'none';
+        if(separatorBtn) separatorBtn.style.display = 'none';
+
         if (currentArchiveTab === 'prateleira') {
             if(postBtn) postBtn.style.display = 'block';
-            if(drawerBtn) drawerBtn.style.display = 'none';
-        } else {
-            if(postBtn) postBtn.style.display = 'none';
+        } else if (currentArchiveTab === 'gavetões') {
             if(drawerBtn) drawerBtn.style.display = 'block';
         }
+        // Na aba 'favoritos', não mostramos botões de criar
 
         renderArchiveFeed();
     });
@@ -34841,6 +34935,42 @@ async function markArchiveAsRead(archiveId) {
 window.displayArchive = async function(id, data, element = null) {
     if (typeof leaveArchivePresence === 'function') await leaveArchivePresence(); 
     console.group(`📂 [ABERTURA] A carregar Arquivo: "${data.nome}"`);
+
+    // --- NOVO: REMOVER O LOADING E MOSTRAR A INTERFACE ---
+    const archiveArea = document.getElementById('archive-area');
+    if (archiveArea) {
+        // Remove o spinner de carregamento se existir
+        const loader = document.getElementById('archive-loader-overlay');
+        if (loader) loader.remove();
+
+        // Restaura a visibilidade dos elementos normais
+        Array.from(archiveArea.children).forEach(child => {
+            // Ignora elementos que devem ser geridos por lógica específica
+            if (child.id !== 'archive-mobile-nav' && child.id !== 'collab-bar') {
+                // Remove o style="display: none" que pusemos no clique
+                child.style.display = ''; 
+                
+                // Reforço para elementos flexíveis
+                if (child.id === 'archive-toolbar' || child.classList.contains('archive-tabs')) {
+                    child.style.display = 'flex';
+                }
+            }
+        });
+
+        // Reforço específico para o Feed
+        const feed = document.getElementById('archive-feed');
+        if(feed) {
+            feed.style.display = 'flex';
+            feed.style.flexDirection = 'column';
+        }
+
+        // Mobile Nav: Só mostra se for ecrã pequeno
+        const mobileNav = document.getElementById('archive-mobile-nav');
+        if(mobileNav && window.innerWidth <= 768) {
+            mobileNav.style.setProperty('display', 'flex', 'important');
+        }
+    }
+    // -----------------------------------------------------
     
     // --- 1. VERIFICAÇÃO DE MIGRAÇÃO ---
     // Se ainda tiver posts no formato antigo (Array no documento pai), migra primeiro.
@@ -34896,7 +35026,7 @@ window.displayArchive = async function(id, data, element = null) {
     // UI Layout
     const placeholder = document.getElementById('editor-placeholder');
     const editorArea = document.getElementById('editor-area');
-    const archiveArea = document.getElementById('archive-area');
+    
     if (placeholder) placeholder.style.setProperty('display', 'none', 'important');
     if (editorArea) editorArea.style.setProperty('display', 'none', 'important');
     if (archiveArea) archiveArea.style.display = 'flex';
@@ -34923,10 +35053,6 @@ window.displayArchive = async function(id, data, element = null) {
         const q = query(postsRef, orderBy('ordem', 'asc')); 
 
         // Atribuímos a uma nova variável global ou reutilizamos uma específica para posts
-        // Nota: O initRealtimeCollab usa collabUnsubscribe para o doc pai. 
-        // Aqui devíamos usar outra variável para não haver conflito se quiseres manter os dois.
-        // Assumindo que collabUnsubscribe é para TUDO do arquivo:
-        
         window.postsUnsubscribe = onSnapshot(q, (snapshot) => {
             console.log(`📥 Snapshot recebido. Docs encontrados: ${snapshot.size}`);
             
@@ -34963,85 +35089,118 @@ window.displayArchive = async function(id, data, element = null) {
 
 // 3. RENDERIZAR POST VIEW MODE (COM PONTOS)
 function renderPostViewMode(container, post) {
-    // LOG DE RENDERIZAÇÃO (Para Debug)
-    const now = Date.now();
-    const updatedAt = post.updatedAt && post.updatedAt.toMillis ? post.updatedAt.toMillis() : (post.updatedAt || 0);
-    
-    if ((now - updatedAt) < 120000) {
-        console.log(`👀 [VISUAL] A desenhar post recente "${post.title}"`);
-    }
+    if (!post || !container) return;
 
-    // 1. Preparação de Dados e Datas
-    const getMs = (val) => val && val.toMillis ? val.toMillis() : Number(val || 0);
-    const lastSeen = Number(sessionStartTimeForArchive || 0);
-    const postCreated = getMs(post.createdAt);
-    const postUpdated = getMs(post.updatedAt);
-    const myUid = auth.currentUser.uid;
-    
-    // 2. Lógica de Notificação (Bolinhas)
-    let statusDotHTML = "";
-    
-    // CASO A: Post NOVO (Bolinha Vermelha)
-    // - Criado depois da minha última visita
-    // - E NÃO fui eu que criei
-    if (postCreated > lastSeen && post.userId !== myUid) {
-        statusDotHTML = `<div class="post-status-dot dot-new" title="Novo Post de ${post.createdBy}"></div>`;
-    } 
-    // CASO B: Post EDITADO (Bolinha Laranja)
-    // - Atualizado depois da minha última visita
-    // - Atualizado significativamente depois de criado (margem de 2s)
-    // - E o último editor NÃO fui eu
-    else if (postUpdated > lastSeen && postUpdated > (postCreated + 2000)) { 
-        const lastEditor = post.lastEditorId || "unknown";
-        if (lastEditor !== myUid) {
-            statusDotHTML = `<div class="post-status-dot dot-edited" title="Editado recentemente"></div>`;
+    try {
+        // --- 1. PREPARAÇÃO DE DADOS SEGURA ---
+        const getMs = (val) => val && val.toMillis ? val.toMillis() : Number(val || 0);
+        
+        // Dados do Autor e Datas
+        const createdBy = post.createdBy || 'Anónimo';
+        const postCreated = getMs(post.createdAt);
+        const createdDate = postCreated ? new Date(postCreated).toLocaleString() : '---';
+        const postUpdated = getMs(post.updatedAt);
+        
+        // Dados do Utilizador Atual (Segurança se não houver login)
+        const myUid = auth.currentUser ? auth.currentUser.uid : "visitor";
+        const lastSeen = Number(sessionStartTimeForArchive || 0);
+        
+        // Dados do Conteúdo
+        const titleSafe = post.title || 'Sem Título';
+        const contentSafe = post.content || '<p style="color:red;">[Conteúdo Vazio]</p>';
+
+        // --- 2. LÓGICA DE NOTIFICAÇÃO (BOLINHAS) ---
+        let statusDotHTML = "";
+        
+        if (postCreated > lastSeen && post.userId !== myUid) {
+            statusDotHTML = `<div class="post-status-dot dot-new" title="Novo Post"></div>`;
+        } 
+        else if (postUpdated > lastSeen && postUpdated > (postCreated + 2000)) { 
+            const lastEditor = post.lastEditorId || "unknown";
+            if (lastEditor !== myUid) {
+                statusDotHTML = `<div class="post-status-dot dot-edited" title="Editado recentemente"></div>`;
+            }
         }
-    }
 
-    const createdDate = postCreated ? new Date(postCreated).toLocaleString() : '---';
-    
-    // Estilos inline para os botões de controlo
-    const btnStyle = "position: static !important; background:var(--bg-color); border:1px solid var(--border-color); color:var(--text-muted-color); border-radius:4px; padding:0 10px; cursor:pointer; height: 28px; display: flex; align-items: center; justify-content: center; font-size: 14px;";
+        // --- 3. PREPARAÇÃO DOS LIKES ---
+        // Garante que é sempre um array, mesmo que venha null da BD
+        const likes = Array.isArray(post.likes) ? post.likes : [];
+        const likeCount = likes.length;
+        const iLiked = likes.includes(myUid);
+        const heartIcon = iLiked ? '❤️' : '🤍';
+        const activeClass = iLiked ? 'active-like' : '';
 
-    container.style.position = "relative";
-    
-    // 3. Rodapé (Info vs Metadados)
-    let footerHTML = '';
-    if (currentArchiveData && currentArchiveData.tipo === 'partilhado') {
-        // Se for partilhado, mostra apenas o botão "i" para poupar espaço e manter limpo
-        footerHTML = `
-            <div style="width: 100%; display: flex; justify-content: flex-end;">
-                <button class="post-info-btn" onclick="event.stopPropagation(); window.showPostDetails('${post.id}')" title="Ver Detalhes">
-                    ℹ️
-                </button>
-            </div>`;
-    } else {
-        // Se for arquivo pessoal, mostra os dados diretos
-        footerHTML = `<span>Criado por: ${post.createdBy}</span><span>${createdDate}</span>`;
-    }
+        // Estilos Inline
+        const btnStyle = "position: static !important; background:var(--bg-color); border:1px solid var(--border-color); color:var(--text-muted-color); border-radius:4px; padding:0 10px; cursor:pointer; height: 28px; display: flex; align-items: center; justify-content: center; font-size: 14px;";
 
-    // 4. Montagem do HTML Final
-    container.innerHTML = `
-        ${statusDotHTML} <!-- A bolinha aparece aqui (position absolute top-left) -->
-        
-        <div class="post-controls" style="position: absolute; top: 10px; right: 10px; display: flex; align-items: center; gap: 5px; opacity: 0.6; z-index:10;">
-            <button onclick="moveArchivePost('${post.id}', -1)" title="Subir" style="${btnStyle}">↑</button>
-            <button onclick="moveArchivePost('${post.id}', 1)" title="Descer" style="${btnStyle}">↓</button>
-            <button class="post-edit-btn" onclick="editArchivePost('${post.id}')" style="${btnStyle}">Editar</button>
-        </div>
-        
-        <div class="post-view-title" style="padding-left: 25px; font-weight:bold; color:var(--accent-color); font-size:1.2em; margin-bottom:10px;">
-            ${post.title || 'Sem Título'}
-        </div>
-        
-        <div class="post-view-content" style="padding-left: 5px;">${post.content}</div>
-        
-        <div class="post-footer">${footerHTML}</div>
-    `;
+        container.style.position = "relative";
 
-    // 5. Ativar Observador (Para a bolinha desaparecer ao ler)
-    if (statusDotHTML !== "") {
-        postObserver.observe(container);
+        // HTML do Botão de Like
+        const likeBtnHTML = `
+            <button class="post-like-btn ${activeClass}" onclick="event.stopPropagation(); window.togglePostLike('${post.id}')" 
+                    title="${iLiked ? 'Remover Like' : 'Gostar'}"
+                    style="background:none; border:1px solid var(--border-color); border-radius:15px; padding:2px 10px; cursor:pointer; display:flex; align-items:center; gap:5px; transition:all 0.2s; color:var(--text-muted-color);">
+                <span style="font-size:1.1em;">${heartIcon}</span>
+                <span style="font-size:0.85em; font-weight:bold;">${likeCount > 0 ? likeCount : ''}</span>
+            </button>
+        `;
+
+        // Agrupamento dos botões da direita (Like + Info)
+        const rightActions = `
+            <div style="display:flex; align-items:center; gap:8px;">
+                ${likeBtnHTML}
+                <button class="post-info-btn" onclick="event.stopPropagation(); window.showPostDetails('${post.id}')" title="Ver Detalhes">ℹ️</button>
+            </div>
+        `;
+
+        // --- 4. RODAPÉ (Condicional) ---
+        let footerHTML = '';
+        // Verifica se currentArchiveData existe para não dar erro
+        const isSharedArchive = currentArchiveData && (currentArchiveData.tipo === 'partilhado' || currentArchiveData.tipo === 'arquivo');
+
+        if (isSharedArchive) {
+            // Modo Partilhado: Alinha tudo à direita
+            footerHTML = `<div style="width: 100%; display: flex; justify-content: flex-end;">${rightActions}</div>`;
+        } else {
+            // Modo Pessoal: Metadados à esquerda, Botões à direita
+            footerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+                    <div style="display:flex; gap:10px;">
+                        <span>Criado por: ${createdBy}</span>
+                        <span>${createdDate}</span>
+                    </div>
+                    ${rightActions}
+                </div>`;
+        }
+
+        // --- 5. MONTAGEM DO HTML FINAL ---
+        container.innerHTML = `
+            ${statusDotHTML}
+            
+            <div class="post-controls" style="position: absolute; top: 10px; right: 10px; display: flex; align-items: center; gap: 5px; opacity: 0.6; z-index:10;">
+                <button onclick="moveArchivePost('${post.id}', -1)" title="Subir" style="${btnStyle}">↑</button>
+                <button onclick="moveArchivePost('${post.id}', 1)" title="Descer" style="${btnStyle}">↓</button>
+                <button class="post-edit-btn" onclick="editArchivePost('${post.id}')" style="${btnStyle}">Editar</button>
+            </div>
+            
+            <div class="post-view-title" style="padding-left: 25px; font-weight:bold; color:var(--accent-color); font-size:1.2em; margin-bottom:10px;">
+                ${titleSafe}
+            </div>
+            
+            <div class="post-view-content" style="padding-left: 5px;">${contentSafe}</div>
+            
+            <div class="post-footer">${footerHTML}</div>
+        `;
+
+        // 6. Ativar Observador (Para a bolinha desaparecer ao ler)
+        if (statusDotHTML !== "") {
+            postObserver.observe(container);
+        }
+
+    } catch (err) {
+        console.error("Erro ao renderizar post:", post.id, err);
+        // Fallback para o post não desaparecer totalmente
+        container.innerHTML = `<div style="padding:10px; border:1px solid red; color:red;">Erro ao mostrar post. (Dados corrompidos)</div>`;
     }
 }
 
@@ -35055,9 +35214,16 @@ async function updateSharedListWithNotifs(resultsMap) {
     resultsMap.forEach(item => {
         const li = document.createElement('li');
         li.className = 'list-item';
+        
+        // --- ATRIBUTOS ESSENCIAIS PARA O OUVINTE GLOBAL FUNCIONAR ---
         li.setAttribute('data-id', item.id);
+        li.setAttribute('data-userid', item.userId); // Importante para saber quem é o dono
+        li.setAttribute('data-type', item.tipo || 'partilhado'); // Garante que o tipo existe
+        li.setAttribute('data-name', item.nome);
+        
         li.style.position = "relative"; 
 
+        // Estilo de seleção
         if (item.id === selectedNoteId) li.classList.add('selected-red');
         else li.style.borderLeft = "4px solid #e74c3c";
 
@@ -35066,12 +35232,9 @@ async function updateSharedListWithNotifs(resultsMap) {
         const unreadCount = window.folderUnreadCounts[item.id] || 0;
 
         if (unreadCount > 0) {
-            // Se tivermos a certeza do número (porque abrimos a pasta), mostra número
-            // Se for apenas uma notificação de timestamp global, mostra "!" ou "1"
             const displayNum = unreadCount > 9 ? "9+" : unreadCount;
             notifHTML = `<span class="unread-count-badge">${displayNum}</span>`;
         }
-        // ---------------------------------
 
         const isOwner = item.userId === myUid;
         
@@ -35085,14 +35248,9 @@ async function updateSharedListWithNotifs(resultsMap) {
         
         if (isOwner && item.partilhado !== "ativo") li.style.opacity = "0.7";
 
-        li.onclick = (e) => {
-            if (e.target.closest('.item-menu-btn')) return;
-            // Ao clicar, assume-se que vai ler, então removemos visualmente o badge logo
-            const badge = li.querySelector('.unread-count-badge');
-            if(badge) badge.style.display = 'none';
-            
-            window.displayArchive(item.id, item, li);
-        };
+        // REMOVEMOS O ONCLICK MANUAL DAQUI!
+        // O listener global 'middlePanelList.addEventListener' vai apanhar 
+        // o clique baseando-se nos atributos data-type e data-id que pusemos acima.
         
         fragment.appendChild(li);
     });
@@ -43431,10 +43589,9 @@ function loadFlashListLeftPanel() {
             li.setAttribute('data-type', item.tipo); 
             li.setAttribute('data-name', item.nome);
 
-            let icon = '📄';
-            if (item.tipo === 'jornal') icon = '📰';
-
-            li.innerHTML = `<span>${icon} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+            // CORREÇÃO AQUI: Removemos a variável 'icon' do HTML
+            // O CSS encarrega-se de mostrar o ícone via 'data-type'
+            li.innerHTML = `<span>${item.nome}</span><button class="item-menu-btn">…</button>`;
 
             li.onclick = (e) => {
                 if (e.target.closest('.item-menu-btn')) return;
@@ -45500,6 +45657,105 @@ window.renameMica = async function(id, currentName) {
         }
     }
 };
+
+// --- FUNÇÃO DE LIKE ---
+window.togglePostLike = async function(postId) {
+    if (!auth.currentUser || !currentArchiveId) return;
+    const myUid = auth.currentUser.uid;
+
+    const post = currentArchiveData.posts.find(p => p.id === postId);
+    if (!post) return;
+
+    if (!post.likes) post.likes = [];
+    const wasLiked = post.likes.includes(myUid);
+
+    // 1. ANIMAÇÃO VISUAL (Antes de atualizar dados)
+    const btn = document.querySelector(`#post-${postId} .post-like-btn`);
+    
+    if (btn) {
+        // A. Efeito de Escala (Bounce)
+        btn.style.transition = "transform 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275)";
+        btn.style.transform = "scale(1.4)";
+        setTimeout(() => btn.style.transform = "scale(1)", 150);
+
+        // B. Efeito de Partículas (Só se for dar Like)
+        if (!wasLiked) {
+            createLikeExplosion(btn);
+        }
+    }
+
+    // 2. ATUALIZAÇÃO LÓGICA (Optimistic UI)
+    if (wasLiked) {
+        post.likes = post.likes.filter(id => id !== myUid);
+    } else {
+        post.likes.push(myUid);
+    }
+
+    // 3. Atualizar o DOM sem destruir o botão (para não cortar a animação)
+    if (btn) {
+        const countSpan = btn.querySelectorAll('span')[1];
+        const iconSpan = btn.querySelectorAll('span')[0];
+        
+        // Atualiza contador
+        countSpan.textContent = post.likes.length > 0 ? post.likes.length : '';
+        
+        // Atualiza ícone e classe
+        if (!wasLiked) { // Agora tem like
+            iconSpan.textContent = '❤️';
+            btn.classList.add('active-like');
+        } else { // Removeu like
+            iconSpan.textContent = '🤍';
+            btn.classList.remove('active-like');
+        }
+    }
+
+    // 4. ATUALIZAÇÃO NO FIREBASE
+    try {
+        const { doc, updateDoc, arrayUnion, arrayRemove } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const postRef = doc(db, 'pastas', currentArchiveId, 'posts', postId);
+
+        if (wasLiked) {
+            await updateDoc(postRef, { likes: arrayRemove(myUid) });
+        } else {
+            await updateDoc(postRef, { likes: arrayUnion(myUid) });
+        }
+    } catch (e) {
+        console.error("Erro ao dar like:", e);
+        // Reverte se falhar
+    }
+};
+
+// --- FUNÇÃO DE PARTÍCULAS (EXPLOSÃO) ---
+function createLikeExplosion(btnElement) {
+    const rect = btnElement.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    for (let i = 0; i < 8; i++) {
+        const particle = document.createElement('div');
+        particle.classList.add('like-particle');
+        document.body.appendChild(particle);
+
+        // Posição inicial (centro do botão)
+        particle.style.left = `${centerX}px`;
+        particle.style.top = `${centerY}px`;
+
+        // Direção aleatória
+        const angle = Math.random() * Math.PI * 2;
+        const velocity = 30 + Math.random() * 30; // Distância
+        const tx = Math.cos(angle) * velocity;
+        const ty = Math.sin(angle) * velocity;
+
+        // Animação
+        particle.animate([
+            { transform: 'translate(0, 0) scale(1)', opacity: 1 },
+            { transform: `translate(${tx}px, ${ty}px) scale(0)`, opacity: 0 }
+        ], {
+            duration: 600,
+            easing: 'cubic-bezier(0, .9, .57, 1)',
+        }).onfinish = () => particle.remove();
+    }
+}
 
     </script>
 </body>
