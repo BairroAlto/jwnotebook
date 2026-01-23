@@ -24832,42 +24832,83 @@ document.getElementById('hidden-items-list').addEventListener('click', async (e)
 
     // --- RESTAURAR ---
     if (action === 'restore-universal') {
-        if (!confirm("Restaurar este item?")) return;
+        if (!confirm("Restaurar este item e ir para lá?")) return;
+
+        // Feedback visual
+        btn.textContent = "A restaurar...";
+        btn.disabled = true;
 
         try {
-            // Remove o estado 'desativa' (apaga o campo ou muda para ativa)
-            // Para entidades usamos deleteField() para limpar o campo estado, 
-            // para pastas mudamos para 'ativa'
+            // 1. Atualizar no Firebase (Tirar do estado 'desativa')
+            // Se for da blackbox, teríamos de mover de volta, mas assumindo 'Ocultos' (estado=desativa):
             const updatePayload = collectionName === 'pastas' 
                 ? { estado: 'ativa', ultimaedicao: serverTimestamp() } 
-                : { estado: deleteField() }; // Remove o campo 'estado' para voltar ao normal
+                : { estado: deleteField() }; 
 
             await updateDoc(doc(db, collectionName, id), updatePayload);
             
-            // Remove da lista visual
-            listItem.remove();
-            if (document.getElementById('hidden-items-list').children.length === 0) {
-                document.getElementById('hidden-items-list').innerHTML = '<li style="padding:15px; color:#888;">Reciclagem vazia.</li>';
-            }
+            // 2. FECHAR MODAIS
+            document.getElementById('hidden-items-modal').style.display = 'none';
+            document.getElementById('settings-modal').style.display = 'none';
 
-            // Atualiza caches globais se for entidade
-            if (collectionName !== 'pastas') {
-                if (typeof fetchAllEntities === 'function') fetchAllEntities();
-                // Se estivermos a ver a lista dessa categoria, atualiza
-                if (currentTab === 'lists') {
-                    // Tenta adivinhar a categoria pelo nome da coleção (ex: personagens -> personagem)
-                    // Mas o ideal é recarregar a navegação atual
-                    const currentNavId = navigationStack.length > 0 ? navigationStack[0].id : null;
-                    if (currentNavId) renderListCategoryItems(currentNavId);
+            // 3. NAVEGAR PARA O CONTEÚDO
+            console.log(`🚀 Restaurado! A navegar para: ${id} (${collectionName})`);
+
+            if (collectionName === 'pastas') {
+                // Precisamos saber se é Nota ou Pasta para decidir como abrir
+                const docSnap = await getDoc(doc(db, 'pastas', id));
+                const data = docSnap.data();
+
+                if (data.tipo === 'nota' || data.tipo === 'jornal' || data.tipo === 'aquario' || data.tipo === 'arquivo' || data.tipo === 'partilhado') {
+                    
+                    // Se for NOTA/ARQUIVO/AQUÁRIO: Abre diretamente
+                    // Se tiver a função de navegação inteligente, usa-a para reconstruir o caminho das pastas
+                    if (typeof navigateToNoteSmart === 'function') {
+                        await navigateToNoteSmart(id);
+                    } else {
+                        // Fallback
+                        displayNote(id, null);
+                    }
+
+                } else if (data.tipo === 'pasta' || data.tipo === 'agregacao') {
+                    
+                    // Se for PASTA: Entra nela
+                    // Usa a função de reconstruir navegação para o breadcrumbs ficar correto
+                    if (typeof reconstructFolderNavigation === 'function') {
+                        await reconstructFolderNavigation(id);
+                    } else {
+                        // Fallback simples
+                        navigationStack.push({ id: id, name: data.nome });
+                        updateNavigationView(true);
+                    }
                 }
-            } else {
-                // Se for nota, tenta abrir
-                if (typeof navigateToNoteSmart === 'function') navigateToNoteSmart(id);
+            } 
+            else {
+                // Se for ENTIDADE (Personagem, Local, etc): Abre a 4ª Coluna
+                // Precisamos do nome para o título do painel. O listItem tem o nome visualmente.
+                // Mas vamos buscar o documento atualizado para garantir.
+                const docSnap = await getDoc(doc(db, collectionName, id));
+                const data = docSnap.data();
+                
+                // Determina o tipo singular para a função (ex: 'personagens' -> 'personagem')
+                // Uma forma simples é usar o 'tipo' que gravámos no botão ou inferir
+                let singularType = 'topico'; // Default
+                // Procura na config global qual a chave que tem esta coleção
+                for (const [key, val] of Object.entries(ENTITY_CONFIG)) {
+                    if (val.collection === collectionName) {
+                        singularType = key;
+                        break;
+                    }
+                }
+                
+                showReferencesPanel(id, data.nome, singularType);
             }
 
         } catch (err) {
             console.error(err);
             alert("Erro ao restaurar.");
+            btn.textContent = "Restaurar";
+            btn.disabled = false;
         }
     }
 
