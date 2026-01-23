@@ -11772,6 +11772,7 @@ button[data-command="boldBlue"].active-tool {
 
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+   <script src="https://cdn.jsdelivr.net/npm/algoliasearch@4/dist/algoliasearch-lite.umd.js"></script>
    <script type="module">
     
   // 1. Importações de Configuração
@@ -12129,7 +12130,8 @@ let presenceRef = null;
 let presenceHeartbeat = null;
 let lockHeartbeatInterval = null;
 let lastRenderedLeftParentId = 'INIT';
-
+let globalSearchResults = []; // Variável crítica para a pesquisa
+let currentSearchPage = 0;    // Variável para a paginação da pesquisa
 
 
 window.currentNoteHybridMode = false;
@@ -18264,133 +18266,117 @@ function createFilterToggle(id, label, property) {
 }
 
 // --- FUNÇÃO DE PESQUISA REAL ---
-async function executeGlobalSearch(queryText, container) {
-    container.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A procurar...</span></div>';
-    
-    const terms = parseSearchQuery(queryText);
-    if (terms.length === 0) return;
+// --- CONFIGURAÇÃO ALGOLIA (ADICIONE ISTO NO INÍCIO DO SCRIPT, APÓS OS IMPORTS) ---
+// Estas chaves são públicas e seguras
+const algoliaClient = algoliasearch('3YJNDB26WJ', '3f5dbb5aac3026a94525c61092ddff90');
+const algoliaIndex = algoliaClient.initIndex('notas');
 
-    const isMultiMode = terms.length >= 2;
-    const f = window.searchFilters;
-    const myUid = auth.currentUser.uid;
-    const foundResults = [];
+// --- NOVA FUNÇÃO DE PESQUISA RÁPIDA ---
+async function executeGlobalSearch(queryText, container) {
+    container.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A procurar (Algolia)...</span></div>';
+    
+    // Se o texto for muito curto, não pesquisa
+    if (!queryText || queryText.trim().length < 2) {
+        container.innerHTML = '';
+        return;
+    }
 
     try {
-        const qPastas = query(collection(db, 'pastas'), where('estado', '==', 'ativa'), where('userId', '==', myUid));
-        const snapPastas = await getDocs(qPastas);
-
-        snapPastas.forEach(docSnap => {
-            const data = docSnap.data();
-            const content = data.conteudo || "";
-            const noteName = data.nome || "";
-            
-            const isArchive = (data.tipo === 'arquivo' || data.tipo === 'partilhado');
-            if (isArchive && !f.archives) return;
-            if (data.superpasta && !f.superfolders) return;
-
-            let matched = false;
-            let context = "";
-
-            // --- LÓGICA DE VERIFICAÇÃO ---
-            const checkAgainstText = (text) => {
-                // Retorna true se TODOS os termos da pesquisa passarem no teste
-                return terms.every(termObj => {
-                    const regex = getAccentInsensitiveRegex(termObj.text, termObj.exact);
-                    return regex.test(text);
-                });
-            };
-
-            if (isMultiMode && globalSearchScope === 'paragraph') {
-                const parser = new DOMParser();
-                const docHTML = parser.parseFromString(content, 'text/html');
-                // Procura em parágrafos, caixas de texto e títulos de entidades
-                const blocks = docHTML.querySelectorAll('p, div, li, h1, h2, h3, .mini-note-content, .mini-note-title-input');
-
-                for (const block of blocks) {
-                    const blockText = block.tagName === 'INPUT' || block.tagName === 'TEXTAREA' ? block.value : block.innerText;
-                    if (checkAgainstText(blockText)) {
-                        matched = true;
-                        context = generateSearchContext(blockText, terms[0].text, terms[0].exact);
-                        break;
-                    }
-                }
-            } else {
-                // Pesquisa na página toda (Título + Conteúdo limpo de HTML)
-                const fullText = noteName + " " + content.replace(/<[^>]*>/g, ' ');
-                if (checkAgainstText(fullText)) {
-                    matched = true;
-                    context = generateSearchContext(fullText, terms[0].text, terms[0].exact);
-                }
-            }
-
-            if (matched) {
-                foundResults.push({
-                    id: docSnap.id, name: noteName, badge: isArchive ? "Arquivo" : "Nota",
-                    context: context, updatedAt: data.ultimaedicao?.toMillis() || 0,
-                    rawSearchTerm: terms[0].text, clickAction: 'note'
-                });
-            }
+        // 1. Pedir ao Algolia
+        const result = await algoliaIndex.search(queryText, {
+            filters: `userId:${auth.currentUser.uid} AND estado:ativa`, 
+            hitsPerPage: 20,
+            attributesToSnippet: ["conteudo:80", "nome"] 
         });
 
-        // 4ª COLUNA (PUZZLE)
-        if (f.fourthColumn) {
-            const entityCollections = ['personagens', 'locais', 'topicos', 'textosbiblicos', 'marcadores', 'cosmos', 'subcosmos'];
-            for (const colName of entityCollections) {
-                const qEntity = query(collection(db, colName), where('userId', '==', myUid));
-                const snapEntity = await getDocs(qEntity);
+        // 2. Limpar contentor
+        container.innerHTML = '';
+        
+        // >>> AQUI ESTÁ A CORREÇÃO: Usar a variável global agora declarada <<<
+        globalSearchResults = []; 
 
-                snapEntity.forEach(docSnap => {
-                    const data = docSnap.data();
-                    if (!data.puzzleBoard) return;
-
-                    let matched = false;
-                    let context = "";
-
-                    const checkAgainstText = (text) => {
-                        return terms.every(termObj => {
-                            const regex = getAccentInsensitiveRegex(termObj.text, termObj.exact);
-                            return regex.test(text);
-                        });
-                    };
-
-                    if (isMultiMode && globalSearchScope === 'paragraph') {
-                        for (const item of data.puzzleBoard) {
-                            const cardText = item.content || "";
-                            if (checkAgainstText(cardText)) {
-                                matched = true;
-                                context = generateSearchContext(cardText, terms[0].text, terms[0].exact);
-                                break;
-                            }
-                        }
-                    } else {
-                        const allPuzzleText = data.puzzleBoard.map(i => i.content).join(" ");
-                        if (checkAgainstText(allPuzzleText)) {
-                            matched = true;
-                            context = generateSearchContext(allPuzzleText, terms[0].text, terms[0].exact);
-                        }
-                    }
-
-                    if (matched) {
-                        foundResults.push({
-                            id: docSnap.id, name: data.nome, badge: "Puzzle",
-                            context: context, updatedAt: data.updatedAt?.toMillis() || 0,
-                            clickAction: 'entity', entityType: colName
-                        });
-                    }
-                });
-            }
+        if (result.hits.length === 0) {
+            container.innerHTML = '<p style="text-align: center; color: var(--text-muted-color); margin-top: 20px;">Nenhum resultado encontrado.</p>';
+            return;
         }
 
-        foundResults.sort((a, b) => b.updatedAt - a.updatedAt);
-        globalExplorerResults = foundResults;
-        currentExplorerPage = 0;
-        renderExplorerResultsPage(container, terms[0].text, {}, true);
+        // 3. Renderizar Resultados
+        result.hits.forEach(hit => {
+            if (hit.tipo !== 'nota' && hit.tipo !== 'jornal' && hit.tipo !== 'aquario' && hit.tipo !== 'arquivo' && hit.tipo !== 'partilhado') return;
+
+            const divItem = document.createElement('div');
+            divItem.className = 'search-result-item';
+            
+            let borderColor = "var(--accent-color)";
+            if (hit.tipo === 'arquivo' || hit.tipo === 'partilhado') borderColor = "#e74c3c";
+            if (hit.tipo === 'aquario') borderColor = "#2ecc71";
+            
+            divItem.style.borderLeft = `4px solid ${borderColor}`;
+
+            let snippet = hit._snippetResult && hit._snippetResult.conteudo ? hit._snippetResult.conteudo.value : "";
+            snippet = snippet.replace(/<em>/g, "<mark>").replace(/<\/em>/g, "</mark>");
+            
+            let titleHtml = hit._highlightResult && hit._highlightResult.nome ? hit._highlightResult.nome.value : hit.nome;
+            titleHtml = titleHtml.replace(/<em>/g, "<mark>").replace(/<\/em>/g, "</mark>");
+
+            let icon = "📄";
+            if (hit.tipo === 'arquivo' || hit.tipo === 'partilhado') icon = "🗄️";
+            if (hit.tipo === 'aquario') icon = "🪸";
+
+            divItem.innerHTML = `
+                <div class="search-result-title">
+                    ${icon} ${titleHtml}
+                </div>
+                <div class="search-match-context" style="margin-top: 5px; font-size: 0.85em; opacity: 0.8;">
+                    ${snippet}
+                </div>
+            `;
+
+            divItem.onclick = () => {
+                document.getElementById('anchors-modal').style.display = 'none';
+                if (typeof navigateToNoteSmart === 'function') {
+                    navigateToNoteSmart(hit.objectID, queryText);
+                } else {
+                    displayNote(hit.objectID, null, queryText);
+                }
+            };
+
+            container.appendChild(divItem);
+        });
 
     } catch (error) {
-        console.error(error);
-        container.innerHTML = '<p>Erro na pesquisa.</p>';
+        console.error("Erro Algolia:", error);
+        container.innerHTML = '<p style="color:red; text-align:center;">Erro na pesquisa. Verifique a consola.</p>';
     }
 }
+
+
+(async () => {
+    console.log("🚀 A iniciar re-indexação total para o Algolia...");
+    const { collection, getDocs, updateDoc, doc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+    
+    // Usa as variáveis globais 'db' e 'auth' do seu código
+    // Se der erro, certifique-se que o site carregou completamente
+
+    if (!auth.currentUser) return console.error("❌ ERRO: Aguarde o login terminar!");
+
+    const notesRef = collection(db, 'pastas');
+    const snapshot = await getDocs(notesRef);
+    
+    console.log(`📂 A processar ${snapshot.size} documentos...`);
+
+    let count = 0;
+    for (const docSnap of snapshot.docs) {
+        const data = docSnap.data();
+        if (['nota', 'jornal', 'arquivo', 'aquario'].includes(data.tipo)) {
+            await updateDoc(doc(db, 'pastas', docSnap.id), { algoliaSync: serverTimestamp() });
+            count++;
+            if (count % 10 === 0) console.log(`✅ Processados: ${count}`);
+        }
+    }
+    console.log("🏁 PROCESSO CONCLUÍDO! O Algolia vai indexar em breve.");
+})();
+
 
 
 // --- GERAR CONTEXTO (TEXTO AO REDOR) ---
