@@ -22542,79 +22542,120 @@ document.getElementById('generic-list-modal').addEventListener('click', (e) => {
 // ====================================================================
 // 2. DETETAR CLIQUE NA IDEIA (Abrir Menu ✂️ 🧲)
 // ====================================================================
- let activeIdeaElement = null; 
+ window.activeIdeaElement = null; 
 
-noteContentEditor.addEventListener('click', (e) => {
+noteContentEditor.addEventListener('mousedown', (e) => {
     // Tenta encontrar o span da ideia onde clicámos
     const ideaSpan = e.target.closest('.idea-span');
     const ideaPopup = document.getElementById('idea-actions-popup');
 
     // Se clicou numa ideia
     if (ideaSpan) {
+        console.log("💡 [IDEIA] Clique detetado. Guardando referência...");
+        
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
         // --- CORREÇÃO DO ERRO ORTOGRÁFICO ---
-        // Força o navegador a ignorar erros ortográficos NESTE elemento específico.
-        // Isto remove o sublinhado vermelho e impede o menu nativo do browser de aparecer.
         if (ideaSpan.spellcheck !== false) {
             ideaSpan.spellcheck = false;
-            // Opcional: força um "repaint" leve se o browser não atualizar logo
             ideaSpan.setAttribute('spellcheck', 'false'); 
         }
-        // -------------------------------------
 
-        // Guardamos a referência globalmente
-        activeIdeaElement = ideaSpan;
+        // >>> A CORREÇÃO ESTÁ AQUI: USAR window. <<<
+        window.activeIdeaElement = ideaSpan;
+        console.log("✅ Referência guardada em window.activeIdeaElement:", window.activeIdeaElement);
 
-        // Calcula a posição para o menu aparecer logo abaixo do texto
+        // Movemos o popup para o body
+        document.body.appendChild(ideaPopup);
+
         const rect = ideaSpan.getBoundingClientRect();
         
-        ideaPopup.style.display = 'flex';
-        ideaPopup.style.top = `${rect.bottom + window.scrollY + 5}px`;
-        ideaPopup.style.left = `${rect.left + window.scrollX}px`;
+        ideaPopup.style.cssText = `
+            display: flex !important;
+            position: fixed !important;
+            z-index: 2147483647 !important;
+            top: ${rect.bottom + 5}px;
+            left: ${rect.left}px;
+            background: var(--sidebar-color);
+            border: 1px solid var(--border-color);
+            padding: 5px;
+            border-radius: 5px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            gap: 5px;
+        `;
         
-        // Impede que o clique se propague e ative outros listeners
-        e.stopPropagation(); 
-        e.preventDefault();
-        return;
+        return false;
     } 
     
-    // Se clicou fora, fecha o popup
-    if (ideaPopup && ideaPopup.style.display === 'flex' && !e.target.closest('#idea-actions-popup')) {
-        ideaPopup.style.display = 'none';
-        activeIdeaElement = null;
+    // Se clicou fora (em qualquer outro lugar do editor), fecha o menu
+    if (ideaPopup && ideaPopup.style.display !== 'none') {
+        if (!e.target.closest('#idea-actions-popup')) {
+            ideaPopup.style.display = 'none';
+            window.activeIdeaElement = null; // Limpa a referência
+        }
     }
 });
+
+// Listener extra global para fechar ao clicar fora do editor
+document.addEventListener('mousedown', (e) => {
+    const ideaPopup = document.getElementById('idea-actions-popup');
+    if (ideaPopup && ideaPopup.style.display !== 'none') {
+        // Se NÃO clicou na ideia E NÃO clicou no menu
+        if (!e.target.closest('.idea-span') && !e.target.closest('#idea-actions-popup')) {
+            ideaPopup.style.display = 'none';
+            window.activeIdeaElement = null; // Limpa a referência
+        }
+    }
+});
+
 
 // ====================================================================
 // 3. AÇÕES DO MENU DA IDEIA (✂️ e 🧲)
 // ====================================================================
 const ideaPopupElement = document.getElementById('idea-actions-popup');
-if (ideaPopupElement) {
-    ideaPopupElement.addEventListener('click', async (e) => {
-        const btn = e.target.closest('button');
-        if (!btn || !activeIdeaElement) return;
 
-        e.stopPropagation(); // Impede fechar o menu ao clicar no botão
+if (ideaPopupElement) {
+    // Removemos ouvintes antigos clonando o elemento
+    const newPopup = ideaPopupElement.cloneNode(true);
+    ideaPopupElement.parentNode.replaceChild(newPopup, ideaPopupElement);
+
+    newPopup.addEventListener('click', async (e) => {
+        // 1. Identificar o botão
+        const btn = e.target.closest('button');
+        if (!btn || !window.activeIdeaElement) return;
+
+        // 2. Parar propagação
+        e.preventDefault();
+        e.stopPropagation(); 
 
         const action = btn.dataset.action;
 
         // --- AÇÃO ✂️: REMOVER IDEIA ---
         if (action === 'remove-idea') {
-            const text = activeIdeaElement.textContent;
-            const parent = activeIdeaElement.parentNode;
+            const text = window.activeIdeaElement.textContent;
+            const parent = window.activeIdeaElement.parentNode;
             
-            // Substitui o span pelo texto simples
             const textNode = document.createTextNode(text);
-            parent.replaceChild(textNode, activeIdeaElement);
-            parent.normalize(); // Junta nós de texto adjacentes
+            parent.replaceChild(textNode, window.activeIdeaElement);
+            parent.normalize(); 
 
-            saveNote();
-            ideaPopupElement.style.display = 'none';
+            if (typeof saveNote === 'function') saveNote();
+            newPopup.style.display = 'none';
         }
 
         // --- AÇÃO 🧲: ADICIONAR A OUTRA NOTA ---
         else if (action === 'append-idea') {
-            ideaPopupElement.style.display = 'none'; // Fecha o menu pequeno
-            await openNoteSelectorForIdea();  // Abre o seletor de notas
+            console.log("🧲 [ÍMAN] Iniciando transferência...");
+            newPopup.style.display = 'none'; // Fecha o menu pequeno
+            
+            // Chama a função corrigida abaixo
+            if (typeof window.openNoteSelectorForIdea === 'function') {
+                await window.openNoteSelectorForIdea();  
+            } else {
+                alert("Erro: Função de transferência não encontrada.");
+            }
         }
     });
 }
@@ -22623,26 +22664,45 @@ if (ideaPopupElement) {
 // 4. FUNÇÕES AUXILIARES PARA IDEIAS (Seletor e Transferência)
 // ====================================================================
 
-// A. SELETOR DE NOTAS
-async function openNoteSelectorForIdea() {
-    if (!selectedNoteId) return;
+window.openNoteSelectorForIdea = async function() {
+    if (!selectedNoteId) return console.warn("Sem ID de nota selecionado.");
 
     const modal = document.getElementById('select-note-modal');
     const list = document.getElementById('select-note-list');
     
-    modal.style.display = 'flex';
-    list.innerHTML = '<li>A carregar notas...</li>';
+    if (!modal) return;
+
+    // 1. BLINDAGEM VISUAL (Z-INDEX MÁXIMO)
+    document.body.appendChild(modal); // Move para o topo do HTML
+    modal.style.cssText = `
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        position: fixed !important;
+        top: 0; left: 0; width: 100vw; height: 100vh;
+        background-color: rgba(0, 0, 0, 0.85) !important;
+        z-index: 2147483647 !important; /* Fica acima de tudo */
+        justify-content: center !important;
+        align-items: center !important;
+    `;
+
+    list.innerHTML = '<li style="padding:15px; text-align:center;">A carregar notas...</li>';
 
     try {
-        // 1. Descobrir o parentId da nota atual
-        const currentNoteSnap = await getDoc(doc(db, 'pastas', selectedNoteId));
-        const currentParentId = currentNoteSnap.exists() ? currentNoteSnap.data().parentId : null;
+        // Importação dinâmica para garantir acesso ao DB
+        const { collection, query, where, getDocs, doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
-        // 2. Buscar todas as NOTAS (não pastas) que estão na MESMA pasta
+        // 2. Descobrir a pasta onde estamos
+        const currentNoteSnap = await getDoc(doc(db, 'pastas', selectedNoteId));
+        if (!currentNoteSnap.exists()) return;
+        
+        const currentParentId = currentNoteSnap.data().parentId;
+
+        // 3. Buscar vizinhos
         const q = query(
             collection(db, 'pastas'),
             where('parentId', '==', currentParentId),
-            where('tipo', '==', 'nota'), // Só queremos notas
+            where('tipo', '==', 'nota'),
             where('estado', '==', 'ativa'),
             where('userId', '==', auth.currentUser.uid)
         );
@@ -22651,42 +22711,42 @@ async function openNoteSelectorForIdea() {
         list.innerHTML = '';
 
         if (snapshot.empty || (snapshot.size === 1 && snapshot.docs[0].id === selectedNoteId)) {
-            list.innerHTML = '<li>Nenhuma outra nota nesta pasta.</li>';
+            list.innerHTML = '<li style="padding:15px; color:#888;">Nenhuma outra nota nesta pasta.</li>';
             return;
         }
 
         snapshot.forEach(docSnap => {
-            // Não mostrar a própria nota atual
+            // Ignora a própria nota
             if (docSnap.id === selectedNoteId) return;
 
             const noteData = docSnap.data();
             const li = document.createElement('li');
-            li.textContent = "📄 " + noteData.nome;
-            li.style.cursor = 'pointer';
-            li.style.padding = '10px';
-            li.style.borderBottom = '1px solid var(--border-color)';
+            li.style.cssText = "padding: 12px; border-bottom: 1px solid var(--border-color); cursor: pointer; display: flex; align-items: center;";
+            li.innerHTML = `<span style="margin-right: 10px;">📄</span> <strong>${noteData.nome}</strong>`;
             
-            // Ao clicar numa nota da lista
-            li.onclick = () => transferIdeaToNote(docSnap.id, noteData);
+            // Clique para transferir
+            li.onclick = () => window.transferIdeaToNote(docSnap.id, noteData);
             
             list.appendChild(li);
         });
 
     } catch (error) {
-        console.error(error);
-        list.innerHTML = '<li>Erro ao carregar notas.</li>';
+        console.error("Erro no íman:", error);
+        list.innerHTML = '<li style="color:red; padding:15px;">Erro ao carregar lista.</li>';
     }
-}
+};
 
-// B. TRANSFERIR O TEXTO
-async function transferIdeaToNote(targetNoteId, targetNoteData) {
-    if (!activeIdeaElement) return;
+// Função de Transferência (Mantém-se, mas exposta globalmente)
+window.transferIdeaToNote = async function(targetNoteId, targetNoteData) {
+    if (!window.activeIdeaElement) return;
 
-    const textToTransfer = activeIdeaElement.textContent;
+    const textToTransfer = window.activeIdeaElement.textContent;
     const modal = document.getElementById('select-note-modal');
 
     try {
-        // Adiciona o texto ao final do conteúdo existente da nota alvo
+        const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // Adiciona o texto ao final do conteúdo existente
         const newContent = (targetNoteData.conteudo || "") + `<br><p>💡 ${textToTransfer}</p>`;
 
         const targetRef = doc(db, 'pastas', targetNoteId);
@@ -22695,14 +22755,17 @@ async function transferIdeaToNote(targetNoteId, targetNoteData) {
             ultimaedicao: serverTimestamp()
         });
 
-        alert(`Ideia adicionada à nota "${targetNoteData.nome}" com sucesso!`);
         modal.style.display = 'none';
+        
+        // Feedback visual (Alerta simples)
+        // Se tiver a função showConfirmation ou alert
+        alert(`✅ Ideia enviada para "${targetNoteData.nome}"!`);
 
     } catch (error) {
         console.error("Erro ao transferir:", error);
-        alert("Erro ao adicionar ideia à nota.");
+        alert("Erro ao enviar ideia.");
     }
-}
+};
 
 
 // 1. Abrir o Modal e Iniciar Navegação
