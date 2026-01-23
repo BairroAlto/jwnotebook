@@ -37755,24 +37755,53 @@ async function toggleAnchorOnEntity(anchorId, shouldAdd, liElement) {
 }
 
 // 3. Abrir Modal de Criação (+)
-document.getElementById('open-create-anchor-btn').addEventListener('click', () => {
-    const modal = document.getElementById('create-anchor-modal');
-    const input = document.getElementById('new-anchor-name');
-    const desc = document.getElementById('new-anchor-desc');
-    
-    // Limpa
-    input.value = '';
-    desc.value = '';
-    
-    // Move para body e mostra
-    document.body.appendChild(modal);
-    modal.style.setProperty('display', 'flex', 'important');
-    modal.style.zIndex = "55000"; // Acima do gestor
-    modal.style.opacity = "1";
-    modal.style.visibility = "visible";
-    
-    setTimeout(() => input.focus(), 100);
-});
+const openCreateAnchorBtn = document.getElementById('open-create-anchor-btn');
+
+if (openCreateAnchorBtn) {
+    // Clonar para limpar ouvintes antigos e evitar duplicações
+    const newBtn = openCreateAnchorBtn.cloneNode(true);
+    openCreateAnchorBtn.parentNode.replaceChild(newBtn, openCreateAnchorBtn);
+
+    newBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const modal = document.getElementById('create-anchor-modal');
+        const input = document.getElementById('new-anchor-name');
+        const desc = document.getElementById('new-anchor-desc');
+        
+        if (!modal) return;
+
+        // 1. Limpa os campos
+        input.value = '';
+        desc.value = '';
+        
+        // 2. CORREÇÃO CRÍTICA DE VISUALIZAÇÃO:
+        // Move o modal para o final do <body> para garantir que não fica preso em CSS de pais
+        document.body.appendChild(modal);
+        
+        // Aplica o Z-Index Máximo (O topo absoluto do navegador)
+        modal.style.cssText = `
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            background-color: rgba(0, 0, 0, 0.85) !important;
+            z-index: 2147483647 !important; /* MÁXIMO ABSOLUTO */
+            align-items: center !important;
+            justify-content: center !important;
+        `;
+        
+        // 3. Foca no input para escrever logo
+        setTimeout(() => {
+            if (input) input.focus();
+        }, 100);
+    });
+}
 
 // 4. Confirmar Criação da Âncora
 document.getElementById('confirm-create-anchor').addEventListener('click', async () => {
@@ -38131,16 +38160,27 @@ function openEditAnchorModal(anchor) {
 
     if (!modal) return;
 
-    // Preenche dados atuais
+    // 1. Preenche dados atuais
     nameInput.value = anchor.nome;
     descInput.value = anchor.descricao || '';
 
-    // --- CONFIGURAÇÃO VISUAL ---
-    document.body.appendChild(modal);
-    modal.style.setProperty('display', 'flex', 'important');
-    modal.style.setProperty('z-index', '10000000', 'important'); // 10 Milhões
-    modal.style.setProperty('visibility', 'visible', 'important');
-    modal.style.setProperty('opacity', '1', 'important');
+    // 2. CORREÇÃO DE VISIBILIDADE (Topo Absoluto)
+    document.body.appendChild(modal); // Move para a raiz
+    
+    modal.style.cssText = `
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        background-color: rgba(0, 0, 0, 0.85) !important;
+        z-index: 2147483647 !important; /* Valor Máximo */
+        align-items: center !important;
+        justify-content: center !important;
+    `;
 
     setTimeout(() => nameInput.focus(), 100);
 
@@ -38168,7 +38208,7 @@ function openEditAnchorModal(anchor) {
             });
 
             modal.style.display = 'none';
-            loadAnchorsForSelection(true); 
+            loadAnchorsForSelection(true); // Recarrega a lista do modal de trás
 
         } catch (error) {
             console.error("Erro ao editar:", error);
@@ -38179,7 +38219,7 @@ function openEditAnchorModal(anchor) {
         }
     };
 
-    // --- AÇÃO OCULTAR (COM POPUP PERSONALIZADO) ---
+    // --- AÇÃO OCULTAR (COM POPUP DE CONFIRMAÇÃO) ---
     const newDeleteBtn = deleteBtn.cloneNode(true);
     deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
 
@@ -38188,28 +38228,21 @@ function openEditAnchorModal(anchor) {
 
     newDeleteBtn.onclick = async () => {
         
-        // 1. AJUSTE DE CAMADA (Z-INDEX)
-        // Como o modal de edição está em 10.000.000, o de confirmação tem de ser superior
+        // TRUQUE EXTRA: Como o modal de edição está no Z-Index máximo,
+        // o modal de confirmação também tem de ir para lá (e ser o último no DOM).
         const confirmModalElement = document.getElementById('confirm-modal');
         if (confirmModalElement) {
-            confirmModalElement.style.setProperty('z-index', '20000000', 'important');
+            document.body.appendChild(confirmModalElement); // Move para o fim
+            confirmModalElement.style.setProperty('z-index', '2147483647', 'important');
         }
 
-        // 2. CHAMAR O POPUP PERSONALIZADO
         const confirmed = await showConfirmation(
             "Ocultar Âncora?",
             `Deseja ocultar a âncora "${anchor.nome}"?\n\nEla desaparecerá desta lista e irá para "Itens Ocultos".`
         );
 
-        // 3. RESETAR O Z-INDEX (Limpeza)
-        if (confirmModalElement) {
-            confirmModalElement.style.zIndex = ''; 
-        }
-
-        // Se o utilizador clicar em "Cancelar", paramos aqui
         if (!confirmed) return;
 
-        // Se confirmou, prossegue com a lógica...
         newDeleteBtn.textContent = "A ocultar...";
         newDeleteBtn.disabled = true;
 
@@ -38218,15 +38251,12 @@ function openEditAnchorModal(anchor) {
             
             const anchorRef = doc(db, 'ancoras', anchor.id);
             
-            // Define estado como 'desativa'
             await updateDoc(anchorRef, {
                 estado: 'desativa',
                 ultimaedicao: serverTimestamp()
             });
             
             modal.style.display = 'none';
-            
-            // Recarrega a lista para o item desaparecer
             loadAnchorsForSelection(true);
 
         } catch (error) {
