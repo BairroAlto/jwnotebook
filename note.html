@@ -21931,17 +21931,14 @@ function setLeftPanelTitle(text, isBackAction = false) {
     const titleEl = document.getElementById('left-panel-title');
     if (!titleEl) return;
 
-    // Verifica se estamos dentro de uma Superpasta (ID presente no URL/Variável)
+    // Verifica se estamos dentro de uma Superpasta
     const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
-    // ============================================================
-    // REGRA 1: MODO SUPERPASTA (Mantém o botão de Sair para segurança)
-    // ============================================================
+    // REGRA 1: MODO SUPERPASTA
     if (isSuperContext) {
         titleEl.className = ''; 
         titleEl.style.display = 'block';
         titleEl.onclick = null;
-
         titleEl.innerHTML = `
             <h2 style="font-size:18px; cursor:pointer; display: flex; align-items: center;" title="Sair desta Superpasta">
                 <span style="font-size: 0.8em; opacity: 0.7; margin-right: 8px;">🔙</span> 
@@ -21962,39 +21959,34 @@ function setLeftPanelTitle(text, isBackAction = false) {
         return;
     }
 
-    // ============================================================
     // REGRA 2: ABA NOTE (SELETOR SEMPRE VISÍVEL)
-    // ============================================================
-    // Aqui forçamos o seletor mesmo que isBackAction seja true.
-   if (currentTab === 'note') {
-    titleEl.className = 'folder-mode-container';
-    titleEl.style.display = 'flex';
-    titleEl.onclick = null;
+    if (currentTab === 'note') {
+        titleEl.className = 'folder-mode-container';
+        titleEl.style.display = 'flex';
+        titleEl.onclick = null;
 
-    const localActive = currentViewMode === 'local' ? 'active' : '';
-    const sharedActive = currentViewMode === 'shared' ? 'active mode-shared' : '';
-    const pinsActive = currentViewMode === 'pins' ? 'active mode-pins' : '';
-    const flashActive = currentViewMode === 'flash' ? 'active mode-flash' : ''; // <--- ESTE FALTAVA NO VISUAL AO RECARREGAR
+        const localActive = currentViewMode === 'local' ? 'active' : '';
+        const sharedActive = currentViewMode === 'shared' ? 'active mode-shared' : '';
+        const pinsActive = currentViewMode === 'pins' ? 'active mode-pins' : '';
+        const flashActive = currentViewMode === 'flash' ? 'active mode-flash' : '';
 
-    titleEl.innerHTML = `
-        <span class="folder-mode-item ${localActive}" onclick="window.switchFolderView('local')">Local</span>
-        <span class="folder-mode-separator">|</span>
-        <span class="folder-mode-item ${sharedActive}" onclick="window.switchFolderView('shared')">Partilha</span>
-        <span class="folder-mode-separator">|</span>
-        <span class="folder-mode-item ${pinsActive}" onclick="window.switchFolderView('pins')">Pins</span>
-        <span class="folder-mode-separator">|</span>
-        <span class="folder-mode-item ${flashActive}" onclick="window.switchFolderView('flash')">Flash</span>
-    `;
+        // >>> ALTERAÇÃO AQUI: "Partilha" mudou para "Share" <<<
+        titleEl.innerHTML = `
+            <span class="folder-mode-item ${localActive}" onclick="window.switchFolderView('local')">Local</span>
+            <span class="folder-mode-separator">|</span>
+            <span class="folder-mode-item ${sharedActive}" onclick="window.switchFolderView('shared')">Share</span>
+            <span class="folder-mode-separator">|</span>
+            <span class="folder-mode-item ${pinsActive}" onclick="window.switchFolderView('pins')">Pins</span>
+            <span class="folder-mode-separator">|</span>
+            <span class="folder-mode-item ${flashActive}" onclick="window.switchFolderView('flash')">Flash</span>
+        `;
 
-    // >>> ATUALIZAÇÃO DA NOTIFICAÇÃO GLOBAL <<<
-    // Chamamos a função para redesenhar a bolinha vermelha no novo HTML
-    setTimeout(() => {
-        if (typeof updateShareTabDot === 'function') updateShareTabDot();
-    }, 50);
-}
-    // ============================================================
-    // REGRA 3: OUTRAS ABAS (Lists, etc - Mantém comportamento de voltar)
-    // ============================================================
+        // Atualização da notificação
+        setTimeout(() => {
+            if (typeof updateShareTabDot === 'function') updateShareTabDot();
+        }, 50);
+    }
+    // REGRA 3: OUTRAS ABAS
     else if (isBackAction) {
         titleEl.className = ''; 
         titleEl.style.display = 'block';
@@ -24879,16 +24871,63 @@ document.getElementById('hidden-items-list').addEventListener('click', async (e)
         }
     }
 
-    // --- ELIMINAR PERMANENTE ---
+ // --- ELIMINAR PERMANENTE (AGORA: MOVER PARA BLACKBOX 🪦) ---
     else if (action === 'delete-universal') {
+        // Mantemos o aviso original como pediu
         if (!confirm("Eliminar permanentemente? Esta ação é irreversível.")) return;
 
-        try {
-            await deleteDoc(doc(db, collectionName, id));
-            listItem.remove();
+        // Feedback visual para o utilizador saber que algo está a acontecer
+        const originalText = btn.textContent;
+        btn.textContent = "A arquivar...";
+        btn.disabled = true;
+
+   try {
+            // Importar writeBatch também
+            const { doc, getDoc, writeBatch, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            
+            const sourceRef = doc(db, collectionName, id);
+            const targetRef = doc(db, 'blackbox', id);
+
+            // 1. Ler o documento original
+            const docSnap = await getDoc(sourceRef);
+
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+
+                // 2. Preparar dados para o "cemitério"
+                const blackboxData = {
+                    ...data,
+                    originalCollection: collectionName,
+                    deletedAt: serverTimestamp(),
+                    deletedBy: auth.currentUser.uid,
+                    status: 'dead'
+                };
+
+                // 3. Executar Transação Atómica (Tudo ou Nada)
+                const batch = writeBatch(db);
+                batch.set(targetRef, blackboxData); // Cria na Blackbox
+                batch.delete(sourceRef);            // Apaga da Origem
+                
+                await batch.commit(); // Executa as duas ações ao mesmo tempo
+
+                // 4. Remover da lista visual
+                listItem.remove();
+                
+                if (document.getElementById('hidden-items-list').children.length === 0) {
+                    document.getElementById('hidden-items-list').innerHTML = '<li style="padding:15px; color:#888;">Reciclagem vazia.</li>';
+                }
+                
+                console.log(`🪦 Item ${id} movido para a Blackbox com sucesso.`);
+            } else {
+                alert("Erro: O item já não existe na base de dados.");
+                listItem.remove();
+            }
+
         } catch (err) {
-            console.error(err);
-            alert("Erro ao eliminar.");
+            console.error("Erro ao mover para blackbox:", err);
+            alert("Ocorreu um erro ao arquivar o item (Verifique as Permissões).");
+            btn.textContent = originalText;
+            btn.disabled = false;
         }
     }
 });
@@ -43379,11 +43418,12 @@ function recalcGlobalNotification() {
 
 // Função visual (Mantém-se igual, mas garante que existe)
 function updateShareTabDot() {
-    // Procura o elemento da aba Share (Pode variar dependendo se é Mobile ou PC)
+    // Procura o elemento da aba Share
     const shareTabs = document.querySelectorAll('.folder-mode-item');
     
     shareTabs.forEach(tab => {
-        if (tab.textContent.includes('Partilha')) {
+        // >>> ALTERAÇÃO AQUI: Procura por 'Share' em vez de 'Partilha' <<<
+        if (tab.textContent.includes('Share')) {
             let dot = tab.querySelector('.tab-notification-dot');
             if (!dot) {
                 dot = document.createElement('div');
