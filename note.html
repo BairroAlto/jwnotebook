@@ -9835,6 +9835,132 @@ button[data-command="boldBlue"].active-tool {
     transition: background-color 0.2s, border-color 0.2s, color 0.2s, transform 0.1s !important;
 }
 
+
+/* --- POPUP DE PESQUISA LOCAL (Ctrl+F) --- */
+#local-search-popup {
+    display: none;
+    position: absolute;
+    top: 60px;
+    right: 20px;
+    background-color: var(--sidebar-color);
+    border: 1px solid var(--accent-color);
+    border-radius: 6px;
+    padding: 8px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    z-index: 1000;
+    align-items: center;
+    gap: 8px;
+    animation: slideDown 0.2s ease-out;
+}
+
+#local-search-input {
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    padding: 5px 8px;
+    border-radius: 4px;
+    font-size: 14px;
+    width: 200px;
+    outline: none;
+}
+
+#local-search-input:focus {
+    border-color: var(--accent-color);
+}
+
+.local-search-btn {
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-muted-color);
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 4px 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.local-search-btn:hover {
+    background-color: var(--hover-color);
+    color: var(--text-color);
+}
+
+#local-search-count {
+    font-size: 12px;
+    color: var(--text-muted-color);
+    min-width: 40px;
+    text-align: center;
+}
+
+/* --- ESTILO DO TEXTO ENCONTRADO --- */
+/* Amarelo suave para todos os encontrados */
+.local-highlight {
+    background-color: rgba(241, 196, 15, 0.4);
+    border-radius: 2px;
+    color: white;
+}
+
+/* Laranja forte para o foco atual (o que estamos a ver) */
+.local-highlight.active {
+    background-color: #e67e22;
+    color: white;
+    font-weight: bold;
+    box-shadow: 0 0 10px #e67e22;
+}
+
+/* Lista de Resultados da Pesquisa Local */
+#local-search-popup {
+    flex-wrap: wrap; /* Permite que a lista quebre para a linha de baixo */
+}
+
+#local-search-results-list {
+    display: none; /* Escondido por defeito */
+    width: 100%;
+    max-height: 250px; /* Altura máxima com scroll */
+    overflow-y: auto;
+    background-color: var(--panel-color);
+    border-top: 1px solid var(--border-color);
+    margin-top: 5px;
+    padding: 0;
+    list-style: none;
+    flex-basis: 100%; /* Força a ocupar a largura toda */
+}
+
+#local-search-results-list.visible {
+    display: block;
+}
+
+.local-result-item {
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    cursor: pointer;
+    font-size: 0.9em;
+    color: var(--text-muted-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.1s;
+}
+
+.local-result-item:hover {
+    background-color: var(--hover-color);
+    color: var(--text-color);
+}
+
+/* Item selecionado na lista (Sincronizado com as setas) */
+.local-result-item.active-list-item {
+    background-color: rgba(230, 126, 34, 0.2); /* Fundo Laranja suave */
+    border-left: 3px solid #e67e22;
+    color: var(--text-color);
+}
+
+/* Destaque do termo dentro da lista */
+.local-result-item mark {
+    background: transparent;
+    color: #e67e22; /* Laranja */
+    font-weight: bold;
+}
+
 </style>
 
 
@@ -9992,7 +10118,7 @@ button[data-command="boldBlue"].active-tool {
                     
                     <!-- GRUPO 2: Ações -->
                     <div class="toolbar-group">
-                        <button data-action="show-explorer" title="Explorador">🔍</button>
+                       <button data-action="local-search" title="Pesquisar na Nota (Ctrl+F)">🔍</button>
                         <button data-action="show-attachments" title="Anexos">📎</button>
                         <button data-command="undo" title="Retroceder">↩️</button>
                         <button data-command="redo" title="Refazer">↪️</button>
@@ -11844,6 +11970,16 @@ button[data-command="boldBlue"].active-tool {
     </div>
 </div>
 
+<!-- POPUP DE PESQUISA LOCAL -->
+<div id="local-search-popup">
+  <input type="text" id="local-search-input" placeholder="Localizar...">
+    <span id="local-search-count">0/0</span>
+    <div style="width:1px; height:20px; background:var(--border-color); margin:0 5px;"></div>
+    <button class="local-search-btn" id="local-search-prev" title="Anterior">▲</button>
+    <button class="local-search-btn" id="local-search-next" title="Próximo">▼</button>
+    <button class="local-search-btn" id="local-search-close" title="Fechar" style="margin-left:5px; border-color:transparent; color:#e74c3c;">✕</button>
+    <ul id="local-search-results-list"></ul>
+</div>
 
 </body>
 
@@ -12210,6 +12346,9 @@ let lastRenderedLeftParentId = 'INIT';
 let globalSearchResults = []; // Variável crítica para a pesquisa
 let currentSearchPage = 0;    // Variável para a paginação da pesquisa
 let listSearchTimer = null;
+let localSearchResults = [];
+let currentLocalMatchIndex = -1;
+
 
 
 window.currentNoteHybridMode = false;
@@ -25232,16 +25371,37 @@ if (saveStatusIndicator) {
 
  // --- EVENT LISTENER: BOTÃO DA TOOLBAR ---
 editorToolbar.addEventListener('click', async (e) => {
+    // LOG 1: O clique foi registado?
+    console.log("🖱️ [DEBUG] Clique detetado dentro da Toolbar.");
+
     const btn = e.target.closest('button');
-    if (!btn) return;
+    if (!btn) {
+        console.log("❌ [DEBUG] O alvo do clique não é um botão.");
+        return;
+    }
 
     const action = btn.dataset.action;
-    if (!action) return;
+    
+    // LOG 2: Qual a ação do botão?
+    console.log("🔘 [DEBUG] Botão clicado. Ação (dataset.action):", action);
 
-    // Impedir que o clique tire o foco do editor se necessário
-    if (['show-topics', 'show-history', 'note-sharing-settings', 'show-attachments', 'show-explorer', 'bible-scan', 'more-formatting'].includes(action)) {
+    // ============================================================
+    // 0. PESQUISA LOCAL (Ctrl+F)
+    // ============================================================
+    if (action === 'local-search') {
+        console.log("✅ [DEBUG] Condição 'local-search' encontrada!");
+        
         e.preventDefault();
         e.stopPropagation();
+
+        // LOG 3: A função existe?
+        if (typeof openLocalSearch === 'function') {
+            console.log("🚀 [DEBUG] A chamar a função openLocalSearch()...");
+            openLocalSearch();
+        } else {
+            console.error("🔥 [ERRO CRÍTICO] A função 'openLocalSearch' NÃO existe no código!");
+        }
+        return;
     }
 
     // 1. GERIR TÓPICOS (📑)
@@ -25272,7 +25432,7 @@ editorToolbar.addEventListener('click', async (e) => {
         openAttachmentsModal();
     }
     
-    // 5. EXPLORADOR / PESQUISA (🔍)
+    // 5. PESQUISA GLOBAL (Antigo botão Explorer)
     else if (action === 'show-explorer') {
         openExplorerModal();
     }
@@ -25288,16 +25448,14 @@ editorToolbar.addEventListener('click', async (e) => {
     else if (action === 'open-margin-editor') {
         if (!selectedNoteId) return alert("Selecione uma nota primeiro.");
         
-        // Feedback visual
-        const originalText = btn.textContent;
+        const btnText = btn.textContent;
         btn.textContent = "💾";
         
-        // Grava antes de sair para não perder dados
         await saveNote(true);
         window.location.href = `editnote.html?noteId=${selectedNoteId}`;
     }
 
-    // 8. MAIS FORMATAÇÕES (⋮)
+    // 8. MAIS FORMATAÇÕES / DROPDOWN (⋮)
     else if (action === 'more-formatting' || btn.id === 'more-formatting-btn') {
         const popup = document.getElementById('formatting-popup');
         if (!popup) return;
@@ -25313,10 +25471,10 @@ editorToolbar.addEventListener('click', async (e) => {
             
             const rect = btn.getBoundingClientRect();
             popup.style.display = 'block';
-            popup.style.position = 'fixed'; // Para flutuar sobre tudo
+            popup.style.position = 'fixed'; 
             popup.style.zIndex = "9999999"; 
             
-            // Posicionamento inteligente (evita sair do ecrã à direita)
+            // Posicionamento inteligente
             let leftPos = rect.left;
             if (leftPos + 250 > window.innerWidth) {
                 leftPos = window.innerWidth - 260;
@@ -25326,6 +25484,283 @@ editorToolbar.addEventListener('click', async (e) => {
             popup.style.left = `${leftPos}px`;
             
             btn.classList.add('active');
+        }
+    }
+
+    // 9. UNDO / REDO (Retroceder e Avançar)
+    else if (command === 'undo') {
+        document.execCommand('undo', false, null);
+    }
+    else if (command === 'redo') {
+        document.execCommand('redo', false, null);
+    }
+});
+
+
+
+// 2. FUNÇÃO DE ABERTURA
+function openLocalSearch() {
+    console.group("🔍 [DEBUG] Dentro de openLocalSearch");
+    
+ const popup = document.getElementById('local-search-popup');
+    const input = document.getElementById('local-search-input');
+    
+    if (!popup) return console.error("❌ [ERRO] Popup não encontrado!");
+
+    // 1. TRUQUE DE MESTRE: Move o popup para o fim do <body>
+    // Isto garante que ele não fica preso dentro de divs com scroll escondido
+    document.body.appendChild(popup);
+
+    // 2. FORÇA BRUTA VISUAL
+    // Usamos 'fixed' em vez de 'absolute' para ele flutuar no ecrã mesmo com scroll
+    popup.style.cssText = `
+        display: flex !important;
+        position: fixed !important;
+        top: 80px !important;       /* Ajuste para não tapar a toolbar */
+        right: 30px !important;
+        z-index: 2147483647 !important; /* Máximo possível para ficar à frente de tudo */
+        background-color: var(--sidebar-color);
+        border: 1px solid var(--accent-color);
+        padding: 8px;
+        border-radius: 6px;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.8);
+    `;
+    
+
+    if (input) {
+        input.value = '';
+        input.focus();
+        input.onkeydown = handleLocalSearchKeys;
+        input.oninput = (e) => executeLocalSearch(e.target.value);
+    }
+}
+
+function executeLocalSearch(term) {
+    clearLocalHighlights();
+    
+    const countEl = document.getElementById('local-search-count');
+    const listEl = document.getElementById('local-search-results-list');
+    
+    localSearchResults = [];
+    currentLocalMatchIndex = -1;
+
+    if (!term || term.length < 2) {
+        countEl.textContent = "0/0";
+        listEl.classList.remove('visible'); // Esconde a lista
+        return;
+    }
+
+   const editor = document.getElementById('note-content-editor');
+    
+    // 1. Procura e Destaca (Highlight)
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null, false);
+    const nodesToReplace = [];
+    
+    let node;
+    while (node = walker.nextNode()) {
+        if (node.parentNode.tagName === 'SCRIPT' || node.parentNode.tagName === 'STYLE' || node.parentNode.tagName === 'TEXTAREA') continue;
+
+        const text = node.textContent;
+        const regex = new RegExp(`(${escapeRegExp(term)})`, 'gi');
+        
+        if (regex.test(text)) {
+            nodesToReplace.push({ node, text, regex });
+        }
+    }
+
+    nodesToReplace.forEach(item => {
+        const span = document.createElement('span');
+        span.innerHTML = item.text.replace(item.regex, '<mark class="local-highlight">$1</mark>');
+        item.node.parentNode.replaceChild(span, item.node);
+        
+        // Limpeza do HTML para evitar spans aninhados
+        const parent = span.parentNode;
+        while (span.firstChild) {
+            parent.insertBefore(span.firstChild, span);
+        }
+        parent.removeChild(span);
+    });
+
+
+    // 2. Coletar resultados
+   localSearchResults = Array.from(editor.querySelectorAll('.local-highlight'));
+    
+    if (localSearchResults.length > 0) {
+        currentLocalMatchIndex = 0;
+        focusLocalMatch(0);
+        
+        // 3. NOVO: GERAR A LISTA VISUAL
+        renderLocalResultsList(term);
+    } else {
+        listEl.classList.remove('visible');
+    }
+    
+    countEl.textContent = localSearchResults.length > 0 
+        ? `1/${localSearchResults.length}` 
+        : "0/0";
+}
+
+// --- NOVA FUNÇÃO: RENDERIZAR LISTA ---
+function renderLocalResultsList(term) {
+    const list = document.getElementById('local-search-results-list');
+    list.innerHTML = '';
+    
+    localSearchResults.forEach((mark, index) => {
+        const li = document.createElement('li');
+        li.className = 'local-result-item';
+        li.dataset.index = index;
+        
+        // Pega no texto à volta (Contexto)
+        // Sobe ao pai (ex: parágrafo) e pega o texto todo
+        let fullText = mark.parentElement.textContent;
+        
+        // Corta um excerto à volta da palavra
+        const termIndex = fullText.toLowerCase().indexOf(term.toLowerCase());
+        const start = Math.max(0, termIndex - 20);
+        const end = Math.min(fullText.length, termIndex + term.length + 40);
+        
+        let snippet = fullText.substring(start, end);
+        if(start > 0) snippet = "..." + snippet;
+        
+        // Destaca a palavra na lista também
+        const regex = new RegExp(`(${escapeRegExp(term)})`, 'gi');
+        snippet = snippet.replace(regex, '<mark>$1</mark>');
+
+        li.innerHTML = snippet;
+        
+        // Clique na lista = Scroll no editor
+        li.onclick = () => {
+            currentLocalMatchIndex = index;
+            focusLocalMatch(index);
+        };
+        
+        list.appendChild(li);
+    });
+    
+    list.classList.add('visible');
+    highlightActiveListItem(0); // Seleciona o primeiro
+}
+
+// --- ATUALIZAÇÃO: FOCAR E SINCRONIZAR LISTA ---
+function focusLocalMatch(index) {
+    if (localSearchResults.length === 0) return;
+
+    // 1. Destaque no Editor (Amarelo/Laranja)
+    localSearchResults.forEach(el => el.classList.remove('active'));
+    const target = localSearchResults[index];
+    target.classList.add('active');
+    
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    // 2. Atualiza contador
+    document.getElementById('local-search-count').textContent = `${index + 1}/${localSearchResults.length}`;
+    
+    // 3. NOVO: Sincroniza a Lista (Pinta a linha de laranja)
+    highlightActiveListItem(index);
+}
+
+function highlightActiveListItem(index) {
+    const list = document.getElementById('local-search-results-list');
+    
+    // Remove classe antiga
+    const oldActive = list.querySelector('.active-list-item');
+    if (oldActive) oldActive.classList.remove('active-list-item');
+    
+    // Adiciona classe nova
+    const newActive = list.children[index];
+    if (newActive) {
+        newActive.classList.add('active-list-item');
+        // Faz a lista scrollar sozinha para mostrar o item selecionado
+        newActive.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+    }
+}
+
+
+function navigateMatches(direction) {
+    if (localSearchResults.length === 0) return;
+    currentLocalMatchIndex += direction;
+    if (currentLocalMatchIndex >= localSearchResults.length) currentLocalMatchIndex = 0;
+    if (currentLocalMatchIndex < 0) currentLocalMatchIndex = localSearchResults.length - 1;
+    focusLocalMatch(currentLocalMatchIndex);
+}
+
+function clearLocalHighlights() {
+    const editor = document.getElementById('note-content-editor');
+    if (!editor) return;
+    const highlights = editor.querySelectorAll('.local-highlight');
+    highlights.forEach(mark => {
+        const parent = mark.parentNode;
+        parent.replaceChild(document.createTextNode(mark.textContent), mark);
+        parent.normalize();
+    });
+    localSearchResults = [];
+}
+
+// Controlos
+const btnPrev = document.getElementById('local-search-prev');
+const btnNext = document.getElementById('local-search-next');
+const btnClose = document.getElementById('local-search-close');
+
+if(btnPrev) btnPrev.onclick = () => navigateMatches(-1);
+if(btnNext) btnNext.onclick = () => navigateMatches(1);
+if(btnClose) btnClose.onclick = closeLocalSearch;
+
+function closeLocalSearch() {
+    document.getElementById('local-search-popup').style.display = 'none';
+    document.getElementById('local-search-input').value = '';
+    clearLocalHighlights();
+}
+
+function handleLocalSearchKeys(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        navigateMatches(1);
+    } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeLocalSearch();
+    }
+}
+
+// ATALHO DE TECLADO (Ctrl+F)
+document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        if (document.getElementById('editor-area').style.display !== 'none') {
+            openLocalSearch();
+        }
+    }
+});
+
+// SEGURANÇA: Limpar ao escrever para não gravar HTML sujo
+const safeEditor = document.getElementById('note-content-editor');
+if(safeEditor) {
+    safeEditor.addEventListener('input', () => {
+        if (document.getElementById('local-search-popup').style.display === 'flex') {
+            clearLocalHighlights();
+        }
+    });
+}
+
+// Interceptar o saveNote para limpar antes de enviar
+const originalSaveNoteBeforeSearch = window.saveNote;
+window.saveNote = async function(force) {
+    // Limpa destaques antes de gravar
+    if (document.querySelectorAll('.local-highlight').length > 0) {
+        clearLocalHighlights();
+        document.getElementById('local-search-popup').style.display = 'none';
+    }
+    return await originalSaveNoteBeforeSearch(force);
+};
+
+
+// 8. ATALHO DE TECLADO (Ctrl+F)
+document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault(); // Impede o Ctrl+F do browser
+        
+        // Verifica se o editor está visível
+        if (document.getElementById('editor-area').style.display !== 'none') {
+            openLocalSearch();
         }
     }
 });
