@@ -30625,46 +30625,37 @@ async function renderListCategoryItems(categoryId, filterText = '') {
     const listElement = middlePanelList;
     const myUid = auth.currentUser.uid;
     
-    // Identifica onde estamos na navegação
-    // Se navigationStack estiver vazio, estamos na raiz da categoria
     const lastNav = navigationStack.length > 0 ? navigationStack[navigationStack.length - 1] : null;
-    const origin = navigationStack[0]?.id || categoryId;
-
-    // Categorias que têm barra de pesquisa e limite de 50
+    const origin = (navigationStack.length > 0) ? navigationStack[0].id : categoryId;
     const specialCategories = ['personagem', 'local', 'data', 'cosmos', 'tag', 'topico', 'marcadores'];
-    const isSpecialCategory = specialCategories.includes(categoryId);
+    const isSpecialCategory = specialCategories.includes(origin);
 
-    // 1. Limpeza inicial (apenas se não for pesquisa ativa para não piscar)
+    // 1. Limpeza inicial
     if (!filterText) {
         listElement.innerHTML = `
             <div class="panel-loader">
                 <div class="spinner"></div>
-                <span>A carregar ${lastNav ? lastNav.name : categoryId}...</span>
+                <span>A carregar ${lastNav ? lastNav.name : 'itens'}...</span>
             </div>`;
     }
 
     try {
         const { collection, query, where, orderBy, getDocs, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        
         let items = [];
         let htmlBuffer = '';
 
         // ==========================================
-        // 1. NAVEGAÇÃO DA BÍBLIA
+        // 0. BÍBLIA: NAVEGAÇÃO COMPLETA (Aba separada)
         // ==========================================
         if (origin === 'biblia-root') {
-            
-            // A. LISTA DE LIVROS (Raiz)
             if (!lastNav || lastNav.type === 'list-category') {
                 middlePanelTitle.textContent = "Bíblia: Livros";
                 updateAddButtonState(false);
                 listElement.innerHTML = '';
-                
                 BIBLE_DATA.forEach(book => {
                     const li = document.createElement('li');
                     li.className = 'list-item';
                     li.innerHTML = `<span>📖 ${book.nome}</span>`;
-                    
                     li.onclick = () => {
                         navigateWithUnsavedCheck(() => {
                             navigationStack.push({ id: book.nome, name: book.nome, type: 'bible-book', caps: book.caps });
@@ -30673,55 +30664,37 @@ async function renderListCategoryItems(categoryId, filterText = '') {
                     };
                     listElement.appendChild(li);
                 });
-            } 
-            
-            // B. LISTA DE CAPÍTULOS
-            else if (lastNav.type === 'bible-book') {
+            } else if (lastNav.type === 'bible-book') {
                 middlePanelTitle.textContent = lastNav.name;
                 listElement.innerHTML = '<div class="bible-grid"></div>';
                 const grid = listElement.querySelector('.bible-grid');
-                
                 for (let i = 1; i <= lastNav.caps; i++) {
                     const btn = document.createElement('div');
                     btn.className = 'bible-grid-btn';
                     btn.textContent = i;
-                    
                     btn.onclick = () => {
                         navigateWithUnsavedCheck(() => {
-                            navigationStack.push({ 
-                                id: `${lastNav.name} ${i}`, 
-                                name: `Cap. ${i}`, 
-                                type: 'bible-chapter', 
-                                book: lastNav.name, 
-                                chapter: i 
-                            });
+                            navigationStack.push({ id: `${lastNav.name} ${i}`, name: `Cap. ${i}`, type: 'bible-chapter', book: lastNav.name, chapter: i });
                             updateNavigationView(true);
                         });
                     };
                     grid.appendChild(btn);
                 }
-            } 
-            
-            // C. LISTA DE VERSÍCULOS
-            else if (lastNav.type === 'bible-chapter') {
+            } else if (lastNav.type === 'bible-chapter') {
                 const bookData = BIBLE_DATA.find(b => b.nome === lastNav.book);
                 const prefix = `${lastNav.book} ${lastNav.chapter}:`;
                 middlePanelTitle.textContent = prefix.replace(':', '');
                 listElement.innerHTML = '<div class="bible-grid"></div>';
                 const grid = listElement.querySelector('.bible-grid');
-                
                 const totalV = bookData?.versiculos?.[lastNav.chapter - 1] || 50;
                 const existingVerses = allEntities['textobiblico'] || [];
-                
                 for (let v = 1; v <= totalV; v++) {
                     const fullVerse = `${prefix}${v}`;
                     const exists = existingVerses.some(e => e.nome === fullVerse);
                     const isActive = fullVerse === currentlyOpenVerseName;
-                    
                     const btn = document.createElement('div');
                     btn.className = `bible-grid-btn ${exists ? 'exists' : ''} ${isActive ? 'active-verse' : ''}`;
                     btn.textContent = v;
-                    
                     btn.onclick = () => {
                         navigateWithUnsavedCheck(() => {
                             currentlyOpenVerseName = fullVerse;
@@ -30733,41 +30706,145 @@ async function renderListCategoryItems(categoryId, filterText = '') {
                     grid.appendChild(btn);
                 }
             }
-            return; 
+            return;
         }
 
         // ==========================================
-        // 2. DESTAQUES / CORES
+        // 1. TEXTOS BÍBLICOS (REGISTOS DO UTILIZADOR) - CORRIGIDO
         // ==========================================
-        if (categoryId === 'destaque') {
-            middlePanelTitle.textContent = "Destaques (Cores)";
-            updateAddButtonState(false); 
-            listElement.innerHTML = '';
+        if (origin === 'textobiblico') {
             
-            DEFAULT_HIGHLIGHTS.forEach(colorObj => {
+            if (lastNav && lastNav.type === 'bible-record-group') {
+                middlePanelTitle.textContent = lastNav.name;
+            } else {
+                middlePanelTitle.textContent = "Textos Bíblicos";
+            }
+            
+            updateAddButtonState(false); 
+
+            // A. Buscar TODOS os textos
+            const q = query(collection(db, 'textosbiblicos'), where('userId', '==', myUid));
+            const snapshot = await getDocs(q);
+            
+            // B. Agrupar
+            const groupedBooks = {};
+            snapshot.forEach(docSnap => {
+                const data = docSnap.data();
+                if (data.estado === 'desativa') return;
+                const match = data.nome.match(/^(.+?)\s+\d+:/);
+                const bookName = match ? match[1].trim() : "Outros";
+                
+                if (!groupedBooks[bookName]) groupedBooks[bookName] = [];
+                
+                // CORREÇÃO: Usar 'nome' em vez de 'name' para compatibilidade com o renderizador final
+                groupedBooks[bookName].push({ 
+                    id: docSnap.id, 
+                    nome: data.nome, // <--- AQUI ESTAVA O ERRO (estava 'name')
+                    type: 'textobiblico' 
+                });
+            });
+
+            // C. Verificar Nível de Navegação
+            
+            // --- NÍVEL 2: DENTRO DO LIVRO (Versículos) ---
+            if (lastNav && lastNav.type === 'bible-record-group') {
+                const bookName = lastNav.id;
+                middlePanelTitle.textContent = bookName;
+                const verses = groupedBooks[bookName] || [];
+                
+                // Ordenar versículos (Capítulo e Versículo)
+                verses.sort((a, b) => {
+                    // CORREÇÃO: Usar 'nome' aqui também
+                    const refA = a.nome.replace(bookName, '').trim();
+                    const refB = b.nome.replace(bookName, '').trim();
+                    const [capA, verA] = refA.split(':').map(n => parseInt(n));
+                    const [capB, verB] = refB.split(':').map(n => parseInt(n));
+                    if (capA !== capB) return capA - capB;
+                    return verA - verB;
+                });
+                items = verses; 
+            } 
+            
+            // --- NÍVEL 1: LISTA DE LIVROS (RAIZ) ---
+            else {
+                // Lista Canónica Exata (Português)
+                const CANONICAL_ORDER = [
+                    "Génesis", "Êxodo", "Levítico", "Números", "Deuteronómio", 
+                    "Josué", "Juízes", "Rute", "1 Samuel", "2 Samuel", "1 Reis", "2 Reis", 
+                    "1 Crónicas", "2 Crónicas", "Esdras", "Neemias", "Ester", "Jó", "Salmos", 
+                    "Provérbios", "Eclesiastes", "Cântico de Salomão", "Isaías", "Jeremias", 
+                    "Lamentações", "Ezequiel", "Daniel", "Oseias", "Joel", "Amós", "Obadias", 
+                    "Jonas", "Miqueias", "Naum", "Habacuque", "Sofonias", "Ageu", "Zacarias", "Malaquias",
+                    "Mateus", "Marcos", "Lucas", "João", "Atos", "Romanos", "1 Coríntios", "2 Coríntios", 
+                    "Gálatas", "Efésios", "Filipenses", "Colossenses", "1 Tessalonicenses", "2 Tessalonicenses", 
+                    "1 Timóteo", "2 Timóteo", "Tito", "Filémon", "Hebreus", "Tiago", "1 Pedro", "2 Pedro", 
+                    "1 João", "2 João", "3 João", "Judas", "Apocalipse"
+                ];
+
+                const bookNames = Object.keys(groupedBooks);
+                
+                // Ordenação por índice na lista canónica
+                bookNames.sort((a, b) => {
+                    const idxA = CANONICAL_ORDER.indexOf(a);
+                    const idxB = CANONICAL_ORDER.indexOf(b);
+                    if (idxA === -1) return 1;
+                    if (idxB === -1) return -1;
+                    return idxA - idxB;
+                });
+
+                listElement.innerHTML = '';
+                
+                if (bookNames.length === 0) {
+                    listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Nenhum texto bíblico guardado.</li>';
+                    return;
+                }
+
+                bookNames.forEach(book => {
+                    const li = document.createElement('li');
+                    li.className = 'list-item';
+                    
+                    li.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; width:100%; align-items:center; overflow:hidden;">
+                            <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">🌫️ ${book}</span>
+                        </div>`;
+                    
+                    li.onclick = () => {
+                        navigateWithUnsavedCheck(() => {
+                            navigationStack.push({ id: book, name: book, type: 'bible-record-group' });
+                            updateNavigationView(true);
+                        });
+                    };
+                    listElement.appendChild(li);
+                });
+                return; // Sai da função aqui
+            }
+        }
+
+        // ==========================================
+        // 2. RESTO DAS CATEGORIAS (IGUAL)
+        // ==========================================
+        else if (categoryId === 'destaque') {
+             middlePanelTitle.textContent = "Destaques (Cores)";
+             updateAddButtonState(false);
+             listElement.innerHTML = '';
+             DEFAULT_HIGHLIGHTS.forEach(colorObj => {
                 const displayName = userCustomHighlights[colorObj.code] || colorObj.name;
                 const li = document.createElement('li');
                 li.className = 'list-item';
-                
                 const colorDot = `<span style="display:inline-block; width:16px; height:16px; min-width:16px; background:${colorObj.code}; border-radius:50%; margin-right:10px; border:1px solid rgba(255,255,255,0.3); flex: none !important;"></span>`;
-                
                 li.innerHTML = `${colorDot} <span>${displayName}</span>`;
-                
                 li.onclick = () => {
                     listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
                     const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
                     li.classList.add(selectionClass);
                     showHighlightReferencesPanel(colorObj.code, displayName);
                 };
-                
                 listElement.appendChild(li);
             });
             return;
         }
 
-        // ==========================================
-        // 3. BARRA DE PESQUISA (PARA CATEGORIAS ESPECIAIS)
-        // ==========================================
+        // 3. BARRA DE PESQUISA (Para especiais)
         if (isSpecialCategory) {
             htmlBuffer += `
             <li class="list-search-sticky-header">
@@ -30780,139 +30857,94 @@ async function renderListCategoryItems(categoryId, filterText = '') {
             </li>`;
         }
 
-        // ==========================================
-        // 4. LOGICA DE DADOS (AGORA COM SUB-COSMOS)
-        // ==========================================
-
-        // --- A. COSMOS NÍVEL 1: TEMAS (RAIZ) ---
-        if (categoryId === 'cosmos' && (!lastNav || lastNav.type === 'list-category')) {
-            middlePanelTitle.textContent = "💼 Cosmos: Temas";
-            updateAddButtonState(true, true); // Botão Amarelo
-
-            let q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('nome'));
+        // 4. LÓGICA DE DADOS (Resto das Categorias)
+        if (items.length === 0) {
             
-            if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
-            q = query(q, limit(50));
-
-            const snap = await getDocs(q);
-            
-            snap.forEach(docSnap => {
-                const item = docSnap.data();
-                if (item.estado !== 'desativa') {
-                    // Botão de editar (lápis) no menu
-                    const editHtml = `<button class="item-menu-btn" onclick="event.stopPropagation(); window.openCosmosEditPopup('${docSnap.id}', '${item.nome}', '${item.emoji}', 'cosmos-parent')">✏️</button>`;
-                    
-                    items.push({ 
-                        id: docSnap.id, 
-                        nome: item.nome, 
-                        type: 'cosmos-parent', // Importante para saber que é pai
-                        emoji: item.emoji,
-                        customHtml: `<span>${item.emoji || '💼'} ${item.nome}</span>${editHtml}`
-                    });
-                }
-            });
-        }
-
-        // --- B. COSMOS NÍVEL 2: SUB-COSMOS (FILHOS) --- [A CORREÇÃO ESTÁ AQUI]
-        else if (lastNav && lastNav.type === 'cosmos-parent') {
-            middlePanelTitle.textContent = `${lastNav.emoji || '💼'} ${lastNav.name}`;
-            updateAddButtonState(true, true); // Permite adicionar filhos
-
-            // Procura na coleção 'subcosmos' onde 'cosmosId' é igual ao ID do pai
-            let q = query(collection(db, 'subcosmos'), where('cosmosId', '==', lastNav.id), where('userId', '==', myUid), orderBy('nome'));
-            
-            if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
-            q = query(q, limit(50));
-
-            const snap = await getDocs(q);
-            
-            snap.forEach(docSnap => {
-                const item = docSnap.data();
-                if (item.estado !== 'desativa') {
-                    // Botão de editar subtema
-                    const editHtml = `<button class="item-menu-btn" onclick="event.stopPropagation(); window.openEditEntityModal('${docSnap.id}', 'subcosmos')">✏️</button>`;
-                    
-                    items.push({ 
-                        id: docSnap.id, 
-                        nome: item.nome, 
-                        type: 'subcosmos', // Importante para abrir a 4ª coluna
-                        emoji: item.emoji,
-                        customHtml: `<span>${item.emoji || '🧬'} ${item.nome}</span>${editHtml}`
-                    });
-                }
-            });
-        }
-
-        // --- C. TÓPICOS NÍVEL 1 ---
-        else if (categoryId === 'topico') {
-            middlePanelTitle.textContent = "Tópicos";
-            updateAddButtonState(true, true);
-            let q = query(collection(db, 'topicos'), where('userId', '==', myUid), orderBy('nome'));
-            
-            if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
-            q = query(q, limit(50));
-
-            const snap = await getDocs(q);
-            snap.forEach(docSnap => {
-                if (docSnap.data().estado !== 'desativa') items.push({ id: docSnap.id, nome: docSnap.data().nome, type: 'topico' });
-            });
-        }
-
-        // --- D. MARCADORES ---
-        else if (categoryId === 'marcadores') {
-             middlePanelTitle.textContent = "Marcadores";
-             updateAddButtonState(true, true);
-             let q = query(collection(db, 'marcadores'), where('userId', '==', myUid), orderBy('nome'));
-             
-             if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
-             q = query(q, limit(50));
-
-             const snap = await getDocs(q);
-             snap.forEach(docSnap => items.push({ id: docSnap.id, nome: docSnap.data().nome, type: 'marcadores' }));
-        }
-
-        // --- E. TAGS ---
-        else if (categoryId === 'tag') {
-            middlePanelTitle.textContent = "Tags (#)";
-            updateAddButtonState(false);
-            
-            const q = query(collection(db, 'pastas'), where('tipo', '==', 'nota'), where('userId', '==', myUid));
-            const snap = await getDocs(q);
-            const tagSet = new Set();
-            snap.forEach(doc => { if(doc.data().tags) doc.data().tags.forEach(t => tagSet.add(t)); });
-            
-            let allTagsArray = Array.from(tagSet).sort();
-            if (filterText) allTagsArray = allTagsArray.filter(t => t.toLowerCase().includes(filterText.toLowerCase()));
-            
-            // Aplica limite manual para tags
-            items = allTagsArray.slice(0, 50).map(t => ({ id: t, nome: t, type: 'tag' }));
-        }
-
-        // --- F. RESTO (Personagens, Locais, Datas) ---
-        else {
-            const config = ENTITY_CONFIG[categoryId];
-            
-            if (config) {
-                middlePanelTitle.textContent = config.displayName;
-                
-                // Texto bíblico não tem botão "+", os outros têm
-                if (categoryId === 'textobiblico') updateAddButtonState(false);
-                else updateAddButtonState(true, true);
-                
-                let q = query(collection(db, config.collection), where('userId', '==', myUid), orderBy('nome'));
-                
-                if (isSpecialCategory) {
-                    if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
-                    q = query(q, limit(50));
-                }
-
+             // A. COSMOS NÍVEL 1
+            if (categoryId === 'cosmos' && (!lastNav || lastNav.type === 'list-category')) {
+                middlePanelTitle.textContent = "💼 Cosmos: Temas";
+                updateAddButtonState(true, true); 
+                let q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('nome'));
+                if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
+                q = query(q, limit(50));
                 const snap = await getDocs(q);
                 snap.forEach(docSnap => {
-                    const data = docSnap.data();
-                    if (data.estado !== 'desativa') {
-                        items.push({ id: docSnap.id, nome: data.nome, type: categoryId });
+                    const item = docSnap.data();
+                    if (item.estado !== 'desativa') {
+                        const editHtml = `<button class="item-menu-btn" onclick="event.stopPropagation(); window.openCosmosEditPopup('${docSnap.id}', '${item.nome}', '${item.emoji}', 'cosmos-parent')">✏️</button>`;
+                        items.push({ id: docSnap.id, nome: item.nome, type: 'cosmos-parent', emoji: item.emoji, customHtml: `<span>${item.emoji || '💼'} ${item.nome}</span>${editHtml}` });
                     }
                 });
+            }
+            // B. COSMOS NÍVEL 2
+            else if (lastNav && lastNav.type === 'cosmos-parent') {
+                middlePanelTitle.textContent = `${lastNav.emoji || '💼'} ${lastNav.name}`;
+                updateAddButtonState(true, true);
+                let q = query(collection(db, 'subcosmos'), where('cosmosId', '==', lastNav.id), where('userId', '==', myUid), orderBy('nome'));
+                if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
+                q = query(q, limit(50));
+                const snap = await getDocs(q);
+                snap.forEach(docSnap => {
+                    const item = docSnap.data();
+                    if (item.estado !== 'desativa') {
+                        const editHtml = `<button class="item-menu-btn" onclick="event.stopPropagation(); window.openEditEntityModal('${docSnap.id}', 'subcosmos')">✏️</button>`;
+                        items.push({ id: docSnap.id, nome: item.nome, type: 'subcosmos', emoji: item.emoji, customHtml: `<span>${item.emoji || '🧬'} ${item.nome}</span>${editHtml}` });
+                    }
+                });
+            }
+            // C. TÓPICOS
+            else if (categoryId === 'topico') {
+                middlePanelTitle.textContent = "Tópicos";
+                updateAddButtonState(true, true);
+                let q = query(collection(db, 'topicos'), where('userId', '==', myUid), orderBy('nome'));
+                if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
+                q = query(q, limit(50));
+                const snap = await getDocs(q);
+                snap.forEach(docSnap => {
+                    if (docSnap.data().estado !== 'desativa') items.push({ id: docSnap.id, nome: docSnap.data().nome, type: 'topico' });
+                });
+            }
+            // D. MARCADORES
+            else if (categoryId === 'marcadores') {
+                 middlePanelTitle.textContent = "Marcadores";
+                 updateAddButtonState(true, true);
+                 let q = query(collection(db, 'marcadores'), where('userId', '==', myUid), orderBy('nome'));
+                 if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
+                 q = query(q, limit(50));
+                 const snap = await getDocs(q);
+                 snap.forEach(docSnap => items.push({ id: docSnap.id, nome: docSnap.data().nome, type: 'marcadores' }));
+            }
+            // E. TAGS
+            else if (categoryId === 'tag') {
+                middlePanelTitle.textContent = "Tags (#)";
+                updateAddButtonState(false);
+                const q = query(collection(db, 'pastas'), where('tipo', '==', 'nota'), where('userId', '==', myUid));
+                const snap = await getDocs(q);
+                const tagSet = new Set();
+                snap.forEach(doc => { if(doc.data().tags) doc.data().tags.forEach(t => tagSet.add(t)); });
+                let allTagsArray = Array.from(tagSet).sort();
+                if (filterText) allTagsArray = allTagsArray.filter(t => t.toLowerCase().includes(filterText.toLowerCase()));
+                items = allTagsArray.slice(0, 50).map(t => ({ id: t, nome: t, type: 'tag' }));
+            }
+            // F. RESTO
+            else if (categoryId !== 'textobiblico') { 
+                const config = ENTITY_CONFIG[categoryId];
+                if (config) {
+                    middlePanelTitle.textContent = config.displayName;
+                    updateAddButtonState(true, true);
+                    let q = query(collection(db, config.collection), where('userId', '==', myUid), orderBy('nome'));
+                    if (isSpecialCategory) {
+                        if (filterText) q = query(q, where('nome', '>=', filterText), where('nome', '<=', filterText + '\uf8ff'));
+                        q = query(q, limit(50));
+                    }
+                    const snap = await getDocs(q);
+                    snap.forEach(docSnap => {
+                        const data = docSnap.data();
+                        if (data.estado !== 'desativa') {
+                            items.push({ id: docSnap.id, nome: data.nome, type: categoryId });
+                        }
+                    });
+                }
             }
         }
 
@@ -30930,7 +30962,6 @@ async function renderListCategoryItems(categoryId, filterText = '') {
             const li = document.createElement('li');
             li.className = 'list-item';
             
-            // Verifica seleção
             if (activeReferenceEntity && activeReferenceEntity.id === item.id) {
                 const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
                 li.classList.add(selectionClass);
@@ -30952,17 +30983,14 @@ async function renderListCategoryItems(categoryId, filterText = '') {
             }
 
             li.onclick = (e) => {
-                // Se clicou no botão de editar (✏️), não navega
                 if (e.target.closest('.item-menu-btn')) return;
 
-                // --- 1. SE FOR PAI (COSMOS NÍVEL 1) -> ENTRA ---
                 if (item.type === 'cosmos-parent') {
                     navigationStack.push({ id: item.id, name: item.nome, type: 'cosmos-parent', emoji: item.emoji });
-                    updateNavigationView(true); // Isto vai chamar esta função de novo e cair no bloco B
+                    updateNavigationView(true); 
                     return;
                 }
 
-                // --- 2. SE FOR FILHO OU OUTRO -> ABRE 4ª COLUNA ---
                 listElement.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red'));
                 const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
                 li.classList.add(selectionClass);
@@ -30970,14 +30998,13 @@ async function renderListCategoryItems(categoryId, filterText = '') {
                 if (item.type === 'topico') showTopicReferencesPanel(item.id, item.nome, item.desc, 'topico');
                 else if (item.type === 'tag') showTagReferencesPanel(item.nome);
                 else if (item.type === 'marcadores') showMarkerReferencesPanel(item.id, item.nome);
-                else if (item.type === 'subcosmos') showReferencesPanel(item.id, item.nome, 'subcosmos'); // <--- AQUI
+                else if (item.type === 'subcosmos') showReferencesPanel(item.id, item.nome, 'subcosmos');
                 else showReferencesPanel(item.id, item.nome, item.type);
             };
 
             listElement.appendChild(li);
         });
 
-        // Focar no input se foi uma pesquisa
         if (filterText) {
             const input = document.getElementById('category-list-search');
             if (input) {
