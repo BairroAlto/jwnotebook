@@ -13669,8 +13669,40 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
     const q = query(itemsRef, ...constraints);
 
-    return onSnapshot(q, (querySnapshot) => {
-        // --- PREPARAÇÃO EM MEMÓRIA (FRAGMENTO) ---
+    // Adicionamos { includeMetadataChanges: true } para saber se vem da cache ou servidor
+    return onSnapshot(q, { includeMetadataChanges: true }, (querySnapshot) => {
+        
+        // ============================================================
+        // LÓGICA ANTI-PISCAR (CACHE DOS ARQUIVOS)
+        // ============================================================
+        const isCached = querySnapshot.metadata.fromCache;
+        const isOnline = navigator.onLine;
+
+        // Verifica se os itens que vieram são EXCLUSIVAMENTE Arquivos ou Partilhados
+        // (Porque esses são os únicos que estão sempre em cache devido ao sistema de notificações)
+        let onlyArchivesFound = true;
+        
+        if (querySnapshot.empty) {
+            onlyArchivesFound = false;
+        } else {
+            querySnapshot.forEach(doc => {
+                const t = doc.data().tipo;
+                // Se encontrar qualquer coisa que NÃO seja arquivo, então é uma carga mista válida
+                if (t !== 'arquivo' && t !== 'partilhado') {
+                    onlyArchivesFound = false;
+                }
+            });
+        }
+
+        // A REGRA DE OURO:
+        // Se estamos Online + Os dados vêm da Cache + E são só Arquivos...
+        // ...ENTÃO ignoramos esta carga e deixamos a roda a girar à espera do Servidor.
+        if (isOnline && isCached && !querySnapshot.empty && onlyArchivesFound) {
+            console.log("⏳ [LOADER] Cache parcial de Arquivos detetada. A aguardar lista completa...");
+            return; 
+        }
+        // ============================================================
+
         const fragment = document.createDocumentFragment();
         const isColumn1 = (listElement.id === 'left-panel-list');
 
@@ -13691,6 +13723,7 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             li.setAttribute('data-type', item.tipo);
             li.setAttribute('data-name', item.nome);
             li.setAttribute('data-userid', item.userId);
+            li.setAttribute('data-partilhado', item.partilhado || 'inativo');
             li.setAttribute('data-parent-id', item.parentId || "null");
             li.setAttribute('data-protected', (item.passe && item.passe.trim() !== "") ? "true" : "false");
             li.setAttribute('data-pinned', item.isPinned ? "true" : "false");
@@ -13702,11 +13735,24 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
             let lockIcon = (item.passe && item.passe.trim() !== "") ? "🔒 " : "";
             
-            li.innerHTML = `<span>${lockIcon}${item.nome}</span><button class="item-menu-btn">…</button>`;
+            let badgeHTML = "";
+            if (item.tipo === 'arquivo' || item.tipo === 'partilhado') {
+                const unreadCount = window.folderUnreadCounts ? (window.folderUnreadCounts[item.id] || 0) : 0;
+                if (unreadCount > 0) {
+                    badgeHTML = `<span class="unread-count-badge" style="margin-left:auto; margin-right:5px;">${unreadCount > 9 ? '9+' : unreadCount}</span>`;
+                }
+            }
+            
+            li.innerHTML = `
+                <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex-grow:1;">${lockIcon}${item.nome}</span>
+                ${badgeHTML}
+                <button class="item-menu-btn">…</button>
+            `;
 
-            // Lógica de Seleção (Aplicada em Memória)
             let active = false;
-            if (isColumn1) {
+            if (selectedId && item.id === selectedId) {
+                active = true;
+            } else if (isColumn1) {
                 if (item.id === col1SelectedId) active = true;
                 else if (navigationStack.some(nav => nav.id === item.id)) active = true;
             } else {
@@ -13722,22 +13768,25 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
                 else {
                     const selectionClass = (currentViewMode === 'shared') ? 'selected-red' : 'selected';
                     li.classList.add(selectionClass);
+                    setTimeout(() => li.scrollIntoView({ block: 'nearest' }), 100);
                 }
             }
 
-            // Adiciona ao fragmento (invisível) em vez do ecrã
             fragment.appendChild(li);
         });
 
-        // --- RENDERIZAÇÃO FINAL (INSTANTÂNEA) ---
-        // Só agora limpamos a roda e colamos tudo de uma vez
+        // Remove a roda e mostra tudo de uma vez
         listElement.innerHTML = '';
         listElement.appendChild(fragment);
+        
+    }, (error) => {
+        console.error("Erro ao carregar itens:", error);
+        listElement.innerHTML = '<li style="color:red; padding:20px;">Erro de ligação.</li>';
     });
 }
 
 
-async function updateNavigationView(keepEditorOpen = false, targetSelectId = null) {
+ async function updateNavigationView(keepEditorOpen = false, targetSelectId = null) {
     // 1. Atualizações Globais
     updateMobileFABVisibility();
     notebookContainer.classList.remove('left-panel-collapsed');
@@ -33990,10 +34039,9 @@ window.openShareModalForArchive = async function() {
     const modal = document.getElementById('note-share-popup');
     if (!modal) return console.error("Modal #note-share-popup não encontrado!");
 
-    // 1. FORÇA HIERARQUIA
     document.body.appendChild(modal);
     modal.style.setProperty('display', 'flex', 'important');
-    modal.style.zIndex = "8500000";
+    modal.style.zIndex = "8500000"; 
     modal.style.visibility = "visible";
     modal.style.opacity = "1";
 
@@ -34006,20 +34054,18 @@ window.openShareModalForArchive = async function() {
             const data = docSnap.data();
             const myUid = auth.currentUser.uid;
 
-            // 🛡️ BLOQUEIO DE SEGURANÇA: Se não for o dono, esconde opções de escrita
-            // Apenas o dono pode ver e alterar os botões
+            // 🛡️ BLOQUEIO DE SEGURANÇA: Se não for o dono, esconde opções
             if (data.userId !== myUid) {
                 alert("Apenas o dono do arquivo pode gerir as permissões de partilha.");
                 modal.style.display = 'none';
                 return;
             }
 
-            // A. Configurar Link de Leitura (Azul) - Mantém-se igual
+            // A. Link de Leitura (Azul)
             currentNoteShareData = data.shareSettings || { shared: false, shareId: null };
             const mainToggle = document.getElementById('note-share-toggle');
             if(mainToggle) mainToggle.checked = currentNoteShareData.shared || false;
             
-            // ... (Lógica visual da onda azul mantém-se) ...
             const modalContent = document.querySelector('#note-share-popup .modal-content');
             if (currentNoteShareData.shared) modalContent.classList.add('share-active-wave');
             else modalContent.classList.remove('share-active-wave');
@@ -34035,37 +34081,55 @@ window.openShareModalForArchive = async function() {
             }
 
             // ============================================================
-            // B. CORREÇÃO DA SECÇÃO DE COLABORAÇÃO (Vermelha)
+            // B. COLABORAÇÃO + GESTÃO DE UTILIZADORES (VERMELHO)
             // ============================================================
             const collabSection = document.getElementById('archive-collab-section');
             
-            // CORREÇÃO: Removemos "&& currentViewMode === 'shared'"
-            // Se o tipo do documento for arquivo ou partilhado, mostramos as opções.
-            if (data.tipo === 'arquivo' || data.tipo === 'partilhado') {
-                
+            // 1. Limpa qualquer lista de utilizadores antiga que tenha ficado no HTML
+            const oldList = document.getElementById('collab-users-manager');
+            if (oldList) oldList.remove();
+
+            if (data.tipo === 'partilhado') {
                 if(collabSection) collabSection.style.display = 'block';
                 
                 const collabToggle = document.getElementById('collab-share-toggle');
-                // Verifica se está "ativo"
                 if(collabToggle) collabToggle.checked = (data.partilhado === "ativo");
                 
                 const collabLinkContainer = document.getElementById('collab-share-link-container');
                 
-                // Se estiver ativo, mostra o link e gera-o
                 if (data.partilhado === "ativo") {
                     if(collabLinkContainer) collabLinkContainer.style.display = 'block';
                     
                     const baseUrl = window.location.origin + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
-                    // Gera o link com o ID correto e modo=collab
                     const collabUrl = `${baseUrl}/note.html?openArchive=${targetId}&mode=collab`;
-                    
                     const collabInput = document.getElementById('collab-share-url');
                     if(collabInput) collabInput.value = collabUrl;
+
+                    // >>> NOVO: INJETAR LISTA DE UTILIZADORES <<<
+                    const usersContainer = document.createElement('div');
+                    usersContainer.id = 'collab-users-manager';
+                    usersContainer.style.cssText = "margin-top: 15px; border-top: 1px dashed #e74c3c; padding-top: 10px;";
+                    
+                    usersContainer.innerHTML = `
+                        <h4 style="font-size:0.8em; color:#e74c3c; text-transform:uppercase; margin-bottom:10px;">👤 Colaboradores Ativos</h4>
+                        <ul id="collab-users-ul" class="move-list" style="max-height:150px; overflow-y:auto; border:1px solid rgba(231, 76, 60, 0.3); border-radius:4px;">
+                            <li style="padding:10px; text-align:center; color:#888;">
+                                <div class="spinner" style="width:15px; height:15px; border-width:2px; display:inline-block; border-left-color:#e74c3c;"></div>
+                                A carregar nomes...
+                            </li>
+                        </ul>
+                    `;
+                    
+                    // Adiciona a lista logo abaixo do link de colaboração
+                    collabLinkContainer.appendChild(usersContainer);
+
+                    // Chama a função assíncrona para preencher os nomes
+                    window.renderCollaboratorsList(targetId, data.colaboradores);
+
                 } else {
                     if(collabLinkContainer) collabLinkContainer.style.display = 'none';
                 }
             } else {
-                // Se for uma nota normal, esconde a secção vermelha
                 if(collabSection) collabSection.style.display = 'none';
             }
         }
@@ -34074,6 +34138,7 @@ window.openShareModalForArchive = async function() {
         alert("Erro ao carregar permissões.");
     }
 };
+
 
 // Função centralizada para abrir o criador de marcadores
 function openCreateBookmarkPopup() {
@@ -45814,6 +45879,122 @@ function createLikeExplosion(btnElement) {
         }).onfinish = () => particle.remove();
     }
 }
+
+// 1. RENDERIZAR LISTA DE COLABORADORES (Busca nomes na coleção 'users')
+window.renderCollaboratorsList = async function(docId, colaboradoresMap) {
+    const listUl = document.getElementById('collab-users-ul');
+    if (!listUl) return;
+
+    if (!colaboradoresMap || Object.keys(colaboradoresMap).length === 0) {
+        listUl.innerHTML = '<li style="padding:10px; text-align:center; color:#888;">Ainda sem colaboradores.</li>';
+        return;
+    }
+
+    const myUid = auth.currentUser.uid;
+    // Filtra o próprio dono da lista (não faz sentido o dono remover-se a si mesmo aqui)
+    const userIds = Object.keys(colaboradoresMap).filter(uid => uid !== myUid);
+
+    if (userIds.length === 0) {
+        listUl.innerHTML = '<li style="padding:10px; text-align:center; color:#888;">Ainda sem colaboradores convidados.</li>';
+        return;
+    }
+
+    try {
+        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // Limpa lista
+        listUl.innerHTML = '';
+
+        // Busca dados de cada utilizador
+        // Nota: Isto pode ser otimizado com query 'in', mas Promise.all é seguro para listas pequenas
+        const promises = userIds.map(async (uid) => {
+            try {
+                const userSnap = await getDoc(doc(db, 'users', uid));
+                if (userSnap.exists()) {
+                    return { id: uid, name: userSnap.data().nome, email: userSnap.data().email };
+                }
+            } catch(e) {}
+            return { id: uid, name: "Utilizador Desconhecido", email: "---" };
+        });
+
+        const usersData = await Promise.all(promises);
+
+        // Renderiza cada linha
+        usersData.forEach(user => {
+            const li = document.createElement('li');
+            li.className = 'list-item';
+            li.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:rgba(255,255,255,0.02); border-bottom:1px solid var(--border-color);";
+            
+            li.innerHTML = `
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="width:24px; height:24px; background:${stringToColor(user.name)}; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; color:white; font-weight:bold;">
+                        ${user.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div style="display:flex; flex-direction:column;">
+                        <span style="font-weight:500; font-size:0.9em; color:var(--text-color);">${user.name}</span>
+                        <span style="font-size:0.7em; color:var(--text-muted-color);">${user.email}</span>
+                    </div>
+                </div>
+                <button onclick="window.removeCollaborator('${docId}', '${user.id}', this)" 
+                        title="Remover Acesso"
+                        style="background:none; border:1px solid #c0392b; color:#c0392b; border-radius:4px; padding:2px 8px; cursor:pointer; font-size:0.8em; transition:all 0.2s;">
+                    Remover
+                </button>
+            `;
+            
+            // Hover effect no botão
+            const btn = li.querySelector('button');
+            btn.onmouseover = () => { btn.style.background = "#c0392b"; btn.style.color = "white"; };
+            btn.onmouseout = () => { btn.style.background = "none"; btn.style.color = "#c0392b"; };
+
+            listUl.appendChild(li);
+        });
+
+    } catch (e) {
+        console.error("Erro ao carregar utilizadores:", e);
+        listUl.innerHTML = '<li style="color:#e74c3c; padding:10px;">Erro ao carregar lista.</li>';
+    }
+};
+
+// 2. FUNÇÃO PARA REMOVER COLABORADOR
+window.removeCollaborator = async function(docId, userIdToRemove, btnElement) {
+    // Confirmação
+    const confirmed = await showConfirmation(
+        "Remover Acesso?", 
+        "Este utilizador deixará de poder ver e editar este arquivo. O arquivo será removido da lista dele."
+    );
+
+    if (!confirmed) return;
+
+    // Feedback Visual
+    btnElement.textContent = "...";
+    btnElement.disabled = true;
+
+    try {
+        const { doc, updateDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const docRef = doc(db, 'pastas', docId);
+
+        // Remove o ID do mapa de colaboradores
+        await updateDoc(docRef, {
+            [`colaboradores.${userIdToRemove}`]: deleteField()
+        });
+
+        // Remove a linha visualmente
+        const li = btnElement.closest('li');
+        li.style.opacity = '0';
+        setTimeout(() => li.remove(), 300);
+
+        // Se quiser ser muito minucioso, pode também forçar o fecho do "Cadeado" desse utilizador se ele estiver online, 
+        // mas o sistema de realtime (onSnapshot) do lado dele vai tratar disso automaticamente (vai receber erro de permissão e ser expulso).
+
+    } catch (e) {
+        console.error("Erro ao remover colaborador:", e);
+        alert("Erro ao remover. Verifique a sua ligação.");
+        btnElement.textContent = "Remover";
+        btnElement.disabled = false;
+    }
+};
+
 
     </script>
 </body>
