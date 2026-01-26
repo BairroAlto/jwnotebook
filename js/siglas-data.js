@@ -137,5 +137,12 @@ export const SIGLAS_PUBLICACOES = {
     "dy": "Vitória Divina",
     "le": "Viva Para Sempre",
     "rj": "Volte para Jeová",
-    "jl": "Vontade de Jeová"
+    "jl": "Vontade de Jeová",
+
+    // Revistas e Brochuras
+     "jwbvod": "Vídeo",
+     "mwbv": "Vídeo",
+     "jwb": "Vídeo"
+
+
 };
