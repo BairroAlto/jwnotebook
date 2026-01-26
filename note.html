@@ -10280,6 +10280,18 @@ a[data-anexo-id] {
     border-radius: 3px;
 }
 
+/* Estado "Feito" do Card de Anotação */
+.store-note-card.state-done {
+    background-color: rgba(46, 204, 113, 0.15) !important; /* Verde Suave */
+    border-color: #2ecc71 !important; /* Borda Verde */
+}
+
+/* Opcional: Riscar o título quando feito */
+.store-note-card.state-done .store-note-title {
+    text-decoration: line-through;
+    opacity: 0.7;
+}
+
 </style>
 
 
@@ -25083,28 +25095,49 @@ document.getElementById('add-item-options').addEventListener('click', (e) => {
 
     // --- NOVA LÓGICA: CRIAÇÃO IMEDIATA NO MODO FLASH ---
     if (currentViewMode === 'flash') {
-        // 1. Gera um nome automático (Ex: Flash Note 10:45)
         const now = new Date();
         const timeString = now.getHours().toString().padStart(2,'0') + ":" + now.getMinutes().toString().padStart(2,'0');
         const defaultName = (itemTypeToAdd === 'jornal') ? `Jornal Flash ${timeString}` : `Nota Flash ${timeString}`;
         
-        // 2. Preenche o input invisível
         newItemNameInput.value = defaultName;
-        
-        // 3. Simula o clique no botão "Criar" para executar a função de criação existente
         document.getElementById('confirm-item-addition').click();
-        
-        return; // Pára aqui, não mostra o input de título
+        return; 
     }
     // ---------------------------------------------------
+
+    // --- ATUALIZAÇÃO DO TÍTULO DO MODAL ---
+    const modal = document.getElementById('add-item-modal');
+    const modalTitle = modal.querySelector('h3');
+    
+    // Mapa de nomes para ficar bonito (Capitalizado)
+    const typeLabels = {
+        'pasta': 'Pasta',
+        'nota': 'Nota',
+        'agregacao': 'Agregação',
+        'arquivo': 'Arquivo',
+        'jornal': 'Jornal',
+        'aquario': 'Aquário',
+        'partilhado': 'Arquivo'
+    };
+
+    if (modalTitle) {
+        const label = typeLabels[itemTypeToAdd] || 'Item';
+        modalTitle.textContent = `Adicionar Item: ${label}`;
+    }
+    // --------------------------------------
 
     // Comportamento normal (pede título)
     document.getElementById('add-item-options').style.display = 'none';
     newItemNameInput.style.display = 'block';
-    newItemNameInput.placeholder = `Nome d${itemTypeToAdd === 'pasta' ? 'a' : 'a'} ${itemTypeToAdd}...`;
+    
+    // Ajusta o placeholder também para ficar coerente
+    const placeholderLabel = typeLabels[itemTypeToAdd] ? typeLabels[itemTypeToAdd].toLowerCase() : itemTypeToAdd;
+    newItemNameInput.placeholder = `Nome d${itemTypeToAdd === 'pasta' || itemTypeToAdd === 'nota' || itemTypeToAdd === 'agregacao' ? 'a' : 'o'} ${placeholderLabel}...`;
+    
     newItemNameInput.focus();
     document.getElementById('confirm-item-addition').style.display = 'block';
 });
+
 
 document.getElementById('confirm-item-addition').addEventListener('click', async () => {
     const confirmBtn = document.getElementById('confirm-item-addition');
@@ -43231,29 +43264,62 @@ function createStoreNoteCard(id, data) {
     card.className = 'store-note-card';
     card.id = `store-note-${id}`;
 
-    // --- VERIFICAÇÃO DE BLOQUEIO (NOVO) ---
-    // Se este ID estiver na lista de popups abertos, bloqueia o card imediatamente
+    // --- VERIFICAÇÃO DE BLOQUEIO ---
     const isLocked = window.activeStorePopups && window.activeStorePopups.includes(id);
-    const lockedClass = isLocked ? 'locked-card' : '';
     const readOnlyAttr = isLocked ? 'readonly' : '';
     const contentEditableAttr = isLocked ? 'false' : 'true';
 
     if (isLocked) card.classList.add('locked-card');
+    
+    // --- VERIFICAÇÃO DE ESTADO "FEITO" ---
+    if (data.isDone) {
+        card.classList.add('state-done');
+    }
 
     // Título e Botões de Topo
     const header = document.createElement('div');
     header.style.display = 'flex';
     header.style.gap = '5px';
+    header.style.alignItems = 'center';
+
+    // Ícone do Checkbox (Quadrado)
+    const checkIcon = data.isDone ? '☑️' : '⬜';
+
     header.innerHTML = `
-        <input type="text" class="store-note-title" placeholder="Título" value="${data.title || ''}" ${readOnlyAttr}>
+        <input type="text" class="store-note-title" placeholder="Título" value="${data.title || ''}" ${readOnlyAttr} style="flex-grow: 1;">
+        
+        <!-- NOVO BOTÃO CHECKBOX -->
+        <button class="store-icon-btn btn-check-toggle" title="Marcar como feito" 
+                style="font-size: 16px; margin-right: 2px;">
+            ${checkIcon}
+        </button>
+
         <button class="store-icon-btn" title="Abrir Popup" onclick="window.openStoreNotePopup('${id}')">⇱</button>
         <button class="store-icon-btn" title="Apagar" style="color:#e74c3c" onclick="window.deleteStoreItem('${id}')">🗑️</button>
     `;
 
+    // --- LÓGICA DO CHECKBOX ---
+    const checkBtn = header.querySelector('.btn-check-toggle');
+    checkBtn.onclick = () => {
+        // 1. Alterna estado visual
+        const isNowDone = !card.classList.contains('state-done');
+        
+        if (isNowDone) {
+            card.classList.add('state-done');
+            checkBtn.textContent = '☑️';
+        } else {
+            card.classList.remove('state-done');
+            checkBtn.textContent = '⬜';
+        }
+
+        // 2. Grava no Firebase
+        window.updateStoreItem(id, { isDone: isNowDone });
+    };
+
     // Corpo
     const body = document.createElement('div');
     body.className = 'store-note-body';
-    body.contentEditable = contentEditableAttr; // Usa a variável definida acima
+    body.contentEditable = contentEditableAttr;
     body.innerHTML = data.content || "";
 
     // Rodapé (Links)
@@ -43273,9 +43339,7 @@ function createStoreNoteCard(id, data) {
     addLinkBtn.className = 'store-icon-btn';
     addLinkBtn.textContent = "+ Link";
     addLinkBtn.onclick = () => {
-        // Se estiver bloqueado, ignora clique
         if (card.classList.contains('locked-card')) return;
-        
         const newLinks = data.links || [];
         newLinks.push({url: ""});
         window.updateStoreItem(id, { links: newLinks }).then(() => {
@@ -43290,20 +43354,16 @@ function createStoreNoteCard(id, data) {
     // Auto-Save Listeners
     const titleInput = header.querySelector('input');
     titleInput.addEventListener('input', () => {
-        // Se estiver bloqueado, não grava (segurança extra)
         if (card.classList.contains('locked-card')) return;
-        
         clearTimeout(card.saveTimer);
         card.saveTimer = setTimeout(() => window.updateStoreItem(id, { title: titleInput.value }), 1000);
     });
 
     body.addEventListener('input', () => {
         if (card.classList.contains('locked-card')) return;
-
         clearTimeout(card.saveTimer);
         card.saveTimer = setTimeout(() => {
             window.updateStoreItem(id, { content: body.innerHTML });
-            // Sincroniza se houver popup aberto (embora esteja bloqueado, é boa prática)
             const popupBody = document.getElementById(`popup-body-${id}`);
             if(popupBody) popupBody.innerHTML = body.innerHTML;
         }, 1000);
@@ -43656,14 +43716,50 @@ window.editShellName = async function(id, oldName) {
 };
 
 window.removeStoreLink = async function(noteId, idx) {
-    const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-    const ref = doc(db, 'aquarium_annotations', noteId);
-    const snap = await getDoc(ref);
-    const links = snap.data().links;
-    links.splice(idx, 1);
-    await updateDoc(ref, { links });
-    if(window.currentShellId) renderInsideShell(document.getElementById('aq-store-view'));
-    else loadStoreContent();
+    // 1. AJUSTE VISUAL: Garante que o modal de confirmação fica acima do Aquário
+    const confirmModal = document.getElementById('confirm-modal');
+    if (confirmModal) {
+        confirmModal.style.setProperty('z-index', '2147483647', 'important'); // Máximo absoluto
+    }
+
+    // 2. PEDIR CONFIRMAÇÃO
+    const confirmed = await showConfirmation(
+        "Remover Link?", 
+        "Deseja apagar este link da lista?"
+    );
+
+    // 3. RESET VISUAL (Opcional, mas boa prática)
+    if (confirmModal) confirmModal.style.zIndex = "";
+
+    // Se cancelou, sai da função e não faz nada
+    if (!confirmed) return;
+
+    // 4. EXECUÇÃO DA REMOÇÃO
+    try {
+        const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const ref = doc(db, 'aquarium_annotations', noteId);
+        const snap = await getDoc(ref);
+        
+        if (snap.exists()) {
+            const links = snap.data().links || [];
+            
+            // Remove o item do array
+            links.splice(idx, 1);
+            
+            // Grava no Firebase
+            await updateDoc(ref, { links });
+            
+            // Atualiza a vista correta (Se estamos dentro de uma Concha ou na Raiz)
+            if(window.currentShellId) {
+                renderInsideShell(document.getElementById('aq-store-view'));
+            } else {
+                loadStoreContent();
+            }
+        }
+    } catch (e) {
+        console.error("Erro ao remover link:", e);
+        alert("Erro ao remover link.");
+    }
 };
 
 
@@ -45630,9 +45726,16 @@ async function syncPuzzleRealTime() {
             // Atualiza Snippet Oculto
             card.dataset.snippet = encodeURIComponent(liveEl.outerHTML);
             
+
+            // 1. Guardar a cor original da borda esquerda antes do flash
+const originalBorderLeft = card.style.borderLeft;
+
             // Flash Visual
             card.style.border = "2px solid #e74c3c"; // VERMELHO PARA TESTE (Bem visível)
-            setTimeout(() => card.style.border = "", 1000);
+          setTimeout(() => { 
+    card.style.border = ""; // Limpa a borda completa (vermelha)
+    card.style.borderLeft = originalBorderLeft; // RESTAURA A COR ESPECÍFICA (Laranja/Azul/Etc)
+}, 1000);
 
             hasUpdates = true;
         } else {
