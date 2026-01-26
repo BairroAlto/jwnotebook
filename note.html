@@ -16907,7 +16907,7 @@ function showContextMenu(e) {
             superBtn.style.display = 'flex';
             
             if (activeItemContext.isSuperfolder) {
-                superBtn.textContent = "Remover Superpasta";
+                superBtn.textContent = "Retornar a Pasta";
                 menu.querySelector('[data-action="change-icon"]').style.display = 'flex';
             } else {
                 superBtn.textContent = "Tornar Superpasta";
@@ -24683,28 +24683,43 @@ window.confirmAppendToNote = async function(targetId, targetName, targetType) {
             // ============================================================
 
             // --- Gravação (Arquivo ou Nota) ---
-            if (targetType === 'partilhado' || targetType === 'arquivo') {
-                const authorName = currentUserData?.nome || auth.currentUser.email.split('@')[0];
-                const newPost = {
-                    id: 'post_' + Date.now(),
-                    type: 'entity',
-                    title: 'Recebido (Clonado)',
-                    content: window.htmlToAppend, // Já com o ID novo e OriginID
-                    createdBy: authorName,
-                    createdAt: Date.now(),
-                    updatedAt: Date.now()
-                };
-                const updatedPosts = [newPost, ...(data.posts || [])];
-                await updateDoc(noteRef, { posts: updatedPosts, ultimaedicao: serverTimestamp() });
-            } else {
-                const currentContent = data.conteudo || "";
-                // Adiciona ao FUNDO
-                const newContent = currentContent + "<p><br></p>" + window.htmlToAppend;
-                await updateDoc(noteRef, {
-                    conteudo: newContent,
-                    ultimaedicao: serverTimestamp()
-                });
-            }
+          if (targetType === 'partilhado' || targetType === 'arquivo') {
+    const authorName = currentUserData?.nome || auth.currentUser.email.split('@')[0];
+    
+    // 1. Calcular Ordem para ficar no topo
+    // (Tentamos ler a ordem do topo atual, se falhar usamos timestamp negativo)
+    let newOrder = -Date.now(); 
+    if (data.posts && data.posts.length > 0 && typeof data.posts[0].ordem === 'number') {
+        newOrder = data.posts[0].ordem - 1000;
+    }
+
+    // 2. Criar Objeto do Post
+    const newPostData = {
+        id: `post_${Date.now()}`, // ID único do Post
+        type: 'entity',
+        title: 'Recebido (Clonado)', // Título do Post
+        content: window.htmlToAppend, // O HTML da caixa com o ID regenerado
+        userId: auth.currentUser.uid,
+        createdBy: authorName,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        ordem: newOrder // Ordem correta
+    };
+    
+    // 3. GRAVAR NA SUB-COLEÇÃO (CORREÇÃO)
+const { collection, setDoc, doc: docInner, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+
+// Caminho: pastas/{ID_ARQUIVO}/posts/{ID_NOVO_POST}
+const subCollectionRef = docInner(db, 'pastas', targetId, 'posts', newPostData.id);
+await setDoc(subCollectionRef, newPostData);
+
+// 4. ATUALIZAR O PAI (COM ASSINATURA)
+// AQUI ESTÁ O TRUQUE: Adicionamos lastEditorId
+await updateDoc(noteRef, { 
+    ultimaedicao: serverTimestamp(),
+    lastEditorId: auth.currentUser.uid // <--- A SUA ASSINATURA
+});
+}
 
             confirmModal.style.display = 'none';
             if (appendModal) appendModal.style.display = 'none';
