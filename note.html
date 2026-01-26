@@ -11194,16 +11194,18 @@ a[data-anexo-id] {
     <div class="modal-content" style="max-width: 800px; height: 80vh; display: flex; flex-direction: column;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
             <h3 id="topics-modal-title">Gestão da Nota</h3>
-            <button id="manage-topics-btn" title="Criar/Gerir Tópicos" style="background: none; border: 1px solid var(--accent-color); color: var(--accent-color); width: 30px; height: 30px; border-radius: 50%; font-size: 18px; cursor: pointer;">+</button>
+            <!-- Este botão "+" adapta-se via JS (Azul para Tópicos, Verde para Âncoras, Amarelo para Tags) -->
+            <button id="manage-topics-btn" title="Criar Item" style="background: none; border: 1px solid var(--accent-color); color: var(--accent-color); width: 30px; height: 30px; border-radius: 50%; font-size: 18px; cursor: pointer;">+</button>
         </div>
         
-        <!-- NOVO: ABAS DE NAVEGAÇÃO -->
+        <!-- ABAS DE NAVEGAÇÃO -->
         <div class="tabs-container" id="topics-modal-tabs" style="margin-bottom: 15px;">
             <button class="active" data-tab="topics">📑 Tópicos</button>
             <button data-tab="anchors">⚓ Âncoras</button>
+            <button data-tab="autolink">🏷️ Tags</button>
         </div>
 
-        <!-- CONTEÚDO 1: TÓPICOS (Original) -->
+        <!-- CONTEÚDO 1: TÓPICOS -->
         <div id="tm-content-topics" class="tm-tab-content" style="display: flex; flex-direction: column; flex-grow: 1; overflow: hidden;">
             <div class="topics-layout" style="flex-grow: 1; overflow: hidden;">
                 <!-- Coluna da Esquerda: Lista de Tópicos -->
@@ -11221,7 +11223,7 @@ a[data-anexo-id] {
             </div>
         </div>
 
-        <!-- CONTEÚDO 2: ÂNCORAS (Novo) -->
+        <!-- CONTEÚDO 2: ÂNCORAS -->
         <div id="tm-content-anchors" class="tm-tab-content" style="display: none; flex-direction: column; flex-grow: 1; overflow: hidden;">
             
             <!-- Barra de Pesquisa -->
@@ -11236,6 +11238,27 @@ a[data-anexo-id] {
                     <!-- Preenchido via JS -->
                 </ul>
                 <button id="load-more-anchors-btn" class="modal-btn secondary" style="width: 100%; margin-top: 10px; display: none;">Carregar mais 30 itens</button>
+            </div>
+        </div>
+
+        <!-- CONTEÚDO 3: AUTO-LINKER (TAGS) - NOVO E LIMPO -->
+        <div id="tm-content-autolink" class="tm-tab-content" style="display: none; flex-direction: column; flex-grow: 1; overflow: hidden;">
+            
+            <!-- Barra de Ação Minimalista -->
+            <div style="padding: 5px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: center; background: rgba(255,255,255,0.02); margin-bottom: 10px; border-radius: 4px;">
+                <button id="run-auto-linker-btn" class="modal-btn" style="background: transparent; border: 1px solid var(--text-muted-color); color: var(--text-muted-color); padding: 4px 15px; font-size: 0.85em; border-radius: 20px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.borderColor='var(--accent-color)'; this.style.color='var(--accent-color)'" onmouseout="this.style.borderColor='var(--text-muted-color)'; this.style.color='var(--text-muted-color)'">
+                    ✨ Verificar Texto
+                </button>
+            </div>
+
+            <h4 style="margin: 0 0 5px 5px; font-size: 0.75em; color: var(--accent-color); text-transform: uppercase; letter-spacing: 0.5px;">Sugestões Encontradas</h4>
+            
+            <div class="topics-column" style="width: 100%; flex-grow: 1; display: flex; flex-direction: column; background: var(--bg-color); border: 1px solid var(--border-color);">
+                <ul id="auto-linker-results" class="topics-list" style="flex-grow: 1; overflow-y: auto;">
+                    <li style="padding: 20px; text-align: center; color: var(--text-muted-color); font-style: italic; font-size: 0.9em;">
+                        Clique em "Verificar" para analisar.
+                    </li>
+                </ul>
             </div>
         </div>
 
@@ -12772,7 +12795,7 @@ let currentLocalMatchIndex = -1;
 let currentSuperLinkRange = null;
 let currentEditingSuperLinkId = null;
 let selectedSentenceNodes = []; // Guarda os nós de texto selecionados na lista
-
+let currentNoteTags = [];
 
 
 window.currentNoteHybridMode = false;
@@ -13221,14 +13244,17 @@ async function openTopicsModal(targetId, type) {
     console.log(`🚀 Abrindo painel de gestão para ${type}: ${targetId}`);
     
     // 1. CONFIGURAÇÃO DE ESTADO
-    topicTargetId = targetId; 
-    activeMiniNoteElement = null; 
+    window.topicTargetId = targetId; 
+    
+    // Se não veio de uma caixa, limpa a referência ativa
+    if (type !== 'box') window.activeMiniNoteElement = null; 
 
     // Reset das variáveis das âncoras
     currentNoteAnchors = {};
     anchorLastDoc = null;
     currentAnchorSearch = "";
-    document.getElementById('anchor-search-input').value = "";
+    if(document.getElementById('anchor-search-input')) 
+        document.getElementById('anchor-search-input').value = "";
 
     const modal = document.getElementById('topics-modal');
     if (!modal) return;
@@ -13240,50 +13266,92 @@ async function openTopicsModal(targetId, type) {
     modal.style.visibility = "visible";
     modal.style.opacity = "1";
 
-    // 3. RESET DE ABAS (Volta sempre para Tópicos)
+    // ============================================================
+    // 3. RESET DE ABAS (AQUI ESTAVA O ERRO)
+    // ============================================================
+    
+    // A. Reset dos botões
     document.querySelectorAll('#topics-modal-tabs button').forEach(b => b.classList.remove('active'));
     document.querySelector('#topics-modal-tabs button[data-tab="topics"]').classList.add('active');
-    document.getElementById('tm-content-topics').style.display = 'flex';
-    document.getElementById('tm-content-anchors').style.display = 'none';
+    
+    // B. Reset dos conteúdos (CORRIGIDO: Esconder a aba nova também)
+    document.getElementById('tm-content-topics').style.display = 'flex';      // Mostra Tópicos
+    document.getElementById('tm-content-anchors').style.display = 'none';     // Esconde Âncoras
+    document.getElementById('tm-content-autolink').style.display = 'none';    // Esconde Tags (NOVO)
 
-    // --- NOVO: Resetar o botão Híbrido ---
-    // Como a aba inicial é Tópicos, o botão híbrido deve começar escondido
+    // C. Reset do Botão "+" do Cabeçalho (Volta a Azul)
+    const plusBtn = document.getElementById('manage-topics-btn');
+    if (plusBtn) {
+        plusBtn.style.display = 'block';
+        plusBtn.title = "Criar/Gerir Tópicos";
+        plusBtn.style.color = "var(--accent-color)";
+        plusBtn.style.borderColor = "var(--accent-color)";
+    }
+
+    // D. Reset do botão Híbrido (Esconde)
     const hybridContainer = document.getElementById('hybrid-toggle-container');
     if (hybridContainer) hybridContainer.style.display = 'none';
 
-    // 4. CARREGAR DADOS ATUAIS (TÓPICOS E ÂNCORAS)
+    // 4. CARREGAR DADOS ATUAIS
     try {
         let data = {};
         
         // Se for caixa (subnota)
-        if (targetId instanceof HTMLElement || (typeof targetId === 'object' && targetId.dataset)) {
-             // Lógica para caixa
+       if (window.activeMiniNoteElement) {
+             const topicsString = window.activeMiniNoteElement.getAttribute('data-topics') || '{}';
+             // As caixas também podem ter tags no atributo data-tags se quiseres, 
+             // mas assumindo que estamos a falar da NOTA principal:
+             try { data.topicosSelecionados = JSON.parse(topicsString); } catch(e) {}
+             
+             // Se as caixas tiverem tags, leríamos aqui. 
+             // Se o objetivo é gerir tags da NOTA PRINCIPAL, lemos da BD:
+             if (selectedNoteId) {
+                 const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+                 const noteSnap = await getDoc(doc(db, 'pastas', selectedNoteId));
+                 if(noteSnap.exists()) {
+                     data.tags = noteSnap.data().tags;
+                 }
+             }
+
         } else {
-            // Nota ou Pasta
+            // Nota ou Pasta (Lógica Principal)
+            const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
             const docSnap = await getDoc(doc(db, 'pastas', targetId));
             if (docSnap.exists()) data = docSnap.data();
         }
 
-        // Carrega Tópicos
+        // --- CARREGAMENTOS ---
         currentNoteTopics = data.topicosSelecionados || {};
-        
-        // Carrega Âncoras
         currentNoteAnchors = data.ancorasSelecionadas || {};
+        
+        // >>> NOVA LINHA: CARREGAR TAGS <<<
+        currentNoteTags = data.tags || []; 
+        console.log("🏷️ Tags carregadas:", currentNoteTags);
 
-        // --- NOVO: CARREGAR ESTADO HÍBRIDO ---
+        // Carrega estado Híbrido
         const isHybrid = data.isHybridMode || false;
         const hybridToggle = document.getElementById('hybrid-mode-toggle');
-        if (hybridToggle) {
-            hybridToggle.checked = isHybrid;
-        }
+        if (hybridToggle) hybridToggle.checked = isHybrid;
 
-        // Renderiza a lista de Tópicos (Aba 1)
+        // 5. RENDERIZAR LISTAS
         activeTopicIdForSelection = null;
         document.getElementById('subtopics-list-select').innerHTML = '<li style="color: #888; font-style: italic; padding: 10px;">Selecione um tópico à esquerda.</li>';
-        await renderTopicsSelectionList();
+        
+        if (typeof renderTopicsSelectionList === 'function') {
+            await renderTopicsSelectionList();
+        }
 
-        // Limpa a lista de Âncoras (Aba 2) para carregar apenas quando clicar na aba
-        document.getElementById('note-anchors-list').innerHTML = '';
+        // Limpa lista de tags (será gerada ao clicar no botão Verificar ou na aba)
+        const autoLinkList = document.getElementById('auto-linker-results');
+        if (autoLinkList) {
+             // Se já tivermos tags, mostramo-las logo
+             if (currentNoteTags.length > 0) {
+                 // Simula uma "verificação" para listar o que temos + o que está no texto
+                 runAutoLinkerScanner(); 
+             } else {
+                 autoLinkList.innerHTML = '<li style="padding: 20px; text-align: center; color: var(--text-muted-color); font-style: italic; font-size: 0.9em;">Clique em "Verificar" para analisar.</li>';
+             }
+        }
 
     } catch (e) {
         console.error("Erro ao carregar dados da nota:", e);
@@ -34539,65 +34607,66 @@ window.openGavetaSelection = async (postId) => {
 const manageBtn = document.getElementById('manage-topics-btn');
 
 if (manageBtn) {
-    // Clonamos para limpar qualquer listener antigo e garantir uma lógica limpa
     const newManageBtn = manageBtn.cloneNode(true);
     manageBtn.parentNode.replaceChild(newManageBtn, manageBtn);
 
-    newManageBtn.addEventListener('click', (e) => {
+    newManageBtn.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
 
-        // 1. Descobrir qual a aba ativa neste momento
+        // 1. Descobrir qual a aba ativa
         const activeTabBtn = document.querySelector('#topics-modal-tabs button.active');
         const activeTab = activeTabBtn ? activeTabBtn.dataset.tab : 'topics';
 
         // --- CASO A: ABA ÂNCORAS (⚓) ---
         if (activeTab === 'anchors') {
-            console.log("⚓ Botão + clicado: Abrindo criador de Âncoras...");
-            
-            // Simula o clique no botão que já configurámos para abrir o modal de criação
-            // (Ou pode chamar a lógica de abrir o modal diretamente aqui)
             const createAnchorModal = document.getElementById('create-anchor-modal');
-            const nameInput = document.getElementById('new-anchor-name');
-            const descInput = document.getElementById('new-anchor-desc');
-
             if (createAnchorModal) {
-                // Prepara o modal
-                nameInput.value = '';
-                descInput.value = '';
+                document.getElementById('new-anchor-name').value = '';
+                document.getElementById('new-anchor-desc').value = '';
                 
                 document.body.appendChild(createAnchorModal);
-                createAnchorModal.style.setProperty('display', 'flex', 'important');
-                createAnchorModal.style.zIndex = "9000000"; // Acima do gestor
-                createAnchorModal.style.visibility = "visible";
-                createAnchorModal.style.opacity = "1";
+                createAnchorModal.style.cssText = "display:flex !important; z-index:9000000 !important; visibility:visible !important; opacity:1 !important; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.85); justify-content:center; align-items:center;";
                 
-                setTimeout(() => nameInput.focus(), 100);
+                setTimeout(() => document.getElementById('new-anchor-name').focus(), 100);
             }
         } 
         
         // --- CASO B: ABA TÓPICOS (📑) ---
-        else {
-            console.log("📑 Botão + clicado: Abrindo gestão de Tópicos...");
-            
+        else if (activeTab === 'topics') {
             const manageModal = document.getElementById('manage-topics-modal');
             if (!manageModal) return;
 
             document.body.appendChild(manageModal);
-            manageModal.style.setProperty('display', 'flex', 'important');
-            manageModal.style.zIndex = "9000000"; 
-            manageModal.style.visibility = "visible";
-            manageModal.style.opacity = "1";
+            manageModal.style.cssText = "display:flex !important; z-index:9000000 !important; visibility:visible !important; opacity:1 !important; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.85); justify-content:center; align-items:center;";
 
-            // Reseta o estado
             activeTopicIdForManagement = null;
             if (typeof renderManageTopicsList === 'function') renderManageTopicsList();
             
-            const subBtn = document.getElementById('create-new-subtopic-btn');
-            if(subBtn) subBtn.style.display = 'none';
+            document.getElementById('create-new-subtopic-btn').style.display = 'none';
+            document.getElementById('subtopics-list-manage').innerHTML = '<li style="color:#888; padding:10px;">Selecione um tópico para ver os subtópicos.</li>';
+        }
+
+        // --- CASO C: ABA TAGS/AUTO-LINKER (🏷️) --- NEW!
+        else if (activeTab === 'autolink') {
+            // Usa o seu modal bonito de input
+            const result = await showCustomInput("Criar Nova Tag", "Nome da tag (sem #)...");
             
-            const subList = document.getElementById('subtopics-list-manage');
-            if(subList) subList.innerHTML = '<li style="color:#888; padding:10px;">Selecione um tópico para ver os subtópicos.</li>';
+            if (result && result.name) {
+                const tagName = result.name.trim().replace(/^#/, ''); // Remove # se o user colocar
+                
+                // Função já existente no seu sistema para criar Tags
+                if (typeof createNewTag === 'function') {
+                    await createNewTag(tagName);
+                    alert(`Tag #${tagName} criada com sucesso!`);
+                    
+                    // Opcional: Atualiza o botão de verificar para dar feedback
+                    const verifyBtn = document.getElementById('run-auto-linker-btn');
+                    if(verifyBtn) {
+                        verifyBtn.click(); // Roda a verificação automaticamente
+                    }
+                }
+            }
         }
     });
 }
@@ -39052,61 +39121,60 @@ document.getElementById('topics-modal-tabs').addEventListener('click', async (e)
     const btn = e.target.closest('button');
     if (!btn) return;
 
-    // 1. Atualiza visual dos botões das abas
+    // 1. Atualiza visual
     document.querySelectorAll('#topics-modal-tabs button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
 
-    const tab = btn.dataset.tab; // 'topics' ou 'anchors'
+    const tab = btn.dataset.tab; 
     
-    // 2. Alternar Conteúdo (Esconde um, mostra o outro)
+    // 2. Esconde conteúdos
     document.getElementById('tm-content-topics').style.display = 'none';
     document.getElementById('tm-content-anchors').style.display = 'none';
+    document.getElementById('tm-content-autolink').style.display = 'none';
     
+    // 3. Mostra o alvo
     const targetContent = document.getElementById(`tm-content-${tab}`);
     if (targetContent) targetContent.style.display = 'flex';
 
-    // 3. Atualizar o Botão "+" do Cabeçalho
+    // 4. Configura o Botão "+" do Cabeçalho e Toggle Híbrido
     const plusBtn = document.getElementById('manage-topics-btn');
+    const hybridContainer = document.getElementById('hybrid-toggle-container');
+
+    // Reset ao toggle híbrido (só aparece em Âncoras)
+    if (hybridContainer) hybridContainer.style.display = (tab === 'anchors') ? 'flex' : 'none';
+
     if (plusBtn) {
+        plusBtn.style.display = 'block'; // Mostra sempre por padrão
+
         if (tab === 'anchors') {
             // MODO ÂNCORA: Botão Verde
             plusBtn.title = "Criar Nova Âncora";
             plusBtn.style.color = "#2ecc71"; 
             plusBtn.style.borderColor = "#2ecc71";
-        } else {
+
+        } else if (tab === 'topics') {
             // MODO TÓPICOS: Botão Azul
             plusBtn.title = "Criar/Gerir Tópicos";
             plusBtn.style.color = "var(--accent-color)";
             plusBtn.style.borderColor = "var(--accent-color)";
+
+        } else if (tab === 'autolink') {
+            // MODO TAGS (NOVO): Botão Amarelo
+            plusBtn.title = "Criar Nova Tag";
+            plusBtn.style.color = "#f1c40f"; 
+            plusBtn.style.borderColor = "#f1c40f";
         }
     }
 
-    // ============================================================
-    // 4. LÓGICA DA ABA ÂNCORAS (GRAVAÇÃO + CARREGAMENTO)
-    // ============================================================
+    // 5. Carregar dados se necessário (Âncoras)
     if (tab === 'anchors') {
-        
-        // A. GRAVAÇÃO AUTOMÁTICA
-        console.log("⚓ [SISTEMA] Mudança para aba Âncoras. A gravar nota...");
-        
-        if (typeof updateSaveStatus === 'function') updateSaveStatus('saving'); // Muda para "A guardar..."
-        
-        if (typeof saveNote === 'function') {
-            await saveNote(true); // Gravação forçada e imediata
-        }
-
-        if (typeof updateSaveStatus === 'function') updateSaveStatus('saved'); // Muda para "Guardado"
-
-        // B. CARREGAMENTO PREGUIÇOSO (Lazy Load)
-        // Só carrega a lista se ela ainda estiver vazia
         const list = document.getElementById('note-anchors-list');
-        if (list && list.children.length === 0) {
-            if (typeof loadAnchorsForSelection === 'function') {
-                loadAnchorsForSelection(true); // true = reset/limpar
-            }
+        if (list && (list.children.length === 0 || list.querySelector('.spinner'))) {
+            if (typeof loadAnchorsForSelection === 'function') loadAnchorsForSelection(true);
         }
     }
 });
+
 
 // 2. Pesquisa de Âncoras
 document.getElementById('anchor-search-input').addEventListener('input', (e) => {
@@ -47903,6 +47971,258 @@ window.openViewLinkModal = function(anexoId) {
         alert("Dados do link inválidos.");
     }
 };
+
+
+// ============================================================
+// 🧠 MOTOR DO AUTO-LINKER (ZERO READS)
+// ============================================================
+
+// Listener do Botão Mágico
+document.getElementById('run-auto-linker-btn').addEventListener('click', (e) => {
+    e.preventDefault();
+    runAutoLinkerScanner();
+});
+
+function runAutoLinkerScanner() {
+    const list = document.getElementById('auto-linker-results');
+    const editor = document.getElementById('note-content-editor');
+    
+    if (!editor || !list) return;
+
+    list.innerHTML = '<li style="padding:15px; text-align:center;"><div class="spinner"></div><br>A comparar...</li>';
+
+    // 1. Preparar Candidatos (Tags e Entidades)
+    let candidates = [];
+    
+    // A. Adiciona Tags Globais
+    if (typeof allTags !== 'undefined') {
+        allTags.forEach(tag => {
+            candidates.push({ name: tag.nome, type: 'tag', id: tag.id });
+        });
+    }
+
+    // B. Adiciona Entidades (EXCLUINDO 'textobiblico')
+    Object.keys(allEntities).forEach(type => {
+        
+        // >>> AQUI ESTÁ A CORREÇÃO: Ignora textos bíblicos <<<
+        if (type === 'textobiblico') return; 
+
+        allEntities[type].forEach(ent => {
+            candidates.push({ name: ent.nome, type: type, id: ent.id });
+        });
+    });
+
+    // 2. Analisar Texto
+    const textContent = editor.innerText.toLowerCase();
+    const suggestions = [];
+    const processedNames = new Set();
+
+    candidates.forEach(cand => {
+        const lowerName = cand.name.toLowerCase();
+        
+        // Critério: Ou está no texto, OU JÁ ESTÁ GRAVADO NA NOTA
+        const isPresentInText = textContent.includes(lowerName);
+        const isAlreadySaved = currentNoteTags.includes(cand.name);
+
+        if (isPresentInText || isAlreadySaved) {
+            if (!processedNames.has(lowerName)) {
+                suggestions.push({
+                    ...cand,
+                    isSaved: isAlreadySaved // Marca se já está ativo
+                });
+                processedNames.add(lowerName);
+            }
+        }
+    });
+
+    // 3. Renderizar
+    list.innerHTML = '';
+
+    if (suggestions.length === 0) {
+        list.innerHTML = `<li style="padding: 20px; text-align: center; color: #888;">Nada encontrado.</li>`;
+        return;
+    }
+
+    // Ordenar: Primeiro os ativos/guardados
+    suggestions.sort((a, b) => (b.isSaved === a.isSaved) ? 0 : b.isSaved ? 1 : -1);
+
+    suggestions.forEach(item => {
+        const li = document.createElement('li');
+        li.style.cssText = "display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid var(--border-color);";
+        
+        // Se estiver guardado, fundo verde claro
+        if (item.isSaved) {
+            li.style.backgroundColor = "rgba(46, 204, 113, 0.1)";
+        }
+
+        let icon = item.type === 'tag' ? "🏷️" : "🔹";
+        
+        // Botão Dinâmico
+        const btnText = item.isSaved ? "✅ Ativo" : "✨ Aplicar";
+        const btnColor = item.isSaved ? "#2ecc71" : "var(--accent-color)";
+        const btnBorder = item.isSaved ? "none" : "1px solid var(--accent-color)";
+
+        li.innerHTML = `
+            <div style="display:flex; flex-direction:column;">
+                <span style="font-weight:bold; font-size:1em; color:var(--text-color);">${icon} ${item.name}</span>
+                <small style="color:var(--text-muted-color); font-size:0.75em;">${item.type}</small>
+            </div>
+            <button class="modal-btn secondary action-btn" style="padding: 4px 12px; font-size: 0.85em; border: ${btnBorder}; color: ${btnColor}; background:transparent;">
+                ${btnText}
+            </button>
+        `;
+
+        // Ação do Botão
+  const btn = li.querySelector('.action-btn');
+        btn.onclick = async () => {
+            // Desabilita o botão temporariamente para evitar duplo clique
+            btn.disabled = true;
+            
+            // Chama a função de toggle (agora assíncrona)
+            await toggleTagState(item, btn, li);
+            
+            // Reabilita
+            btn.disabled = false;
+        };
+
+        list.appendChild(li);
+    });
+}
+
+// Função para aplicar a sugestão no texto real
+function applyAutoSuggestion(item) {
+    const editor = document.getElementById('note-content-editor');
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+            if (node.parentElement.closest('.entity-link, .tag, a, button')) return NodeFilter.FILTER_REJECT;
+            return NodeFilter.FILTER_ACCEPT;
+        }
+    });
+
+    const regex = new RegExp(`\\b(${escapeRegExp(item.name)})\\b`, 'gi');
+    let nodesToReplace = [];
+
+    // Fase 1: Identificar nós (não podemos alterar enquanto caminhamos)
+    let node;
+    while (node = walker.nextNode()) {
+        if (regex.test(node.textContent)) {
+            nodesToReplace.push(node);
+        }
+    }
+
+    // Fase 2: Substituir
+    let appliedCount = 0;
+    nodesToReplace.forEach(textNode => {
+        const span = document.createElement('span');
+        
+        // Se for tag, usa estrutura de tag, senão usa entity-link
+        if (item.type === 'tag') {
+            // Nota: Se a tag for "Jesus", o replace vai criar <span class="tag">#Jesus</span>
+            // Adicionamos o # visualmente se não existir
+            const replacement = `<span class="tag" contenteditable="false">#$1</span>`;
+            span.innerHTML = textNode.textContent.replace(regex, replacement);
+        } else {
+            const replacement = `<span class="entity-link" data-entity-type="${item.type}" data-entity-name="$1">$1</span>`;
+            span.innerHTML = textNode.textContent.replace(regex, replacement);
+        }
+
+        // Substitui o nó de texto pelo novo HTML (que pode conter múltiplos spans se a palavra aparecer 2x no mesmo nó)
+        // Precisamos ter cuidado para não perder texto à volta.
+        // O método mais seguro é substituir o nó pai se for simples, ou usar replaceWith
+        
+        // Estratégia Segura: 
+        // Como o innerHTML do span contém o texto original todo com as substituições feitas,
+        // podemos substituir o textNode por fragmentos.
+        
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = span.innerHTML;
+        
+        const fragment = document.createDocumentFragment();
+        while (tempDiv.firstChild) {
+            fragment.appendChild(tempDiv.firstChild);
+        }
+        
+        textNode.replaceWith(fragment);
+        appliedCount++;
+    });
+
+    if (appliedCount > 0) {
+        if (typeof saveNote === 'function') saveNote();
+        
+        // Se for entidade, atualiza a referência na base de dados
+        if (item.type !== 'tag') {
+             // (Opcional: chamar a função que atualiza o array de referências no documento da entidade)
+             // Como é um processo local, podemos assumir que o "scan" do servidor tratará disso depois,
+             // ou podemos forçar aqui se quiser perfeição imediata.
+             ensureEntityReference(item.type, item.name);
+        }
+    }
+}
+
+async function toggleTagState(item, btn, li) {
+    const tagName = item.name;
+    const index = currentNoteTags.indexOf(tagName);
+    
+    // --- 1. ALTERAR O ARRAY LOCAL ---
+    if (index === -1) {
+        // ATIVAR
+        
+        // Verifica/Cria a Tag Global se não existir
+        const tagExists = allTags.some(t => t.nome.toLowerCase() === tagName.toLowerCase());
+        if (!tagExists && typeof createNewTag === 'function') {
+            btn.textContent = "A criar tag...";
+            await createNewTag(tagName);
+        }
+
+        currentNoteTags.push(tagName);
+        
+        // Atualiza Visual
+        btn.textContent = "✅ Ativo";
+        btn.style.color = "#2ecc71";
+        btn.style.border = "none";
+        li.style.backgroundColor = "rgba(46, 204, 113, 0.1)";
+        
+        applyAutoSuggestion(item);
+
+    } else {
+        // DESATIVAR
+        currentNoteTags.splice(index, 1);
+        
+        // Atualiza Visual
+        btn.textContent = "✨ Aplicar";
+        btn.style.color = "var(--accent-color)";
+        btn.style.border = "1px solid var(--accent-color)";
+        li.style.backgroundColor = "transparent";
+    }
+
+    // =========================================================
+    // 2. GRAVAR IMEDIATAMENTE NA NOTA (O FIX)
+    // =========================================================
+    // Isto garante que se fechares e voltares, o estado está salvo no servidor.
+    if (selectedNoteId) {
+        console.log("💾 [AUTO-SAVE] Gravando Tags atualizadas...");
+        try {
+            const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            const noteRef = doc(db, 'pastas', selectedNoteId);
+            
+            await updateDoc(noteRef, {
+                tags: currentNoteTags,
+                ultimaedicao: serverTimestamp()
+            });
+            
+            // Opcional: Atualiza o botão Gravar principal para "Guardado" para dar feedback
+            updateSaveStatus('saved');
+            
+        } catch (e) {
+            console.error("Erro ao gravar tags:", e);
+        }
+    }
+}
+
+
+
+
+
 
 
     </script>
