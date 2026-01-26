@@ -43191,7 +43191,7 @@ async function loadStoreContent() {
                 orderBy('createdAt', 'desc')
             );
         }
-        
+
         else if (window.currentStoreTab === 'shells') {
             const btn = document.createElement('button');
             btn.className = 'store-create-btn';
@@ -43411,14 +43411,17 @@ function createStoreNoteCard(id, data) {
     body.innerHTML = data.content || "";
 
     // Rodapé (Links)
-    const footer = document.createElement('div');
+ const footer = document.createElement('div');
     footer.className = 'store-card-footer';
     
+    // Área onde os links vivem
     const linksArea = document.createElement('div');
     linksArea.className = 'store-links-area';
     
+    // Renderiza links existentes (vindos do Firebase)
     if (data.links) {
         data.links.forEach((link, idx) => {
+            // Passamos o valor guardado
             linksArea.appendChild(createLinkRow(id, idx, link.url));
         });
     }
@@ -43426,14 +43429,24 @@ function createStoreNoteCard(id, data) {
     const addLinkBtn = document.createElement('button');
     addLinkBtn.className = 'store-icon-btn';
     addLinkBtn.textContent = "+ Link";
+    
+    // --- CORREÇÃO DO BOTÃO + LINK ---
     addLinkBtn.onclick = () => {
         if (card.classList.contains('locked-card')) return;
-        const newLinks = data.links || [];
-        newLinks.push({url: ""});
-        window.updateStoreItem(id, { links: newLinks }).then(() => {
-            if(window.currentShellId) renderInsideShell(document.getElementById('aq-store-view'));
-            else loadStoreContent();
-        });
+        
+        // 1. Calcula o novo índice
+        const newIdx = linksArea.childElementCount;
+        
+        // 2. Cria o novo campo visualmente (Vazio)
+        const newRow = createLinkRow(id, newIdx, "");
+        linksArea.appendChild(newRow);
+        
+        // 3. Foca no novo input
+        const input = newRow.querySelector('input');
+        if(input) input.focus();
+
+        // 4. (Opcional) Cria espaço vazio no array do Firebase para reservar o lugar
+        // Mas o mais seguro é deixar o evento 'change' do input tratar da gravação real.
     };
 
     footer.appendChild(linksArea);
@@ -43457,35 +43470,53 @@ function createStoreNoteCard(id, data) {
         }, 1000);
     });
 
-    card.appendChild(header);
+   card.appendChild(header);
     card.appendChild(body);
     card.appendChild(footer);
 
     return card;
 }
 
+
 function createLinkRow(noteId, idx, urlVal) {
     const div = document.createElement('div');
     div.className = 'store-link-row';
+    // Adicionamos um ID único à linha para a encontrarmos facilmente
+    div.dataset.index = idx; 
+
     div.innerHTML = `
         <input type="text" class="store-link-input" placeholder="URL..." value="${urlVal}">
-        <button class="store-icon-btn" onclick="window.open('${urlVal}', '_blank')">↗</button>
-        <button class="store-icon-btn" style="color:#e74c3c" onclick="window.removeStoreLink('${noteId}', ${idx})">×</button>
+        <button class="store-icon-btn" onclick="window.open(this.previousElementSibling.value, '_blank')">↗</button>
+        <button class="store-icon-btn" style="color:#e74c3c" onclick="window.removeStoreLink('${noteId}', this)">×</button>
     `;
     
-    // Auto-save do link
+    // Auto-save INTELIGENTE
     const input = div.querySelector('input');
     input.addEventListener('change', async () => {
         const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const ref = doc(db, 'aquarium_annotations', noteId);
         const snap = await getDoc(ref);
-        const links = snap.data().links;
-        links[idx].url = input.value;
-        await updateDoc(ref, { links });
+        
+        if (snap.exists()) {
+            // Obtém o array atual do servidor (para não perder links de outros users)
+            let links = snap.data().links || [];
+            
+            // Garante que o array tem tamanho suficiente
+            while (links.length <= idx) {
+                links.push({ url: "" });
+            }
+            
+            // Atualiza apenas este link
+            links[idx] = { url: input.value.trim() };
+            
+            // Grava
+            await updateDoc(ref, { links });
+        }
     });
 
     return div;
 }
+
 
 // 6. RENDERIZAR CONCHA
 function createStoreShellCard(id, data) {
@@ -43803,50 +43834,34 @@ window.editShellName = async function(id, oldName) {
     }
 };
 
-window.removeStoreLink = async function(noteId, idx) {
-    // 1. AJUSTE VISUAL: Garante que o modal de confirmação fica acima do Aquário
-    const confirmModal = document.getElementById('confirm-modal');
-    if (confirmModal) {
-        confirmModal.style.setProperty('z-index', '2147483647', 'important'); // Máximo absoluto
-    }
+window.removeStoreLink = async function(noteId, btnElement) {
+    const row = btnElement.closest('.store-link-row');
+    if (!row) return;
 
-    // 2. PEDIR CONFIRMAÇÃO
-    const confirmed = await showConfirmation(
-        "Remover Link?", 
-        "Deseja apagar este link da lista?"
-    );
+    // Confirmação rápida
+    if (!confirm("Apagar este link?")) return;
 
-    // 3. RESET VISUAL (Opcional, mas boa prática)
-    if (confirmModal) confirmModal.style.zIndex = "";
-
-    // Se cancelou, sai da função e não faz nada
-    if (!confirmed) return;
-
-    // 4. EXECUÇÃO DA REMOÇÃO
     try {
         const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const ref = doc(db, 'aquarium_annotations', noteId);
         const snap = await getDoc(ref);
         
         if (snap.exists()) {
-            const links = snap.data().links || [];
+            let links = snap.data().links || [];
             
-            // Remove o item do array
-            links.splice(idx, 1);
+            // Descobre o índice real desta linha no DOM
+            // (Porque se apagou o link #2, o link #3 passa a ser o #2 visualmente)
+            const allRows = Array.from(row.parentNode.children);
+            const realIndex = allRows.indexOf(row);
             
-            // Grava no Firebase
-            await updateDoc(ref, { links });
-            
-            // Atualiza a vista correta (Se estamos dentro de uma Concha ou na Raiz)
-            if(window.currentShellId) {
-                renderInsideShell(document.getElementById('aq-store-view'));
-            } else {
-                loadStoreContent();
+            if (realIndex > -1) {
+                links.splice(realIndex, 1); // Remove do array
+                await updateDoc(ref, { links }); // Grava
+                row.remove(); // Remove do ecrã
             }
         }
     } catch (e) {
         console.error("Erro ao remover link:", e);
-        alert("Erro ao remover link.");
     }
 };
 
