@@ -3295,7 +3295,12 @@ function processContentForReading(htmlContent) {
    // ============================================================
    // 3. FUNÇÃO PRINCIPAL DE EXIBIÇÃO DA NOTA
    // ============================================================
-  window.displayNote = async function(noteData, searchTerm = null) {
+  window.displayNote = async function(noteData, searchTerm = null, skipUrlUpdate = false) {
+    
+    // ATUALIZAÇÃO DE URL
+    if (!skipUrlUpdate) {
+        window.updateAddressBar(noteData.id, 'note');
+    }
     
     // Reset TTS
     if (typeof window.resetTTS === 'function') window.resetTTS();
@@ -4250,7 +4255,38 @@ async function loadBookStructure(userId) {
         // Renderizar a aba padrão (Local)
         navStack = []; 
         window.currentBookMode = 'local'; 
-        renderTocLevel(null);
+        
+        const params = new URLSearchParams(window.location.search);
+        const urlNoteId = params.get('note');
+        const urlFolderId = params.get('folder');
+
+        if (urlNoteId) {
+            // Tenta encontrar a nota na lista carregada
+            const item = cachedBookItems.find(i => i.id === urlNoteId);
+            if (item) {
+                // Se encontrar, renderiza a pasta pai primeiro (para o botão voltar funcionar)
+                if (item.parentId && item.parentId !== "null") {
+                    navStack.push(item.parentId); // Simula histórico
+                    renderTocLevel(item.parentId, true);
+                } else {
+                    renderTocLevel(null, true);
+                }
+                // Abre a nota
+                window.displayNote(item, null, true); // true = não duplicar histórico
+            } else {
+                // Se ID inválido, vai para a raiz
+                renderTocLevel(null);
+            }
+        } 
+        else if (urlFolderId) {
+            // Se for link de pasta
+            navStack.push(urlFolderId);
+            renderTocLevel(urlFolderId, true);
+        } 
+        else {
+            // Padrão: Raiz
+            renderTocLevel(null);
+        }
 
     } catch (e) {
         console.error("Erro ao carregar estrutura:", e);
@@ -4260,7 +4296,12 @@ async function loadBookStructure(userId) {
 
 
    // Função que desenha a lista baseada no ID da pasta pai atual
- window.renderTocLevel = async (parentId) => {
+window.renderTocLevel = async (parentId, skipUrlUpdate = false) => {
+    // ATUALIZAÇÃO DE URL
+    if (!skipUrlUpdate) {
+        window.updateAddressBar(parentId, 'folder');
+    }
+
     const tocContainer = document.getElementById('book-toc');
     if (!tocContainer) return;
 
@@ -6658,6 +6699,49 @@ window.dragReadElement = function(e, id) {
     function closeDragElement() {
         document.onmouseup = null;
         document.onmousemove = null;
+    }
+};
+
+// ============================================================
+// GESTÃO DE URL (DEEP LINKING)
+// ============================================================
+window.updateAddressBar = function(id, type) {
+    const url = new URL(window.location);
+    
+    // Limpa parâmetros antigos
+    url.searchParams.delete('folder');
+    url.searchParams.delete('note');
+    
+    if (id) {
+        if (type === 'folder') {
+            url.searchParams.set('folder', id);
+        } else if (type === 'note') {
+            url.searchParams.set('note', id);
+        }
+    }
+    
+    // Atualiza o URL sem recarregar (pushState)
+    window.history.pushState({ id: id, type: type }, '', url);
+};
+
+// Escutar o botão "Voltar" do navegador para navegar dentro da app
+window.onpopstate = function(event) {
+    const params = new URLSearchParams(window.location.search);
+    const noteId = params.get('note');
+    const folderId = params.get('folder');
+
+    if (noteId) {
+        // Tenta encontrar a nota na cache e abrir
+        const item = cachedBookItems.find(i => i.id === noteId);
+        if (item) window.displayNote(item, null, true); // true = não atualizar URL de novo
+    } else if (folderId) {
+        // Se for pasta, reset à vista de leitura e mostra a pasta
+        document.body.classList.remove('mobile-reading-active');
+        window.renderTocLevel(folderId, true);
+    } else {
+        // Raiz
+        document.body.classList.remove('mobile-reading-active');
+        window.renderTocLevel(null, true);
     }
 };
 
