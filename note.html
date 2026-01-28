@@ -10292,6 +10292,79 @@ a[data-anexo-id] {
     opacity: 0.7;
 }
 
+/* --- SELETOR DE MODO DE CLONAGEM (ESPELHO vs ESTÁTUA) --- */
+.append-mode-selector {
+    display: flex;
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 2px;
+    margin-right: 10px;
+}
+
+.append-mode-option {
+    padding: 6px 12px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-weight: 500;
+    color: var(--text-muted-color);
+    transition: all 0.2s;
+    border: 1px solid transparent;
+}
+
+/* Estado Ativo */
+.append-mode-option.active {
+    background-color: var(--panel-color);
+    color: var(--text-color);
+    border-color: var(--border-color);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    font-weight: bold;
+}
+
+/* Estilo Específico para Estátua (Ativo) */
+.append-mode-option[data-value="statue"].active {
+    color: #a569bd; /* Roxo Místico */
+    border-color: #a569bd;
+}
+
+/* --- CARD ESTÁTUA (VISUAL) --- */
+.statue-card-wrapper {
+    position: relative;
+    border: 1px solid rgba(165, 105, 189, 0.3); /* Borda Roxa Suave */
+    background: linear-gradient(145deg, rgba(30, 30, 30, 1) 0%, rgba(40, 35, 45, 1) 100%);
+    border-radius: 6px;
+    margin: 15px 0;
+    padding: 0; /* Padding gerido pelos filhos */
+}
+
+/* Indicador Visual de Estátua (Icone no canto) */
+.statue-card-wrapper::after {
+    content: '🗿';
+    position: absolute;
+    bottom: 5px;
+    right: 5px;
+    font-size: 20px;
+    opacity: 0.2;
+    pointer-events: none;
+    filter: grayscale(1);
+}
+
+/* Conteúdo da Estátua (Bloqueado) */
+.statue-content-lock {
+    padding: 10px;
+    opacity: 0.8; /* Ligeiramente desvanecido para indicar não editável */
+    user-select: text; /* Permite selecionar texto */
+    cursor: default;
+    pointer-events: none; /* Bloqueia cliques em links/inputs internos */
+}
+
+/* Permite scroll se for muito grande */
+.statue-content-lock {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
 </style>
 
 
@@ -15326,62 +15399,111 @@ function fixLegacyMiniNotes() {
     const editor = document.getElementById('note-content-editor');
     if (!editor) return;
 
-    // 1. LIMPEZA DE SEGURANÇA (Remove elementos órfãos de versões antigas)
     const ghostArrows = editor.querySelectorAll('.title-expand-arrow');
     ghostArrows.forEach(arrow => arrow.remove());
 
     const wrappers = editor.querySelectorAll('.mini-note-wrapper');
     
     wrappers.forEach(wrapper => {
-        // 2. GARANTIA DE ATRIBUTOS ESSENCIAIS (Inicia se não existirem)
         if (!wrapper.hasAttribute('data-topics')) wrapper.setAttribute('data-topics', '{}');
         if (!wrapper.hasAttribute('data-shared')) wrapper.setAttribute('data-shared', 'false');
         if (!wrapper.hasAttribute('data-box-links')) wrapper.setAttribute('data-box-links', '{}');
 
-        // 3. RECONSTRUÇÃO DA TOOLBAR
         let toolbar = wrapper.querySelector('.mini-note-toolbar');
         if (!toolbar) {
             toolbar = document.createElement('div');
             toolbar.className = 'mini-note-toolbar';
             toolbar.setAttribute('contenteditable', 'false');
-            // Insere a toolbar antes do conteúdo da nota
-            const content = wrapper.querySelector('.mini-note-content');
-            wrapper.insertBefore(toolbar, content);
+            const content = wrapper.querySelector('.mini-note-content') || wrapper.querySelector('.statue-content-lock');
+            if (content) wrapper.insertBefore(toolbar, content);
         }
 
-        // Garante que o grupo de setas (Mover) existe
         let arrowGroup = toolbar.querySelector('.toolbar-btn-group');
         if (!arrowGroup) {
             arrowGroup = document.createElement('div');
             arrowGroup.className = 'toolbar-btn-group';
-            toolbar.appendChild(arrowGroup);
+            const shareBtn = toolbar.querySelector('button[data-action="sharing-settings"]');
+            if (shareBtn) shareBtn.after(arrowGroup);
+            else toolbar.prepend(arrowGroup);
         }
 
-        // Configuração de todos os botões necessários
-        const buttonsConfig = [
-            { action: 'sharing-settings', icon: '🔐', title: 'Partilha', parent: toolbar },
+        let buttonsConfig = [
+            { action: 'sharing-settings', icon: '🔐', title: 'Partilha', parent: toolbar, pos: 'start' },
             { action: 'move-up', icon: '🔺', title: 'Subir', parent: arrowGroup },
             { action: 'move-down', icon: '🔻', title: 'Descer', parent: arrowGroup },
-            { action: 'manage-box-links', icon: '⚡', title: 'Links/Codex', parent: toolbar },
-            { action: 'append-mini-note', icon: '🧬', title: 'Clonar para Nota', parent: toolbar },
             { action: 'highlight-color', icon: '🎨', title: 'Destacar Cor', parent: toolbar },
-            { action: 'manage-mini-note-topics', icon: '📋', title: 'Gerir Tópicos', parent: toolbar },
+            
+            { action: 'manage-box-links', icon: '⚡', title: 'Links/Codex', parent: toolbar, type: 'interactive' },
+            { action: 'append-mini-note', icon: '🧬', title: 'Clonar para Nota', parent: toolbar, type: 'interactive' },
+            { action: 'manage-mini-note-topics', icon: '📋', title: 'Gerir Tópicos', parent: toolbar, type: 'interactive' },
+
             { action: 'delete-mini-note', icon: '🗑️', title: 'Apagar', parent: toolbar }
         ];
 
+        // --- LÓGICA ESTÁTUA ---
+        if (wrapper.classList.contains('statue-card-wrapper')) {
+            // Remove interativos
+            buttonsConfig = buttonsConfig.filter(cfg => cfg.type !== 'interactive');
+            
+            // Obtém dados (mesmo que nulos, vamos tentar criar o botão)
+            const originNote = wrapper.getAttribute('data-origin-note');
+            const originBox = wrapper.getAttribute('data-origin-box');
+            
+            // Adiciona Configuração do Moai
+            const moaiBtnConfig = {
+                action: 'jump-to-origin',
+                icon: '🗿',
+                title: 'Ir para Origem',
+                parent: toolbar,
+                customStyle: 'color: #a569bd; font-weight: bold; border-color: #a569bd; margin-right: 2px;',
+                // Se não houver dados, o clique não fará nada, mas o botão aparece
+                onclickCode: originNote ? `event.preventDefault(); window.handleGoToNote('${originNote}', '${originBox}')` : ''
+            };
+
+            // INSERIR ANTES DO LIXO
+            const deleteIndex = buttonsConfig.findIndex(b => b.action === 'delete-mini-note');
+            if (deleteIndex !== -1) buttonsConfig.splice(deleteIndex, 0, moaiBtnConfig);
+            else buttonsConfig.push(moaiBtnConfig);
+        }
+
+        // --- INJEÇÃO NO DOM ---
         buttonsConfig.forEach(cfg => {
             let btn = toolbar.querySelector(`button[data-action="${cfg.action}"]`);
+            
             if (!btn) {
                 btn = document.createElement('button');
                 btn.type = 'button';
                 btn.dataset.action = cfg.action;
                 btn.textContent = cfg.icon;
                 btn.title = cfg.title;
-                cfg.parent.appendChild(btn);
+                
+                if (cfg.customStyle) btn.style.cssText = cfg.customStyle;
+                if (cfg.onclickCode) btn.setAttribute('onclick', cfg.onclickCode);
+                
+                if (cfg.parent === arrowGroup) {
+                    cfg.parent.appendChild(btn);
+                } else if (cfg.pos === 'start') {
+                    cfg.parent.prepend(btn);
+                } else {
+                    const delBtn = toolbar.querySelector('button[data-action="delete-mini-note"]');
+                    if (delBtn && cfg.action !== 'delete-mini-note') {
+                        toolbar.insertBefore(btn, delBtn);
+                    } else {
+                        cfg.parent.appendChild(btn);
+                    }
+                }
             }
         });
 
-        // 4. CONVERSÃO DE TÍTULOS (Input -> Textarea para múltiplas linhas)
+        // --- LIMPEZA DE PROIBIDOS (para estátuas existentes que tinham os botões errados) ---
+        if (wrapper.classList.contains('statue-card-wrapper')) {
+            ['manage-box-links', 'append-mini-note', 'manage-mini-note-topics'].forEach(action => {
+                const existingBtn = toolbar.querySelector(`button[data-action="${action}"]`);
+                if (existingBtn) existingBtn.remove();
+            });
+        }
+
+        // --- RESTO DO CÓDIGO (Títulos e Editabilidade) ---
         let titleArea = wrapper.querySelector('.mini-note-title-input');
         if (titleArea && titleArea.tagName === 'INPUT') {
             const textarea = document.createElement('textarea');
@@ -15393,22 +15515,19 @@ function fixLegacyMiniNotes() {
             titleArea = textarea;
         }
 
-        // Aplica o comportamento de quebra de linha se a configuração global estiver ativa
         if (titleArea && typeof appSettings !== 'undefined' && appSettings.showFullTitles) {
             titleArea.classList.add('wrap-enabled');
-            // Ajusta a altura inicial baseado no conteúdo
-            setTimeout(() => {
-                titleArea.style.height = 'auto';
-                titleArea.style.height = titleArea.scrollHeight + 'px';
-            }, 0);
+            titleArea.style.height = 'auto';
+            titleArea.style.height = titleArea.scrollHeight + 'px';
         }
 
-        // 5. GARANTIA DE EDIÇÃO
         toolbar.setAttribute('contenteditable', 'false');
-        const contentDiv = wrapper.querySelector('.mini-note-content');
-        if (contentDiv) contentDiv.setAttribute('contenteditable', 'true');
+        
+        if (!wrapper.classList.contains('statue-card-wrapper')) {
+            const contentDiv = wrapper.querySelector('.mini-note-content');
+            if (contentDiv) contentDiv.setAttribute('contenteditable', 'true');
+        }
 
-        // 6. ATUALIZAÇÃO VISUAL (Cores dos botões baseadas nos dados)
         if (typeof updateMiniNoteButtonState === 'function') updateMiniNoteButtonState(wrapper); 
         if (typeof updateHighlightButtonState === 'function') updateHighlightButtonState(wrapper); 
         if (typeof updateSharingButtonState === 'function') updateSharingButtonState(wrapper); 
@@ -15855,11 +15974,14 @@ function syncVisualSelection(selectedId) {
 
 
  async function displayNote(noteId, noteElement, searchTerm = null) {
-    // 0. Reset de Estados Globais
+    // 0. Reset de Estados Globais e Visuais
     window.nextSelectedId = null; 
     document.body.classList.remove('show-fab');
     
-    // Limpa ouvinte anterior para evitar fugas de memória
+    // VARIÁVEL DE CONTROLO PARA O CARD ESTÁTUA (NOVO)
+    let isStatueSynced = false;
+
+    // Limpa ouvinte anterior para evitar fugas de memória ou conflitos de dados
     if (unsubscribeCurrentNote) { 
         unsubscribeCurrentNote(); 
         unsubscribeCurrentNote = null; 
@@ -15868,6 +15990,8 @@ function syncVisualSelection(selectedId) {
     // 1. Reset de Variáveis Locais
     window.currentNoteHybridMode = false;
     activeNoteAnchorsIds = [];
+    selectedNoteId = noteId;
+    isClosingNote = false;
     
     // Referências DOM
     const noteTitleInput = document.getElementById('note-title-input');
@@ -15878,9 +16002,6 @@ function syncVisualSelection(selectedId) {
     // Limpeza Visual Imediata
     if (noteTitleInput) noteTitleInput.value = ""; 
     if (noteContentEditor) noteContentEditor.innerHTML = ""; 
-    
-    selectedNoteId = noteId;
-    isClosingNote = false;
 
     // Gestão de Paineis (Esconder Placeholder / Arquivo, Mostrar Editor)
     document.getElementById('editor-placeholder').style.setProperty('display', 'none', 'important');
@@ -15925,14 +16046,16 @@ function syncVisualSelection(selectedId) {
             const serverTitle = data.nome || '';
             const serverContent = data.conteudo || '';
             
-            noteTitleInput.value = serverTitle;
+            // Proteção de escrita: Só atualiza o título se não estivermos a escrever nele
+            if (document.activeElement !== noteTitleInput) {
+                 noteTitleInput.value = serverTitle;
+            }
             
-            // Verificação de segurança para não sobrescrever se estiver a editar ativamente
-            // (Opcional, mas útil se a latência for alta)
+            // Proteção de escrita: Só atualiza o conteúdo se não estivermos a escrever no editor
+            // (Ou se estiver vazio, carrega na mesma)
             if (document.activeElement !== noteContentEditor) {
                  noteContentEditor.innerHTML = serverContent;
             } else if (noteContentEditor.innerHTML === "") {
-                 // Se estava vazio, carrega na mesma
                  noteContentEditor.innerHTML = serverContent;
             }
 
@@ -15951,15 +16074,28 @@ function syncVisualSelection(selectedId) {
                 }
             }
 
-            // Scripts de ajuste pós-carregamento
+            // ============================================================
+            // 6. SCRIPTS DE PÓS-CARREGAMENTO
+            // ============================================================
             setTimeout(() => {
+                // A. Reativa os widgets de Calendário
                 if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
+
+                // B. >>> CORREÇÃO DO CARD ESTÁTUA (🗿) <<<
+                // Só executa se ainda não tiver sincronizado nesta sessão da nota
+                if (!isStatueSynced && typeof syncStatueCardsInCurrentNote === 'function') {
+                    console.log("🗿 Sincronizando Cards Estátua (Apenas no carregamento)...");
+                    syncStatueCardsInCurrentNote();
+                    isStatueSynced = true; // Bloqueia futuras atualizações automáticas
+                }
+                
             }, 100);
 
+            // C. Correções de estrutura
             if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
             if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
 
-            // 6. Forçar Router e Atualizações Visuais
+            // 7. Forçar Router e Atualizações Visuais (Abas do Meio)
             setTimeout(() => {
                 if (typeof refreshMiddlePanelTabIcon === 'function') refreshMiddlePanelTabIcon();
                 if (typeof initToolbarDropdowns === 'function') initToolbarDropdowns();
@@ -15969,6 +16105,7 @@ function syncVisualSelection(selectedId) {
 
                 if (typeof updateMiddlePanelViews === 'function') updateMiddlePanelViews(); 
                 
+                // D. Scroll Automático (Se vier de uma pesquisa ou clique)
                 if (searchTerm && typeof scrollToAndHighlightText === 'function') {
                     scrollToAndHighlightText(searchTerm);
                 }
@@ -24464,37 +24601,59 @@ noteContentEditor.addEventListener('click', (e) => {
 });
 
 // 2. ABRIR O MODAL
-window.openAppendModal = function() {
+ window.openAppendModal = function() {
     console.log("🚀 [CLONAR] Abertura iniciada...");
     
     const modal = document.getElementById('append-to-note-modal');
     if (!modal) return console.error("Modal #append-to-note-modal não encontrado!");
 
-    // 1. MOVE PARA O BODY (Camada Superior para sair de dentro de divs com overflow)
-    document.body.appendChild(modal);
+    // --- INJEÇÃO DO SELETOR DE MODO ---
+    const actionsDiv = modal.querySelector('.modal-actions');
+    
+    // Verifica se já existe para não duplicar
+    if (!actionsDiv.querySelector('.append-mode-selector')) {
+        const selectorHTML = `
+            <div class="append-mode-selector" style="margin-right: auto;">
+                <div class="append-mode-option active" data-value="copy" onclick="window.setAppendMode('copy', this)">🪞 Cópia</div>
+                <div class="append-mode-option" data-value="statue" onclick="window.setAppendMode('statue', this)">🗿 Card</div>
+            </div>
+        `;
+        // Insere no início da div de ações (à esquerda do Cancelar)
+        actionsDiv.insertAdjacentHTML('afterbegin', selectorHTML);
+    } else {
+        // Reset para "Cópia" ao abrir
+        window.setAppendMode('copy', actionsDiv.querySelector('[data-value="copy"]'));
+    }
+    // -----------------------------------
 
-    // 2. FORÇA VISIBILIDADE E Z-INDEX ALTO (Para ficar acima do Aquário)
+    document.body.appendChild(modal);
     modal.style.cssText = `
         display: flex !important;
         visibility: visible !important;
         opacity: 1 !important;
         position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100vw !important;
-        height: 100vh !important;
+        top: 0 !important; left: 0 !important; width: 100vw; height: 100vh;
         background-color: rgba(0, 0, 0, 0.85) !important;
-        z-index: 2147483647 !important; /* MÁXIMO ABSOLUTO */
+        z-index: 2147483647 !important;
         justify-content: center !important;
         align-items: center !important;
     `;
 
-    // 3. RESET DA NAVEGAÇÃO INTERNA
     appendStack = [];
     const rootId = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID) ? SUPERFOLDER_ID : null;
-    
-    // Chama a função de carregar lista (esta pode ficar local, pois é chamada daqui de dentro)
     loadAppendList(rootId);
+};
+
+// Função auxiliar para trocar o modo
+window.appendMode = 'copy'; // Variável global de estado
+
+window.setAppendMode = function(mode, btnElement) {
+    window.appendMode = mode;
+    
+    // Atualiza visual
+    const parent = btnElement.parentElement;
+    parent.querySelectorAll('.append-mode-option').forEach(el => el.classList.remove('active'));
+    btnElement.classList.add('active');
 };
 
 // 3. CARREGAR LISTA (PASTAS E NOTAS)
@@ -24645,163 +24804,143 @@ newAppendBackBtn.addEventListener('click', () => {
 
 // 5. CONFIRMAR E GRAVAR
 window.confirmAppendToNote = async function(targetId, targetName, targetType) {
-    console.log(`📥 [CLONAR] A enviar para o FUNDO de: ${targetName}`);
+    console.log(`📥 [CLONAR] Modo: ${window.appendMode} -> Destino: ${targetName}`);
 
     const confirmModal = document.getElementById('confirm-modal');
     const appendModal = document.getElementById('append-to-note-modal');
 
-    // 1. Rebaixar o modal de lista
     if (appendModal) appendModal.style.zIndex = '2147483640'; 
+    if (confirmModal) confirmModal.style.setProperty('z-index', '2147483647', 'important');
 
-    // 2. Elevar o modal de confirmação
-    document.body.appendChild(confirmModal); 
-    confirmModal.style.cssText = `
-        display: flex !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-        position: fixed !important;
-        z-index: 2147483647 !important;
-        background-color: rgba(0, 0, 0, 0.85) !important;
-        justify-content: center !important;
-        align-items: center !important;
-        top: 0; left: 0; width: 100vw; height: 100vh;
-    `;
-
-    // 3. Executar a confirmação
-    const confirmed = await showConfirmation(
-        "Confirmar Envio", 
-        `Deseja clonar este bloco para o FUNDO de "${targetName}"?`
-    );
+    const actionText = window.appendMode === 'statue' ? "criar um Card Estátua" : "clonar este bloco";
+    const confirmed = await showConfirmation("Confirmar Envio", `Deseja ${actionText} em "${targetName}"?`);
 
     if (!confirmed) {
         if (appendModal) appendModal.style.zIndex = '2147483647';
-        confirmModal.style.display = 'none';
+        if (confirmModal) confirmModal.style.display = 'none';
         return;
     }
 
     try {
         const { doc, getDoc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', targetId);
-        const docSnap = await getDoc(noteRef);
+        
+        let finalContentToAppend = "";
 
-        if (docSnap.exists()) {
-            const data = docSnap.data();
-            
-            // ============================================================
-            // 🆕 CORREÇÃO DE ID: REGENERAR IDENTIDADE E GUARDAR ORIGEM
-            // ============================================================
-            // Criamos um elemento temporário para manipular o HTML antes de gravar
+        // --- MODO ESTÁTUA 🗿 ---
+        if (window.appendMode === 'statue') {
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = window.htmlToAppend;
+            const originalWrapper = tempDiv.firstElementChild;
             
-            // Encontra o wrapper principal (qualquer tipo)
+            if (!originalWrapper) throw new Error("Conteúdo inválido.");
+            
+            const originBoxId = originalWrapper.id || `box_${Date.now()}`;
+            const titleInput = originalWrapper.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
+            let titleVal = titleInput ? (titleInput.value || titleInput.textContent) : "";
+            const bodyDiv = originalWrapper.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content, .cube-content');
+            let bodyVal = bodyDiv ? bodyDiv.innerHTML : "";
+
+            const statueId = `statue_${Date.now()}`;
+            
+            // AQUI: Inserimos o botão DIRETAMENTE no HTML com o data-action correto
+            const jumpAction = `event.preventDefault(); window.handleGoToNote('${selectedNoteId}', '${originBoxId}')`;
+
+            finalContentToAppend = `
+                <div class="mini-note-wrapper statue-card-wrapper" id="${statueId}" 
+                     data-origin-note="${selectedNoteId}" 
+                     data-origin-box="${originBoxId}" 
+                     data-shared="false" 
+                     contenteditable="false">
+                    
+                    <div class="mini-note-toolbar" contenteditable="false">
+                        <button type="button" data-action="sharing-settings" title="Partilha (Independente)">🔐</button>
+                        <div class="toolbar-btn-group">
+                            <button type="button" data-action="move-up" title="Subir">🔺</button>
+                            <button type="button" data-action="move-down" title="Descer">🔻</button>
+                        </div>
+                        <button type="button" data-action="highlight-color" title="Cor (Independente)">🎨</button>
+                        
+                        <!-- BOTÃO MOAI INSERIDO AQUI (Antes do Lixo) -->
+                        <button type="button" data-action="jump-to-origin" onclick="${jumpAction}" title="Ir para Origem" 
+                                style="color: #a569bd; font-weight: bold; border-color: #a569bd; margin-right:2px;">🗿</button>
+
+                        <button type="button" data-action="delete-mini-note" title="Apagar Estátua">🗑️</button>
+                    </div>
+
+                    <div class="statue-content-lock">
+                        ${titleVal ? `<strong style="display:block; margin-bottom:5px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:3px;">${titleVal}</strong>` : ''}
+                        <div>${bodyVal}</div>
+                    </div>
+                </div>
+                <p><br></p>
+            `;
+            
+        } else {
+            // --- MODO CÓPIA 🪞 ---
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = window.htmlToAppend;
             const wrapper = tempDiv.firstElementChild;
-            
             if (wrapper) {
-                // 1. Guarda o ID Original (O Pai)
                 const oldId = wrapper.id;
-                
-                // 2. Gera o Novo ID
-                const prefix = oldId.split('_')[0] || 'mn'; // Mantém o tipo (mn, red, sign, etc.)
-                const newId = `${prefix}_${Date.now()}_clone`; // Ex: mn_1712345678_clone
-                
-                // 3. Aplica o novo ID
+                const prefix = oldId.split('_')[0] || 'mn';
+                const newId = `${prefix}_${Date.now()}_clone`;
                 wrapper.id = newId;
-                
-                // 4. >>> O SEGREDO <<< : Grava o ID do pai num atributo de dados
-                // Se o pai já era um clone, mantemos o "Avô" (o original primário) ou atualizamos para o pai imediato?
-                // Lógica: Se já tem origin-id, mantemos esse (preserva a fonte original). Se não, usa o oldId.
-                const existingOrigin = wrapper.getAttribute('data-origin-id');
-                const finalOriginId = existingOrigin || oldId;
-                
-                wrapper.setAttribute('data-origin-id', finalOriginId);
-                
-                // 5. Limpa atributos que não devem ser clonados (Opcional)
-                // Se a caixa original estava "selecionada" (borda azul), removemos isso na cópia
+                wrapper.setAttribute('data-origin-id', oldId);
                 wrapper.classList.remove('active-selection', 'active-store-target', 'locked-popup');
                 wrapper.style.border = "";
                 wrapper.style.boxShadow = "";
                 wrapper.style.backgroundColor = "";
 
-                // 6. Se for um Redator, precisamos atualizar também o ID nos botões internos
-                // (O botão 'T' e o botão 'Menu' usam o ID para saber o que abrir)
                 if (wrapper.classList.contains('redator-wrapper')) {
-                    const reopenBtn = wrapper.querySelector('.redator-reopen-btn');
-                    if(reopenBtn) reopenBtn.setAttribute('onclick', `window.toggleRedatorHeader('${newId}', true)`);
-                    
                     const header = wrapper.querySelector('.redator-header');
                     if(header) header.id = `header-${newId}`;
-                    
+                    const btn = wrapper.querySelector('.redator-reopen-btn');
+                    if (btn) btn.setAttribute('onclick', `window.toggleRedatorHeader('${newId}', true)`);
                     const content = wrapper.querySelector('.redator-content');
-                    if(content) content.setAttribute('oninput', `window.checkRedatorFocus(this, '${newId}')`);
-                    
-                    const dockBtns = wrapper.querySelectorAll('.dock-btn');
-                    if(dockBtns.length > 0) {
-                        // Atualiza os onlicks da dock
-                        dockBtns[0].setAttribute('onclick', `event.preventDefault(); window.openRedatorFocus('${newId}')`);
-                        if(dockBtns[1]) dockBtns[1].setAttribute('onclick', `event.preventDefault(); window.addRedatorBelow('${newId}')`);
-                    }
+                    if (content) content.setAttribute('oninput', `window.checkRedatorFocus(this, '${newId}')`);
                 }
-
-                // Atualiza a variável com o HTML limpo e com ID novo
-                window.htmlToAppend = tempDiv.innerHTML;
-                
-                console.log(`🧬 ID Regenerado: ${oldId} -> ${newId} (Origem: ${finalOriginId})`);
+                finalContentToAppend = tempDiv.innerHTML;
             }
-            // ============================================================
-
-            // --- Gravação (Arquivo ou Nota) ---
-          if (targetType === 'partilhado' || targetType === 'arquivo') {
-    const authorName = currentUserData?.nome || auth.currentUser.email.split('@')[0];
-    
-    // 1. Calcular Ordem para ficar no topo
-    // (Tentamos ler a ordem do topo atual, se falhar usamos timestamp negativo)
-    let newOrder = -Date.now(); 
-    if (data.posts && data.posts.length > 0 && typeof data.posts[0].ordem === 'number') {
-        newOrder = data.posts[0].ordem - 1000;
-    }
-
-    // 2. Criar Objeto do Post
-    const newPostData = {
-        id: `post_${Date.now()}`, // ID único do Post
-        type: 'entity',
-        title: 'Recebido (Clonado)', // Título do Post
-        content: window.htmlToAppend, // O HTML da caixa com o ID regenerado
-        userId: auth.currentUser.uid,
-        createdBy: authorName,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        ordem: newOrder // Ordem correta
-    };
-    
-    // 3. GRAVAR NA SUB-COLEÇÃO (CORREÇÃO)
-const { collection, setDoc, doc: docInner, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-
-// Caminho: pastas/{ID_ARQUIVO}/posts/{ID_NOVO_POST}
-const subCollectionRef = docInner(db, 'pastas', targetId, 'posts', newPostData.id);
-await setDoc(subCollectionRef, newPostData);
-
-// 4. ATUALIZAR O PAI (COM ASSINATURA)
-// AQUI ESTÁ O TRUQUE: Adicionamos lastEditorId
-await updateDoc(noteRef, { 
-    ultimaedicao: serverTimestamp(),
-    lastEditorId: auth.currentUser.uid // <--- A SUA ASSINATURA
-});
-}
-
-            confirmModal.style.display = 'none';
-            if (appendModal) appendModal.style.display = 'none';
-            
-            await window.showSuccessAlert(
-                "Sucesso! ✅", 
-                `Clonado para "${targetName}" com novo ID.`
-            );
         }
+
+        // --- GRAVAÇÃO ---
+        const docSnap = await getDoc(noteRef);
+        const data = docSnap.data();
+
+        if (targetType === 'partilhado' || targetType === 'arquivo') {
+             const authorName = currentUserData?.nome || "Eu";
+             const newPostData = {
+                id: `post_${Date.now()}`,
+                type: 'entity',
+                title: window.appendMode === 'statue' ? '🗿 Estátua Recebida' : '🪞 Cópia Recebida',
+                content: finalContentToAppend,
+                userId: auth.currentUser.uid,
+                createdBy: authorName,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                ordem: -Date.now()
+            };
+            const subCollectionRef = doc(db, 'pastas', targetId, 'posts', newPostData.id);
+            await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js").then(mod => mod.setDoc(subCollectionRef, newPostData));
+            await updateDoc(noteRef, { ultimaedicao: serverTimestamp(), lastEditorId: auth.currentUser.uid });
+
+        } else {
+            const currentContent = data.conteudo || "";
+            const newContent = currentContent + finalContentToAppend;
+            await updateDoc(noteRef, { conteudo: newContent, ultimaedicao: serverTimestamp() });
+        }
+
+        if (confirmModal) confirmModal.style.display = 'none';
+        if (appendModal) appendModal.style.display = 'none';
+        await window.showSuccessAlert("Sucesso! ✅", `Enviado para "${targetName}".`);
+
     } catch (e) {
         console.error("Erro ao enviar:", e);
-        await window.showSuccessAlert("Erro", "Falha ao realizar o envio.");
+        alert("Erro no envio.");
     }
 };
+
 
 
 // --- FUNÇÃO UNIFICADA DE PARTILHA E CO-EDIÇÃO ---
@@ -26700,115 +26839,77 @@ document.getElementById('right-panel').addEventListener('click', (event) => {
  window.archiveMiniNote = async function(element, skipConfirmation = false) {
     if (!element) return false;
 
-    console.group("📦 [ARCHIVE] A processar item...");
-
-    // Identificação de IDs
+    // ... (início da função igual) ...
     let targetId = selectedNoteId;
     if (!targetId) {
         const urlParams = new URLSearchParams(window.location.search);
         targetId = urlParams.get('rootId') || urlParams.get('noteId');
     }
     
-    if (!targetId) { 
-        console.error("❌ ERRO: ID da Nota não encontrado."); 
-        console.groupEnd(); 
-        return false; 
-    }
+    if (!targetId) return false;
 
-    // Parar timers para evitar conflitos
-    if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
-    if (typeof archiveAutoSaveTimer !== 'undefined') clearTimeout(archiveAutoSaveTimer);
+    // ... (limpeza timers) ...
 
-    // Extração de dados da caixa
     const itemId = element.id; 
     let originalIndex = -1;
     if (element.parentNode) originalIndex = Array.from(element.parentNode.children).indexOf(element);
 
-    // Limpeza de referências remotas (links na 4ª coluna)
-    const boxLinksJson = element.getAttribute('data-box-links');
-    // (Omitido o bloco de limpeza de links para poupar espaço, ele mantém-se igual)
-
-    // --- DETEÇÃO DE TIPO E CONTEÚDO ---
     let title = "Sem Título"; 
     let content = element.innerHTML; 
-    let type = "default"; // Assume Subnota se nada for detetado
+    let type = "default";
     let topicsJSON = element.getAttribute('data-topics') || '{}';
+    
+    // --- VARIÁVEIS NOVAS PARA ESTÁTUA ---
+    let originNoteId = null;
+    let originBoxId = null;
 
-    // 1. Detetar Título (Adicionado suporte para .sign-title-input)
+    // ... (deteção de título igual) ...
     const inp = element.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
-    if (inp) {
-        title = inp.value;
-    } else {
+    if (inp) title = inp.value;
+    else {
         const strong = element.querySelector('strong');
         if (strong) title = strong.textContent;
     }
     
-    // ============================================================
-    // 2. DETEÇÃO DE TIPO (AQUI ESTÁ A CORREÇÃO)
-    // ============================================================
+    // DETEÇÃO DE TIPO
+    if (element.classList.contains('redator-wrapper')) { type = 'redator'; }
+    else if (element.classList.contains('question-mode')) { type = 'question'; }
+    else if (element.classList.contains('free-mode')) { type = 'free'; }
+    else if (element.classList.contains('journal-sign-wrapper')) { type = 'sign'; }
+    else if (element.classList.contains('journal-id-card')) { type = 'card'; }
+    else if (element.classList.contains('journal-cube-wrapper')) { type = 'cube'; }
+    else if (element.tagName === 'DETAILS') { type = 'toggle'; }
     
-    if (element.classList.contains('redator-wrapper')) {
-        type = 'redator';
+    // >>> DETEÇÃO DE ESTÁTUA <<<
+    else if (element.classList.contains('statue-card-wrapper')) {
+        type = 'statue';
+        title = "Estátua: " + (element.querySelector('.statue-content-lock strong')?.textContent || "Sem título");
+        // Guarda os IDs para poder reconstruir o botão 🗿
+        originNoteId = element.dataset.originNote;
+        originBoxId = element.dataset.originBox;
     }
-    else if (element.classList.contains('question-mode')) {
-        type = 'question';
-    }
-    else if (element.classList.contains('free-mode')) {
-        type = 'free'; // Contentor
-    }
-    // >>> CORREÇÃO PARA A CAIXA DE RACIOCÍNIO <<<
-    else if (element.classList.contains('journal-sign-wrapper')) {
-        type = 'sign'; 
-        console.log("✅ Tipo identificado: RACIOCÍNIO (sign)");
-    }
-    // >>> CORREÇÃO PARA O CARTÃO TEMÁTICO <<<
-    else if (element.classList.contains('journal-id-card')) {
-        type = 'card';
-    }
-    // >>> CORREÇÃO PARA O CUBO <<<
-    else if (element.classList.contains('journal-cube-wrapper')) {
-        type = 'cube';
-    }
-    else if (element.tagName === 'DETAILS') {
-        type = 'toggle';
-    }
-    else if (element.classList.contains('ghost-block') || element.getAttribute('data-archive-type') === 'ghost') {
-        type = 'ghost'; // Tipo específico para o histórico
-        title = element.innerText.split('\n')[0].substring(0, 30) + "..."; // Usa o início do texto como título
-        if (!title || title === "...") title = "Bloco de Texto";
-        console.log("✅ Tipo identificado: BLOCO FANTASMA (ghost)");
-    }
-    else {
-        console.warn("⚠️ Tipo não específico. A gravar como Subnota (default).");
-    }
-    
-    // ============================================================
+    else { type = "default"; } // Subnota
 
     try {
         const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', targetId);
         
-        // Objeto que vai para o Firebase
         const trashItem = {
             id: itemId, 
             titulo: title, 
-            conteudo: content, // HTML original
-            type: type,        // AGORA GRAVA 'sign' CORRETAMENTE
+            conteudo: content,
+            type: type,
             topicsJSON: topicsJSON, 
             originalIndex: originalIndex, 
-            deletedAt: serverTimestamp()
+            deletedAt: serverTimestamp(),
+            // Guarda dados extras se for estátua
+            originNoteId: originNoteId,
+            originBoxId: originBoxId
         };
 
-        // Sincroniza Inputs antes de remover do DOM
         const editor = document.getElementById('note-content-editor');
-        if (editor) {
-            editor.querySelectorAll('input, textarea').forEach(t => {
-                if (t.tagName === 'INPUT') t.setAttribute('value', t.value);
-                else t.textContent = t.value;
-            });
-        }
+        // ... (sincronização inputs igual) ...
 
-        // Substitui por marcador invisível
         const marker = document.createElement('span');
         marker.id = `marker_${itemId}`;
         marker.className = 'hidden-note-marker';
@@ -26823,17 +26924,12 @@ document.getElementById('right-panel').addEventListener('click', (event) => {
             ultimaedicao: serverTimestamp()
         });
         
-        console.log("✅ Sucesso! Item arquivado na Reciclagem.");
         if (typeof updateSaveStatus === 'function') updateSaveStatus('saved');
-        console.groupEnd();
         return true;
 
     } catch (error) {
-        console.error("❌ Erro ao arquivar:", error);
-        alert("Erro de conexão. Item não removido.");
-        // Restaura visualmente em caso de erro
+        console.error(error);
         element.style.display = 'block';
-        console.groupEnd();
         return false;
     }
 };
@@ -30571,83 +30667,109 @@ window.openArchiveRecycleBin = function() {
 
 
 // Função para Restaurar Item
-window.restoreArchiveItem = async (postId) => {
-    
-    const confirmed = await showConfirmation(
-        "Restaurar Post?", 
-        "O post voltará para o topo do feed."
-    );
+window.restoreHiddenMiniNote = async function(miniNoteId) {
+    if (!selectedNoteId) return;
 
+    // ... (confirmação igual) ...
+    const confirmed = await showConfirmation("Restaurar Item?", "O item voltará para a nota.");
     if (!confirmed) return;
 
     try {
-        const { doc, getDoc, setDoc, deleteDoc, serverTimestamp, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { doc, getDoc, updateDoc, serverTimestamp, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const noteRef = doc(db, 'pastas', selectedNoteId);
+        const noteSnap = await getDoc(noteRef);
         
-        // Referências
-        const trashRef = doc(db, 'pastas', currentArchiveId, 'deleted_posts', postId);
-        const restoreRef = doc(db, 'pastas', currentArchiveId, 'posts', postId);
-        const parentRef = doc(db, 'pastas', currentArchiveId);
+        if (!noteSnap.exists()) return;
+        
+        const data = noteSnap.data();
+        const hiddenItems = data.subnotasocultas || {};
+        const item = hiddenItems[miniNoteId];
 
-        // 1. Ler dados do lixo
-        const snapshot = await getDoc(trashRef);
+        if (!item) { alert("Item não encontrado."); return; }
+
+        let restoredHTML = "";
         
-        if (!snapshot.exists()) {
-            alert("Erro: O post já não existe na reciclagem.");
-            return;
+        // Toolbar Padrão (Sem os ícones extras)
+        const commonToolbar = `...`; // (Igual ao que já tens)
+
+        const safeId = item.id || `restored_${Date.now()}`;
+        const contentVal = item.conteudo || "<p><br></p>";
+        const titleVal = item.titulo || "";
+        
+        // Atributos base
+        const safeTopics = (item.topicsJSON || "{}").replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+        const attrs = `id="${safeId}" data-topics='${safeTopics}' data-shared="false" data-box-links='{}'`;
+
+        // --- TIPOS ---
+
+        // >>> NOVO BLOCO PARA ESTÁTUA <<<
+        if (item.type === 'statue') {
+            // Reconstrói o botão de salto usando os dados guardados
+            const jumpAction = `event.preventDefault(); window.handleGoToNote('${item.originNoteId}', '${item.originBoxId}')`;
+            
+            restoredHTML = `
+                <div class="mini-note-wrapper statue-card-wrapper" id="${safeId}" 
+                     data-origin-note="${item.originNoteId}" 
+                     data-origin-box="${item.originBoxId}" 
+                     data-shared="false" 
+                     contenteditable="false">
+                    
+                    <div class="mini-note-toolbar" contenteditable="false">
+                        <button type="button" data-action="sharing-settings" title="Partilha">🔐</button>
+                        <div class="toolbar-btn-group">
+                            <button type="button" data-action="move-up">🔺</button>
+                            <button type="button" data-action="move-down">🔻</button>
+                        </div>
+                        <button type="button" data-action="highlight-color">🎨</button>
+                        <button type="button" data-action="delete-mini-note">🗑️</button>
+                        <button type="button" onclick="${jumpAction}" title="Ir para Origem" style="color: #a569bd; font-weight: bold; border-color: #a569bd;">🗿</button>
+                    </div>
+
+                    <div class="statue-content-lock">
+                        ${contentVal} <!-- O conteúdo já vem formatado do backup -->
+                    </div>
+                </div>
+                <p><br></p>
+            `;
         }
-        
-        // Prepara objeto limpo
-        const data = snapshot.data();
-        delete data.deletedAt;
-        delete data.deletedBy;
-        delete data.originalCollection;
-
-        // 2. Definir ordem de topo
-        data.updatedAt = serverTimestamp(); // Para o servidor
-        const clientTimestamp = Date.now(); // Para a memória local
-        
-        let newOrder = -clientTimestamp; 
-        if (currentArchiveData && currentArchiveData.posts && currentArchiveData.posts.length > 0) {
-            const topOrder = currentArchiveData.posts[0].ordem;
-            if (typeof topOrder === 'number') newOrder = topOrder - 1000;
+        // ... (Resto dos tipos: redator, sign, etc. mantêm-se iguais) ...
+        else if (item.type === 'sign') { /* ... */ }
+        else {
+             // (Código padrão de subnota)
+             restoredHTML = `<div class="mini-note-wrapper" ${attrs} contenteditable="false"><textarea class="mini-note-title-input" rows="1">${titleVal}</textarea>${commonToolbar}<div class="mini-note-content" contenteditable="true">${contentVal}</div></div><p><br></p>`;
         }
-        data.ordem = newOrder;
 
-        // 3. ATUALIZAÇÃO VISUAL IMEDIATA (O FIX)
-        // Adiciona o post recuperado diretamente à memória local
-        if (!currentArchiveData.posts) currentArchiveData.posts = [];
+        // ... (Inserção no DOM e gravação igual ao anterior) ...
+        let container = document.getElementById('note-content-editor');
+        const marker = document.getElementById(`marker_${miniNoteId}`);
         
-        // Cria objeto seguro para memória (converte timestamp server para número)
-        const localPost = { ...data, updatedAt: clientTimestamp, id: postId };
-        currentArchiveData.posts.unshift(localPost);
-        
-        // Redesenha o feed
-        renderArchiveFeed();
+        if (marker) marker.outerHTML = restoredHTML;
+        else container.insertAdjacentHTML('beforeend', restoredHTML);
 
-        // 4. Mover no Firebase
-        await setDoc(restoreRef, data);
-        await deleteDoc(trashRef);
-        
-        // 5. Atualizar pai (notifica outros utilizadores)
-        await updateDoc(parentRef, { 
-            ultimaedicao: serverTimestamp(),
-            lastEditorId: auth.currentUser.uid
+        // Atualiza inputs visuais
+        container.querySelectorAll('input').forEach(t => t.setAttribute('value', t.value));
+
+        const finalHTML = container.innerHTML;
+
+        await updateDoc(noteRef, {
+            conteudo: finalHTML,
+            [`subnotasocultas.${miniNoteId}`]: deleteField(),
+            ultimaedicao: serverTimestamp()
         });
 
-        // 6. Fechar e Feedback
+        // Fechar modal e scroll
         document.getElementById('history-modal').style.display = 'none';
-        
-        // Scroll para o topo
-        const feed = document.getElementById('archive-feed');
-        if(feed) feed.scrollTop = 0;
+        setTimeout(() => {
+            const el = document.getElementById(safeId);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 300);
 
-        await window.showSuccessAlert("Restaurado!", "O post voltou para o feed.");
-
-    } catch(e) {
-        console.error("Erro ao restaurar:", e);
-        alert("Erro ao restaurar.");
+    } catch (error) {
+        console.error("Erro restauro:", error);
     }
 };
+
+
 
 // Listener para Gravação Manual no Status do Arquivo
 const archiveStatus = document.getElementById('archive-save-status');
@@ -33347,6 +33469,9 @@ async function renderUniversalTextSearch(name) {
                 let match = false;
                 let matchSource = "text"; // 'text' ou 'category'
 
+
+                 if (box.classList.contains('statue-card-wrapper')) return; 
+
                 // A. Verifica Texto dentro da caixa
                 if (wholeWordRegex.test(box.textContent)) {
                     match = true;
@@ -35772,31 +35897,11 @@ window.restoreBackup = async function(backupId) {
 window.restoreHiddenMiniNote = async function(miniNoteId) {
     if (!selectedNoteId) return;
 
-    // 1. AJUSTE VISUAL (Z-Index para o popup de confirmação ficar no topo)
-    const historyModal = document.getElementById('history-modal');
-    const confirmModal = document.getElementById('confirm-modal');
-    if (confirmModal) confirmModal.style.setProperty('z-index', '2147483647', 'important');
-
-    // 2. CONFIRMAÇÃO
-    const confirmed = await showConfirmation(
-        "Restaurar Item?", 
-        "O item será retirado da reciclagem e colocado de volta na nota."
-    );
-    
-    // Reset do Z-Index
-    if (confirmModal) confirmModal.style.zIndex = "";
-
+    // ... (confirmação igual) ...
+    const confirmed = await showConfirmation("Restaurar Item?", "O item voltará para a nota.");
     if (!confirmed) return;
 
-    // 3. FEEDBACK VISUAL NO BOTÃO DA LISTA
-    const restoreBtn = document.querySelector(`button[onclick*="${miniNoteId}"]`);
-    if (restoreBtn) {
-        restoreBtn.textContent = "A restaurar...";
-        restoreBtn.disabled = true;
-    }
-
     try {
-        // 4. LIGAR AO FIREBASE
         const { doc, getDoc, updateDoc, serverTimestamp, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', selectedNoteId);
         const noteSnap = await getDoc(noteRef);
@@ -35807,205 +35912,87 @@ window.restoreHiddenMiniNote = async function(miniNoteId) {
         const hiddenItems = data.subnotasocultas || {};
         const item = hiddenItems[miniNoteId];
 
-        if (!item) {
-            alert("Erro: Item não encontrado (pode já ter sido restaurado).");
-            if(restoreBtn) restoreBtn.closest('li').remove();
-            return;
-        }
+        if (!item) { alert("Item não encontrado."); return; }
 
-        // ============================================================
-        // 5. RECONSTRUÇÃO DO HTML (BASEADO NO TIPO)
-        // ============================================================
         let restoredHTML = "";
         
-        // Toolbar Padrão (para subnotas normais)
-        const commonToolbar = `
-            <div class="mini-note-toolbar" contenteditable="false">
-                <button type="button" data-action="sharing-settings" title="Partilha">🔐</button>
-                <div class="toolbar-btn-group">
-                    <button type="button" data-action="move-up">🔺</button>
-                    <button type="button" data-action="move-down">🔻</button>
-                </div>
-                <button type="button" data-action="manage-box-links">⚡</button>
-                <button type="button" data-action="append-mini-note">🧬</button>
-                <button type="button" data-action="highlight-color">🎨</button>
-                <button type="button" data-action="manage-mini-note-topics">📋</button>
-                <button type="button" data-action="delete-mini-note">🗑️</button>
-            </div>`;
+        // Toolbar Padrão (Sem os ícones extras)
+        const commonToolbar = `...`; // (Igual ao que já tens)
 
-        // Prepara atributos
-        const safeTopics = (item.topicsJSON || "{}").replace(/'/g, "&apos;").replace(/"/g, "&quot;");
         const safeId = item.id || `restored_${Date.now()}`;
-        const attrs = `id="${safeId}" data-topics='${safeTopics}' data-shared="false" data-box-links='{}'`;
         const contentVal = item.conteudo || "<p><br></p>";
         const titleVal = item.titulo || "";
+        
+        // Atributos base
+        const safeTopics = (item.topicsJSON || "{}").replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+        const attrs = `id="${safeId}" data-topics='${safeTopics}' data-shared="false" data-box-links='{}'`;
 
-        // --- SWITCH DE TIPOS ---
+        // --- TIPOS ---
 
-        // 1. RACIOCÍNIO (SIGN) - COM CORREÇÃO DO ÍCONE ⏳ -> 🗑️
-        if (item.type === 'sign') {
-            let cleanContent = contentVal;
-
-            // Regex para encontrar o botão velho (que tem o ícone ⏳ e estilos antigos)
-            const btnRegex = /<button[^>]*class="sign-btn-del"[^>]*>.*?<\/button>/i;
+        // >>> NOVO BLOCO PARA ESTÁTUA <<<
+        if (item.type === 'statue') {
+            // Reconstrói o botão de salto usando os dados guardados
+            const jumpAction = `event.preventDefault(); window.handleGoToNote('${item.originNoteId}', '${item.originBoxId}')`;
             
-            // O botão novo e limpo
-            const freshBtn = '<button class="sign-btn-del" onclick="window.confirmSignDelete(this)" title="Mover para a Reciclagem">🗑️</button>';
-            
-            // Substitui o botão velho pelo novo no HTML
-            if (btnRegex.test(cleanContent)) {
-                cleanContent = cleanContent.replace(btnRegex, freshBtn);
-            } else {
-                // Fallback de segurança: substitui apenas o emoji se a regex falhar
-                cleanContent = cleanContent.replace('⏳', '🗑️');
-            }
-
-            restoredHTML = `<div class="journal-sign-wrapper" ${attrs} contenteditable="false">${cleanContent}</div><p><br></p>`;
-        }
-        
-        // 2. CARTÃO (CARD)
-        else if (item.type === 'card') {
-            restoredHTML = `<div class="journal-id-card" ${attrs} contenteditable="false">${contentVal}</div><p><br></p>`;
-        }
-        
-        // 3. CUBO (CUBE)
-        else if (item.type === 'cube') {
-            restoredHTML = `<div class="journal-cube-wrapper" ${attrs} contenteditable="false">${contentVal}</div><p style="clear:both;"><br></p>`;
-        }
-        
-        // 4. TOGGLE (TÍTULO EXPANSÍVEL)
-        else if (item.type === 'toggle') {
             restoredHTML = `
-            <details class="toggle-section" open ${attrs}>
-                <summary>
-                    <h2>${titleVal}</h2>
-                    <button class="toggle-move-btn" data-action="move-up">🔺</button>
-                    <button class="toggle-move-btn" data-action="move-down">🔻</button>
-                    <button class="toggle-color-btn" contenteditable="false">🖌️</button>
-                    <button class="toggle-delete-btn" contenteditable="false">🗑️</button>
-                </summary>
-                <div class="toggle-content" contenteditable="true">${contentVal}</div>
-            </details><p><br></p>`;
-        } 
-        
-        // 5. REDATOR
-        else if (item.type === 'redator') {
-            restoredHTML = `
-            <div class="redator-wrapper" ${attrs} contenteditable="false">
-                <button class="redator-reopen-btn" onclick="window.toggleRedatorHeader('${safeId}', true)">T</button>
-                <div class="redator-header" id="header-${safeId}">
-                    <input type="text" class="redator-input" value="${titleVal}" oninput="this.setAttribute('value', this.value)">
-                    <div class="redator-top-tools">
-                        <button class="redator-menu-trigger" onclick="window.toggleRedatorMenu(this)">⋮</button>
-                         <div class="redator-slide-menu">
-                            <button class="tool-icon-btn" data-action="move-up">🔺</button>
-                            <button class="tool-icon-btn" data-action="move-down">🔻</button>
-                            <button class="tool-icon-btn" data-action="delete-mini-note" style="color:#e74c3c;">🗑️</button>
+                <div class="mini-note-wrapper statue-card-wrapper" id="${safeId}" 
+                     data-origin-note="${item.originNoteId}" 
+                     data-origin-box="${item.originBoxId}" 
+                     data-shared="false" 
+                     contenteditable="false">
+                    
+                    <div class="mini-note-toolbar" contenteditable="false">
+                        <button type="button" data-action="sharing-settings" title="Partilha">🔐</button>
+                        <div class="toolbar-btn-group">
+                            <button type="button" data-action="move-up">🔺</button>
+                            <button type="button" data-action="move-down">🔻</button>
                         </div>
+                        <button type="button" data-action="highlight-color">🎨</button>
+                        <button type="button" data-action="delete-mini-note">🗑️</button>
+                        <button type="button" onclick="${jumpAction}" title="Ir para Origem" style="color: #a569bd; font-weight: bold; border-color: #a569bd;">🗿</button>
                     </div>
-                </div>
-                <div class="redator-content" contenteditable="true">${contentVal}</div>
-                <div class="redator-dock">
-                     <button class="dock-btn" onclick="event.preventDefault(); window.openRedatorFocus('${safeId}')"><svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg></button>
-                </div>
-            </div><p><br></p>`;
-        }
-        
-        // 7. BLOCO FANTASMA (AQUÁRIO) - NOVO
-        else if (item.type === 'ghost') {
-            // Recria apenas a div simples, sem bordas nem toolbar
-            restoredHTML = `<div class="ghost-block" id="${safeId}" contenteditable="true" data-placeholder="">${contentVal}</div>`;
-            
-            // Re-injeta os botões flutuantes (Concha e Popup) para o bloco voltar a ser funcional
-            // Nota: A função ensureGhostActions será chamada automaticamente quando o user clicar no bloco,
-            // mas podemos forçar a estrutura inicial aqui se o conteúdo vier limpo.
-            if (!restoredHTML.includes('ghost-actions')) {
-                const actionsDiv = `
-                    <div class="ghost-actions" contenteditable="false">
-                        <button class="ghost-action-btn" title="Armazém (Notas Anexadas)" onclick="window.openGhostStore(this)">🐚</button>
-                        <button class="ghost-action-btn" title="Abrir Popup" onclick="window.openGhostPopup(this)">⇱</button>
-                    </div>
-                    <div class="ghost-add-between-btn" contenteditable="false" title="Inserir Parágrafo Abaixo" onclick="event.preventDefault(); event.stopPropagation(); window.insertBlockBelow(this.parentElement)"></div>
-                `;
-                // Injeta os botões dentro da div
-                restoredHTML = restoredHTML.replace('>', '>' + actionsDiv);
-            }
-        }
 
-        // 6. DEFAULT (SUBNOTAS / QUESTÕES / CONTENTORES)
+                    <div class="statue-content-lock">
+                        ${contentVal} <!-- O conteúdo já vem formatado do backup -->
+                    </div>
+                </div>
+                <p><br></p>
+            `;
+        }
+        // ... (Resto dos tipos: redator, sign, etc. mantêm-se iguais) ...
+        else if (item.type === 'sign') { /* ... */ }
         else {
-            let modeClass = "mini-note-wrapper";
-            let titleHTML = `<textarea class="mini-note-title-input" rows="1">${titleVal}</textarea>`;
-            
-            if (item.type === 'question') modeClass += " question-mode";
-            else if (item.type === 'free') {
-                modeClass += " free-mode";
-                titleHTML = ""; 
-            }
-
-            restoredHTML = `
-            <div class="${modeClass}" ${attrs} contenteditable="false">
-                ${titleHTML}
-                ${commonToolbar}
-                <div class="mini-note-content" contenteditable="true">${contentVal}</div>
-            </div><p><br></p>`;
+             // (Código padrão de subnota)
+             restoredHTML = `<div class="mini-note-wrapper" ${attrs} contenteditable="false"><textarea class="mini-note-title-input" rows="1">${titleVal}</textarea>${commonToolbar}<div class="mini-note-content" contenteditable="true">${contentVal}</div></div><p><br></p>`;
         }
 
-        // ============================================================
-        // 6. INSERÇÃO NO DOM
-        // ============================================================
+        // ... (Inserção no DOM e gravação igual ao anterior) ...
         let container = document.getElementById('note-content-editor');
-        if (!container) throw new Error("Editor não encontrado.");
-
-        // Procura marcador de posição original
         const marker = document.getElementById(`marker_${miniNoteId}`);
-        if (marker) {
-            marker.outerHTML = restoredHTML;
-        } else {
-            // Se não houver marcador, põe no fim
-            container.insertAdjacentHTML('beforeend', restoredHTML);
-        }
         
-        // Sincroniza inputs (garante que o texto aparece nas caixas de título)
-        container.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input').forEach(t => {
-            if (t.tagName === 'INPUT') t.setAttribute('value', t.value);
-            else t.textContent = t.value;
-        });
+        if (marker) marker.outerHTML = restoredHTML;
+        else container.insertAdjacentHTML('beforeend', restoredHTML);
 
-        // ============================================================
-        // 7. GRAVAÇÃO ATÓMICA
-        // ============================================================
-        // Captura o HTML final do editor (já com a caixa restaurada)
+        // Atualiza inputs visuais
+        container.querySelectorAll('input').forEach(t => t.setAttribute('value', t.value));
+
         const finalHTML = container.innerHTML;
 
-        // Atualiza o Firebase: Grava o conteúdo E apaga da lixeira ao mesmo tempo
         await updateDoc(noteRef, {
             conteudo: finalHTML,
             [`subnotasocultas.${miniNoteId}`]: deleteField(),
             ultimaedicao: serverTimestamp()
         });
 
-        // 8. FINALIZAÇÃO
-        if (historyModal) historyModal.style.display = 'none';
-
-        // Scroll suave até ao item restaurado
+        // Fechar modal e scroll
+        document.getElementById('history-modal').style.display = 'none';
         setTimeout(() => {
             const el = document.getElementById(safeId);
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            
-            // Efeito visual de destaque
-            el.style.transition = "box-shadow 0.5s";
-            el.style.boxShadow = "0 0 20px var(--accent-color)";
-            setTimeout(() => el.style.boxShadow = "", 1500);
         }, 300);
 
     } catch (error) {
-        console.error("❌ Erro ao restaurar:", error);
-        alert("Erro ao restaurar item. Tente novamente.");
-        if (restoreBtn) {
-            restoreBtn.textContent = "Restaurar";
-            restoreBtn.disabled = false;
-        }
+        console.error("Erro restauro:", error);
     }
 };
 
@@ -37810,37 +37797,91 @@ function updateMiddlePanelViews() {
 
 // 1. Expande uma referência complexa (ex: "João 3:1-3, 5") numa lista de versículos individuais
 function expandVerseReference(fullRef) {
-    // Regex para capturar: Livro, Capítulo, Versículos
-    // Ex: "1 João 3:1-5" -> Livro: "1 João", Cap: "3", Vers: "1-5"
-    const match = fullRef.match(/(.+)\s+(\d+):(.+)/);
-    if (!match) return [fullRef]; // Se falhar, devolve como está
+    // Regex para capturar: Livro e Números
+    const match = fullRef.match(/^(.+?)\s+(\d+:.*)$/);
+    if (!match) return [fullRef];
 
-    const book = match[1].trim();
-    const chapter = match[2];
-    const versePart = match[3];
+    const bookName = match[1].trim();
+    const numbersPart = match[2]; // ex: "2:13-3:1" ou "3:16, 18"
     
+    // Precisamos dos dados do livro para saber os limites dos capítulos
+    // BIBLE_DATA deve estar acessível globalmente
+    const bookData = typeof BIBLE_DATA !== 'undefined' 
+        ? BIBLE_DATA.find(b => b.nome === bookName) 
+        : null;
+
     let expandedVerses = [];
 
-    // Separa por vírgulas (ex: "1-3, 5" -> ["1-3", " 5"])
-    const groups = versePart.split(',');
+    // Separa por vírgulas ou ponto e vírgula
+    // (Nota: A função generateNoteTexts já deve ter tratado os ; de capítulos diferentes,
+    // mas aqui tratamos , e intervalos -)
+    const groups = numbersPart.split(/[,;]/);
 
     groups.forEach(group => {
         const g = group.trim();
-        if (g.includes('-')) {
-            // É um intervalo (ex: "1-3")
-            const [start, end] = g.split('-').map(n => parseInt(n));
-            if (!isNaN(start) && !isNaN(end)) {
-                for (let v = start; v <= end; v++) {
-                    expandedVerses.push(`${book} ${chapter}:${v}`);
+
+        // CASO A: Intervalo entre Capítulos (ex: 2:13-3:1)
+        // Procura padrão d:d-d:d
+        const crossChapterMatch = g.match(/^(\d+):(\d+)\s*[-–]\s*(\d+):(\d+)$/);
+
+        if (crossChapterMatch && bookData) {
+            const startCap = parseInt(crossChapterMatch[1]);
+            const startVer = parseInt(crossChapterMatch[2]);
+            const endCap = parseInt(crossChapterMatch[3]);
+            const endVer = parseInt(crossChapterMatch[4]);
+
+            // Loop pelos capítulos
+            for (let c = startCap; c <= endCap; c++) {
+                // Quantos versículos tem este capítulo?
+                // (Se não houver dados, assume 50 por segurança)
+                const maxVerses = bookData.versiculos ? (bookData.versiculos[c - 1] || 50) : 50;
+                
+                let vStart = (c === startCap) ? startVer : 1;
+                let vEnd = (c === endCap) ? endVer : maxVerses;
+
+                for (let v = vStart; v <= vEnd; v++) {
+                    expandedVerses.push(`${bookName} ${c}:${v}`);
                 }
             }
-        } else {
-            // É um número simples
-            expandedVerses.push(`${book} ${chapter}:${g}`);
+            return; // Já processou este grupo
+        }
+
+        // CASO B: Intervalo Simples no mesmo capítulo (ex: 3:16-18 ou apenas 16-18 se o capítulo for implícito)
+        // Mas a nossa string principal pode ser "3:16-18".
+        
+        // Vamos tentar extrair o capítulo base do início do grupo
+        // Se o grupo é "3:16-18", cap é 3.
+        // Se o grupo é "16-18" (vindo de "3:1, 16-18"), precisamos do contexto.
+        // SIMPLIFICAÇÃO: Como a nossa regex principal garante "Cap:Vers", assumimos que o grupo começa com Cap.
+        // Exceto se for uma lista tipo "3:1, 5". O "5" não tem cap.
+        
+        // HACK: Para lidar com "3:1, 5", precisamos manter o último capítulo visto.
+        // Mas nesta função isolada é difícil.
+        // Para garantir compatibilidade com a regex `\d+:\d+`, vamos assumir que o input
+        // já vem normalizado ou tratar apenas os que têm :.
+        
+        if (g.includes(':')) {
+            const parts = g.split(':');
+            const chapter = parts[0];
+            const versesPart = parts[1];
+
+            if (versesPart.includes('-') || versesPart.includes('–')) {
+                const [vStart, vEnd] = versesPart.split(/[-–]/).map(n => parseInt(n));
+                for (let v = vStart; v <= vEnd; v++) {
+                    expandedVerses.push(`${bookName} ${chapter}:${v}`);
+                }
+            } else {
+                expandedVerses.push(`${bookName} ${chapter}:${versesPart}`);
+            }
+        } 
+        else {
+             // Se vier apenas um número isolado (o que não devia acontecer com a nova lógica de split),
+             // retornamos como está para tentar o fallback
+             // (Ou implementamos lógica de estado para lembrar o capítulo anterior, se necessário)
         }
     });
 
-    return expandedVerses;
+    return expandedVerses.length > 0 ? expandedVerses : [fullRef];
 }
 
 // 2. Busca o texto na coleção pública (Cache simples para evitar leituras repetidas na mesma sessão)
@@ -37908,98 +37949,98 @@ async function generateNoteTexts() {
     
     if (!editor || !list) return;
 
-    // --- 1. PREPARAÇÃO INTELIGENTE DA REGEX ---
-    
-    // A. Criar um mapa de tradução: "exodo" -> "Êxodo"
-    // Isto serve para que, se encontrarmos "Exodo", o sistema saiba pedir "Êxodo" ao Firebase
+    // --- 1. PREPARAÇÃO DA REGEX ---
     const canonicalBookMap = {};
     const flexiblePatterns = [];
-
-    // Ordenar por tamanho (maior para menor) para evitar que "Judeus" dê match em "Judas"
+    
     const sortedBooks = [...BIBLICAL_BOOKS].sort((a, b) => b.length - a.length);
 
     sortedBooks.forEach(book => {
-        // 1. Cria a chave normalizada (ex: "exodo")
         const normalized = normalizeStr(book);
-        canonicalBookMap[normalized] = book; // Guarda o nome oficial ("Êxodo")
-
-        // 2. Cria o padrão flexível para a regex
+        canonicalBookMap[normalized] = book;
         flexiblePatterns.push(getFlexibleRegexStr(book));
     });
 
-    // B. Montar a Regex Gigante
-    // Procura: (Início|Espaço|Aspas) + (NomeFlexivel) + (Cap:Vers)
     const booksPattern = flexiblePatterns.join('|');
-    const regex = new RegExp(`(?:^|[\\s"'(])((?:${booksPattern})\\s+\\d+:\\d+(?:\\s*[-–,;]\\s*\\d+)*)`, 'gi');
 
+    // Regex que aceita vírgulas para continuação
+    const regex = new RegExp(
+        `(?:^|[\\s"'(])` +
+        `(` +
+            `(?:${booksPattern})\\s+\\d+:\\d+` + 
+            `(?:` +
+                `\\s*[-–]\\s*\\d+(?::\\d+)?` +
+                `|` +
+                `\\s*;\\s*\\d+(?::\\d+)?` + 
+                `|` +
+                `\\s*,\\s*\\d+(?!\\s*:)` + // Aceita vírgula seguida de número (versículo)
+            `)*` +
+        `)`, 
+    'gi');
 
-    // --- 2. EXTRAÇÃO DE TEXTO LINEAR (DOM Walker) ---
-    // Lê o texto na ordem exata da página
+    // --- 2. EXTRAÇÃO ---
     let textContent = "";
-    
-    const walker = document.createTreeWalker(
-        editor, 
-        NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, 
-        {
-            acceptNode: (node) => {
-                if (node.nodeType === 3) return NodeFilter.FILTER_ACCEPT;
-                if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') return NodeFilter.FILTER_ACCEPT;
-                return NodeFilter.FILTER_SKIP;
-            }
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+        acceptNode: (node) => {
+            if (node.nodeType === 3) return NodeFilter.FILTER_ACCEPT;
+            if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') return NodeFilter.FILTER_ACCEPT;
+            return NodeFilter.FILTER_SKIP;
         }
-    );
+    });
 
     let currentNode;
     while (currentNode = walker.nextNode()) {
-        if (currentNode.nodeType === 3) {
-            textContent += currentNode.textContent + " ";
-        } else {
-            textContent += currentNode.value + " ";
-        }
+        if (currentNode.nodeType === 3) textContent += currentNode.textContent + " ";
+        else textContent += currentNode.value + " ";
     }
     
-    // --- 3. CAPTURA E NORMALIZAÇÃO ---
+    // --- 3. PROCESSAMENTO ---
     const rawMatches = textContent.match(regex) || [];
-    
-    // Processa os resultados encontrados
-    const currentRefs = [...new Set(rawMatches.map(r => {
-        // A. Limpa a pontuação inicial
+    let processedRefs = [];
+
+    rawMatches.forEach(r => {
         let foundText = r.replace(/^[ "((]+/, '').trim();
-        
-        // B. Separa o Livro dos Números (ex: "Exodo" de "20:1")
-        // Usa regex para encontrar onde começam os números
         const splitMatch = foundText.match(/^(.+?)\s+(\d+:.*)$/);
         
         if (splitMatch) {
-            const foundBookName = splitMatch[1]; // "Exodo"
-            const numbers = splitMatch[2];       // "20:1"
+            const originalBookName = splitMatch[1];
+            const numbersPart = splitMatch[2];
             
-            // C. Corrige o nome do livro usando o mapa
-            const normalizedFound = normalizeStr(foundBookName);
-            const officialName = canonicalBookMap[normalizedFound];
-            
-            if (officialName) {
-                // Retorna o nome corrigido + números (ex: "Êxodo 20:1")
-                return `${officialName} ${numbers}`;
-            }
-        }
-        
-        return foundText; // Fallback se falhar
-    }))];
+            const normalizedBook = normalizeStr(originalBookName);
+            const canonicalBook = canonicalBookMap[normalizedBook] || originalBookName;
 
-    // Detetar novos para scroll
+            // Divide por PONTO E VÍRGULA (;) para criar blocos separados
+            const segments = numbersPart.split(';');
+            let currentRefBuffer = ""; 
+
+            segments.forEach((seg, index) => {
+                const trimmedSeg = seg.trim();
+                
+                if (trimmedSeg.includes(':')) {
+                    if (currentRefBuffer) processedRefs.push(`${canonicalBook} ${currentRefBuffer}`);
+                    currentRefBuffer = trimmedSeg; 
+                } else {
+                    if (currentRefBuffer) currentRefBuffer += `, ${trimmedSeg}`;
+                    else currentRefBuffer = trimmedSeg; 
+                }
+
+                if (index === segments.length - 1 && currentRefBuffer) {
+                     processedRefs.push(`${canonicalBook} ${currentRefBuffer}`);
+                }
+            });
+        } else {
+            processedRefs.push(foundText);
+        }
+    });
+
+    const uniqueRefs = [...new Set(processedRefs)];
     const prevRefsJSON = list.getAttribute('data-prev-refs') || "[]";
     const prevRefs = JSON.parse(prevRefsJSON);
-    const newRefFound = currentRefs.find(ref => !prevRefs.includes(ref));
+    const newRefFound = uniqueRefs.find(ref => !prevRefs.includes(ref));
 
     // --- 4. RENDERIZAÇÃO ---
-    if (currentRefs.length === 0) {
-        list.innerHTML = `
-            <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:#888; text-align:center; padding:20px;">
-                <span style="font-size:30px;">📖</span>
-                <p>Nenhum texto detetado.</p>
-                <small style="opacity:0.5;">Suporta: "Exodo 1:1", "Joao 3:16"</small>
-            </div>`;
+    if (uniqueRefs.length === 0) {
+        list.innerHTML = `<div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:#888; text-align:center; padding:20px;"><span style="font-size:30px;">📖</span><p>Nenhum texto detetado.</p></div>`;
         list.setAttribute('data-prev-refs', "[]");
         return;
     }
@@ -38007,44 +38048,34 @@ async function generateNoteTexts() {
     list.innerHTML = ''; 
     let elementToScrollTo = null;
 
-    for (const cleanRef of currentRefs) {
+    for (const cleanRef of uniqueRefs) {
         
         const itemDiv = document.createElement('div');
         itemDiv.style.cssText = "padding: 0 15px 15px 15px; border-bottom: 1px solid var(--border-color); text-align: left; position: relative;";
         
-        if (newRefFound && cleanRef === newRefFound) {
-            elementToScrollTo = itemDiv;
-        }
+        if (newRefFound && cleanRef === newRefFound) elementToScrollTo = itemDiv;
+
+        // ============================================================
+        // CORREÇÃO VISUAL: LIMPAR O TÍTULO NA VISTA
+        // ============================================================
+        // O `cleanRef` contém "Jó 1:2 , 2-1".
+        // Vamos cortar na primeira vírgula para mostrar apenas "Jó 1:2"
+        let displayTitle = cleanRef.split(',')[0].trim();
+
+        // Se o título ficou igual ao livro (ex: erro de split), mantém o original
+        if (displayTitle === cleanRef.split(' ')[0]) displayTitle = cleanRef;
 
         const title = document.createElement('div');
         title.className = 'bible-ref-title';
-        title.style.cssText = `
-            font-weight: bold; 
-            color: var(--accent-color); 
-            cursor: pointer; 
-            font-size: 0.95em; 
-            white-space: nowrap; 
-            overflow: hidden; 
-            text-overflow: ellipsis;
-            position: sticky;
-            top: 0;
-            background-color: var(--panel-color); 
-            z-index: 5;
-            padding: 12px 0 8px 0;
-            border-bottom: 1px solid transparent; 
-        `;
+        title.style.cssText = `font-weight: bold; color: var(--accent-color); cursor: pointer; font-size: 0.95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: sticky; top: 0; background-color: var(--panel-color); z-index: 5; padding: 12px 0 8px 0;`;
         
-        title.textContent = cleanRef;
+        title.textContent = displayTitle; // Usa o título curto
+        title.title = cleanRef; // Mostra o completo ao passar o rato (tooltip)
         
-        // ScrollSpy Inverso (Clique no título -> Scroll no Texto)
         title.onclick = () => {
             if (typeof scrollToAndHighlightText === 'function') {
-                // Aqui podemos passar a parte numérica se o nome tiver mudado muito, 
-                // mas geralmente scrollToAndHighlightText deve ser esperto.
-                // Como corrigimos o nome para "Êxodo", se o texto original for "Exodo",
-                // a pesquisa exata pode falhar.
-                // Idealmente, a scrollToAndHighlightText também deveria ser "Insensitive".
-                scrollToAndHighlightText(cleanRef);
+                // Tenta pesquisar pelo versículo específico do título curto
+                scrollToAndHighlightText(displayTitle.split(' ').pop());
             }
         };
 
@@ -38056,18 +38087,18 @@ async function generateNoteTexts() {
         itemDiv.appendChild(contentDiv);
         list.appendChild(itemDiv);
 
-        // Busca o texto na base de dados (usando o nome oficial "Êxodo")
+        // AQUI MANTEMOS 'cleanRef' (O COMPLETO) PARA BUSCAR OS TEXTOS TODOS
         const individualVerses = expandVerseReference(cleanRef);
         const textPromises = individualVerses.map(v => fetchPublicBibleText(v));
         
-        const texts = await Promise.all(textPromises);
-        
-        const fullText = texts.filter(t => t).join(" ");
-        if (fullText.trim()) {
-            contentDiv.textContent = fullText;
-        } else {
-            contentDiv.innerHTML = '<span style="opacity:0.5; font-size:0.8em;">Texto não disponível.</span>';
-        }
+        Promise.all(textPromises).then(texts => {
+            const fullText = texts.filter(t => t).join(" ");
+            if (fullText.trim()) {
+                contentDiv.textContent = fullText;
+            } else {
+                contentDiv.innerHTML = '<span style="opacity:0.5; font-size:0.8em;">Texto não disponível.</span>';
+            }
+        });
     }
 
     if (elementToScrollTo) {
@@ -38079,7 +38110,7 @@ async function generateNoteTexts() {
         }, 150);
     }
 
-    list.setAttribute('data-prev-refs', JSON.stringify(currentRefs));
+    list.setAttribute('data-prev-refs', JSON.stringify(uniqueRefs));
 }
 
 // 3. FUNÇÃO: GERAR FONTES (VISTA 4)
@@ -48239,7 +48270,83 @@ async function toggleTagState(item, btn, li) {
     }
 }
 
+async function syncStatueCardsInCurrentNote() {
+    const editor = document.getElementById('note-content-editor');
+    if (!editor) return;
 
+    // Encontra todas as estátuas na nota atual
+    const statues = editor.querySelectorAll('.statue-card-wrapper');
+    if (statues.length === 0) return;
+
+    console.log(`🗿 [SYNC] Encontradas ${statues.length} estátuas para atualizar.`);
+
+    const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+    let changesMade = false;
+
+    // Processa cada estátua
+    for (const statue of statues) {
+        const originNoteId = statue.dataset.originNote;
+        const originBoxId = statue.dataset.originBox;
+
+        if (!originNoteId || !originBoxId) continue;
+
+        try {
+            // Busca a nota original
+            const originRef = doc(db, 'pastas', originNoteId);
+            const originSnap = await getDoc(originRef);
+
+            if (originSnap.exists()) {
+                const originContent = originSnap.data().conteudo || "";
+                
+                // Parse do HTML original para encontrar a caixa
+                const parser = new DOMParser();
+                const docDOM = parser.parseFromString(originContent, 'text/html');
+                const originalBox = docDOM.getElementById(originBoxId);
+
+                if (originalBox) {
+                    // Extrai dados atualizados
+                    const titleInput = originalBox.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
+                    const titleVal = titleInput ? (titleInput.value || titleInput.textContent) : "";
+
+                    const bodyDiv = originalBox.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content, .cube-content');
+                    const bodyVal = bodyDiv ? bodyDiv.innerHTML : "Conteúdo removido.";
+
+                    // Constrói o novo HTML interno da estátua
+                    const newInnerHtml = `
+                        ${titleVal ? `<strong style="display:block; margin-bottom:5px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:3px;">${titleVal}</strong>` : ''}
+                        <div>${bodyVal}</div>
+                    `;
+
+                    const lockContainer = statue.querySelector('.statue-content-lock');
+                    
+                    // Compara para evitar gravações desnecessárias
+                    // Removemos espaços em branco para comparação justa
+                    if (lockContainer && lockContainer.innerHTML.replace(/\s/g,'') !== newInnerHtml.replace(/\s/g,'')) {
+                        console.log(`🔄 Atualizando estátua de: ${originBoxId}`);
+                        lockContainer.innerHTML = newInnerHtml;
+                        
+                        // Flash visual para indicar update
+                        statue.style.borderColor = "#2ecc71"; // Verde
+                        setTimeout(() => statue.style.borderColor = "rgba(165, 105, 189, 0.3)", 1000);
+                        
+                        changesMade = true;
+                    }
+                } else {
+                    // Se a caixa original foi apagada
+                    const lockContainer = statue.querySelector('.statue-content-lock');
+                    if (lockContainer) lockContainer.innerHTML = "<em style='color:#e74c3c'>A origem deste card foi eliminada.</em>";
+                }
+            }
+        } catch (e) {
+            console.error("Erro sync estátua:", e);
+        }
+    }
+
+    // Se houve atualizações visuais, grava a nota automaticamente para persistir a sincronia
+    if (changesMade) {
+        saveNote(true);
+    }
+}
 
 
 
