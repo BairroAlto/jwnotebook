@@ -40383,47 +40383,54 @@ const postObserver = new IntersectionObserver((entries) => {
 
 // 1. Função para Abrir o Ambiente
 window.openAquariumEnvironment = async function(id, data) {
-    console.group("🪸 [ABERTURA AQUÁRIO]");
+    console.group("🪸 [ABERTURA BLINDADA] A trocar para: " + data.nome);
+
+    // 1. PARAGEM DE EMERGÊNCIA (Matar timers pendentes)
+    // Isto impede que gravações atrasadas da nota anterior disparem
+    // depois de já termos carregado o novo texto no ecrã.
+    if (typeof aqAutoSaveTimer !== 'undefined') clearTimeout(aqAutoSaveTimer);
+    if (typeof aqTitleTimer !== 'undefined') clearTimeout(aqTitleTimer);
+    if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
     
-    // 1. GRAVAÇÃO DE SEGURANÇA DA NOTA ANTERIOR
-    // Se estávamos numa nota normal e vamos para o Aquário (IDs diferentes)
+    // 2. GRAVAÇÃO SEGURA DA NOTA ANTERIOR (Antes de tocar no DOM)
     if (selectedNoteId && selectedNoteId !== id) {
-        console.log("⏳ A guardar e fechar a nota anterior...");
+        console.log(`💾 A gravar nota anterior (${selectedNoteId}) antes de mudar...`);
         
-        // A. Gravar nota anterior
-        if (typeof saveNote === 'function') {
-            await saveNote(true); 
+        // Verifica em que modo estamos para saber qual o save correto a chamar
+        const isAquariumVisible = document.getElementById('aquarium-environment').style.display !== 'none';
+        
+        if (isAquariumVisible) {
+            // Se já estávamos no aquário, usa o save do aquário
+            await window.saveAquariumState();
+        } else {
+            // Se vínhamos de fora, usa o save normal
+            await saveNote(true);
         }
 
-        // B. Desligar o "ouvido" do Firebase da nota anterior
+        // Desliga ouvintes antigos
         if (unsubscribeCurrentNote) {
             unsubscribeCurrentNote();
             unsubscribeCurrentNote = null;
-            console.log("🔌 Ligação à nota anterior cortada.");
         }
-
-        // C. Limpar visualmente o Editor Normal
-        const normalEditor = document.getElementById('note-content-editor');
-        const normalTitle = document.getElementById('note-title-input');
-        if (normalEditor) normalEditor.innerHTML = "";
-        if (normalTitle) normalTitle.value = "";
     }
 
-    // 2. LIMPEZA DO AMBIENTE AQUÁRIO
-    if (typeof window.resetAquariumState === 'function') {
-        window.resetAquariumState();
-    }
-    console.log("ID Novo:", id);
-
-    // 3. MUDANÇA DE ESTADO
-    selectedNoteId = id;
+    // 3. LIMPEZA E TROCA DE ID (O Ponto de Não Retorno)
+    // Mudamos o ID *antes* de injetar o novo HTML. 
+    // Assim, se houver algum save fantasma, ele gravará no ID novo (menos grave) 
+    // em vez de destruir a nota antiga.
+    if (typeof window.resetAquariumState === 'function') window.resetAquariumState();
+    
+    selectedNoteId = id; // <--- TROCA DE IDENTIDADE
     window.nextSelectedId = null;
     
-    // --- 4. ATUALIZAÇÃO VISUAL (TÍTULO EDITÁVEL) ---
+    console.log("✅ ID Global atualizado para:", id);
+
+    // 4. ATUALIZAÇÃO VISUAL (Agora é seguro mudar o HTML)
+    
+    // A. Título
     const titleGroup = document.querySelector('.aquarium-title-group');
     if (titleGroup) {
-        titleGroup.innerHTML = ''; // Limpa o H2 antigo
-        
+        titleGroup.innerHTML = ''; 
         const titleInput = document.createElement('input');
         titleInput.type = 'text';
         titleInput.id = 'aquarium-title-input';
@@ -40431,16 +40438,8 @@ window.openAquariumEnvironment = async function(id, data) {
         titleInput.value = data.nome || "Sem Título";
         titleInput.placeholder = "Nome do Aquário...";
         
-        // Evento para gravar o nome automaticamente
+        // Listener de título com debounce
         titleInput.addEventListener('input', (e) => {
-            // Atualiza o título na lista lateral (visual imediato)
-            const listItem = document.querySelector(`.list-item[data-id="${id}"] span`);
-            if (listItem) {
-                const icon = listItem.textContent.split(' ')[0]; 
-                listItem.textContent = `${icon} ${e.target.value}`;
-            }
-            
-            // Grava na base de dados (Debounce)
             clearTimeout(window.aqTitleTimer);
             window.aqTitleTimer = setTimeout(() => {
                 if (typeof window.saveAquariumTitle === 'function') {
@@ -40448,130 +40447,119 @@ window.openAquariumEnvironment = async function(id, data) {
                 }
             }, 1000);
         });
-
         titleGroup.appendChild(titleInput);
     }
     
-    // --- 5. CARREGAR CONTEÚDO E ZOOM ---
+    // B. Conteúdo (Canvas)
     const canvas = document.getElementById('aquarium-content-canvas');
     if (canvas) {
-        // A. Injetar Conteúdo
+        // Injeta o novo conteúdo
         if (data.conteudo && data.conteudo.trim() !== "") {
-            // Sanitiza e carrega (se DOMPurify estiver disponível)
             if (typeof DOMPurify !== 'undefined') {
                 canvas.innerHTML = DOMPurify.sanitize(data.conteudo);
             } else {
                 canvas.innerHTML = data.conteudo;
             }
         } else {
-            // Se vazio, cria o primeiro bloco
             canvas.innerHTML = '<div class="ghost-block" contenteditable="true" data-placeholder=""></div>';
         }
 
-        // ============================================================
-        // B. APLICAR ZOOM GUARDADO (AQUI ESTÁ A CORREÇÃO)
-        // ============================================================
+        // Restaura Zoom
         const savedZoom = data.zoomLevel || '100%';
         const aqZoomSelect = document.getElementById('aq-zoom');
-
-        // Atualiza a dropdown visualmente
-        if (aqZoomSelect) {
-            aqZoomSelect.value = savedZoom;
-        }
-
-        // Aplica o estilo ao Canvas
+        if (aqZoomSelect) aqZoomSelect.value = savedZoom;
         canvas.style.fontSize = savedZoom;
-        
-        // Ajuste de altura de linha
-        if (!savedZoom.includes('%')) {
-             const sizeNum = parseInt(savedZoom);
-             if (!isNaN(sizeNum)) {
-                 canvas.style.lineHeight = (sizeNum * 1.5) + 'px';
-             }
-        } else {
-             canvas.style.lineHeight = '1.6';
-        }
-        // ============================================================
-    }
 
-    // --- AUTO-CURA E RECONSTRUÇÃO ---
-    if (canvas) {
-        // Remove popups órfãos
-        canvas.querySelectorAll('.aq-popup-window').forEach(p => p.remove());
-
-        const allGhosts = canvas.querySelectorAll('.ghost-block');
-        allGhosts.forEach(g => {
-            // Desbloqueia tudo e restaura botões
+        // Reativa comportamentos dos blocos
+        canvas.querySelectorAll('.ghost-block').forEach(g => {
             g.classList.remove('locked-popup', 'active-selection', 'active-store-target');
-            g.style.cssText = ""; // Limpa estilos inline
+            g.style.cssText = "";
             g.setAttribute('contenteditable', 'true');
-            
-            if (typeof ensureGhostActions === 'function') {
-                ensureGhostActions(g);
-            }
+            if (typeof ensureGhostActions === 'function') ensureGhostActions(g);
         });
     }
 
-    // 6. VISIBILIDADE (O Grande Truque)
-    // Esconde a App Normal
+    // 5. EXIBIÇÃO
     const mainApp = document.querySelector('.notebook-container');
     if (mainApp) mainApp.style.setProperty('display', 'none', 'important');
 
-    // Mostra o Aquário
-    document.body.style.overflow = 'hidden';
     const env = document.getElementById('aquarium-environment');
-    
     if (env) {
         document.body.appendChild(env);
         env.style.cssText = `
             display: flex !important;
             position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100vw !important;
-            height: 100vh !important;
+            top: 0 !important; left: 0 !important; width: 100vw; height: 100vh !important;
             z-index: 2000000000 !important;
             background: radial-gradient(circle at center, #2c3e50 0%, #000000 100%) !important;
-            opacity: 0;
-            visibility: visible !important;
+            opacity: 0; visibility: visible !important;
             transition: opacity 0.5s ease;
         `;
         requestAnimationFrame(() => { setTimeout(() => { env.style.opacity = '1'; }, 10); });
-        
-        // Efeito de bolhas
-        if (typeof window.triggerAquariumBubbles === 'function') {
-            window.triggerAquariumBubbles();
-        }
     }
 
-    // --- AJUSTE MOBILE: MOVER STATUS PARA O TOPO ---
-    if (window.innerWidth <= 768) {
-        const navGroup = document.querySelector('.aquarium-nav-group');
-        const statusEl = document.getElementById('aq-save-status');
-        
-        if (navGroup && statusEl && !navGroup.contains(statusEl)) {
-            if (statusEl.parentNode) statusEl.parentNode.removeChild(statusEl);
-
-            const spacer = document.createElement('div');
-            spacer.style.cssText = "width: 15px; height: 1px; display: inline-block; flex-shrink: 0;";
-            
-            const sep = document.createElement('div');
-            sep.className = 'mobile-status-sep';
-            sep.style.cssText = "width:1px; height:20px; background:rgba(255,255,255,0.2); margin-right: 5px; display:inline-block; flex-shrink: 0;";
-            
-            navGroup.appendChild(spacer);
-            navGroup.appendChild(sep);
-            navGroup.appendChild(statusEl);
-            
-            statusEl.style.fontSize = "0.75em";
-            statusEl.style.whiteSpace = "nowrap";
-            statusEl.style.position = "static"; 
-            statusEl.style.display = "inline-block";
-        }
-    }
-
+    console.log("🏁 Carregamento concluído com segurança.");
     console.groupEnd();
 };
+
+// 2. Corrigir o clique no botão de Salto (Para não gravar duas vezes)
+window.loadAquariumNotesList = async function(filterText = "") {
+    const list = document.getElementById('aquarium-jump-list');
+    if (!list) return;
+
+    list.innerHTML = '<li style="padding:10px; color:#888;">A carregar aquários...</li>';
+
+    try {
+        const { collection, query, where, orderBy, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const q = query(
+            collection(db, 'pastas'),
+            where('tipo', '==', 'aquario'),
+            where('estado', '==', 'ativa'),
+            where('userId', '==', auth.currentUser.uid),
+            orderBy('nome')
+        );
+
+        const snapshot = await getDocs(q);
+        list.innerHTML = '';
+
+        if (snapshot.empty) {
+            list.innerHTML = '<li style="padding:10px; color:#888;">Nenhum outro aquário encontrado.</li>';
+            return;
+        }
+
+        snapshot.forEach(docSnap => {
+            const data = docSnap.data();
+            const nomeSeguro = data.nome || "Aquário Sem Título";
+            const item = { id: docSnap.id, nome: nomeSeguro, ...data };
+            
+            if (item.id === selectedNoteId) return; // Não mostra o atual
+            if (filterText && !nomeSeguro.toLowerCase().includes(filterText.toLowerCase())) return;
+
+            const li = document.createElement('li');
+            li.style.cssText = "padding:10px; border-bottom:1px solid var(--border-color); cursor:pointer; display:flex; align-items:center; gap:8px;";
+            li.innerHTML = `<span style="font-size:1.2em;">🪸</span> <span>${nomeSeguro}</span>`;
+            
+            li.onclick = async () => {
+                // 1. Feedback visual
+                li.style.backgroundColor = "var(--accent-color)";
+                li.style.color = "white";
+                li.textContent = "A trocar...";
+
+                // 2. Fecha o popup
+                document.getElementById('aquarium-jump-popup').style.display = 'none';
+
+                // 3. Executa a abertura segura (A função openAquariumEnvironment acima já trata da gravação do antigo)
+                await window.openAquariumEnvironment(item.id, item);
+            };
+
+            list.appendChild(li);
+        });
+    } catch (e) {
+        console.error("Erro ao carregar lista:", e);
+    }
+};
+
 
 // ============================================================
 // FUNÇÃO DE GRAVAÇÃO DO AQUÁRIO
@@ -40695,17 +40683,22 @@ if (jumpBtnFix) {
     const newJumpBtn = jumpBtnFix.cloneNode(true);
     jumpBtnFix.parentNode.replaceChild(newJumpBtn, jumpBtnFix);
 
-    newJumpBtn.addEventListener('click', (e) => {
+    newJumpBtn.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
+
+        // 1. GRAVAÇÃO IMEDIATA DE SEGURANÇA
+        if (typeof window.saveAquariumState === 'function') {
+            updateAquariumStatus('saving');
+            await window.saveAquariumState();
+        }
         
+        // 2. Abre o popup normalmente
         const popup = document.getElementById('aquarium-jump-popup');
-        
         if (popup) {
             if (popup.style.display === 'flex') {
                 popup.style.display = 'none';
             } else {
-          // FORÇA BRUTA: Move para o body e aplica Z-Index Máximo
                 document.body.appendChild(popup);
                 popup.style.cssText = `
                     display: flex !important;
@@ -40715,11 +40708,8 @@ if (jumpBtnFix) {
                     left: 80px !important;
                     visibility: visible !important;
                     opacity: 1 !important;
-                    
-                    /* CORREÇÃO DO FUNDO: Cor sólida (Hexadecimal) + Sombra Forte */
                     background-color: #252528 !important; 
                     box-shadow: 0 10px 50px rgba(0,0,0,1) !important;
-                    
                     border: 1px solid var(--accent-color);
                     border-radius: 8px;
                     padding: 10px;
@@ -40729,12 +40719,10 @@ if (jumpBtnFix) {
                 
                 const search = document.getElementById('aquarium-jump-search');
                 if (search) {
-                    search.value = ""; // Limpa pesquisa anterior
+                    search.value = "";
                     search.focus();
-                    search.oninput = (ev) => loadAquariumNotesList(ev.target.value); // Liga a pesquisa
+                    search.oninput = (ev) => loadAquariumNotesList(ev.target.value);
                 }
-                
-                // Carrega a lista inicial (todas)
                 loadAquariumNotesList();
             }
         }
@@ -40808,7 +40796,7 @@ if (toolsGroupFix) {
 const aqToolbarFix = document.getElementById('aquarium-toolbar');
 
 if (aqToolbarFix) {
-    // 1. Remover ouvintes antigos
+    // 1. Remover ouvintes antigos (Clonagem)
     const newToolbar = aqToolbarFix.cloneNode(true);
     aqToolbarFix.parentNode.replaceChild(newToolbar, aqToolbarFix);
 
@@ -40832,7 +40820,7 @@ if (aqToolbarFix) {
                 popup.style.left = rect.left + 'px';
                 popup.style.setProperty('z-index', '2147483647', 'important');
             }
-            return;
+            return; // Não grava aqui porque abriu um menu, gravará quando escolher a cor
         }
 
         // --- B. COMANDOS DE TEXTO ---
@@ -40851,12 +40839,11 @@ if (aqToolbarFix) {
             const action = btn.dataset.action;
             const uniqueId = `aq_${action}_${Date.now()}`;
 
-            // >>> NOVA LÓGICA: BURACO NEGRO (🕳️) <<<
+            // >>> BURACO NEGRO (🕳️) <<<
             if (action === 'black-hole') {
                 if (typeof openBlackHoleModal === 'function') {
                     openBlackHoleModal();
-                    
-                    // Força o Z-Index para aparecer à frente do Aquário
+                    // Z-Index fix
                     const bhModal = document.getElementById('black-hole-modal');
                     if(bhModal) {
                         document.body.appendChild(bhModal);
@@ -40864,11 +40851,10 @@ if (aqToolbarFix) {
                         bhModal.style.display = 'flex';
                     }
                 }
-                return;
+                return; // Não grava, apenas abre modal
             }
-            // >>> FIM DO NOVO BLOCO <<<
 
-            // ... (Resto das ações: bible-scan, insert-toggle, etc. mantêm-se iguais) ...
+            // ... (INSERÇÕES DE WIDGETS) ...
             if (action === 'bible-scan') {
                 if (typeof openUniversalScanner === 'function') {
                     openUniversalScanner();
@@ -40879,6 +40865,7 @@ if (aqToolbarFix) {
                         scanModal.style.setProperty('visibility', 'visible', 'important');
                     }
                 }
+                return; // Não grava, abre modal
             }
             else if (action === 'insert-toggle-h2') {
                 document.execCommand('insertHTML', false, `<details class="toggle-section" open id="${uniqueId}"><summary><h2>Título</h2><button class="toggle-delete-btn" contenteditable="false">🗑️</button></summary><div class="toggle-content" contenteditable="true"><p><br></p></div></details><p><br></p>`);
@@ -40906,15 +40893,44 @@ if (aqToolbarFix) {
                 document.execCommand('insertHorizontalRule', false, null);
             }
         }
+
+        // ============================================================
+        // 4. GRAVAÇÃO IMEDIATA (FORÇA BRUTA)
+        // ============================================================
+        // Como alterámos a estrutura (negrito, widgets, etc.), gravamos JÁ.
+        // Não esperamos 2 minutos.
+        console.log("💾 [TOOLBAR] Ação estrutural detetada. Gravando imediatamente...");
+        
+        // Limpa o timer de escrita para não gravar duas vezes
+        if (typeof aqAutoSaveTimer !== 'undefined') clearTimeout(aqAutoSaveTimer);
+
+        setTimeout(() => {
+             if (typeof updateAquariumStatus === 'function') updateAquariumStatus('saving');
+             if (typeof window.saveAquariumState === 'function') window.saveAquariumState();
+        }, 100); // Pequeno delay para o DOM processar o comando
     });
 
-    // Re-ligação dos inputs (Zoom, Formato, Cor) - MANTENHA ESTA PARTE IGUAL AO SEU CÓDIGO ORIGINAL
+    // Re-ligação dos inputs (Zoom, Formato, Cor) - Estes também devem gravar ao mudar
     const aqZoom = document.getElementById('aq-zoom');
-    if (aqZoom) aqZoom.addEventListener('change', (e) => { const c = document.getElementById('aquarium-content-canvas'); if (c) c.style.zoom = e.target.value; });
+    if (aqZoom) aqZoom.addEventListener('change', (e) => { 
+        const c = document.getElementById('aquarium-content-canvas'); 
+        if (c) c.style.fontSize = e.target.value; 
+        window.saveAquariumState(); // Grava Zoom
+    });
+    
     const aqFormat = document.getElementById('aq-format');
-    if (aqFormat) aqFormat.addEventListener('change', (e) => { document.execCommand('formatBlock', false, e.target.value); });
+    if (aqFormat) aqFormat.addEventListener('change', (e) => { 
+        document.execCommand('formatBlock', false, e.target.value); 
+        window.saveAquariumState(); // Grava Formato
+    });
+    
     const aqColor = document.getElementById('aq-color');
-    if (aqColor) aqColor.addEventListener('input', (e) => { document.execCommand('foreColor', false, e.target.value); });
+    if (aqColor) aqColor.addEventListener('input', (e) => { 
+        document.execCommand('foreColor', false, e.target.value); 
+        // Nota: Cores via input gravam muito, talvez aqui queira um debounce pequeno, 
+        // mas como pediu "botões e outros", input imediato é o mais seguro.
+        window.saveAquariumState(); 
+    });
 }
 
 // ============================================================
@@ -41075,35 +41091,56 @@ function createNewGhost() {
     const newGhost = document.createElement('div');
     newGhost.className = 'ghost-block';
     newGhost.setAttribute('contenteditable', 'true');
-    newGhost.dataset.placeholder = ""; // Placeholder vazio para não atrapalhar
+    newGhost.dataset.placeholder = ""; 
     
-    // Injeta os botões de ação imediatamente
     if (typeof ensureGhostActions === 'function') {
         ensureGhostActions(newGhost);
     }
     
     canvas.appendChild(newGhost);
     
-    // --- MAGIA DO FOCO IMEDIATO ---
-    // 1. Foca o elemento
+    // Foco e Scroll
     newGhost.focus();
-    
-    // 2. Cria um "Intervalo de Seleção" (Range) dentro da caixa
-    // Isto força o navegador a por o cursor a piscar lá dentro
+    // Truque do Range para cursor
     const range = document.createRange();
     range.selectNodeContents(newGhost);
-    range.collapse(false); // Colapsa para o fim (preparado para escrever)
-    
+    range.collapse(false);
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
     
-    // 3. Ativa a barra de ferramentas visual
     window.setActiveGhost(newGhost);
-    
-    // 4. Scroll suave para garantir que a nova caixa está visível
     newGhost.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    // --- GRAVAÇÃO IMEDIATA ---
+    updateAquariumStatus('saving');
+    window.saveAquariumState();
 }
+
+window.insertBlockBelow = function(currentBlock) {
+    console.log("🚀 A criar novo bloco...");
+    
+    const newGhost = document.createElement('div');
+    newGhost.className = 'ghost-block';
+    newGhost.id = 'ghost_' + Date.now();
+    newGhost.setAttribute('contenteditable', 'true');
+    newGhost.dataset.placeholder = "";
+    
+    currentBlock.insertAdjacentElement('afterend', newGhost);
+
+    ensureGhostActions(newGhost);
+
+    setTimeout(() => {
+        newGhost.focus();
+        if (typeof window.setActiveGhost === 'function') {
+            window.setActiveGhost(newGhost);
+        }
+    }, 10);
+    
+    // --- GRAVAÇÃO IMEDIATA ---
+    updateAquariumStatus('saving');
+    if (typeof window.saveAquariumState === 'function') window.saveAquariumState();
+};
 
 // 4. Configurar Listeners do Canvas (com atraso para garantir que o HTML existe)
  setTimeout(() => {
@@ -41193,19 +41230,28 @@ function createNewGhost() {
             });
 
       // D. DETETAR ESCRITA (Lógica de "Por Guardar")
-            canvas.addEventListener('input', (e) => {
-                const ghost = e.target.closest('.ghost-block');
-                if (ghost) window.setActiveGhost(ghost);
+           canvas.addEventListener('input', (e) => {
+    const ghost = e.target.closest('.ghost-block');
+    if (ghost) window.setActiveGhost(ghost);
 
-                // 1. Muda status para "por guardar..."
-                updateAquariumStatus('unsaved');
+    // 1. Muda status visual para "por guardar..." imediatamente
+    // O utilizador sabe que há alterações pendentes
+    if (typeof updateAquariumStatus === 'function') {
+        updateAquariumStatus('unsaved');
+    }
 
-                // 2. Reinicia o temporizador (Debounce de 2 minutos)
-                clearTimeout(aqAutoSaveTimer);
-                aqAutoSaveTimer = setTimeout(() => {
-                    window.saveAquariumState();
-                }, 120000); // 2 minutos
-            });
+    // 2. Limpa o temporizador anterior
+    // (Isto é o "Debounce": se escrever outra letra antes dos 2 min, o relógio volta ao zero)
+    if (typeof aqAutoSaveTimer !== 'undefined') clearTimeout(aqAutoSaveTimer);
+
+    // 3. Define novo temporizador para 2 MINUTOS (120.000 ms)
+    aqAutoSaveTimer = setTimeout(() => {
+        console.log("⏰ [AUTO-SAVE] 2 minutos de inatividade. A gravar...");
+        if (typeof window.saveAquariumState === 'function') {
+            window.saveAquariumState();
+        }
+    }, 120000); 
+});
 
             // Listener para clicar no texto "por guardar..." para forçar gravação
             const statusBtn = document.getElementById('aq-save-status');
@@ -44547,10 +44593,39 @@ if (editorForGPS) {
 // 4. GATILHO DE REGRESSO (Quando volta à aba)
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-        // Se estiver a editar um post, chama a função mestra
-        if (activeEditingPostId || window.activeEditingPostId) {
-            console.log("📱 [SAÍDA] Aba escondida. A gravar e sair...");
-            forceUnlockAndSaveOnExit();
+        const aquariumEnv = document.getElementById('aquarium-environment');
+        
+        // Verifica se o Aquário está visível
+        if (aquariumEnv && aquariumEnv.style.display !== 'none' && selectedNoteId) {
+            console.log("🌊 [SAÍDA] Aba escondida. A gravar Aquário imediatamente...");
+            
+            // Limpa o timer de 2 minutos para não gravar duas vezes
+            if (typeof aqAutoSaveTimer !== 'undefined') clearTimeout(aqAutoSaveTimer);
+            
+            // Grava JÁ
+            if (typeof window.saveAquariumState === 'function') {
+                window.saveAquariumState();
+            }
+        }
+    }
+});
+
+
+// Gravar ao Fechar Janela ou Refresh (Aviso de Segurança)
+window.addEventListener('beforeunload', (event) => {
+    const aquariumEnv = document.getElementById('aquarium-environment');
+    if (aquariumEnv && aquariumEnv.style.display !== 'none') {
+        // Verifica se há texto pendente
+        const aqStatus = document.getElementById('aq-save-status');
+        
+        if (aqStatus && (aqStatus.textContent === 'por guardar...' || aqStatus.textContent === 'A guardar...')) {
+            console.log("🌊 [REFRESH] Aquário por guardar. Forçando...");
+            // Dispara gravação (Best Effort)
+            window.saveAquariumState();
+            
+            // (Opcional) Pede confirmação ao browser se a gravação demorar
+            // event.preventDefault();
+            // event.returnValue = ''; 
         }
     }
 });
