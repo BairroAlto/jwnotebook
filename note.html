@@ -26221,7 +26221,7 @@ function openLocalSearch() {
 }
 
 function executeLocalSearch(term) {
-    clearLocalHighlights();
+    clearLocalHighlights(); // Limpa marcas anteriores
     
     const countEl = document.getElementById('local-search-count');
     const listEl = document.getElementById('local-search-results-list');
@@ -26231,21 +26231,39 @@ function executeLocalSearch(term) {
 
     if (!term || term.length < 2) {
         countEl.textContent = "0/0";
-        listEl.classList.remove('visible'); // Esconde a lista
+        if(listEl) listEl.classList.remove('visible');
         return;
     }
 
-   const editor = document.getElementById('note-content-editor');
+    // --- DETEÇÃO INTELIGENTE DO ALVO ---
+    let editor;
+    const aqEnv = document.getElementById('aquarium-environment');
+    
+    if (aqEnv && aqEnv.style.display !== 'none') {
+        // Estamos no Aquário -> Procura no Canvas
+        editor = document.getElementById('aquarium-content-canvas');
+        console.log("🔍 Pesquisando no Aquário...");
+    } else {
+        // Estamos na Nota -> Procura no Editor
+        editor = document.getElementById('note-content-editor');
+        console.log("🔍 Pesquisando na Nota...");
+    }
+
+    if (!editor) return; // Segurança
+    // -----------------------------------
     
     // 1. Procura e Destaca (Highlight)
+    // O resto da lógica mantém-se igual, mas agora usa a variável 'editor' correta
     const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null, false);
     const nodesToReplace = [];
     
     let node;
     while (node = walker.nextNode()) {
-        if (node.parentNode.tagName === 'SCRIPT' || node.parentNode.tagName === 'STYLE' || node.parentNode.tagName === 'TEXTAREA') continue;
+        // Ignora scripts, estilos e inputs para não quebrar o HTML
+        if (['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'SELECT'].includes(node.parentNode.tagName)) continue;
 
         const text = node.textContent;
+        // Regex para encontrar o termo (insensível a maiúsculas)
         const regex = new RegExp(`(${escapeRegExp(term)})`, 'gi');
         
         if (regex.test(text)) {
@@ -26253,6 +26271,7 @@ function executeLocalSearch(term) {
         }
     }
 
+    // Aplica o destaque amarelo (<mark>)
     nodesToReplace.forEach(item => {
         const span = document.createElement('span');
         span.innerHTML = item.text.replace(item.regex, '<mark class="local-highlight">$1</mark>');
@@ -26266,18 +26285,18 @@ function executeLocalSearch(term) {
         parent.removeChild(span);
     });
 
-
     // 2. Coletar resultados
-   localSearchResults = Array.from(editor.querySelectorAll('.local-highlight'));
+    localSearchResults = Array.from(editor.querySelectorAll('.local-highlight'));
     
     if (localSearchResults.length > 0) {
         currentLocalMatchIndex = 0;
         focusLocalMatch(0);
         
-        // 3. NOVO: GERAR A LISTA VISUAL
-        renderLocalResultsList(term);
+        if (typeof renderLocalResultsList === 'function') {
+            renderLocalResultsList(term);
+        }
     } else {
-        listEl.classList.remove('visible');
+        if(listEl) listEl.classList.remove('visible');
     }
     
     countEl.textContent = localSearchResults.length > 0 
@@ -26370,14 +26389,28 @@ function navigateMatches(direction) {
 }
 
 function clearLocalHighlights() {
-    const editor = document.getElementById('note-content-editor');
+    // --- DETEÇÃO INTELIGENTE DO ALVO (IGUAL AO EXECUTE) ---
+    let editor;
+    const aqEnv = document.getElementById('aquarium-environment');
+    
+    if (aqEnv && aqEnv.style.display !== 'none') {
+        editor = document.getElementById('aquarium-content-canvas');
+    } else {
+        editor = document.getElementById('note-content-editor');
+    }
+
     if (!editor) return;
+    // ------------------------------------------------------
+
     const highlights = editor.querySelectorAll('.local-highlight');
+    
     highlights.forEach(mark => {
         const parent = mark.parentNode;
+        // Substitui o <mark>amarelo</mark> apenas pelo texto "amarelo"
         parent.replaceChild(document.createTextNode(mark.textContent), mark);
-        parent.normalize();
+        parent.normalize(); // Funde os nós de texto vizinhos
     });
+    
     localSearchResults = [];
 }
 
@@ -26406,15 +26439,6 @@ function handleLocalSearchKeys(e) {
     }
 }
 
-// ATALHO DE TECLADO (Ctrl+F)
-document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-        e.preventDefault();
-        if (document.getElementById('editor-area').style.display !== 'none') {
-            openLocalSearch();
-        }
-    }
-});
 
 // SEGURANÇA: Limpar ao escrever para não gravar HTML sujo
 const safeEditor = document.getElementById('note-content-editor');
@@ -26438,15 +26462,25 @@ window.saveNote = async function(force) {
 };
 
 
-// 8. ATALHO DE TECLADO (Ctrl+F)
+// 8. ATALHO DE TECLADO (Ctrl+F) - UNIFICADO E CORRIGIDO
 document.addEventListener('keydown', (e) => {
+    // Verifica se carregou em Ctrl+F (Windows) ou Cmd+F (Mac)
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-        e.preventDefault(); // Impede o Ctrl+F do browser
         
-        // Verifica se o editor está visível
-        if (document.getElementById('editor-area').style.display !== 'none') {
+        const aqEnv = document.getElementById('aquarium-environment');
+        const editorArea = document.getElementById('editor-area');
+
+        // A. Se o Aquário estiver aberto, ativa a pesquisa lá
+        if (aqEnv && aqEnv.style.display !== 'none') {
+            e.preventDefault(); // Impede o browser de abrir a pesquisa dele
             openLocalSearch();
         }
+        // B. Se o Editor Normal estiver aberto, ativa a pesquisa lá
+        else if (editorArea && editorArea.style.display !== 'none') {
+            e.preventDefault();
+            openLocalSearch();
+        }
+        // Se nenhum estiver aberto, deixa o browser fazer o Ctrl+F normal
     }
 });
 
