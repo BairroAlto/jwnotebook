@@ -10365,6 +10365,63 @@ a[data-anexo-id] {
     overflow-y: auto;
 }
 
+/* ============================================================
+   CORREÇÃO DE POPUPS FLUTUANTES EM MOBILE (Centralização Forçada)
+   ============================================================ */
+/* ============================================================
+   POPUPS FLUTUANTES EM MOBILE (Arrastáveis + Seguros)
+   ============================================================ */
+@media (max-width: 768px) {
+
+    /* 1. CONFIGURAÇÃO BASE DAS JANELAS */
+    .aq-popup-window,
+    .redator-popup-window,
+    #sat-links-popup {
+        /* Tamanho seguro */
+        width: 90vw !important;
+        max-width: 380px !important;
+        height: auto !important;
+        max-height: 75vh !important;
+        
+        /* Posição Inicial (Centrada) - Sem !important no top/left para permitir arrasto */
+        position: fixed !important;
+        margin: 0 !important;
+        
+        /* Garante que o conteúdo não sai para fora */
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important; 
+    }
+
+    /* 2. ÁREA DE ARRASTO (CABEÇALHO) */
+    .aq-popup-header,
+    .redator-popup-header {
+        padding: 15px !important; /* Área de toque maior */
+        background-color: rgba(255, 255, 255, 0.1) !important; /* Destacar visualmente */
+        cursor: move !important; /* Indica que é arrastável */
+    }
+
+    /* 3. CONTEÚDO COM SCROLL INTERNO */
+    .aq-popup-content,
+    .redator-popup-body {
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch; /* Scroll suave no iPhone */
+        flex-grow: 1 !important;
+    }
+
+    /* 4. BOTÃO FECHAR GRANDE */
+    .aq-popup-close,
+    .btn-close-popup {
+        width: 40px !important;
+        height: 40px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        font-size: 20px !important;
+        background: rgba(0,0,0,0.2) !important;
+        border-radius: 50% !important;
+    }
+}
 </style>
 
 
@@ -37247,41 +37304,29 @@ let activeRedatorFocusId = null;
 
 // 2. Abrir Modo Foco (Popup)
 window.openRedatorFocus = function(id) {
-    // 1. Verificações
-    if (activeRedatorPopups.includes(id)) {
-        alert("Este Redator já está aberto numa janela.");
-        return;
-    }
-    
-    if (activeRedatorPopups.length >= MAX_POPUPS) {
-        alert("Máximo de 3 janelas abertas simultaneamente.");
-        return;
-    }
+    if (activeRedatorPopups.includes(id)) return alert("Este Redator já está aberto numa janela.");
+    if (activeRedatorPopups.length >= MAX_POPUPS) return alert("Máximo de 3 janelas abertas simultaneamente.");
 
     const wrapper = document.getElementById(id);
     if (!wrapper) return;
 
-    // 2. Bloquear o Original
     wrapper.classList.add('in-popup-mode');
     activeRedatorPopups.push(id);
 
-    // 3. Capturar Dados Atuais
     const titleVal = wrapper.querySelector('.redator-input').value;
     const contentHTML = wrapper.querySelector('.redator-content').innerHTML;
 
-    // 4. Criar a Janela Flutuante
     const popupId = `popup-${id}`;
     const popup = document.createElement('div');
     popup.className = 'redator-popup-window';
     popup.id = popupId;
     
-    // Posição em cascata (para não ficarem umas cima das outras)
+    // Posição Padrão PC
     const offset = activeRedatorPopups.length * 30;
     popup.style.top = `${100 + offset}px`;
     popup.style.left = `${100 + offset}px`;
     popup.style.zIndex = ++highestZIndex;
 
-    // HTML da Janela
     popup.innerHTML = `
         <div class="redator-popup-header">
             <span class="popup-title-label">📓 Redator Flutuante</span>
@@ -37293,11 +37338,27 @@ window.openRedatorFocus = function(id) {
         </div>
     `;
 
-    // 5. Injetar no Body e Ativar Arrasto
     document.body.appendChild(popup);
-    makeElementDraggable(popup);
 
-    // Focar ao abrir
+    // ============================================================
+    // NOVO: CENTRALIZAÇÃO AUTOMÁTICA NO MOBILE
+    // ============================================================
+    if (window.innerWidth <= 768) {
+        const rect = popup.getBoundingClientRect();
+        const centerX = (window.innerWidth - rect.width) / 2;
+        const centerY = (window.innerHeight - rect.height) / 2;
+        
+        popup.style.top = centerY + 'px';
+        popup.style.left = centerX + 'px';
+        popup.style.margin = '0';
+        popup.style.transform = 'none';
+    }
+    // ============================================================
+
+    if (typeof makeElementDraggable === 'function') {
+        makeElementDraggable(popup);
+    }
+
     popup.onclick = () => { popup.style.zIndex = ++highestZIndex; };
 };
 
@@ -37434,30 +37495,25 @@ function updateRedatorParagraphs() {
 function makeElementDraggable(elmnt) {
     let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
     
-    // Tenta encontrar o cabeçalho (pode ter nomes diferentes dependendo da janela)
+    // Tenta encontrar o cabeçalho
     const header = elmnt.querySelector(".aq-popup-header") || elmnt.querySelector(".redator-popup-header");
-    
-    if (header) {
-        // Se o cabeçalho existir, é por lá que arrastamos
-        header.onmousedown = dragMouseDown;
-    } else {
-        // Se não tiver cabeçalho, arrasta-se pelo corpo (fallback)
-        elmnt.onmousedown = dragMouseDown;
+    const dragTarget = header || elmnt;
+
+    if (dragTarget) {
+        // PC (Rato)
+        dragTarget.onmousedown = dragMouseDown;
+        // MOBILE (Toque)
+        dragTarget.addEventListener('touchstart', dragTouchStart, { passive: false });
     }
 
+    // ============================
+    // LÓGICA DE COMPUTADOR (RATO)
+    // ============================
     function dragMouseDown(e) {
         e = e || window.event;
         e.preventDefault();
+        bringToFront();
         
-        // Traz a janela para a frente de todas as outras ao clicar
-        // Usa a variável global highestZIndex se existir, senão usa timestamp
-        if (typeof highestZIndex !== 'undefined') {
-            elmnt.style.zIndex = ++highestZIndex;
-        } else {
-            elmnt.style.zIndex = Date.now(); 
-        }
-        
-        // Pega a posição inicial do rato
         pos3 = e.clientX;
         pos4 = e.clientY;
         
@@ -37469,21 +37525,88 @@ function makeElementDraggable(elmnt) {
         e = e || window.event;
         e.preventDefault();
         
-        // Calcula a nova posição
         pos1 = pos3 - e.clientX;
         pos2 = pos4 - e.clientY;
         pos3 = e.clientX;
         pos4 = e.clientY;
         
-        // Define a nova posição do elemento
-        elmnt.style.top = (elmnt.offsetTop - pos2) + "px";
-        elmnt.style.left = (elmnt.offsetLeft - pos1) + "px";
+        setElementPosition(elmnt.offsetTop - pos2, elmnt.offsetLeft - pos1);
     }
 
     function closeDragElement() {
-        // Para de mover quando larga o botão do rato
         document.onmouseup = null;
         document.onmousemove = null;
+    }
+
+    // ============================
+    // LÓGICA DE MOBILE (TOQUE)
+    // ============================
+    function dragTouchStart(e) {
+        // Se tocou no botão de fechar, não arrasta
+        if (e.target.closest('button')) return;
+
+        e.preventDefault(); // Impede scroll da página
+        bringToFront();
+
+        const touch = e.touches[0];
+        pos3 = touch.clientX;
+        pos4 = touch.clientY;
+
+        document.addEventListener('touchend', closeTouchDrag, { passive: false });
+        document.addEventListener('touchmove', touchDrag, { passive: false });
+    }
+
+    function touchDrag(e) {
+        e.preventDefault(); // Crítico: Impede o site de mexer
+
+        const touch = e.touches[0];
+        
+        pos1 = pos3 - touch.clientX;
+        pos2 = pos4 - touch.clientY;
+        pos3 = touch.clientX;
+        pos4 = touch.clientY;
+
+        setElementPosition(elmnt.offsetTop - pos2, elmnt.offsetLeft - pos1);
+    }
+
+    function closeTouchDrag() {
+        document.removeEventListener('touchend', closeTouchDrag);
+        document.removeEventListener('touchmove', touchDrag);
+    }
+
+    // ============================
+    // AUXILIARES E LIMITES
+    // ============================
+    function bringToFront() {
+        if (typeof highestZIndex !== 'undefined') {
+            elmnt.style.zIndex = ++highestZIndex;
+        } else {
+            elmnt.style.zIndex = new Date().getTime();
+        }
+    }
+
+    function setElementPosition(newTop, newLeft) {
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const rect = elmnt.getBoundingClientRect();
+
+        // Limites (Margem de segurança de 0px)
+        const minTop = 0;
+        const maxTop = viewportHeight - rect.height; // Não pode descer mais que a altura dele
+        const minLeft = 0;
+        const maxLeft = viewportWidth - rect.width; // Não pode ir mais para a direita que a largura dele
+
+        // Aplica Matemática de Restrição (Clamp)
+        if (newTop < minTop) newTop = minTop;
+        if (newTop > maxTop) newTop = maxTop;
+        if (newLeft < minLeft) newLeft = minLeft;
+        if (newLeft > maxLeft) newLeft = maxLeft;
+
+        elmnt.style.top = newTop + "px";
+        elmnt.style.left = newLeft + "px";
+        
+        // Remove transformações antigas que possam interferir no posicionamento
+        elmnt.style.transform = "none"; 
     }
 }
 
@@ -42761,9 +42884,8 @@ window.openGhostPopup = function(btn) {
     // --- SEGURANÇA CONTRA ERROS ---
     if (!btn || typeof btn.closest !== 'function') {
         console.error("❌ ERRO CRÍTICO: 'btn' inválido recebido em openGhostPopup:", btn);
-        return; // Sai da função sem quebrar o site
+        return; 
     }
-    // -----------------------------
 
     console.log("🚀 [POPUP] A processar abertura...");
     
@@ -42778,7 +42900,6 @@ window.openGhostPopup = function(btn) {
     if (activeAquariumPopups.includes(ghost.id)) {
         const existing = document.getElementById(`popup_${ghost.id}`);
         if (existing) {
-            // Traz para a frente e faz um efeito visual
             existing.style.zIndex = ++highestZIndex;
             existing.style.transform = "scale(1.05)";
             existing.style.boxShadow = "0 0 30px var(--accent-color)";
@@ -42797,8 +42918,8 @@ window.openGhostPopup = function(btn) {
     }
 
     // 5. BLOQUEAR O ORIGINAL
-    ghost.classList.add('locked-popup'); // Aplica o CSS cinzento
-    ghost.setAttribute('contenteditable', 'false'); // IMPEDE ESCREVER
+    ghost.classList.add('locked-popup'); 
+    ghost.setAttribute('contenteditable', 'false'); 
     activeAquariumPopups.push(ghost.id);
 
     // 6. Criar a Janela
@@ -42807,7 +42928,7 @@ window.openGhostPopup = function(btn) {
     popup.className = 'aq-popup-window';
     popup.id = popupId;
     
-    // Cascata visual
+    // Posição padrão para PC (Cascata)
     const offset = activeAquariumPopups.length * 30;
     popup.style.top = `${120 + offset}px`;
     popup.style.left = `${120 + offset}px`;
@@ -42826,32 +42947,31 @@ window.openGhostPopup = function(btn) {
         </div>
     `;
 
-    // 7. Inserir e Ativar
+    // 7. Inserir no Body
     document.body.appendChild(popup);
+
+    // ============================================================
+    // NOVO: CENTRALIZAÇÃO AUTOMÁTICA NO MOBILE
+    // ============================================================
+    if (window.innerWidth <= 768) {
+        // 1. Obtém as dimensões reais da janela acabada de criar
+        const rect = popup.getBoundingClientRect();
+        
+        // 2. Calcula o centro exato
+        const centerX = (window.innerWidth - rect.width) / 2;
+        const centerY = (window.innerHeight - rect.height) / 2;
+        
+        // 3. Aplica as coordenadas
+        popup.style.top = centerY + 'px';
+        popup.style.left = centerX + 'px';
+        popup.style.margin = '0'; // Garante que margens não estragam a conta
+        popup.style.transform = 'none'; // Remove qualquer transform CSS
+    }
+    // ============================================================
     
-    // Ativa o arrasto da janela
+    // Ativa o arrasto
     if (typeof makeElementDraggable === 'function') {
-        // Pequeno hack para garantir que usamos o header certo
-        const header = popup.querySelector('.aq-popup-header');
-        // Reutiliza a lógica de drag, adaptando o evento
-        header.onmousedown = (e) => {
-            popup.style.zIndex = ++highestZIndex; // Traz para frente ao clicar
-            // Chama a lógica de drag existente no seu código (se tiver)
-            // Se não tiver, o código abaixo trata disso:
-            e.preventDefault();
-            let pos3 = e.clientX;
-            let pos4 = e.clientY;
-            document.onmouseup = () => { document.onmouseup = null; document.onmousemove = null; };
-            document.onmousemove = (ev) => {
-                ev.preventDefault();
-                let pos1 = pos3 - ev.clientX;
-                let pos2 = pos4 - ev.clientY;
-                pos3 = ev.clientX;
-                pos4 = ev.clientY;
-                popup.style.top = (popup.offsetTop - pos2) + "px";
-                popup.style.left = (popup.offsetLeft - pos1) + "px";
-            };
-        };
+        makeElementDraggable(popup);
     }
 
     // 8. Sincronização (Janela -> Bloco Original)
@@ -42859,7 +42979,6 @@ window.openGhostPopup = function(btn) {
     editor.addEventListener('input', () => {
         const actionsHTML = ghost.querySelector('.ghost-actions')?.outerHTML || '';
         
-        // Reconstrói o HTML do original mantendo os botões
         if (!ghost.querySelector('.ghost-actions')) {
             ghost.innerHTML = editor.innerHTML;
             if(typeof ensureGhostActions === 'function') ensureGhostActions(ghost);
@@ -42867,10 +42986,8 @@ window.openGhostPopup = function(btn) {
             ghost.innerHTML = editor.innerHTML + actionsHTML;
         }
         
-        // Grava automaticamente
         if (typeof saveAquariumState === 'function') saveAquariumState();
         
-        // Dispara evento para atualizar estatísticas ou 4ª coluna
         const canvas = document.getElementById('aquarium-content-canvas');
         if (canvas) canvas.dispatchEvent(new Event('input', { bubbles: true }));
     });
