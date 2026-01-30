@@ -12880,7 +12880,10 @@ window.htmlToAppend = "";
 window.activeStorePopups = window.activeStorePopups || [];
 window.livePostDraft = null;
 window.folderUnreadCounts = {}; 
-
+window.isSwitchingNote = false;
+window.currentNavRequest = 0;
+window.lastBoxLinkManagerId = null;
+window.lastBoxLinkManagerTab = 'refs'; // Padrão
 
 
 // Função: Gravação Silenciosa (Mantém o editor aberto)
@@ -13241,69 +13244,75 @@ function checkInitialConnection() {
  * @param {function} navigationAction A função a ser executada se a navegação for confirmada.
  */
 async function navigateWithUnsavedCheck(navigationAction) {
-    // Verifica se estamos a editar um Post de Arquivo
+    // Verifica se estamos a editar um Post de Arquivo (Feed)
     const editingId = activeEditingPostId || window.activeEditingPostId;
 
-    if (editingId) {
-        console.group("🛑 [AUTO-SAVE] A sair do Post para navegar...");
-        
-        // Feedback Visual
-        const statusEl = document.getElementById('archive-save-status');
-        if(statusEl) statusEl.textContent = "A libertar...";
-
-        // 1. PÁRA O CORAÇÃO IMEDIATAMENTE
-        // Isto impede que o sistema tente renovar o bloqueio enquanto estamos a sair
-        if (typeof stopLockHeartbeat === 'function') {
-            stopLockHeartbeat();
-        }
-
-        try {
-            // 2. TENTA GRAVAR E DESBLOQUEAR (Normal)
-            // A função saveArchivePost já chama o unlockPost no final
-            await window.saveArchivePost(editingId);
-            console.log("✅ Post guardado e desbloqueado com sucesso.");
-
-        } catch (e) {
-            console.error("⚠️ Erro ao gravar na saída:", e);
-            
-            // 3. REDE DE SEGURANÇA: FORÇA O DESBLOQUEIO
-            // Se a gravação falhar (ex: erro de validação), desbloqueia na mesma!
-            // Não podemos deixar o post preso só porque o save falhou.
-            await unlockPost(editingId);
-            console.log("🔓 Desbloqueio de emergência executado.");
-        }
-
-        // 4. LIMPEZA DE VARIÁVEIS GLOBAIS
-        // Garante que o sistema sabe que já não estamos a editar nada
-        activeEditingPostId = null;
-        window.activeEditingPostId = null;
-        window.livePostDraft = null;
-        
-        console.groupEnd();
-        
-        // 5. PERMITE A NAVEGAÇÃO
+    // Se não houver nada para gravar (nem post, nem nota normal), navega logo.
+    if (!editingId && currentSaveStatus !== 'unsaved' && currentSaveStatus !== 'saving') {
         navigationAction();
-        return; 
+        return;
     }
 
-    // --- CENÁRIO NOTA NORMAL (Mantém-se igual) ---
-    if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
-        const savingModal = document.getElementById('forcing-save-modal');
-        if (savingModal) {
-            document.body.appendChild(savingModal);
-            savingModal.style.setProperty('display', 'flex', 'important');
-        }
-        try {
+    // --- ATIVAR O ESCUDO (MODAL DE BLOQUEIO) ---
+    const blockingModal = document.getElementById('forcing-save-modal');
+    if (blockingModal) {
+        // Garante que está no topo e visível
+        document.body.appendChild(blockingModal);
+        blockingModal.style.setProperty('display', 'flex', 'important');
+        blockingModal.style.setProperty('z-index', '2147483647', 'important'); // Máximo absoluto
+        blockingModal.style.setProperty('opacity', '1', 'important');
+        blockingModal.style.setProperty('visibility', 'visible', 'important');
+    }
+
+    try {
+        // CENÁRIO 1: A editar um Post de Arquivo
+        if (editingId) {
+            console.log("🛑 [SEGURANÇA] A gravar Post antes de sair...");
+            
+            // Pára o heartbeat para evitar conflitos
+            if (typeof stopLockHeartbeat === 'function') stopLockHeartbeat();
+
+            // Grava e espera
+            await window.saveArchivePost(editingId);
+            
+            // Limpa variáveis globais
+            activeEditingPostId = null;
+            window.activeEditingPostId = null;
+            window.livePostDraft = null;
+        } 
+        
+        // CENÁRIO 2: A editar uma Nota Normal
+        else if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
+            console.log("🛑 [SEGURANÇA] A gravar Nota antes de mudar...");
+            
+            // AQUI ESTÁ O SEGREDO: o 'await' obriga o código a parar aqui
+            // até o executeSave() terminar e devolver true/false.
             await saveNote(true); 
-            if (savingModal) savingModal.style.display = 'none';
-            navigationAction();
-        } catch (error) {
-            if (savingModal) savingModal.style.display = 'none';
-            if(confirm("Erro de conexão. Sair sem gravar?")) navigationAction();
         }
-    } else {
-        // Se não houver nada pendente, navega direto
+
+        // --- SUCESSO: PODE PASSAR ---
+        console.log("✅ Gravação confirmada. Libertando navegação.");
+        
+        // Esconde o modal
+        if (blockingModal) blockingModal.style.display = 'none';
+        
+        // Executa a navegação (abrir a nova nota)
         navigationAction();
+
+    } catch (error) {
+        console.error("❌ ERRO CRÍTICO AO GRAVAR NA SAÍDA:", error);
+        
+        if (blockingModal) blockingModal.style.display = 'none';
+        
+        // Pergunta de segurança em caso de falha de rede
+        if (confirm("Houve um erro ao gravar a nota anterior (falha de rede?).\nSe continuar, pode perder as últimas alterações.\n\nDeseja forçar a saída?")) {
+            // Se for post, tenta desbloquear à força para não ficar preso
+            if (editingId && typeof unlockPost === 'function') {
+                unlockPost(editingId).catch(e => {}); 
+                activeEditingPostId = null;
+            }
+            navigationAction();
+        }
     }
 }
 
@@ -14316,24 +14325,31 @@ async function fetchAllEntities() {
 }
 
 function resetEditor() {
-    // --- NOVO: Desliga o ouvinte da nota em tempo real ---
+    // 1. LIMPEZA DE POPUPS (NOVO)
+    window.closeAllFloatingPopups();
+
+    // 2. Desliga o ouvinte da nota em tempo real
     if (unsubscribeCurrentNote) {
         unsubscribeCurrentNote();
         unsubscribeCurrentNote = null;
     }
-    // -----------------------------------------------------
 
-    leaveArchivePresence(); 
-    toggleJournalToolbar(false);
+    if (typeof leaveArchivePresence === 'function') leaveArchivePresence(); 
+    if (typeof toggleJournalToolbar === 'function') toggleJournalToolbar(false);
+    
     selectedNoteId = null;
     currentArchiveId = null; 
     activeEditingPostId = null; 
 
     if (document.getElementById('insertion-popup')) document.getElementById('insertion-popup').style.display = 'none';
 
-    editorArea.style.display = 'none';
-    document.getElementById('archive-area').style.display = 'none';
-    editorPlaceholder.style.display = 'flex';
+    const editorArea = document.getElementById('editor-area');
+    const placeholder = document.getElementById('editor-placeholder');
+    const archiveArea = document.getElementById('archive-area');
+
+    if (editorArea) editorArea.style.setProperty('display', 'none', 'important');
+    if (archiveArea) archiveArea.style.setProperty('display', 'none', 'important');
+    if (placeholder) placeholder.style.display = 'flex';
 
     const tabsBar = document.querySelector('.middle-bottom-tabs');
     if (tabsBar) tabsBar.style.display = 'none';
@@ -14341,6 +14357,7 @@ function resetEditor() {
     const filesTabBtn = document.querySelector('button[data-mid-tab="files"]');
     if (filesTabBtn) filesTabBtn.click();
 
+    // Limpa seleções visuais
     document.querySelectorAll('#middle-panel-list .list-item.selected').forEach(el => el.classList.remove('selected'));
     document.querySelectorAll('#file-list .list-item.selected').forEach(el => el.classList.remove('selected', 'selected-red'));
     
@@ -15973,37 +15990,48 @@ function syncVisualSelection(selectedId) {
 
 
 
- async function displayNote(noteId, noteElement, searchTerm = null) {
-    // 0. Reset de Estados Globais e Visuais
+async function displayNote(noteId, noteElement, searchTerm = null) {
+    // 1. GERAR NOVO ID DE PEDIDO (Concurrency Control)
+    const thisRequestId = ++window.currentNavRequest;
+    console.log(`🚀 [NAV #${thisRequestId}] A iniciar abertura da nota: ${noteId}`);
+
+    // 2. LIMPEZA DE POPUPS
+    window.closeAllFloatingPopups();
+
+    // 3. ATIVAR ESCUDO DE GRAVAÇÃO
+    // Isto diz ao `executeSave`: "Não graves nada agora, estou a mudar de nota!"
+    window.isSwitchingNote = true; 
+
+    // Reset de Estados Globais
     window.nextSelectedId = null; 
     document.body.classList.remove('show-fab');
-    
-    // VARIÁVEL DE CONTROLO PARA O CARD ESTÁTUA (NOVO)
     let isStatueSynced = false;
 
-    // Limpa ouvinte anterior para evitar fugas de memória ou conflitos de dados
+    // Desliga ouvinte anterior para parar de receber updates da nota velha
     if (unsubscribeCurrentNote) { 
         unsubscribeCurrentNote(); 
         unsubscribeCurrentNote = null; 
     }
     
-    // 1. Reset de Variáveis Locais
+    // Reset de Variáveis
     window.currentNoteHybridMode = false;
     activeNoteAnchorsIds = [];
     selectedNoteId = noteId;
     isClosingNote = false;
     
-    // Referências DOM
+    // 4. LIMPEZA VISUAL IMEDIATA (Evita ver a nota velha por breves instantes)
     const noteTitleInput = document.getElementById('note-title-input');
     const noteContentEditor = document.getElementById('note-content-editor');
     const editorArea = document.getElementById('editor-area');
     const zoomSelect = document.getElementById('editor-zoom'); 
     
-    // Limpeza Visual Imediata
-    if (noteTitleInput) noteTitleInput.value = ""; 
-    if (noteContentEditor) noteContentEditor.innerHTML = ""; 
+    if (noteTitleInput) noteTitleInput.value = "A carregar..."; 
+    if (noteContentEditor) {
+        noteContentEditor.innerHTML = ""; // Limpa conteúdo
+        noteContentEditor.setAttribute('data-real-id', noteId); // Marca o ID no HTML por segurança
+    }
 
-    // Gestão de Paineis (Esconder Placeholder / Arquivo, Mostrar Editor)
+    // Gestão de Paineis
     document.getElementById('editor-placeholder').style.setProperty('display', 'none', 'important');
     document.getElementById('archive-area').style.setProperty('display', 'none', 'important');
     if (editorArea) editorArea.style.setProperty('display', 'flex', 'important');
@@ -16014,89 +16042,67 @@ function syncVisualSelection(selectedId) {
 
         // --- LISTENER EM TEMPO REAL ---
         unsubscribeCurrentNote = onSnapshot(noteRef, (noteSnap) => {
+            
+            // CHECKPOINT DE SEGURANÇA:
+            // Se o utilizador clicou noutra nota entretanto, este pedido é velho. Aborta.
+            if (window.currentNavRequest !== thisRequestId) {
+                console.warn(`🛑 [NAV #${thisRequestId}] Cancelado. O utilizador mudou de nota.`);
+                return;
+            }
+
+            // Nota carregada, pode voltar a permitir gravações
+            window.isSwitchingNote = false; 
+            
             if (!noteSnap.exists()) return;
             const data = noteSnap.data();
 
-            // --- ATUALIZAÇÃO DO TIPO GLOBAL ---
             window.currentNoteType = data.tipo; 
-
-            // Ativa a toolbar do Jornal (ícones de cima) se necessário
             if (typeof toggleJournalToolbar === 'function') {
                 toggleJournalToolbar(window.currentNoteType === 'jornal');
             }
             
-            // 2. Definir Variáveis Críticas
             window.currentNoteHybridMode = (data.isHybridMode === true);
             activeNoteAnchorsIds = Object.keys(data.ancorasSelecionadas || {});
-
-            // ============================================================
-            // 3. ATUALIZAÇÃO VISUAL DA PARTILHA (CADEADO)
-            // ============================================================
-            // Carrega estado para memória global
             currentNoteShareData = data.shareSettings || { shared: false, shareId: null };
             
-            // Atualiza o ícone na toolbar (🔓 ou 🔐) e verifica se sou o dono
             if (typeof updateNoteSharingButtonUI === 'function') {
-                // Passamos data.userId para verificar permissão
                 updateNoteSharingButtonUI(currentNoteShareData.shared, data.userId);
             }
-            // ============================================================
 
-            // 4. Atualizar HTML (Título e Conteúdo)
+            // Atualizar HTML
             const serverTitle = data.nome || '';
             const serverContent = data.conteudo || '';
             
-            // Proteção de escrita: Só atualiza o título se não estivermos a escrever nele
-            if (document.activeElement !== noteTitleInput) {
-                 noteTitleInput.value = serverTitle;
-            }
-            
-            // Proteção de escrita: Só atualiza o conteúdo se não estivermos a escrever no editor
-            // (Ou se estiver vazio, carrega na mesma)
-            if (document.activeElement !== noteContentEditor) {
-                 noteContentEditor.innerHTML = serverContent;
-            } else if (noteContentEditor.innerHTML === "") {
-                 noteContentEditor.innerHTML = serverContent;
-            }
-
-            // 5. APLICAR ZOOM GUARDADO
-            const savedZoom = data.zoomLevel || '100%'; 
-            
-            if (zoomSelect) zoomSelect.value = savedZoom;
-            
-            if (noteContentEditor) {
-                noteContentEditor.style.fontSize = savedZoom;
-                if (!savedZoom.includes('%')) { 
-                    const sizeNum = parseInt(savedZoom);
-                    if (!isNaN(sizeNum)) noteContentEditor.style.lineHeight = (sizeNum * 1.5) + 'px';
-                } else {
-                    noteContentEditor.style.lineHeight = '1.6';
-                }
-            }
-
-            // ============================================================
-            // 6. SCRIPTS DE PÓS-CARREGAMENTO
-            // ============================================================
-            setTimeout(() => {
-                // A. Reativa os widgets de Calendário
-                if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
-
-                // B. >>> CORREÇÃO DO CARD ESTÁTUA (🗿) <<<
-                // Só executa se ainda não tiver sincronizado nesta sessão da nota
-                if (!isStatueSynced && typeof syncStatueCardsInCurrentNote === 'function') {
-                    console.log("🗿 Sincronizando Cards Estátua (Apenas no carregamento)...");
-                    syncStatueCardsInCurrentNote();
-                    isStatueSynced = true; // Bloqueia futuras atualizações automáticas
+            if (window.currentNavRequest === thisRequestId) {
+                if (document.activeElement !== noteTitleInput) noteTitleInput.value = serverTitle;
+                
+                // Só substitui o HTML se não estivermos a escrever (para não perder o cursor)
+                // OU se o editor estiver vazio (primeira carga)
+                if (document.activeElement !== noteContentEditor || noteContentEditor.innerHTML === "") {
+                     noteContentEditor.innerHTML = serverContent;
                 }
                 
-            }, 100);
+                const savedZoom = data.zoomLevel || '100%'; 
+                if (zoomSelect) zoomSelect.value = savedZoom;
+                if (noteContentEditor) {
+                    noteContentEditor.style.fontSize = savedZoom;
+                    noteContentEditor.style.lineHeight = savedZoom.includes('%') ? '1.6' : (parseInt(savedZoom) * 1.5) + 'px';
+                }
+            }
 
-            // C. Correções de estrutura
-            if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
-            if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
+            // SCRIPTS PÓS-CARREGAMENTO
+           setTimeout(async () => {
+                if (window.currentNavRequest !== thisRequestId) return;
 
-            // 7. Forçar Router e Atualizações Visuais (Abas do Meio)
-            setTimeout(() => {
+                if (typeof refreshAllCalendars === 'function') refreshAllCalendars();
+
+             if (!isStatueSynced && typeof syncStatueCardsInCurrentNote === 'function') {
+                    await syncStatueCardsInCurrentNote(); // Espera acabar
+                    isStatueSynced = true;
+                }
+
+                if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes(); 
+                if (typeof updateRedatorParagraphs === 'function') updateRedatorParagraphs();
                 if (typeof refreshMiddlePanelTabIcon === 'function') refreshMiddlePanelTabIcon();
                 if (typeof initToolbarDropdowns === 'function') initToolbarDropdowns();
 
@@ -16105,7 +16111,6 @@ function syncVisualSelection(selectedId) {
 
                 if (typeof updateMiddlePanelViews === 'function') updateMiddlePanelViews(); 
                 
-                // D. Scroll Automático (Se vier de uma pesquisa ou clique)
                 if (searchTerm && typeof scrollToAndHighlightText === 'function') {
                     scrollToAndHighlightText(searchTerm);
                 }
@@ -16114,10 +16119,10 @@ function syncVisualSelection(selectedId) {
             }, 100);
         });
     } catch (error) { 
-        console.error("Erro ao carregar nota:", error); 
+        console.error("Erro ao carregar nota:", error);
+        window.isSwitchingNote = false; 
     }
     
-    // Força a transição de ecrã no Mobile
     if (window.innerWidth <= 768) {
         document.body.classList.remove('mobile-view-middle');
         document.body.classList.add('mobile-view-editor');
@@ -16237,13 +16242,21 @@ function extractTopicsFromEditorHTML() {
 
 // Função que faz a gravação real no Firebase
 async function executeSave() {
-    // 1. Verificação de segurança: Se não há nota nem post selecionado, sai.
+    // 1. BLOQUEIO DE NAVEGAÇÃO
+    // Se o sistema já estiver a mudar de nota, aborta a gravação automática
+    // para não gravar uma nota "a meio" sobre a outra.
+    if (window.isSwitchingNote) {
+        console.warn("🛑 [SEGURANÇA] Gravação bloqueada: Navegação em curso.");
+        return false;
+    }
+
+    // 2. Verificação de segurança: Se não há nota nem post selecionado, sai.
     if (!selectedNoteId && !activeEditingPostId) return;
     
     // Se a nota estiver num processo de fecho, evita gravações fantasma
     if (isClosingNote) return;
 
-    // 2. MODO ARQUIVO (FEED): Se estivermos no feed, grava o post específico
+    // 3. MODO ARQUIVO (FEED)
     const archiveArea = document.getElementById('archive-area');
     if (archiveArea && archiveArea.style.display !== 'none') {
         if (activeEditingPostId) {
@@ -16254,23 +16267,20 @@ async function executeSave() {
         return true; 
     }
 
-    // 3. PREPARAÇÃO DO EDITOR (NOTA NORMAL)
+    // 4. PREPARAÇÃO DO EDITOR (NOTA NORMAL)
     const editor = document.getElementById('note-content-editor');
     
-    // --- PRESERVAR ESTADO VISUAL (Scroll e Zoom) ---
+    // --- PRESERVAR ESTADO VISUAL ---
     let currentScrollPos = 0;
-    let currentZoomVal = '100%'; // Valor padrão
+    let currentZoomVal = '100%';
 
     if (editor) {
         currentScrollPos = editor.scrollTop;
-        
-        // Captura o zoom atual do dropdown para gravar na BD
         const zoomSelect = document.getElementById('editor-zoom');
         if (zoomSelect) currentZoomVal = zoomSelect.value;
 
-        // SINCRONIZAÇÃO DE INPUTS:
-        // O innerHTML não captura o texto escrito em <input> ou <textarea> automaticamente.
-        // Temos de passar o valor para o atributo HTML 'value' ou 'textContent' antes de gravar.
+        // SINCRONIZAÇÃO DE INPUTS (CRÍTICO PARA CARDS E ESTÁTUAS)
+        // Garante que o que escreveu nos títulos dos cards é passado para o HTML
         const allInputs = editor.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
         allInputs.forEach(t => {
             if (t.tagName === 'TEXTAREA') {
@@ -16281,11 +16291,13 @@ async function executeSave() {
         });
     }
 
-    // Atualiza UI para "A guardar..."
     updateSaveStatus('saving');
 
+    // Usa o ID que estava selecionado no momento em que a função começou
+    // Isto evita que, se mudar a variável selectedNoteId a meio, grave na nota errada
     let targetId = selectedNoteId;
-    // Verifica se há um ID real injetado (usado em casos raros de redirecionamento)
+    
+    // Proteção extra: Lê ID do atributo HTML se existir
     const realId = editor ? editor.getAttribute('data-real-id') : null;
     if (realId) targetId = realId;
 
@@ -16297,10 +16309,9 @@ async function executeSave() {
         const finalTitle = titleInput ? titleInput.value : "Sem Título";
         const finalContent = editor ? editor.innerHTML : "";
         
-        // Extrai cores usadas para facilitar a pesquisa por cor
         const usedColors = typeof extractUsedColorsFromEditor === 'function' ? extractUsedColorsFromEditor() : [];
 
-        // --- GRAVAÇÃO PRINCIPAL NO FIREBASE ---
+        // --- GRAVAÇÃO PRINCIPAL NO FIREBASE (AWAIT É OBRIGATÓRIO) ---
         await updateDoc(noteRef, { 
             nome: finalTitle, 
             conteudo: finalContent,
@@ -16309,20 +16320,11 @@ async function executeSave() {
             ultimaedicao: serverTimestamp()
         });
 
-        // ====================================================================
-        // NOVO: PROPAGAÇÃO PARA MICAS (EM SEGUNDO PLANO)
-        // ====================================================================
-        // Chama a função que verifica se alguma caixa desta nota existe numa Mica
-        // e atualiza-a automaticamente se houver mudanças.
-        if (typeof propagateUpdatesToMicas === 'function') {
-             propagateUpdatesToMicas(targetId, finalContent);
-        }
-        if (typeof propagateUpdatesToBible === 'function') {
-             propagateUpdatesToBible(targetId, finalContent, finalTitle);
-        }
-        // ====================================================================
+        // Propagações em segundo plano (não bloqueiam o sucesso desta função)
+        if (typeof propagateUpdatesToMicas === 'function') propagateUpdatesToMicas(targetId, finalContent);
+        if (typeof propagateUpdatesToBible === 'function') propagateUpdatesToBible(targetId, finalContent, finalTitle);
 
-        // Sincronização Pública (Se a nota estiver partilhada com link público)
+        // Sincronização Pública (se existir)
         if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
              try {
                 const shareId = currentNoteShareData.shareId;
@@ -16337,18 +16339,17 @@ async function executeSave() {
             } catch (e) {}
         }
 
-        // Restaura a posição do scroll (para não saltar para o topo)
         if (editor && editor.scrollTop !== currentScrollPos) {
             editor.scrollTop = currentScrollPos;
         }
 
         updateSaveStatus('saved');
-        return true; 
+        return true; // Retorna SUCESSO para o navigateWithUnsavedCheck saber que pode avançar
 
     } catch (error) {
         console.error("❌ ERRO AO GUARDAR:", error);
         updateSaveStatus('error');
-        return false;
+        throw error; // Lança erro para o navigateWithUnsavedCheck apanhar e parar a navegação
     }
 }
 
@@ -24828,7 +24829,7 @@ window.confirmAppendToNote = async function(targetId, targetName, targetType) {
         let finalContentToAppend = "";
 
         // --- MODO ESTÁTUA 🗿 ---
-        if (window.appendMode === 'statue') {
+if (window.appendMode === 'statue') {
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = window.htmlToAppend;
             const originalWrapper = tempDiv.firstElementChild;
@@ -24846,6 +24847,7 @@ window.confirmAppendToNote = async function(targetId, targetName, targetType) {
             // AQUI: Inserimos o botão DIRETAMENTE no HTML com o data-action correto
             const jumpAction = `event.preventDefault(); window.handleGoToNote('${selectedNoteId}', '${originBoxId}')`;
 
+            // >>> CORREÇÃO APLICADA ABAIXO NA VARIÁVEL finalContentToAppend <<<
             finalContentToAppend = `
                 <div class="mini-note-wrapper statue-card-wrapper" id="${statueId}" 
                      data-origin-note="${selectedNoteId}" 
@@ -24861,7 +24863,6 @@ window.confirmAppendToNote = async function(targetId, targetName, targetType) {
                         </div>
                         <button type="button" data-action="highlight-color" title="Cor (Independente)">🎨</button>
                         
-                        <!-- BOTÃO MOAI INSERIDO AQUI (Antes do Lixo) -->
                         <button type="button" data-action="jump-to-origin" onclick="${jumpAction}" title="Ir para Origem" 
                                 style="color: #a569bd; font-weight: bold; border-color: #a569bd; margin-right:2px;">🗿</button>
 
@@ -26885,7 +26886,13 @@ document.getElementById('right-panel').addEventListener('click', (event) => {
     // ... (limpeza timers) ...
 
     const itemId = element.id; 
-    let originalIndex = -1;
+    let associationsToClean = [];
+    try {
+        const linksData = JSON.parse(element.getAttribute('data-box-links') || '{}');
+        if (linksData.associations) {
+            associationsToClean = linksData.associations;
+        }
+    } catch(e) {}
     if (element.parentNode) originalIndex = Array.from(element.parentNode.children).indexOf(element);
 
     let title = "Sem Título"; 
@@ -26958,6 +26965,10 @@ document.getElementById('right-panel').addEventListener('click', (event) => {
             ultimaedicao: serverTimestamp()
         });
         
+          if (associationsToClean.length > 0) {
+            window.cleanDeadAssociations(itemId, associationsToClean);
+        }
+
         if (typeof updateSaveStatus === 'function') updateSaveStatus('saved');
         return true;
 
@@ -28408,36 +28419,56 @@ function updateBoxLinkButtonState(wrapper) {
     if (!btn) return;
 
     const linksJson = wrapper.getAttribute('data-box-links') || '{}';
-    let hasContent = false;
+    
+    let hasNormalContent = false;
+    let hasAssociations = false;
 
     try {
-        const links = JSON.parse(linksJson);
+        const data = JSON.parse(linksJson);
         
-        // Verifica as três camadas de conteúdo possível
-        const hasUrls = links.urls && Object.keys(links.urls).length > 0;
-        const hasCodex = links.codex && links.codex.length > 0;
-        const hasCategories = links.categories && links.categories.length > 0; // NOVA VERIFICAÇÃO
+        // 1. Verifica conteúdo normal (Links, Codex, Categorias)
+        const hasUrls = data.urls && Object.keys(data.urls).length > 0;
+        const hasCodex = data.codex && data.codex.length > 0;
+        const hasCategories = data.categories && data.categories.length > 0;
 
-        // Se tiver QUALQUER uma das três, ativa a cor amarela
         if (hasUrls || hasCodex || hasCategories) {
-            hasContent = true;
+            hasNormalContent = true;
         }
+
+        // 2. Verifica Associações (Prioridade Máxima)
+        if (data.associations && data.associations.length > 0) {
+            hasAssociations = true;
+        }
+
     } catch (e) { 
-        hasContent = false; 
+        hasNormalContent = false;
+        hasAssociations = false;
     }
 
-    if (hasContent) {
-        // ESTADO ATIVO (AMARELO)
+    // --- APLICAÇÃO VISUAL ---
+
+    // Remove classes e estilos antigos
+    btn.classList.remove('has-links', 'has-associations');
+    btn.style.borderColor = "";
+    btn.style.color = "";
+    btn.style.backgroundColor = "";
+    btn.title = "Adicionar Hiperligações, Codex ou Associações";
+
+    // CASO 1: TEM ASSOCIAÇÕES (Vermelho - Prioridade)
+    if (hasAssociations) {
+        btn.classList.add('has-associations');
+        btn.title = "🔗 Esta caixa tem Associações ativas";
+        btn.style.borderColor = "#e74c3c"; // Borda Vermelha
+        btn.style.color = "#e74c3c";       // Raio Vermelho
+        // Opcional: Fundo vermelho muito suave para destacar
+        btn.style.backgroundColor = "rgba(231, 76, 60, 0.1)";
+    } 
+    // CASO 2: TEM APENAS CONTEÚDO NORMAL (Amarelo)
+    else if (hasNormalContent) {
         btn.classList.add('has-links');
-        btn.title = "Conteúdo Anexado (Ativo)";
-        btn.style.borderColor = "#f1c40f"; // Cor Amarela
-        btn.style.color = "#f1c40f";
-    } else {
-        // ESTADO INATIVO (RESET)
-        btn.classList.remove('has-links');
-        btn.style.borderColor = "";
-        btn.style.color = "";
-        btn.title = "Adicionar Hiperligações, Codex ou Categorias";
+        btn.title = "Conteúdo Anexado (Links/Codex)";
+        btn.style.borderColor = "#f1c40f"; // Borda Amarela
+        btn.style.color = "#f1c40f";       // Raio Amarelo
     }
 }
 
@@ -28553,242 +28584,6 @@ function getCodexDataFromRow(row) {
         tempo: tempoStr
     };
 }
-
-window.openBoxLinkManager = async function(wrapper) {
-    // -----------------------------------------------------------
-    // 🛡️ CORREÇÃO DE SEGURANÇA (ID)
-    // -----------------------------------------------------------
-    // Antes de fazer qualquer coisa, garante que o elemento tem um ID válido.
-    // Se não tiver, atribuímos um agora mesmo para não dar erro depois.
-    if (!wrapper.id || wrapper.id.trim() === "") {
-        const prefix = wrapper.classList.contains('redator-wrapper') ? 'red' : 'mn';
-        wrapper.id = `${prefix}_${Date.now()}`;
-        console.log("🔧 [AUTO-FIX] ID em falta regenerado:", wrapper.id);
-    }
-
-    console.log("🚀 [GESTOR] Abertura iniciada para caixa:", wrapper.id);
-    
-    const targetWrapperId = wrapper.id;
-    // -----------------------------------------------------------
-
-    const modal = document.getElementById('link-modal');
-    const tabHeader = document.getElementById('box-link-tabs'); 
-    const modalTitle = document.getElementById('link-modal-title'); 
-    
-    const refsDiv = document.getElementById('box-content-refs');
-    const codexDiv = document.getElementById('box-content-codex');
-    const categDiv = document.getElementById('box-content-categories'); 
-    
-    const saveBtn = document.getElementById('link-save-btn');
-    const addUrlBtn = document.getElementById('add-url-btn'); 
-    const addCodexBtn = document.getElementById('add-codex-row-btn'); 
-    const bibleToggle = document.getElementById('search-bible-toggle');
-    
-    // 1. VISIBILIDADE
-    document.body.appendChild(modal);
-    modal.style.cssText = `
-        display: flex !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-        position: fixed !important;
-        z-index: 2147483647 !important;
-        top: 0; left: 0; width: 100vw; height: 100dvh !important;
-        background: rgba(0, 0, 0, 0.9) !important;
-        justify-content: center !important;
-        align-items: center !important;
-        padding: 0 !important;
-        margin: 0 !important;
-    `;
-
-    // 2. CARREGAR DADOS
-    let currentData = {};
-    try {
-        currentData = JSON.parse(wrapper.getAttribute('data-box-links') || '{}');
-    } catch (e) { currentData = {}; }
-
-    // 3. RESET UI
-    if (tabHeader) tabHeader.style.display = 'flex'; 
-    if (modalTitle) modalTitle.textContent = "Gestão de Links"; 
-    
-    const oldSat = document.getElementById('satellite-indicator');
-    if (oldSat) oldSat.remove();
-    modal.querySelector('.modal-content').classList.remove('electromagnetic-wave');
-
-    checkIfBoxIsLinked(wrapper.id, modal);
-
-    document.getElementById('codex-rows-container').innerHTML = '';
-    document.getElementById('link-urls-container').innerHTML = '';
-    document.getElementById('link-remove-btn').style.display = 'none';
-
-    if (bibleToggle) bibleToggle.checked = currentData.bibleMode === true;
-    
-    document.getElementById('link-title-input').value = currentData.title || "";
-    
-    // URLs
-    const urls = currentData.urls ? Object.values(currentData.urls) : [];
-    if (urls.length > 0) urls.forEach(url => addUrlField(url));
-    else addUrlField(); 
-
-    // Codex (Carregar linhas existentes)
-    if (currentData.codex && currentData.codex.length > 0) {
-        currentData.codex.forEach(item => window.createCodexRow(item));
-    } else { 
-        window.createCodexRow(); 
-    }
-
-    selectedCategoriesForBox = currentData.categories || [];
-    renderAttachedCategories();
-
-    // 4. CONFIGURAR BOTÕES +
-    const newAddUrlBtn = addUrlBtn.cloneNode(true);
-    addUrlBtn.parentNode.replaceChild(newAddUrlBtn, addUrlBtn);
-    newAddUrlBtn.onclick = (e) => { e.preventDefault(); addUrlField(); };
-    
-    const newAddCodexBtn = addCodexBtn.cloneNode(true);
-    addCodexBtn.parentNode.replaceChild(newAddCodexBtn, addCodexBtn);
-    newAddCodexBtn.onclick = (e) => { 
-        e.preventDefault(); e.stopPropagation();
-        window.createCodexRow(); 
-        setTimeout(() => {
-            const container = document.getElementById('codex-rows-container');
-            const lastRow = container ? container.lastElementChild : null;
-            if (lastRow) {
-                lastRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                const firstInput = lastRow.querySelector('input');
-                if (firstInput) firstInput.focus();
-            }
-        }, 50); 
-    };
-
-    // 5. GESTÃO DE ABAS
-    const tabButtons = tabHeader.querySelectorAll('button');
-    tabButtons.forEach(btn => {
-        btn.onclick = (e) => {
-            e.preventDefault();
-            tabButtons.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            
-            const target = btn.getAttribute('data-box-tab');
-            refsDiv.style.display = 'none';
-            codexDiv.style.display = 'none';
-            categDiv.style.display = 'none';
-            newAddUrlBtn.style.display = 'none';
-            newAddCodexBtn.style.display = 'none';
-
-            if (target === 'refs') {
-                refsDiv.style.display = 'block';
-                newAddUrlBtn.style.display = 'block';
-            } else if (target === 'codex') {
-                codexDiv.style.display = 'block';
-                newAddCodexBtn.style.display = 'block';
-            } else if (target === 'categories') {
-                categDiv.style.display = 'block';
-            }
-        };
-    });
-
-    // Abre na aba correta dependendo do conteúdo
-    if (currentData.codex && currentData.codex.length > 0) {
-        tabButtons[1].click(); // Codex
-    } else {
-        tabButtons[0].click(); // Referências
-    }
-
-    // 6. BOTÃO GRAVAR
-    const newSaveBtn = saveBtn.cloneNode(true);
-    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
-
-    newSaveBtn.onclick = async () => {
-        newSaveBtn.textContent = "A gravar...";
-        
-        // Tenta encontrar o elemento pelo ID guardado
-        let liveWrapper = document.getElementById(targetWrapperId);
-        
-        // --- FALLBACK DE SEGURANÇA ---
-        // Se não encontrar pelo ID (porque o DOM mudou), tentamos usar a referência 'wrapper' original
-        // e verificamos se ela ainda está conectada ao documento.
-        if (!liveWrapper && wrapper && document.body.contains(wrapper)) {
-            console.log("⚠️ Recuperando referência do elemento via memória...");
-            liveWrapper = wrapper;
-            // Se perdeu o ID, repomos
-            if (!liveWrapper.id) liveWrapper.id = targetWrapperId;
-        }
-
-        if (!liveWrapper) {
-            alert("Erro crítico: A caixa original foi perdida. Tente fechar e abrir novamente.");
-            modal.style.display = 'none';
-            return;
-        }
-
-        try {
-            const urlsToSave = {};
-            document.querySelectorAll('#link-urls-container input').forEach((inp, i) => {
-                if(inp.value.trim()) {
-                    let val = inp.value.trim();
-                    if(!val.startsWith('http')) val = 'https://' + val;
-                    urlsToSave[`url_${Date.now()}_${i}`] = val;
-                }
-            });
-
-            const codexToSave = [];
-            modal.querySelectorAll('.codex-row').forEach(row => {
-                const rowData = getCodexDataFromRow(row);
-                const hasData = rowData.serie || 
-                                rowData.paginas.length > 0 || 
-                                rowData.paragrafos.length > 0 || 
-                                rowData.manualYear || 
-                                rowData.manualMonth || 
-                                rowData.capitulo ||
-                                rowData.tempo;
-
-                if (hasData) {
-                    let totalStr = rowData.serie || "Ref.";
-                    
-                    if (rowData.manualMonth && rowData.manualYear) totalStr += ` ${rowData.manualMonth}/${rowData.manualYear}`;
-                    else if (rowData.manualYear) totalStr += ` ${rowData.manualYear}`;
-                    
-                    if (rowData.capitulo) totalStr += `, cap. ${rowData.capitulo}`;
-                    
-                    if (rowData.paginas.length > 0) totalStr += `, pág. ${rowData.paginas.join(', ')}`;
-                    if (rowData.paragrafos.length > 0) totalStr += `, par. ${rowData.paragrafos.join(', ')}`;
-                    if (rowData.tempo) totalStr += ` [${rowData.tempo}]`;
-                    
-                    rowData.total = totalStr;
-                    codexToSave.push(rowData);
-                }
-            });
-
-            const finalJson = { 
-                title: document.getElementById('link-title-input').value.trim(), 
-                urls: urlsToSave, 
-                codex: codexToSave,
-                categories: selectedCategoriesForBox,
-                bibleMode: bibleToggle ? bibleToggle.checked : false
-            };
-            
-            liveWrapper.setAttribute('data-box-links', JSON.stringify(finalJson));
-            
-            if (typeof updateBoxLinkButtonState === 'function') updateBoxLinkButtonState(liveWrapper);
-            
-            const isAquarium = document.getElementById('aquarium-environment').style.display !== 'none';
-            if (isAquarium && typeof saveAquariumState === 'function') {
-                await window.saveAquariumState();
-            } else {
-                await saveNote(true);
-            }
-            
-            modal.style.display = 'none';
-
-        } catch (err) {
-            console.error("Erro ao gravar links:", err);
-            alert("Erro ao gravar dados da caixa.");
-        } finally {
-            newSaveBtn.textContent = "Gravar";
-        }
-    };
-};
-
-
 
 
 // --- FUNÇÃO DE VERIFICAÇÃO 4ª COLUNA (SATÉLITE) ---
@@ -32670,108 +32465,233 @@ window.removeManualField = function(closeBtn, type) {
     fieldGroup.remove();
 };
 
-window.openPanelLinkCreator = async function(type, editingIndex = null) {
-    console.log(`🚀 [GESTOR PAINEL] Abertura iniciada (${type})...`);
-    
-    const modal = document.getElementById('link-modal');
-    const saveBtn = document.getElementById('link-save-btn');
-    const modalTitle = document.getElementById('link-modal-title');
-    const tabHeader = document.getElementById('box-link-tabs');
-    const addCodexBtn = document.getElementById('add-codex-row-btn');
-    const addUrlBtn = document.getElementById('add-url-btn'); 
-    
-    // Divs de conteúdo das abas
-    const refsTabContent = document.getElementById('box-content-refs');
-    const codexTabContent = document.getElementById('box-content-codex');
-    const categoriesTabContent = document.getElementById('box-content-categories'); 
-    
-    const codexContainer = document.getElementById('codex-rows-container');
-    const urlsContainer = document.getElementById('link-urls-container');
-    const titleInput = document.getElementById('link-title-input');
+window.openBoxLinkManager = async function(wrapper) {
+    // 🛡️ SEGURANÇA DE ID
+    if (!wrapper.id || wrapper.id.trim() === "") {
+        const prefix = wrapper.classList.contains('redator-wrapper') ? 'red' : 'mn';
+        wrapper.id = `${prefix}_${Date.now()}`;
+    }
+    const currentBoxId = wrapper.id;
 
+    console.log("🚀 [GESTOR] Abertura iniciada para caixa:", currentBoxId);
+
+    // --- LÓGICA DE MEMÓRIA DE ABA ---
+    if (window.lastBoxLinkManagerId !== currentBoxId) {
+        window.lastBoxLinkManagerId = currentBoxId;
+        window.lastBoxLinkManagerTab = 'refs';
+    }
+
+    const modal = document.getElementById('link-modal');
     if (!modal) return;
 
-    // 1. FORÇAR HIERARQUIA
+    // 1. ATUALIZAÇÃO DO TÍTULO
+    const modalTitle = document.getElementById('link-modal-title');
+    if (modalTitle) modalTitle.textContent = "Gestão de Conexões";
+
+    // 2. CONFIGURAÇÃO VISUAL DO MODAL
     document.body.appendChild(modal); 
+    modal.style.cssText = `display: flex !important; z-index: 2147483647 !important; visibility: visible !important; opacity: 1 !important; position: fixed !important; top: 0; left: 0; width: 100vw; height: 100dvh !important; background: rgba(0, 0, 0, 0.9) !important; justify-content: center !important; align-items: center !important;`;
     
-    modal.style.cssText = `
-        display: flex !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100vw !important;
-        height: 100dvh !important;
-        background-color: rgba(0, 0, 0, 0.9) !important;
-        z-index: 2147483647 !important;
-        justify-content: center !important;
-        align-items: center !important;
-        padding: 0 !important;
-        margin: 0 !important;
+    const modalContent = modal.querySelector('.modal-content');
+    modalContent.style.position = 'relative';
+
+    // 3. BADGE DE ID (FLUTUANTE NO TOPO)
+    let idBadge = document.getElementById('box-link-id-badge');
+    if (!idBadge) {
+        idBadge = document.createElement('div');
+        idBadge.id = 'box-link-id-badge';
+        idBadge.style.cssText = `
+            position: absolute; top: 20px; right: 50px;
+            background: var(--panel-color); border: 1px solid var(--accent-color); 
+            border-radius: 20px; padding: 6px 15px; display: none; 
+            align-items: center; gap: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); z-index: 50;
+        `;
+        modalContent.appendChild(idBadge);
+    }
+    idBadge.innerHTML = `
+        <span style="color:var(--text-muted-color); font-size: 0.7em; text-transform:uppercase; letter-spacing:1px; font-weight:bold;">ID CAIXA</span>
+        <strong style="color: white; font-family: monospace; letter-spacing: 0.5px; font-size: 0.9em; border-right:1px solid var(--border-color); padding-right:10px;">${currentBoxId}</strong>
+        <button onclick="window.copyToClipboard('${currentBoxId}')" title="Copiar ID" style="background:none; border:none; cursor:pointer; color:var(--accent-color); font-size:1.3em; padding:0; line-height:1; display:flex; align-items:center;">⇝</button>
     `;
 
-    // 2. LIMPEZA PROFUNDA
-    if (tabHeader) tabHeader.style.display = 'none'; 
-    if (categoriesTabContent) categoriesTabContent.style.display = 'none'; 
-    if (refsTabContent) refsTabContent.style.display = 'none'; 
-    if (codexTabContent) codexTabContent.style.display = 'none';
+    // ============================================================
+    // 4. RESTAURO DA ABA "ASSOCIAR" (AQUI ESTAVA A FALTA)
+    // ============================================================
+    const tabHeader = document.getElementById('box-link-tabs');
     
-    document.getElementById('link-remove-btn').style.display = 'none';
-    codexContainer.innerHTML = '';
-    urlsContainer.innerHTML = '';
-    titleInput.value = "";
-    saveBtn.disabled = false;
-    saveBtn.textContent = "Gravar";
+    // Verifica se a aba já existe, se não, cria-a
+    if (!tabHeader.querySelector('[data-box-tab="associar"]')) {
+        const assocTabBtn = document.createElement('button');
+        assocTabBtn.dataset.boxTab = 'associar';
+        assocTabBtn.textContent = 'Associar';
+        tabHeader.appendChild(assocTabBtn);
 
-    // 3. CARREGAR DADOS EXISTENTES (EDIÇÃO)
-    let existingData = null; 
-    if (editingIndex !== null) {
-        try {
-            const collectionName = getCollectionFromType(activeReferenceEntity.type);
-            const docSnap = await getDoc(doc(db, collectionName, activeReferenceEntity.id));
-            if (docSnap.exists() && docSnap.data().panelLinks) {
-                existingData = docSnap.data().panelLinks[editingIndex];
+        const assocContent = document.createElement('div');
+        assocContent.id = 'box-content-associar';
+        assocContent.className = 'box-tab-content';
+        assocContent.style.display = 'none';
+        
+        // HTML da aba Associar
+        assocContent.innerHTML = `
+            <div style="border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 15px; margin-top: 15px;">
+                <label style="font-size:0.8em; color:var(--text-muted-color);">Associar com outra Caixa (Colar ID)</label>
+                
+                <div style="display: flex; gap: 0; margin-top: 5px; align-items: stretch;">
+                    <input type="text" id="assoc-search-id" class="redator-input" placeholder="mn_12345..." 
+                           style="flex:1; border:1px solid var(--border-color); border-right: none; border-radius: 4px 0 0 4px; padding:0 12px; height: 40px; box-sizing: border-box; background-color: var(--bg-color);">
+                    
+                    <button class="modal-btn primary" id="btn-verify-assoc" 
+                            style="padding: 0 20px; height: 40px; display:flex; align-items:center; justify-content:center; box-sizing: border-box; border-radius: 0 4px 4px 0;">
+                        🔍
+                    </button>
+                </div>
+
+                <div id="assoc-search-result" style="margin-top: 10px; display:none;"></div>
+            </div>
+
+            <label style="font-size:0.8em; color:var(--text-muted-color); font-weight:bold; text-transform:uppercase;">Caixas Associadas:</label>
+            <div id="assoc-list-container" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-height: 200px; overflow-y: auto;"></div>
+        `;
+        
+        // Insere o conteúdo no DOM
+        document.getElementById('box-content-categories').after(assocContent);
+    }
+    // ============================================================
+
+    // 5. CARREGAR DADOS EXISTENTES
+    let currentData = {};
+    try {
+        currentData = JSON.parse(wrapper.getAttribute('data-box-links') || '{}');
+    } catch (e) { currentData = {}; }
+
+    window.tempAssociations = currentData.associations || [];
+    if (typeof window.renderExistingAssociationsList === 'function') window.renderExistingAssociationsList();
+
+    // Reset Campos Básicos
+    document.getElementById('link-title-input').value = currentData.title || "";
+    
+    // --- CONFIGURAÇÃO DO BOTÃO ADICIONAR URL ---
+    const urlsContainer = document.getElementById('link-urls-container');
+    if(urlsContainer) urlsContainer.innerHTML = '';
+    
+    const addUrlBtn = document.getElementById('add-url-btn');
+    if (addUrlBtn) {
+        const newAddUrlBtn = addUrlBtn.cloneNode(true);
+        addUrlBtn.parentNode.replaceChild(newAddUrlBtn, addUrlBtn);
+        newAddUrlBtn.onclick = (e) => { e.preventDefault(); window.addUrlField(); };
+    }
+
+    // Preenche URLs existentes
+    const urls = currentData.urls ? Object.values(currentData.urls) : [];
+    if (urls.length > 0) urls.forEach(url => window.addUrlField(url));
+    else window.addUrlField(); 
+
+    // --- CONFIGURAÇÃO DO BOTÃO ADICIONAR CODEX ---
+    const codexContainer = document.getElementById('codex-rows-container');
+    if(codexContainer) codexContainer.innerHTML = '';
+    
+    const addCodexBtn = document.getElementById('add-codex-row-btn');
+    if (addCodexBtn) {
+        const newAddCodexBtn = addCodexBtn.cloneNode(true);
+        addCodexBtn.parentNode.replaceChild(newAddCodexBtn, addCodexBtn);
+        newAddCodexBtn.onclick = (e) => { e.preventDefault(); window.createCodexRow(); };
+    }
+
+    // Preenche Linhas Codex existentes
+    if (currentData.codex && currentData.codex.length > 0) {
+        currentData.codex.forEach(item => window.createCodexRow(item));
+    } else { 
+        window.createCodexRow(); 
+    }
+    
+    // Carrega Categorias
+    window.selectedCategoriesForBox = currentData.categories || [];
+    if (typeof renderAttachedCategories === 'function') renderAttachedCategories();
+
+    // 6. GESTÃO DE ABAS (AGORA INCLUI 'ASSOCIAR')
+    const tabButtons = tabHeader.querySelectorAll('button');
+    
+    const activateTab = (targetTab) => {
+        tabButtons.forEach(b => {
+            if (b.dataset.boxTab === targetTab) b.classList.add('active');
+            else b.classList.remove('active');
+        });
+
+        document.querySelectorAll('.box-tab-content').forEach(div => div.style.display = 'none');
+        
+        const contentMap = {
+            'associar': 'box-content-associar',
+            'refs': 'box-content-refs',
+            'codex': 'box-content-codex',
+            'categories': 'box-content-categories'
+        };
+        
+        const targetId = contentMap[targetTab];
+        if (targetId) document.getElementById(targetId).style.display = 'block';
+        
+        if (idBadge) idBadge.style.display = (targetTab === 'associar') ? 'flex' : 'none';
+        window.lastBoxLinkManagerTab = targetTab;
+    };
+
+    tabButtons.forEach(btn => {
+        btn.onclick = (e) => {
+            e.preventDefault();
+            activateTab(btn.dataset.boxTab);
+        };
+    });
+
+    activateTab(window.lastBoxLinkManagerTab);
+
+    // 7. LISTENER DA LUPA (PESQUISA DE ASSOCIAÇÃO)
+    const verifyBtn = document.getElementById('btn-verify-assoc');
+    if (verifyBtn) {
+        const newVerifyBtn = verifyBtn.cloneNode(true);
+        verifyBtn.parentNode.replaceChild(newVerifyBtn, verifyBtn);
+
+        newVerifyBtn.onclick = async () => {
+            const targetId = document.getElementById('assoc-search-id').value.trim();
+            
+            if (!targetId) return;
+            if (targetId === currentBoxId) return alert("Não pode associar uma caixa a ela própria.");
+            if (window.tempAssociations.includes(targetId)) return alert("Esta caixa já está associada.");
+
+            newVerifyBtn.disabled = true;
+            newVerifyBtn.textContent = "⌛";
+
+            const resultDiv = document.getElementById('assoc-search-result');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '<span style="color:#888;">A procurar...</span>';
+
+            const foundBox = await window.findBoxDetailsById(targetId);
+
+            if (foundBox) {
+                // ... (Lógica de renderização do resultado igual)
+                resultDiv.innerHTML = `
+                    <div style="background:rgba(255,255,255,0.05); border:1px solid #ccc; padding:8px; border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
+                        <div style="overflow:hidden;">
+                            <div style="font-weight:bold; color:var(--text-color);">${foundBox.title}</div>
+                            <div style="font-size:0.8em; color:var(--text-muted-color);">${foundBox.type} • ${foundBox.noteName}</div>
+                        </div>
+                        <button class="modal-btn primary" id="confirm-add-assoc" style="padding:4px 10px; font-size:0.8em; flex-shrink:0;">Adicionar</button>
+                    </div>`;
+                
+                document.getElementById('confirm-add-assoc').onclick = () => {
+                    window.tempAssociations.push(targetId);
+                    window.renderExistingAssociationsList();
+                    resultDiv.style.display = 'none';
+                    document.getElementById('assoc-search-id').value = '';
+                };
+            } else {
+                resultDiv.innerHTML = '<span style="color:#e74c3c;">❌ ID não encontrado.</span>';
             }
-        } catch (e) { console.error("Erro ao carregar edição:", e); }
+            
+            newVerifyBtn.disabled = false;
+            newVerifyBtn.textContent = "🔍";
+        };
     }
 
-    // 4. CONFIGURAR VISUAL
-    if (type === 'link') {
-        modalTitle.textContent = (editingIndex !== null ? "Editar Link" : "Novo Link");
-        refsTabContent.style.display = 'block';
-        if (addUrlBtn) addUrlBtn.style.display = 'block';
-        
-        titleInput.value = existingData ? existingData.title : "";
-        if (existingData && existingData.urls) {
-            Object.values(existingData.urls).forEach(url => addUrlField(url));
-        } else { addUrlField(); }
-    } else {
-        modalTitle.textContent = (editingIndex !== null ? "Editar Codex" : "Novo Codex");
-        codexTabContent.style.display = 'block';
-        if (addCodexBtn) addCodexBtn.style.display = 'block';
-        
-        window.createCodexRow(existingData); 
-
-        // Ativar pílulas se estiver em modo edição
-        if (existingData) {
-            setTimeout(() => {
-                const row = codexContainer.querySelector('.codex-row');
-                if(row) {
-                    if (existingData.manualYear) window.toggleManual(row.querySelector("button[onclick*='A']"), 'A', existingData.manualYear);
-                    if (existingData.manualMonth) window.toggleManual(row.querySelector("button[onclick*='M']"), 'M', existingData.manualMonth);
-                    if (existingData.capitulo) window.toggleManual(row.querySelector("button[onclick*='C']"), 'C', existingData.capitulo);
-                    if (existingData.tempo) window.toggleManual(row.querySelector("button[onclick*='T']"), 'T', existingData.tempo);
-                }
-            }, 50);
-        }
-    }
-    
-    setTimeout(() => {
-        if (type === 'link') titleInput.focus();
-    }, 300);
-
-    // 5. BOTÃO GRAVAR
+    // 8. BOTÃO GRAVAR
+    const saveBtn = document.getElementById('link-save-btn');
     const newSaveBtn = saveBtn.cloneNode(true);
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
 
@@ -32780,86 +32700,49 @@ window.openPanelLinkCreator = async function(type, editingIndex = null) {
         newSaveBtn.textContent = "A processar...";
 
         try {
-            let dataToSave = null;
+            const titleInput = document.getElementById('link-title-input');
+            const codexToSave = []; 
+            modal.querySelectorAll('.codex-row').forEach(row => {
+                 if(typeof getCodexDataFromRow === 'function') codexToSave.push(getCodexDataFromRow(row));
+            });
+            
+            const urlsToSave = {}; 
+            const urlsContainer = document.getElementById('link-urls-container');
+            urlsContainer.querySelectorAll('input').forEach((inp, i) => {
+                if(inp.value.trim()) {
+                    let val = inp.value.trim();
+                    if(!val.startsWith('http')) val = 'https://' + val;
+                    urlsToSave[`url_${Date.now()}_${i}`] = val;
+                }
+            });
 
-            if (type === 'link') {
-                const urlsMap = {};
-                urlsContainer.querySelectorAll('input').forEach((inp, i) => {
-                    if(inp.value.trim()) {
-                        let val = inp.value.trim();
-                        if(!val.startsWith('http')) val = 'https://' + val;
-                        urlsMap[`url_${Date.now()}_${i}`] = val;
-                    }
-                });
-                dataToSave = { type: 'link', title: titleInput.value.trim() || "Link", urls: urlsMap, createdAt: existingData?.createdAt || Date.now() };
-            } 
-            else {
-                // --- LÓGICA DE CODEX ---
-                const row = codexContainer.querySelector('.codex-row');
-                const rowData = getCodexDataFromRow(row);
-                
-                // 1. Obter Nome da Publicação
-                const valorBaixo = rowData.serie.toLowerCase().trim();
-                const siglaMatch = valorBaixo.match(/^[a-z]+(?:-[0-9])?/);
-                const sigla = siglaMatch ? siglaMatch[0] : "";
-                const pubNome = (typeof SIGLAS_PUBLICACOES !== 'undefined' && SIGLAS_PUBLICACOES[sigla]) ? SIGLAS_PUBLICACOES[sigla] : rowData.serie;
+            const finalJson = { 
+                title: titleInput.value.trim(), 
+                urls: urlsToSave, 
+                codex: codexToSave,
+                categories: window.selectedCategoriesForBox || [],
+                associations: window.tempAssociations 
+            };
+            
+            wrapper.setAttribute('data-box-links', JSON.stringify(finalJson));
+            if (typeof updateBoxLinkButtonState === 'function') updateBoxLinkButtonState(wrapper);
 
-                // 2. Obter Data Automática ou Manual
-                const auto = parseSerieInfo(rowData.serie);
-                const finalYear = rowData.manualYear || auto.ano || "";
-                const finalMonth = rowData.manualMonth || auto.mes || "";
-                const finalCap = rowData.capitulo || "";
-
-                // 3. CONSTRUIR STRING VISUAL
-                let codiceShow = pubNome;
-                
-                if (finalMonth && finalYear) codiceShow += ` ${finalMonth} de ${finalYear}`; 
-                else if (finalYear) codiceShow += ` ${finalYear}`;
-                
-                if (finalCap) codiceShow += `, capítulo ${finalCap}`;
-                if (rowData.paginas.length > 0) codiceShow += `, página ${rowData.paginas.join(', ')}`;
-                if (rowData.paragrafos.length > 0) codiceShow += `, parágrafo ${rowData.paragrafos.join(', ')}`;
-                if (rowData.tempo) codiceShow += ` [${rowData.tempo}]`;
-
-                dataToSave = { 
-                    ...rowData, 
-                    type: 'codex', 
-                    publicacaonome: pubNome, 
-                    codiceshow: codiceShow, 
-                    createdAt: existingData?.createdAt || Date.now() 
-                };
+            if (typeof updateRemoteAssociations === 'function') {
+                await updateRemoteAssociations(currentBoxId, window.tempAssociations);
             }
 
-            // GRAVAÇÃO NO FIREBASE
-            const collectionName = getCollectionFromType(activeReferenceEntity.type);
-            const docRef = doc(db, collectionName, activeReferenceEntity.id);
-            const docSnap = await getDoc(docRef);
-            let currentLinks = docSnap.exists() ? (docSnap.data().panelLinks || []) : [];
+            const isAquarium = document.getElementById('aquarium-environment').style.display !== 'none';
+            if (isAquarium && typeof saveAquariumState === 'function') await window.saveAquariumState();
+            else if (typeof saveNote === 'function') await saveNote(true);
 
-            if (editingIndex !== null) {
-                // MODO EDIÇÃO: Atualiza na mesma posição
-                currentLinks[editingIndex] = dataToSave;
-            } else {
-                // =========================================================
-                // MODO CRIAÇÃO: UNSHIFT (ADICIONA AO TOPO DO ARRAY)
-                // =========================================================
-                currentLinks.unshift(dataToSave); 
-            }
-
-            await updateDoc(docRef, { panelLinks: currentLinks });
             modal.style.display = 'none';
-            
-            // Atualiza a vista e faz scroll para o topo
-            await renderPanelLinks();
-            
-            const listContainer = document.getElementById('panel-links-list');
-            if(listContainer) listContainer.scrollTop = 0;
 
-        } catch (e) {
-            console.error("Erro ao gravar:", e);
-            alert("Erro ao gravar. Verifique a consola.");
-            newSaveBtn.disabled = false;
+        } catch (err) {
+            console.error(err);
+            alert("Erro ao gravar.");
+        } finally {
             newSaveBtn.textContent = "Gravar";
+            newSaveBtn.disabled = false;
         }
     };
 };
@@ -40419,47 +40302,37 @@ const postObserver = new IntersectionObserver((entries) => {
 window.openAquariumEnvironment = async function(id, data) {
     console.group("🪸 [ABERTURA BLINDADA] A trocar para: " + data.nome);
 
-    // 1. PARAGEM DE EMERGÊNCIA (Matar timers pendentes)
-    // Isto impede que gravações atrasadas da nota anterior disparem
-    // depois de já termos carregado o novo texto no ecrã.
+    // 1. LIMPEZA DE POPUPS (NOVO)
+    window.closeAllFloatingPopups();
+
+    // 2. PARAGEM DE EMERGÊNCIA
     if (typeof aqAutoSaveTimer !== 'undefined') clearTimeout(aqAutoSaveTimer);
     if (typeof aqTitleTimer !== 'undefined') clearTimeout(aqTitleTimer);
     if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
     
-    // 2. GRAVAÇÃO SEGURA DA NOTA ANTERIOR (Antes de tocar no DOM)
+    // 3. GRAVAÇÃO SEGURA DA NOTA ANTERIOR
     if (selectedNoteId && selectedNoteId !== id) {
-        console.log(`💾 A gravar nota anterior (${selectedNoteId}) antes de mudar...`);
-        
-        // Verifica em que modo estamos para saber qual o save correto a chamar
         const isAquariumVisible = document.getElementById('aquarium-environment').style.display !== 'none';
         
         if (isAquariumVisible) {
-            // Se já estávamos no aquário, usa o save do aquário
             await window.saveAquariumState();
         } else {
-            // Se vínhamos de fora, usa o save normal
             await saveNote(true);
         }
 
-        // Desliga ouvintes antigos
         if (unsubscribeCurrentNote) {
             unsubscribeCurrentNote();
             unsubscribeCurrentNote = null;
         }
     }
 
-    // 3. LIMPEZA E TROCA DE ID (O Ponto de Não Retorno)
-    // Mudamos o ID *antes* de injetar o novo HTML. 
-    // Assim, se houver algum save fantasma, ele gravará no ID novo (menos grave) 
-    // em vez de destruir a nota antiga.
+    // 4. LIMPEZA E TROCA DE ID
     if (typeof window.resetAquariumState === 'function') window.resetAquariumState();
     
-    selectedNoteId = id; // <--- TROCA DE IDENTIDADE
+    selectedNoteId = id; 
     window.nextSelectedId = null;
     
-    console.log("✅ ID Global atualizado para:", id);
-
-    // 4. ATUALIZAÇÃO VISUAL (Agora é seguro mudar o HTML)
+    // 5. ATUALIZAÇÃO VISUAL
     
     // A. Título
     const titleGroup = document.querySelector('.aquarium-title-group');
@@ -40472,7 +40345,6 @@ window.openAquariumEnvironment = async function(id, data) {
         titleInput.value = data.nome || "Sem Título";
         titleInput.placeholder = "Nome do Aquário...";
         
-        // Listener de título com debounce
         titleInput.addEventListener('input', (e) => {
             clearTimeout(window.aqTitleTimer);
             window.aqTitleTimer = setTimeout(() => {
@@ -40487,7 +40359,6 @@ window.openAquariumEnvironment = async function(id, data) {
     // B. Conteúdo (Canvas)
     const canvas = document.getElementById('aquarium-content-canvas');
     if (canvas) {
-        // Injeta o novo conteúdo
         if (data.conteudo && data.conteudo.trim() !== "") {
             if (typeof DOMPurify !== 'undefined') {
                 canvas.innerHTML = DOMPurify.sanitize(data.conteudo);
@@ -40498,13 +40369,11 @@ window.openAquariumEnvironment = async function(id, data) {
             canvas.innerHTML = '<div class="ghost-block" contenteditable="true" data-placeholder=""></div>';
         }
 
-        // Restaura Zoom
         const savedZoom = data.zoomLevel || '100%';
         const aqZoomSelect = document.getElementById('aq-zoom');
         if (aqZoomSelect) aqZoomSelect.value = savedZoom;
         canvas.style.fontSize = savedZoom;
 
-        // Reativa comportamentos dos blocos
         canvas.querySelectorAll('.ghost-block').forEach(g => {
             g.classList.remove('locked-popup', 'active-selection', 'active-store-target');
             g.style.cssText = "";
@@ -40513,7 +40382,7 @@ window.openAquariumEnvironment = async function(id, data) {
         });
     }
 
-    // 5. EXIBIÇÃO
+    // 6. EXIBIÇÃO
     const mainApp = document.querySelector('.notebook-container');
     if (mainApp) mainApp.style.setProperty('display', 'none', 'important');
 
@@ -48380,26 +48249,58 @@ async function toggleTagState(item, btn, li) {
 }
 
 async function syncStatueCardsInCurrentNote() {
+    const myRequestId = window.currentNavRequest;
+    const startingNoteId = selectedNoteId;
     const editor = document.getElementById('note-content-editor');
+    
     if (!editor) return;
 
-    // Encontra todas as estátuas na nota atual
+    // 1. VERIFICAR SE EXISTEM ESTÁTUAS PARA ATUALIZAR
     const statues = editor.querySelectorAll('.statue-card-wrapper');
     if (statues.length === 0) return;
 
-    console.log(`🗿 [SYNC] Encontradas ${statues.length} estátuas para atualizar.`);
+    console.log(`🗿 [SYNC START] Encontradas ${statues.length} estátuas. A ativar escudo...`);
+
+    // ============================================================
+    // 🛡️ ATIVAR ESCUDO DE BLOQUEIO (MODAL PRETO)
+    // ============================================================
+    const blockingModal = document.getElementById('forcing-save-modal');
+    const loadingText = blockingModal ? blockingModal.querySelector('h3') : null;
+    let originalText = "A Guardar...";
+
+    if (blockingModal) {
+        if (loadingText) {
+            originalText = loadingText.textContent;
+            loadingText.textContent = "A Sincronizar Estátuas..."; // Muda o texto para informar o user
+        }
+        
+        // Força bruta de visibilidade
+        document.body.appendChild(blockingModal);
+        blockingModal.style.setProperty('display', 'flex', 'important');
+        blockingModal.style.setProperty('z-index', '2147483647', 'important');
+        blockingModal.style.setProperty('opacity', '1', 'important');
+        blockingModal.style.setProperty('visibility', 'visible', 'important');
+    }
+    // ============================================================
 
     const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
     let changesMade = false;
 
-    // Processa cada estátua
-    for (const statue of statues) {
-        const originNoteId = statue.dataset.originNote;
-        const originBoxId = statue.dataset.originBox;
+    try {
+        // Processa cada estátua
+        for (const statue of statues) {
+            
+            // Verificação de Segurança de Navegação
+            if (window.currentNavRequest !== myRequestId || selectedNoteId !== startingNoteId) {
+                console.warn("🛑 Navegação detetada durante sync. Abortando.");
+                return; // O modal será limpo pela nova nota que está a abrir
+            }
 
-        if (!originNoteId || !originBoxId) continue;
+            const originNoteId = statue.dataset.originNote;
+            const originBoxId = statue.dataset.originBox;
 
-        try {
+            if (!originNoteId || !originBoxId) continue;
+
             // Busca a nota original
             const originRef = doc(db, 'pastas', originNoteId);
             const originSnap = await getDoc(originRef);
@@ -48407,59 +48308,604 @@ async function syncStatueCardsInCurrentNote() {
             if (originSnap.exists()) {
                 const originContent = originSnap.data().conteudo || "";
                 
-                // Parse do HTML original para encontrar a caixa
+                // Parse do HTML original
                 const parser = new DOMParser();
                 const docDOM = parser.parseFromString(originContent, 'text/html');
                 const originalBox = docDOM.getElementById(originBoxId);
 
+                const lockContainer = statue.querySelector('.statue-content-lock');
+                if (!lockContainer) continue;
+
                 if (originalBox) {
-                    // Extrai dados atualizados
+                    // Extração de dados da origem
                     const titleInput = originalBox.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
-                    const titleVal = titleInput ? (titleInput.value || titleInput.textContent) : "";
-
-                    const bodyDiv = originalBox.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content, .cube-content');
-                    const bodyVal = bodyDiv ? bodyDiv.innerHTML : "Conteúdo removido.";
-
-                    // Constrói o novo HTML interno da estátua
-                    const newInnerHtml = `
-                        ${titleVal ? `<strong style="display:block; margin-bottom:5px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:3px;">${titleVal}</strong>` : ''}
-                        <div>${bodyVal}</div>
-                    `;
-
-                    const lockContainer = statue.querySelector('.statue-content-lock');
+                    const originTitle = titleInput ? (titleInput.value || titleInput.textContent || "").trim() : "";
                     
-                    // Compara para evitar gravações desnecessárias
-                    // Removemos espaços em branco para comparação justa
-                    if (lockContainer && lockContainer.innerHTML.replace(/\s/g,'') !== newInnerHtml.replace(/\s/g,'')) {
-                        console.log(`🔄 Atualizando estátua de: ${originBoxId}`);
+                    const bodyDiv = originalBox.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content, .cube-content');
+                    const originBodyHTML = bodyDiv ? bodyDiv.innerHTML : "";
+
+                    // Dados atuais no ecrã
+                    const currentTitleEl = lockContainer.querySelector('strong');
+                    const currentTitle = currentTitleEl ? currentTitleEl.textContent.trim() : "";
+                    
+                    const currentBodyEl = lockContainer.querySelector('div');
+                    const currentBodyHTML = currentBodyEl ? currentBodyEl.innerHTML : "";
+
+                    // Comparação (Remove espaços para evitar falsos positivos)
+                    const isTitleDiff = originTitle !== currentTitle;
+                    const isBodyDiff = originBodyHTML.replace(/\s/g, '') !== currentBodyHTML.replace(/\s/g, '');
+
+                    if (isTitleDiff || isBodyDiff) {
+                        console.log(`🔄 Atualizando Estátua: ${originTitle}`);
+
+                        // Reconstrói o HTML
+                        const newInnerHtml = `
+                            ${originTitle ? `<strong style="display:block; margin-bottom:5px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:3px;">${originTitle}</strong>` : ''}
+                            <div>${originBodyHTML}</div>
+                        `;
+
                         lockContainer.innerHTML = newInnerHtml;
                         
-                        // Flash visual para indicar update
-                        statue.style.borderColor = "#2ecc71"; // Verde
-                        setTimeout(() => statue.style.borderColor = "rgba(165, 105, 189, 0.3)", 1000);
+                        // Flash visual Verde
+                        statue.style.borderColor = "#2ecc71"; 
                         
                         changesMade = true;
                     }
                 } else {
-                    // Se a caixa original foi apagada
-                    const lockContainer = statue.querySelector('.statue-content-lock');
-                    if (lockContainer) lockContainer.innerHTML = "<em style='color:#e74c3c'>A origem deste card foi eliminada.</em>";
+                    // Origem apagada
+                    if (!lockContainer.innerHTML.includes('origem deste card foi eliminada')) {
+                        lockContainer.innerHTML = "<em style='color:#e74c3c'>A origem deste card foi eliminada.</em>";
+                        changesMade = true;
+                    }
                 }
             }
-        } catch (e) {
-            console.error("Erro sync estátua:", e);
         }
-    }
 
-    // Se houve atualizações visuais, grava a nota automaticamente para persistir a sincronia
-    if (changesMade) {
-        saveNote(true);
+        // ============================================================
+        // GRAVAÇÃO DE SEGURANÇA (Enquanto ainda está bloqueado)
+        // ============================================================
+        if (changesMade) {
+            console.log("💾 [SYNC] Alterações aplicadas. Gravando no servidor...");
+            if (loadingText) loadingText.textContent = "A Guardar Atualizações...";
+            
+            // Força a gravação imediata
+            await saveNote(true);
+            console.log("✅ Gravação concluída.");
+        }
+
+    } catch (e) {
+        console.error("🔥 Erro na Sync Estátuas:", e);
+    } finally {
+        // ============================================================
+        // 🔓 DESATIVAR ESCUDO (LIBERTAR O UTILIZADOR)
+        // ============================================================
+        if (blockingModal) {
+            // Pequeno delay para o utilizador ver que terminou
+            setTimeout(() => {
+                blockingModal.style.display = 'none';
+                if (loadingText) loadingText.textContent = originalText; // Restaura texto original "A Guardar..."
+                
+                // Limpa o flash verde das estátuas
+                document.querySelectorAll('.statue-card-wrapper').forEach(s => {
+                     s.style.borderColor = "rgba(165, 105, 189, 0.3)";
+                });
+            }, 500);
+        }
+        console.log("🗿 [SYNC END] Processo terminado.");
     }
 }
 
+async function findBoxDetailsById(targetBoxId) {
+    try {
+        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // Procura em todas as notas do utilizador
+        // NOTA: Esta query pode ser pesada se tiver milhares de notas. 
+        // Em produção real, usaria-se Algolia ou ElasticSearch.
+        // Aqui, filtramos primeiro pelo 'userId' e 'ativa'.
+        const q = query(
+            collection(db, 'pastas'),
+            where('userId', '==', auth.currentUser.uid),
+            where('estado', '==', 'ativa'),
+            where('tipo', '==', 'nota') // Apenas notas
+        );
 
+        const snapshot = await getDocs(q);
+        
+        // Itera sobre os documentos (no cliente) para encontrar o ID dentro do HTML
+        for (const doc of snapshot.docs) {
+            const content = doc.data().conteudo || "";
+            
+            // Verifica se o ID existe na string de conteúdo
+            if (content.includes(`id="${targetBoxId}"`)) {
+                
+                // Parse do HTML para extrair detalhes
+                const parser = new DOMParser();
+                const docDOM = parser.parseFromString(content, 'text/html');
+                const box = docDOM.getElementById(targetBoxId);
+                
+                if (box) {
+                    // Determina o Título
+                    const titleInput = box.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
+                    let title = titleInput ? (titleInput.value || titleInput.textContent) : "Sem Título";
+                    
+                    // Determina o Tipo
+                    let type = "Caixa Genérica";
+                    if (box.classList.contains('question-mode')) type = "Questão";
+                    else if (box.classList.contains('free-mode')) type = "Contentor";
+                    else if (box.classList.contains('redator-wrapper')) type = "Redator";
+                    else if (box.tagName === 'DETAILS') type = "Toggle";
 
+                    return {
+                        id: targetBoxId,
+                        title: title,
+                        type: type,
+                        noteId: doc.id,
+                        noteName: doc.data().nome
+                    };
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Erro na pesquisa de ID:", e);
+    }
+    return null; // Não encontrado
+}
 
+window.renderExistingAssociationsList = async function() {
+    const container = document.getElementById('assoc-list-container');
+    if (!container) return;
+    
+    const ids = window.tempAssociations || [];
+    container.innerHTML = '';
+
+    if (ids.length === 0) {
+        container.innerHTML = '<small style="color:#888; font-style:italic;">Nenhuma associação.</small>';
+        return;
+    }
+
+    ids.forEach(id => {
+        const div = document.createElement('div');
+        div.style.cssText = "background:var(--bg-color); border:1px solid var(--border-color); padding:8px; border-radius:4px; display:flex; justify-content:space-between; align-items:center;";
+        
+        div.innerHTML = `
+            <div style="display:flex; flex-direction:column; overflow:hidden;">
+                <strong style="font-size:0.9em; color:var(--text-color);">🔗 ${id}</strong>
+                <small style="color:var(--text-muted-color); font-size:0.75em;" class="assoc-details-text">(A carregar...)</small>
+            </div>
+            
+            <div style="display:flex; gap:8px;">
+                <button class="btn-assoc-view" style="color:var(--accent-color); background:none; border:none; cursor:pointer; font-size:1.4em; padding:0 5px;" title="Ver Conteúdo">🛪</button>
+                <button class="btn-assoc-remove" style="color:#e74c3c; background:none; border:none; cursor:pointer; font-size:1.4em; padding:0 5px;" title="Remover">×</button>
+            </div>
+        `;
+        container.appendChild(div);
+
+        // --- LISTENERS DOS BOTÕES ---
+
+        // 1. Remover com Confirmação
+        div.querySelector('.btn-assoc-remove').onclick = async (e) => {
+            e.stopPropagation();
+            const confirmModal = document.getElementById('confirm-modal');
+            if(confirmModal) confirmModal.style.zIndex = '2147483650';
+
+            const confirmed = await window.showConfirmation("Remover Associação?", "Esta caixa deixará de estar ligada à atual.");
+            
+            if(confirmModal) confirmModal.style.zIndex = '';
+
+            if (confirmed) window.removeAssociation(id);
+        };
+
+        // 2. Visualizar Conteúdo (Popup Arrastável)
+        div.querySelector('.btn-assoc-view').onclick = async (e) => {
+            e.stopPropagation();
+            
+            // Verifica se já está aberto
+            const existingPopup = document.getElementById(`store-popup-${id}`);
+            if (existingPopup) {
+                if(typeof highestZIndex === 'undefined') highestZIndex = 30000000;
+                existingPopup.style.zIndex = ++highestZIndex;
+                return;
+            }
+
+            // Busca conteúdo
+            const btn = e.currentTarget;
+            const originalIcon = btn.textContent;
+            btn.textContent = "⌛"; // Feedback visual
+
+            const details = await window.findBoxDetailsById(id);
+            btn.textContent = originalIcon;
+            
+            if (details) {
+                const popup = document.createElement('div');
+                popup.className = 'aq-popup-window';
+                popup.id = `store-popup-${id}`;
+                
+                if(typeof highestZIndex === 'undefined') highestZIndex = 30000000;
+                const zIdx = ++highestZIndex;
+
+                const randX = 50 + Math.floor(Math.random() * 100);
+                const randY = 100 + Math.floor(Math.random() * 100);
+                
+                popup.style.cssText = `
+                    position: fixed; z-index: ${zIdx}; 
+                    top: ${randY}px; left: ${randX}px;
+                    width: 400px; height: 350px;
+                    background-color: rgba(30, 30, 35, 0.98);
+                    border: 1px solid var(--accent-color);
+                    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9);
+                    border-radius: 8px;
+                    display: flex; flex-direction: column; overflow: hidden;
+                    animation: popIn 0.2s ease;
+                `;
+
+                // INJETA O CONTEÚDO EXTRAÍDO
+                popup.innerHTML = `
+                    <div class="aq-popup-header" style="padding:10px; background:rgba(255,255,255,0.05); border-bottom:1px solid rgba(255,255,255,0.1); display:flex; justify-content:space-between; cursor:move; align-items:center;">
+                        <span class="aq-popup-title" style="font-weight:bold; color:var(--accent-color); font-size:0.9em;">📝 ${details.title}</span>
+                        <button onclick="this.closest('.aq-popup-window').remove()" style="background:none; border:none; color:#e74c3c; cursor:pointer; font-size:1.2em;">✕</button>
+                    </div>
+                    
+                    <div style="background:var(--bg-color); padding:5px 10px; font-size:0.75em; color:var(--text-muted-color); border-bottom:1px solid rgba(255,255,255,0.05);">
+                        Local: ${details.noteName} (${details.type})
+                    </div>
+
+                    <div class="aq-popup-content" style="padding:15px; color:#e0e0e0; overflow-y:auto; flex-grow:1; line-height:1.5; white-space:pre-wrap;">
+                        ${details.content}
+                    </div>
+                `;
+
+                document.body.appendChild(popup);
+                if (typeof makeElementDraggable === 'function') makeElementDraggable(popup);
+                popup.onmousedown = () => { popup.style.zIndex = ++highestZIndex; };
+            } else {
+                alert("Erro: Conteúdo não encontrado na base de dados.");
+            }
+        };
+
+        // Carrega o título na lista em background
+        window.findBoxDetailsById(id).then(details => {
+            if (details) {
+                const infoDiv = div.querySelector('div');
+                const titleSpan = infoDiv.querySelector('strong');
+                const smallSpan = infoDiv.querySelector('.assoc-details-text');
+                
+                titleSpan.textContent = details.title;
+                titleSpan.style.color = "var(--accent-color)";
+                smallSpan.textContent = `${details.type} • ${details.noteName}`;
+            }
+        });
+    });
+};
+
+window.removeAssociation = function(idToRemove) {
+    window.tempAssociations = window.tempAssociations.filter(id => id !== idToRemove);
+    renderExistingAssociationsList();
+};
+
+// --- FUNÇÃO AUXILIAR: ADICIONAR CAMPO DE URL ---
+// (Necessária para a aba "Referências" funcionar)
+window.addUrlField = function(urlValue = '') {
+    const container = document.getElementById('link-urls-container');
+    if (!container) return;
+
+    const div = document.createElement('div');
+    div.style.cssText = "display:flex; gap:5px; align-items:center; margin-bottom:8px;";
+    
+    // O Input
+    const input = document.createElement('input');
+    input.type = "text";
+    input.value = urlValue;
+    input.placeholder = "https://...";
+    input.className = "source-url-input"; // Classe usada na gravação
+    input.style.cssText = "flex:1; padding:10px; background:var(--bg-color); border:1px solid var(--border-color); border-radius:4px; color:var(--text-color);";
+    
+    // O Botão de Remover
+    const removeBtn = document.createElement('button');
+    removeBtn.innerHTML = "×";
+    removeBtn.tabIndex = -1; // Para não ser focado com Tab
+    removeBtn.style.cssText = "color:#e74c3c; border:1px solid #e74c3c; background:rgba(231, 76, 60, 0.1); cursor:pointer; padding:0 12px; height:38px; border-radius:4px; font-weight:bold;";
+    
+    removeBtn.onclick = function() {
+        div.remove();
+    };
+
+    div.appendChild(input);
+    div.appendChild(removeBtn);
+    container.appendChild(div);
+    
+    // Foca no input se for novo (vazio)
+    if (!urlValue) {
+        setTimeout(() => input.focus(), 50);
+    }
+};
+
+// ============================================================
+// FUNÇÃO EM FALTA: COPIAR PARA A ÁREA DE TRANSFERÊNCIA
+// ============================================================
+window.copyToClipboard = function(text) {
+    // Usa a API moderna de Clipboard
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => {
+            console.log("📋 ID copiado:", text);
+            
+            // Feedback Visual Simples (sem bloquear o ecrã)
+            const btn = document.activeElement; // O botão que foi clicado
+            if (btn && btn.tagName === 'BUTTON') {
+                const originalText = btn.textContent;
+                btn.textContent = "✅";
+                setTimeout(() => btn.textContent = originalText, 1500);
+            }
+            
+        }).catch(err => {
+            console.error('Erro ao copiar:', err);
+            alert("Não foi possível copiar automaticamente.");
+        });
+    } else {
+        // Fallback para navegadores antigos ou contextos não seguros
+        // (Cria uma área de texto temporária, seleciona e copia)
+        let textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        try {
+            document.execCommand('copy');
+            const btn = document.activeElement;
+            if (btn) {
+                const originalText = btn.textContent;
+                btn.textContent = "✅";
+                setTimeout(() => btn.textContent = originalText, 1500);
+            }
+        } catch (err) {
+            console.error('Erro ao copiar (fallback):', err);
+        }
+        
+        document.body.removeChild(textArea);
+    }
+};
+
+// ============================================================
+// FUNÇÃO EM FALTA: PROCURAR DETALHES DA CAIXA POR ID
+// ============================================================
+window.findBoxDetailsById = async function(targetBoxId) {
+    console.log(`🔍 A procurar detalhes e conteúdo para o ID: ${targetBoxId}`);
+
+    if (!auth.currentUser) return null;
+
+    try {
+        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const q = query(
+            collection(db, 'pastas'),
+            where('userId', '==', auth.currentUser.uid),
+            where('estado', '==', 'ativa'),
+            where('tipo', '==', 'nota')
+        );
+
+        const snapshot = await getDocs(q);
+        
+        for (const doc of snapshot.docs) {
+            const content = doc.data().conteudo || "";
+            
+            // Verifica se o ID existe na string antes de fazer parse (Performance)
+            if (content.includes(targetBoxId)) {
+                
+                const parser = new DOMParser();
+                const docDOM = parser.parseFromString(content, 'text/html');
+                const box = docDOM.getElementById(targetBoxId);
+                
+                if (box) {
+                    // 1. TIPO E COR
+                    let type = "Caixa Genérica";
+                    let typeCode = "default";
+
+                    if (box.classList.contains('question-mode')) { type = "Questão"; typeCode = "question"; } 
+                    else if (box.classList.contains('mini-note-wrapper')) { 
+                        if (box.classList.contains('free-mode')) { type = "Contentor"; typeCode = "free"; }
+                        else { type = "SubNota"; typeCode = "subnote"; }
+                    } 
+                    else if (box.classList.contains('redator-wrapper')) { type = "Redator"; typeCode = "redator"; } 
+                    else if (box.classList.contains('journal-sign-wrapper')) { type = "Raciocínio"; typeCode = "free"; }
+                    else if (box.tagName === 'DETAILS') { type = "Toggle"; typeCode = "subnote"; }
+
+                    // 2. EXTRAIR TÍTULO
+                    const titleInput = box.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
+                    let title = titleInput ? (titleInput.value || titleInput.textContent || "").trim() : "";
+
+                    // 3. EXTRAIR CORPO DE TEXTO (HTML)
+                    let bodyHTML = "";
+                    const contentDiv = box.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content, .cube-content');
+                    
+                    if (contentDiv) {
+                        bodyHTML = contentDiv.innerHTML;
+                    } else {
+                        // Fallback para caixas sem div de conteúdo explícita
+                        bodyHTML = "<em style='color:#888'>Conteúdo não textual ou vazio.</em>";
+                    }
+
+                    // Título Fallback (13 palavras)
+                    if (!title && contentDiv) {
+                        const text = contentDiv.innerText.replace(/\s+/g, ' ').trim();
+                        const words = text.split(' ');
+                        if (words.length > 0) {
+                            title = words.slice(0, 13).join(' ') + (words.length > 13 ? "..." : "");
+                        }
+                    }
+                    if (!title) title = "Sem Título";
+
+                    return {
+                        id: targetBoxId,
+                        title: title,
+                        content: bodyHTML, // <--- O CONTEÚDO HTML VAI AQUI
+                        type: type,
+                        typeCode: typeCode,
+                        noteId: doc.id,
+                        noteName: doc.data().nome
+                    };
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Erro na pesquisa de ID:", e);
+    }
+    return null; 
+};
+
+// ============================================================
+// FUNÇÃO DE LIMPEZA DE POPUPS (GLOBAL)
+// ============================================================
+window.closeAllFloatingPopups = function() {
+    console.log("🧹 [LIMPEZA] Fechando todas as janelas flutuantes...");
+
+    // 1. Fecha Janelas Flutuantes (Associações e Redatores)
+    document.querySelectorAll('.aq-popup-window, .redator-popup-window').forEach(popup => {
+        popup.remove();
+    });
+
+    // 2. Esconde Modais de Sistema
+    const systemModals = [
+        'link-modal', 
+        'share-settings-popup', 
+        'selection-popup', 
+        'insertion-popup', 
+        'idea-actions-popup',
+        'table-tools-popup'
+    ];
+    
+    systemModals.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+
+    // 3. Reseta listas de controlo
+    if (typeof window.activeRedatorPopups !== 'undefined') window.activeRedatorPopups = [];
+    if (typeof window.activeStorePopups !== 'undefined') window.activeStorePopups = [];
+    
+    // 4. Desbloqueia blocos que estavam abertos em janelas
+    document.querySelectorAll('.locked-popup').forEach(el => {
+        el.classList.remove('locked-popup');
+        el.setAttribute('contenteditable', 'true');
+    });
+};
+
+// ============================================================
+// FUNÇÃO: ATUALIZAÇÃO BIDIRECIONAL DE ASSOCIAÇÕES
+// ============================================================
+window.updateRemoteAssociations = async function(currentBoxId, associationList) {
+    if (!associationList || associationList.length === 0) return;
+
+    console.log(`🔗 [ASSOC] A criar ligações recíprocas para ${currentBoxId}...`);
+
+    try {
+        const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // Itera sobre cada ID que foi associado (ex: Caixa B, Caixa C...)
+        for (const remoteId of associationList) {
+            
+            // 1. Descobre onde essa caixa vive (Qual nota?)
+            const remoteBoxDetails = await window.findBoxDetailsById(remoteId);
+            
+            if (remoteBoxDetails && remoteBoxDetails.noteId) {
+                const remoteNoteRef = doc(db, 'pastas', remoteBoxDetails.noteId);
+                const remoteSnap = await getDoc(remoteNoteRef);
+
+                if (remoteSnap.exists()) {
+                    let content = remoteSnap.data().conteudo || "";
+                    
+                    // 2. Faz o parse do HTML da nota remota
+                    const parser = new DOMParser();
+                    const docDOM = parser.parseFromString(content, 'text/html');
+                    const remoteBoxEl = docDOM.getElementById(remoteId);
+
+                    if (remoteBoxEl) {
+                        // 3. Lê os dados atuais da caixa remota
+                        let remoteData = {};
+                        try {
+                            remoteData = JSON.parse(remoteBoxEl.getAttribute('data-box-links') || '{}');
+                        } catch(e) {}
+
+                        // Garante que existe o array de associações
+                        if (!remoteData.associations) remoteData.associations = [];
+
+                        // 4. Adiciona o NOSSO ID lá (se ainda não tiver)
+                        if (!remoteData.associations.includes(currentBoxId)) {
+                            remoteData.associations.push(currentBoxId);
+                            
+                            // Atualiza o atributo HTML
+                            remoteBoxEl.setAttribute('data-box-links', JSON.stringify(remoteData));
+                            
+                            // Atualiza a nota remota no Firebase
+                            // Nota: Usamos o outerHTML do body para reconstruir o conteúdo
+                            // Mas como docDOM é um documento completo, extraímos o body.innerHTML
+                            
+                            // Correção: docDOM.body.innerHTML pode adicionar tags extra. 
+                            // O ideal é substituir apenas o bloco específico na string original se possível,
+                            // mas para simplificar e garantir integridade, substituímos o conteúdo todo.
+                            const newContent = docDOM.body.innerHTML;
+                            
+                            await updateDoc(remoteNoteRef, { conteudo: newContent });
+                            console.log(`✅ [ASSOC] Ligação criada em ${remoteId} (Nota: ${remoteBoxDetails.noteName})`);
+                        }
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error("❌ Erro ao criar associações remotas:", e);
+    }
+};
+
+// ============================================================
+// FUNÇÃO: LIMPEZA DE ASSOCIAÇÕES ORFÃS (AO APAGAR)
+// ============================================================
+window.cleanDeadAssociations = async function(deadBoxId, associationList) {
+    if (!associationList || associationList.length === 0) return;
+
+    console.log(`🧹 [LIMPEZA] Removendo referências à caixa morta: ${deadBoxId}`);
+
+    try {
+        const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+
+        for (const remoteId of associationList) {
+            const remoteBoxDetails = await window.findBoxDetailsById(remoteId);
+            
+            if (remoteBoxDetails && remoteBoxDetails.noteId) {
+                const remoteNoteRef = doc(db, 'pastas', remoteBoxDetails.noteId);
+                const remoteSnap = await getDoc(remoteNoteRef);
+
+                if (remoteSnap.exists()) {
+                    const content = remoteSnap.data().conteudo || "";
+                    const parser = new DOMParser();
+                    const docDOM = parser.parseFromString(content, 'text/html');
+                    const remoteBoxEl = docDOM.getElementById(remoteId);
+
+                    if (remoteBoxEl) {
+                        let remoteData = {};
+                        try {
+                            remoteData = JSON.parse(remoteBoxEl.getAttribute('data-box-links') || '{}');
+                        } catch(e) {}
+
+                        if (remoteData.associations && remoteData.associations.includes(deadBoxId)) {
+                            // Remove o ID morto
+                            remoteData.associations = remoteData.associations.filter(id => id !== deadBoxId);
+                            
+                            remoteBoxEl.setAttribute('data-box-links', JSON.stringify(remoteData));
+                            
+                            await updateDoc(remoteNoteRef, { conteudo: docDOM.body.innerHTML });
+                            console.log(`✅ [LIMPEZA] Removido de ${remoteId}`);
+                        }
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error("❌ Erro na limpeza de associações:", e);
+    }
+};
 
     </script>
 </body>
