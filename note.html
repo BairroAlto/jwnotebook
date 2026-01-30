@@ -18987,9 +18987,7 @@ async function renderTopicResultsList(id, type) {
 
 
 async function openEntityModal(type, name) {
-    // 1. Tenta guardar a seleção se ela existir (para quando estás dentro de uma nota)
-    const savedRange = (currentSelectionRange) ? currentSelectionRange.cloneRange() : null;
-
+    // 1. Preparação dos Elementos do Modal
     const modal = document.getElementById('entity-modal');
     const title = document.getElementById('entity-modal-title');
     const nameInput = document.getElementById('entity-name-input');
@@ -19000,84 +18998,103 @@ async function openEntityModal(type, name) {
     const singularNames = {
         personagem: "Personagem",
         local: "Local",
-        data: "Data"
+        data: "Data",
+        cosmos: "Tema",
+        subcosmos: "Subtema"
     };
     title.textContent = `Criar ${singularNames[type] || type}`;
     
+    // Limpa e Preenche campos
     nameInput.value = name;
     descriptionInput.value = '';
     errorMsg.style.display = 'none';
-    modal.style.display = 'flex';
+    
+    // Move o modal para o topo para garantir que é visível
+    document.body.appendChild(modal);
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.zIndex = "10000000"; 
     
     setTimeout(() => nameInput.focus(), 50);
 
     const saveBtn = document.getElementById('entity-save-btn');
+    // Clona o botão para limpar eventos antigos
     const newSaveBtn = saveBtn.cloneNode(true);
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
 
+    // --- AÇÃO DE GRAVAR ---
     newSaveBtn.onclick = async () => {
         const entityName = nameInput.value.trim();
         const entityDescription = descriptionInput.value.trim();
-        if (!entityName) return;
+        
+        if (!entityName) {
+            alert("O nome é obrigatório.");
+            return;
+        }
+        
+        // Desativa botão para evitar duplo clique
+        newSaveBtn.disabled = true;
+        newSaveBtn.textContent = "A criar...";
 
         const collectionName = ENTITY_CONFIG[type]?.collection;
-        if (!collectionName) return;
+        if (!collectionName) {
+            newSaveBtn.disabled = false;
+            return;
+        }
 
         try {
+            // Importações necessárias
+            const { collection, query, where, getDocs, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            
             const collectionRef = collection(db, collectionName);
             const q = query(collectionRef, where("nome", "==", entityName), where("userId", "==", auth.currentUser.uid));
             const querySnapshot = await getDocs(q);
             
-            let entityId = "";
-
             if (querySnapshot.empty) {
-                // CRIAR NOVO REGISTO
-                const docRef = await addDoc(collectionRef, {
+                // CRIAR NOVO REGISTO NA BASE DE DADOS
+                await addDoc(collectionRef, {
                     nome: entityName,
                     descricao: entityDescription,
                     userId: auth.currentUser.uid,
                     createdAt: serverTimestamp(),
-                    referencias: (selectedNoteId && savedRange) ? { [selectedNoteId]: true } : {}
+                    referencias: {} // Cria vazio, sem ligar à nota atual
                 });
-                entityId = docRef.id;
-            } else {
-                // SE JÁ EXISTE, APENAS ATUALIZA A REFERÊNCIA SE ESTIVERMOS NUMA NOTA
-                entityId = querySnapshot.docs[0].id;
-                if (selectedNoteId && savedRange) {
-                    const entityRef = doc(db, collectionName, entityId);
-                    await updateDoc(entityRef, { [`referencias.${selectedNoteId}`]: true });
-                }
-            }
-
-            // 2. LÓGICA VISUAL (Só executa se houver texto selecionado no editor)
-            if (savedRange && selectedNoteId) {
-                const selection = window.getSelection();
-                selection.removeAllRanges();
-                selection.addRange(savedRange);
-
-                const span = document.createElement('span');
-                span.className = 'entity-link';
-                span.dataset.entityType = type;
-                span.dataset.entityName = entityName;
-                span.textContent = entityName;
                 
-                savedRange.deleteContents();
-                savedRange.insertNode(span);
-                saveNote();
+                console.log(`✅ ${type} criado: ${entityName}`);
+            } else {
+                alert("Este item já existe na base de dados.");
             }
 
+            // --- CORREÇÃO: REMOVIDA A PARTE QUE INSERIA TEXTO NO EDITOR ---
+            // O código que escrevia na nota foi apagado aqui.
+            // Agora ele apenas cria na base de dados.
+
+            // Fechar Modal
             modal.style.display = 'none';
             
-            // 3. ATUALIZAÇÃO DA LISTA (Se estiveres na aba Lists, recarrega os itens para o novo aparecer)
+            // Atualizar a lista lateral se estivermos na aba "Lists"
             if (currentTab === 'lists') {
-                renderListCategoryItems(type);
+                // Verifica se a função existe antes de chamar
+                if (typeof renderListCategoryItems === 'function') {
+                    // Se estivermos dentro da categoria certa, atualiza a lista
+                    const lastNav = navigationStack.length > 0 ? navigationStack[navigationStack.length - 1] : null;
+                    if (lastNav && lastNav.id === type) {
+                        renderListCategoryItems(type);
+                    }
+                }
             }
             
-            fetchAllEntities(); 
+            // Atualizar cache global de entidades
+            if (typeof fetchAllEntities === 'function') {
+                fetchAllEntities(); 
+            }
 
         } catch (e) {
             console.error("Erro ao guardar entidade:", e);
             alert("Erro ao guardar.");
+        } finally {
+            // Restaura o botão
+            newSaveBtn.disabled = false;
+            newSaveBtn.textContent = "Gravar";
         }
     };
 }
@@ -20090,13 +20107,22 @@ window.openNoteFromBoard = function(noteId, encodedSearchTerm = null) {
 
 // --- LÓGICA DO POPUP DE SELEÇÃO DE REFERÊNCIAS ---
 async function openReferenceSelectionPopup() {
+    // --- LOG INICIAL ---
+    console.group("🔍 [DEBUG REF] Iniciando Pesquisa de Referências");
+    
     const modal = document.getElementById('puzzle-ref-selection-modal');
     const list = document.getElementById('puzzle-ref-selection-list');
     
     if (!activeReferenceEntity || !activeReferenceEntity.id) {
+        console.error("❌ Nenhuma entidade ativa encontrada.");
+        console.groupEnd();
         alert("Selecione um tópico, tag ou entidade primeiro.");
         return;
     }
+
+    console.log("🎯 Entidade Alvo:", activeReferenceEntity);
+    console.log("🆔 ID a procurar:", activeReferenceEntity.id);
+    console.log("🔤 Nome a procurar:", activeReferenceEntity.name.toLowerCase().trim());
 
     // A. FORÇA HIERARQUIA
     document.body.appendChild(modal);
@@ -20110,7 +20136,7 @@ async function openReferenceSelectionPopup() {
         visibility: visible !important; opacity: 1 !important;
     `;
 
-    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar clones e originais...</span></div>';
+    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar dados... (Veja a Consola F12)</span></div>';
 
     allFoundReferenceBoxes = [];
     currentReferencePageIndex = 0;
@@ -20121,37 +20147,29 @@ async function openReferenceSelectionPopup() {
     const hexToFind = isHighlightSearch ? id.toUpperCase() : null;
 
     try {
-        // 1. CARREGAR O ESTADO ATUAL DO QUADRO (Para saber o que já lá está)
-        // Precisamos saber se o ID Original já existe neste quadro específico
+        // 1. CARREGAR QUADRO ATUAL
         const activeTabBtn = document.querySelector('#ref-tabs button.active');
         const activeTab = activeTabBtn ? activeTabBtn.dataset.refTab : 'puzzle';
         
-        let currentBoardItems = []; // Lista de IDs (snippets) que já estão no quadro
+        let currentBoardItems = []; 
+        const col = getCollectionFromType(type);
+        const { doc, getDoc, collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const docRef = doc(db, col, id);
+        const docSnap = await getDoc(docRef);
 
         if (activeTab === 'dossie' && window.activeMicaId) {
-            // Se for Mica, busca no HTML da Mica atual (é mais rápido que ir à BD)
-            // (Ou melhor, busca no objeto global se tivermos, mas vamos simplificar lendo do DOM se estiver renderizado)
-            // Como o DOM pode não estar renderizado, vamos buscar ao Firebase para segurança
-            const col = getCollectionFromType(type);
-            const docRef = doc(db, col, id);
-            const docSnap = await getDoc(docRef);
             if(docSnap.exists()) {
                 const dossie = docSnap.data().dossie || [];
                 const mica = dossie.find(m => m.id === window.activeMicaId);
                 if(mica && mica.items) currentBoardItems = mica.items;
             }
         } else {
-            // Se for Puzzle, busca no documento principal
-            const col = getCollectionFromType(type);
-            const docRef = doc(db, col, id);
-            const docSnap = await getDoc(docRef);
             if(docSnap.exists()) {
                 currentBoardItems = docSnap.data().puzzleBoard || [];
             }
         }
 
-        // Criar um Set com todos os IDs que já estão no quadro
-        // O ID está escondido dentro do snippet HTML: <div id="mn_12345"...
         const existingIDs = new Set();
         currentBoardItems.forEach(item => {
             if(item.snippet) {
@@ -20159,16 +20177,20 @@ async function openReferenceSelectionPopup() {
                 if(match) existingIDs.add(match[1]);
             }
         });
+        
+        console.log("🧩 Itens já existentes no quadro:", existingIDs);
 
-        // 2. PESQUISA GLOBAL (Igual à anterior)
+        // 2. PESQUISA GLOBAL
         let q = query(collection(db, 'pastas'), 
             where('estado', '==', 'ativa'), 
             where('userId', '==', auth.currentUser.uid),
-            where('tipo', 'in', ['nota', 'arquivo', 'partilhado'])
+            where('tipo', 'in', ['nota', 'arquivo', 'partilhado', 'jornal', 'aquario'])
         );
         
         const snapshot = await getDocs(q);
         const parser = new DOMParser();
+
+        console.log(`📚 Total de documentos a analisar: ${snapshot.size}`);
 
         snapshot.forEach(docSnap => {
             const data = docSnap.data();
@@ -20178,7 +20200,7 @@ async function openReferenceSelectionPopup() {
             if (data.passe && data.passe.trim() !== "" && !appSettings.searchAnchorsInProtected) return;
 
             let contentsToScan = [];
-            if (data.tipo === 'nota') {
+            if (data.tipo === 'nota' || data.tipo === 'jornal' || data.tipo === 'aquario') {
                 contentsToScan.push({ html: data.conteudo || "", originName: noteTitle });
             } else {
                 const posts = data.posts || [];
@@ -20189,71 +20211,101 @@ async function openReferenceSelectionPopup() {
 
             contentsToScan.forEach(item => {
                 const docHTML = parser.parseFromString(item.html, 'text/html');
-                const allWrappers = docHTML.querySelectorAll('.mini-note-wrapper, details.toggle-section');
+                const allWrappers = docHTML.querySelectorAll('.mini-note-wrapper, .redator-wrapper, details.toggle-section, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
                 
                 allWrappers.forEach((w) => {
-                    // ... (Lógica de match mantém-se igual) ...
+                    let match = false;
+                    let matchReason = "";
+
+                    // A. Match por Cor
+                    if (isHighlightSearch) {
+                        const elColor = w.getAttribute('data-highlight');
+                        if (elColor && elColor.toUpperCase() === hexToFind) {
+                            match = true;
+                            matchReason = "Cor";
+                        }
+                    } 
+                    
+                    // B. Match por Texto
+                    // Extração de texto para comparação
                     let boxTitle = "";
                     let boxContentOnly = "";
-
                     if (w.tagName === 'DETAILS') {
                         const h2 = w.querySelector('h2');
-                        boxTitle = h2 ? h2.textContent : "Secção";
+                        boxTitle = h2 ? h2.textContent : "";
                         const contentDiv = w.querySelector('.toggle-content');
                         boxContentOnly = contentDiv ? contentDiv.textContent : "";
                     } else {
-                        const titleInput = w.querySelector('.mini-note-title-input');
+                        const titleInput = w.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
                         boxTitle = titleInput ? (titleInput.value || titleInput.getAttribute('value') || "") : "";
-                        const contentDiv = w.querySelector('.mini-note-content');
+                        const contentDiv = w.querySelector('.mini-note-content, .redator-content, .sign-content, .cube-content, .card-desc-content');
                         boxContentOnly = contentDiv ? contentDiv.textContent : "";
                     }
-
                     const boxFullText = (boxTitle + " " + boxContentOnly).toLowerCase();
-                    let match = false;
 
-                    if (isHighlightSearch) {
-                        const elColor = w.getAttribute('data-highlight');
-                        if (elColor && elColor.toUpperCase() === hexToFind) match = true;
-                    } 
-                    if (!match && boxFullText.includes(searchTerm)) match = true;
+                    if (!match && boxFullText.includes(searchTerm)) {
+                        match = true;
+                        matchReason = "Texto";
+                    }
 
+                    // >>> C. LOG DE MATCH POR CATEGORIA <<<
                     const boxLinksRaw = w.getAttribute('data-box-links');
-                    if (!match && boxLinksRaw) {
+                    
+                    if (!match && boxLinksRaw && boxLinksRaw !== '{}') {
                         try {
                             const boxData = JSON.parse(boxLinksRaw);
+                            
                             if (boxData.categories && Array.isArray(boxData.categories)) {
-                                match = boxData.categories.some(cat => 
-                                    (cat.id && cat.id === id) || 
-                                    (cat.name && cat.name.toLowerCase().trim() === searchTerm)
-                                );
+                                
+                                // LOG EXTRA SE TIVER CATEGORIAS
+                                if (boxData.categories.length > 0) {
+                                    
+                                    const catMatch = boxData.categories.some(cat => {
+                                        // Compara ID (String vs String)
+                                        const idMatch = (cat.id && String(cat.id) === String(id));
+                                        
+                                        // Compara Nome (Trim + Lowercase)
+                                        const nameMatch = (cat.name && cat.name.toLowerCase().trim() === searchTerm);
+                                        
+                                        console.log(`   👉 Teste: [${cat.name}] -> ID Match: ${idMatch} | Nome Match: ${nameMatch}`);
+                                        return idMatch || nameMatch;
+                                    });
+                                    
+                                    if (catMatch) {
+                                        match = true;
+                                        matchReason = "Categoria (JSON)";
+                                        console.log("   ✅ SUCESSO: Match Confirmado!");
+                                    }
+                                    console.groupEnd();
+                                }
                             }
-                        } catch (e) { }
+                        } catch (e) { 
+                            console.warn("Erro ao ler JSON da caixa:", e);
+                        }
                     }
 
                     if (match) {
-                        // --- NOVA LÓGICA DE CLONES ---
-                        // 1. Ler ID atual e ID de Origem
                         const currentId = w.id;
                         const originId = w.getAttribute('data-origin-id');
-
-                        // 2. Verificar Estados
-                        const isClone = !!originId; // É um clone se tiver pai
-                        
-                        // 3. Verificar se o ORIGINAL já está no quadro
-                        // (Se eu sou clone, e o meu pai já lá está)
+                        const isClone = !!originId; 
                         const originalIsPresent = isClone && existingIDs.has(originId);
-                        
-                        // 4. Verificar se EU já estou no quadro
                         const selfIsPresent = existingIDs.has(currentId);
 
+                        // Tipos
                         let boxType = "Bloco"; let boxIcon = "📦";
                         if (w.tagName === 'DETAILS') { boxType = "Secção"; boxIcon = "☂️"; }
                         else if (w.classList.contains('question-mode')) { boxType = "Questão"; boxIcon = "📗"; }
                         else if (w.classList.contains('free-mode')) { boxType = "Contentor"; boxIcon = "📙"; }
+                        else if (w.classList.contains('redator-wrapper')) { boxType = "Redator"; boxIcon = "📓"; }
+                        else if (w.classList.contains('journal-sign-wrapper')) { boxType = "Raciocínio"; boxIcon = "🪧"; }
+                        else if (w.classList.contains('journal-id-card')) { boxType = "Cartão"; boxIcon = "🪪"; }
                         else { boxType = "SubNota"; boxIcon = "📘"; }
 
                         let displayTitle = boxTitle.trim();
                         if (!displayTitle) displayTitle = boxContentOnly.trim().substring(0, 40) + "...";
+                        
+                        // LOG DO RESULTADO
+                        console.log(`✅ Adicionado aos resultados: "${displayTitle}" (Motivo: ${matchReason})`);
 
                         allFoundReferenceBoxes.push({
                             id: docSnap.id, 
@@ -20263,24 +20315,27 @@ async function openReferenceSelectionPopup() {
                             typeName: boxType, 
                             typeIcon: boxIcon, 
                             updatedTime: updatedTime,
-                            
-                            // NOVOS DADOS PARA O RENDERIZADOR
                             isClone: isClone,
                             originalIsPresent: originalIsPresent,
                             selfIsPresent: selfIsPresent,
-                            originId: originId // Para debug se necessário
+                            originId: originId 
                         });
                     }
                 });
             });
         });
 
+        // Ordena e mostra
+        console.log(`🏁 Fim da pesquisa. Total: ${allFoundReferenceBoxes.length} caixas.`);
+        console.groupEnd();
+        
         allFoundReferenceBoxes.sort((a, b) => b.updatedTime - a.updatedTime);
         list.innerHTML = '';
         renderReferenceBoxesPage(); 
 
     } catch (e) {
-        console.error(e);
+        console.error("❌ Erro na pesquisa de referências:", e);
+        console.groupEnd();
         list.innerHTML = '<li style="color:red; padding:10px;">Erro ao carregar resultados.</li>';
     }
 }
@@ -32669,12 +32724,9 @@ window.openBoxLinkManager = async function(wrapper) {
         <button onclick="window.copyToClipboard('${currentBoxId}')" title="Copiar ID" style="background:none; border:none; cursor:pointer; color:var(--accent-color); font-size:1.3em; padding:0; line-height:1; display:flex; align-items:center;">⇝</button>
     `;
 
-    // ============================================================
-    // 4. RESTAURO DA ABA "ASSOCIAR" (AQUI ESTAVA A FALTA)
-    // ============================================================
+    // 4. GESTÃO DAS ABAS
     const tabHeader = document.getElementById('box-link-tabs');
-    
-    // Verifica se a aba já existe, se não, cria-a
+    // Verifica se a aba associar existe, senão cria
     if (!tabHeader.querySelector('[data-box-tab="associar"]')) {
         const assocTabBtn = document.createElement('button');
         assocTabBtn.dataset.boxTab = 'associar';
@@ -32686,32 +32738,22 @@ window.openBoxLinkManager = async function(wrapper) {
         assocContent.className = 'box-tab-content';
         assocContent.style.display = 'none';
         
-        // HTML da aba Associar
         assocContent.innerHTML = `
             <div style="border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 15px; margin-top: 15px;">
                 <label style="font-size:0.8em; color:var(--text-muted-color);">Associar com outra Caixa (Colar ID)</label>
-                
                 <div style="display: flex; gap: 0; margin-top: 5px; align-items: stretch;">
                     <input type="text" id="assoc-search-id" class="redator-input" placeholder="mn_12345..." 
                            style="flex:1; border:1px solid var(--border-color); border-right: none; border-radius: 4px 0 0 4px; padding:0 12px; height: 40px; box-sizing: border-box; background-color: var(--bg-color);">
-                    
                     <button class="modal-btn primary" id="btn-verify-assoc" 
-                            style="padding: 0 20px; height: 40px; display:flex; align-items:center; justify-content:center; box-sizing: border-box; border-radius: 0 4px 4px 0;">
-                        🔍
-                    </button>
+                            style="padding: 0 20px; height: 40px; display:flex; align-items:center; justify-content:center; box-sizing: border-box; border-radius: 0 4px 4px 0;">🔍</button>
                 </div>
-
                 <div id="assoc-search-result" style="margin-top: 10px; display:none;"></div>
             </div>
-
             <label style="font-size:0.8em; color:var(--text-muted-color); font-weight:bold; text-transform:uppercase;">Caixas Associadas:</label>
             <div id="assoc-list-container" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-height: 200px; overflow-y: auto;"></div>
         `;
-        
-        // Insere o conteúdo no DOM
         document.getElementById('box-content-categories').after(assocContent);
     }
-    // ============================================================
 
     // 5. CARREGAR DADOS EXISTENTES
     let currentData = {};
@@ -32725,10 +32767,11 @@ window.openBoxLinkManager = async function(wrapper) {
     // Reset Campos Básicos
     document.getElementById('link-title-input').value = currentData.title || "";
     
-    // --- CONFIGURAÇÃO DO BOTÃO ADICIONAR URL ---
+    // --- URLs ---
     const urlsContainer = document.getElementById('link-urls-container');
     if(urlsContainer) urlsContainer.innerHTML = '';
     
+    // Recria botão adicionar URL para limpar eventos
     const addUrlBtn = document.getElementById('add-url-btn');
     if (addUrlBtn) {
         const newAddUrlBtn = addUrlBtn.cloneNode(true);
@@ -32736,12 +32779,11 @@ window.openBoxLinkManager = async function(wrapper) {
         newAddUrlBtn.onclick = (e) => { e.preventDefault(); window.addUrlField(); };
     }
 
-    // Preenche URLs existentes
     const urls = currentData.urls ? Object.values(currentData.urls) : [];
     if (urls.length > 0) urls.forEach(url => window.addUrlField(url));
     else window.addUrlField(); 
 
-    // --- CONFIGURAÇÃO DO BOTÃO ADICIONAR CODEX ---
+    // --- CODEX ---
     const codexContainer = document.getElementById('codex-rows-container');
     if(codexContainer) codexContainer.innerHTML = '';
     
@@ -32752,26 +32794,23 @@ window.openBoxLinkManager = async function(wrapper) {
         newAddCodexBtn.onclick = (e) => { e.preventDefault(); window.createCodexRow(); };
     }
 
-    // Preenche Linhas Codex existentes
     if (currentData.codex && currentData.codex.length > 0) {
         currentData.codex.forEach(item => window.createCodexRow(item));
     } else { 
         window.createCodexRow(); 
     }
     
-    // Carrega Categorias
+    // --- CATEGORIAS ---
     window.selectedCategoriesForBox = currentData.categories || [];
     if (typeof renderAttachedCategories === 'function') renderAttachedCategories();
 
-    // 6. GESTÃO DE ABAS (AGORA INCLUI 'ASSOCIAR')
+    // 6. NAVEGAÇÃO DE ABAS
     const tabButtons = tabHeader.querySelectorAll('button');
-    
     const activateTab = (targetTab) => {
         tabButtons.forEach(b => {
             if (b.dataset.boxTab === targetTab) b.classList.add('active');
             else b.classList.remove('active');
         });
-
         document.querySelectorAll('.box-tab-content').forEach(div => div.style.display = 'none');
         
         const contentMap = {
@@ -32780,10 +32819,8 @@ window.openBoxLinkManager = async function(wrapper) {
             'codex': 'box-content-codex',
             'categories': 'box-content-categories'
         };
-        
         const targetId = contentMap[targetTab];
         if (targetId) document.getElementById(targetId).style.display = 'block';
-        
         if (idBadge) idBadge.style.display = (targetTab === 'associar') ? 'flex' : 'none';
         window.lastBoxLinkManagerTab = targetTab;
     };
@@ -32794,33 +32831,27 @@ window.openBoxLinkManager = async function(wrapper) {
             activateTab(btn.dataset.boxTab);
         };
     });
-
     activateTab(window.lastBoxLinkManagerTab);
 
-    // 7. LISTENER DA LUPA (PESQUISA DE ASSOCIAÇÃO)
+    // 7. LISTENER DA LUPA (ASSOCIAÇÃO)
     const verifyBtn = document.getElementById('btn-verify-assoc');
     if (verifyBtn) {
         const newVerifyBtn = verifyBtn.cloneNode(true);
         verifyBtn.parentNode.replaceChild(newVerifyBtn, verifyBtn);
-
         newVerifyBtn.onclick = async () => {
             const targetId = document.getElementById('assoc-search-id').value.trim();
-            
             if (!targetId) return;
             if (targetId === currentBoxId) return alert("Não pode associar uma caixa a ela própria.");
             if (window.tempAssociations.includes(targetId)) return alert("Esta caixa já está associada.");
 
             newVerifyBtn.disabled = true;
             newVerifyBtn.textContent = "⌛";
-
             const resultDiv = document.getElementById('assoc-search-result');
             resultDiv.style.display = 'block';
             resultDiv.innerHTML = '<span style="color:#888;">A procurar...</span>';
 
             const foundBox = await window.findBoxDetailsById(targetId);
-
             if (foundBox) {
-                // ... (Lógica de renderização do resultado igual)
                 resultDiv.innerHTML = `
                     <div style="background:rgba(255,255,255,0.05); border:1px solid #ccc; padding:8px; border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
                         <div style="overflow:hidden;">
@@ -32829,7 +32860,6 @@ window.openBoxLinkManager = async function(wrapper) {
                         </div>
                         <button class="modal-btn primary" id="confirm-add-assoc" style="padding:4px 10px; font-size:0.8em; flex-shrink:0;">Adicionar</button>
                     </div>`;
-                
                 document.getElementById('confirm-add-assoc').onclick = () => {
                     window.tempAssociations.push(targetId);
                     window.renderExistingAssociationsList();
@@ -32839,13 +32869,12 @@ window.openBoxLinkManager = async function(wrapper) {
             } else {
                 resultDiv.innerHTML = '<span style="color:#e74c3c;">❌ ID não encontrado.</span>';
             }
-            
             newVerifyBtn.disabled = false;
             newVerifyBtn.textContent = "🔍";
         };
     }
 
-    // 8. BOTÃO GRAVAR
+    // 8. BOTÃO GRAVAR - CORRIGIDO
     const saveBtn = document.getElementById('link-save-btn');
     const newSaveBtn = saveBtn.cloneNode(true);
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
@@ -32856,11 +32885,25 @@ window.openBoxLinkManager = async function(wrapper) {
 
         try {
             const titleInput = document.getElementById('link-title-input');
+            
+            // --- A. RECOLHA DE CODEX (A CORREÇÃO) ---
             const codexToSave = []; 
+            // Varre todas as linhas visíveis
             modal.querySelectorAll('.codex-row').forEach(row => {
-                 if(typeof getCodexDataFromRow === 'function') codexToSave.push(getCodexDataFromRow(row));
+                 if(typeof getCodexDataFromRow === 'function') {
+                     const rowData = getCodexDataFromRow(row);
+                     // Só guarda se tiver alguma série preenchida ou dados manuais
+                     if (rowData.serie || rowData.manualYear || rowData.capitulo) {
+                         // Mantém o ID original se existir (para não apagar e criar de novo)
+                         const originalId = row.getAttribute('data-firestore-id');
+                         if(originalId) rowData.id = originalId;
+                         
+                         codexToSave.push(rowData);
+                     }
+                 }
             });
             
+            // --- B. RECOLHA DE URLs ---
             const urlsToSave = {}; 
             const urlsContainer = document.getElementById('link-urls-container');
             urlsContainer.querySelectorAll('input').forEach((inp, i) => {
@@ -32871,21 +32914,25 @@ window.openBoxLinkManager = async function(wrapper) {
                 }
             });
 
+            // --- C. MONTAGEM DO JSON FINAL ---
             const finalJson = { 
                 title: titleInput.value.trim(), 
                 urls: urlsToSave, 
-                codex: codexToSave,
-                categories: window.selectedCategoriesForBox || [],
+                codex: codexToSave, // Array preenchido
+                categories: window.selectedCategoriesForBox || [], // Array global das categorias
                 associations: window.tempAssociations 
             };
             
+            // --- D. GRAVAÇÃO NO DOM ---
             wrapper.setAttribute('data-box-links', JSON.stringify(finalJson));
+            
             if (typeof updateBoxLinkButtonState === 'function') updateBoxLinkButtonState(wrapper);
 
             if (typeof updateRemoteAssociations === 'function') {
                 await updateRemoteAssociations(currentBoxId, window.tempAssociations);
             }
 
+            // --- E. GRAVAÇÃO NO FIREBASE ---
             const isAquarium = document.getElementById('aquarium-environment').style.display !== 'none';
             if (isAquarium && typeof saveAquariumState === 'function') await window.saveAquariumState();
             else if (typeof saveNote === 'function') await saveNote(true);
