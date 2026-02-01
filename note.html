@@ -12935,16 +12935,17 @@ const ENTITY_CONFIG = {
 
 // 10 Cores diferentes das padrão (Azul/Verde/Laranja)
 const DEFAULT_HIGHLIGHTS = [
-    { code: "#8B0037", name: "Vermelho Coral" },    // Vermelho avermelhado
-    { code: "#A05930", name: "Laranja Sol" },       // Laranja bem distinto
-    { code: "#BAA81B", name: "Amarelo Intenso" },   // Amarelo "Post-it" forte
-    { code: "#415329", name: "Verde Lima" },        // Verde amarelado
-    { code: "#007B69", name: "Verde Esmeralda" },   // Verde menta forte
-    { code: "#006967", name: "Turquesa" },          // Ciano vibrante
-    { code: "#221B6C", name: "Roxo Lavanda" },      // Roxo elétrico claro
-    { code: "#7C1851", name: "Rosa Choque" },       // Rosa forte
-    { code: "#4C5B67", name: "Cinza Metálico" }     // Neutro
+    { code: "#B12823", name: "Vermelho Tijolo" },
+    { code: "#AC4A0B", name: "Laranja Outono" },
+    { code: "#D8B200", name: "Amarelo Dourado" }, // Escolhi a opção mais viva
+    { code: "#436C21", name: "Verde Lima/Oliva" },
+    { code: "#006042", name: "Verde Esmeralda" },
+    { code: "#1F7AC4", name: "Azul Oceano" },
+    { code: "#B53E69", name: "Rosa Suave" },
+    { code: "#8438D7", name: "Roxo Ametista" },  // Escolhi o roxo mais vivo
+    { code: "#A08F8E", name: "Cinza Quente" }    // Escolhi o cinza mais claro
 ];
+
 const EXPLORER_RESULTS_PER_PAGE = 15;
 const MICA_COLORS = [
     { name: 'Laranja', hex: '#e67e22' }, { name: 'Amarelo', hex: '#f1c40f' },
@@ -16083,26 +16084,48 @@ function extractTopicsFromEditorHTML() {
     return aggregatedTopics;
 }
 
-// Função que faz a gravação real no Firebase
+// --- FUNÇÃO AUXILIAR: EXTRAIR GPS (IDs PARA INDEXAÇÃO) ---
+function extractBoxIdsFromHTML(htmlContent) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlContent, 'text/html');
+    
+    // Seleciona todos os tipos de caixas que queremos encontrar rapidamente
+    const elements = doc.querySelectorAll('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, details.toggle-section, .jwn-timeline-wrapper, .jwn-table-wrapper');
+    
+    const ids = [];
+    elements.forEach(el => {
+        // Guarda apenas IDs válidos e não vazios
+        if (el.id && el.id.trim() !== "") {
+            ids.push(el.id);
+        }
+    });
+    
+    return ids; // Retorna array ex: ['mn_123', 'red_456', 'card_789']
+}
+
+// ============================================================
+// FUNÇÃO PRINCIPAL: GRAVAR NOTA (COM GPS E SYNC)
+// ============================================================
 async function executeSave() {
-    // 1. BLOQUEIO DE NAVEGAÇÃO
-    // Se o sistema já estiver a mudar de nota, aborta a gravação automática
-    // para não gravar uma nota "a meio" sobre a outra.
+    // 1. BLOQUEIO DE SEGURANÇA
+    // Se o sistema já estiver a mudar de nota, aborta a gravação
     if (window.isSwitchingNote) {
         console.warn("🛑 [SEGURANÇA] Gravação bloqueada: Navegação em curso.");
         return false;
     }
 
-    // 2. Verificação de segurança: Se não há nota nem post selecionado, sai.
-    if (!selectedNoteId && !activeEditingPostId) return;
+    // Se não há nota nem post selecionado, sai.
+    if (!selectedNoteId && !activeEditingPostId) return false;
     
     // Se a nota estiver num processo de fecho, evita gravações fantasma
-    if (isClosingNote) return;
+    if (isClosingNote) return false;
 
-    // 3. MODO ARQUIVO (FEED)
+    // 2. MODO ARQUIVO (FEED)
+    // Se estivermos a editar um post do arquivo, delegamos para a função específica
     const archiveArea = document.getElementById('archive-area');
     if (archiveArea && archiveArea.style.display !== 'none') {
         if (activeEditingPostId) {
+            // Nota: certifique-se que adiciona a lógica de 'boxIds' também no saveArchivePost
             await saveArchivePost(activeEditingPostId);
             updateSaveStatus('saved');
             return true;
@@ -16110,38 +16133,35 @@ async function executeSave() {
         return true; 
     }
 
-    // 4. PREPARAÇÃO DO EDITOR (NOTA NORMAL)
+    // 3. PREPARAÇÃO DO EDITOR (NOTA NORMAL)
     const editor = document.getElementById('note-content-editor');
+    if (!editor) return false;
     
-    // --- PRESERVAR ESTADO VISUAL ---
-    let currentScrollPos = 0;
-    let currentZoomVal = '100%';
+    // Preservar scroll atual
+    let currentScrollPos = editor.scrollTop;
+    
+    // Ler Zoom atual
+    const zoomSelect = document.getElementById('editor-zoom');
+    const currentZoomVal = zoomSelect ? zoomSelect.value : '100%';
 
-    if (editor) {
-        currentScrollPos = editor.scrollTop;
-        const zoomSelect = document.getElementById('editor-zoom');
-        if (zoomSelect) currentZoomVal = zoomSelect.value;
-
-        // SINCRONIZAÇÃO DE INPUTS (CRÍTICO PARA CARDS E ESTÁTUAS)
-        // Garante que o que escreveu nos títulos dos cards é passado para o HTML
-        const allInputs = editor.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
-        allInputs.forEach(t => {
-            if (t.tagName === 'TEXTAREA') {
-                if (t.textContent !== t.value) t.textContent = t.value; 
-            } else {
-                if (t.getAttribute('value') !== t.value) t.setAttribute('value', t.value);
-            }
-        });
-    }
+    // --- CRÍTICO: SINCRONIZAÇÃO DE INPUTS ---
+    // Passa o valor escrito para o atributo HTML 'value' para ficar persistente
+    const allInputs = editor.querySelectorAll('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
+    allInputs.forEach(t => {
+        if (t.tagName === 'TEXTAREA') {
+            // Textarea usa textContent
+            if (t.textContent !== t.value) t.textContent = t.value; 
+        } else {
+            // Inputs normais usam atributo value
+            if (t.getAttribute('value') !== t.value) t.setAttribute('value', t.value);
+        }
+    });
 
     updateSaveStatus('saving');
 
-    // Usa o ID que estava selecionado no momento em que a função começou
-    // Isto evita que, se mudar a variável selectedNoteId a meio, grave na nota errada
+    // Identifica o ID correto
     let targetId = selectedNoteId;
-    
-    // Proteção extra: Lê ID do atributo HTML se existir
-    const realId = editor ? editor.getAttribute('data-real-id') : null;
+    const realId = editor.getAttribute('data-real-id'); // Fallback de segurança
     if (realId) targetId = realId;
 
     try {
@@ -16150,24 +16170,39 @@ async function executeSave() {
 
         const titleInput = document.getElementById('note-title-input');
         const finalTitle = titleInput ? titleInput.value : "Sem Título";
-        const finalContent = editor ? editor.innerHTML : "";
+        const finalContent = editor.innerHTML;
         
+        // Coletar metadados extra
         const usedColors = typeof extractUsedColorsFromEditor === 'function' ? extractUsedColorsFromEditor() : [];
+        
+        // --- EXTRAIR GPS (Novo Código) ---
+        const boxIdsList = extractBoxIdsFromHTML(finalContent);
 
-        // --- GRAVAÇÃO PRINCIPAL NO FIREBASE (AWAIT É OBRIGATÓRIO) ---
+        // --- GRAVAÇÃO NO FIREBASE ---
         await updateDoc(noteRef, { 
             nome: finalTitle, 
             conteudo: finalContent,
-            coresUsadas: usedColors,
+            
+            // Novos Campos
+            boxIds: boxIdsList,      // O Índice para a pesquisa rápida
+            coresUsadas: usedColors, // Para o filtro de cores
+            
             zoomLevel: currentZoomVal, 
             ultimaedicao: serverTimestamp()
         });
 
-        // Propagações em segundo plano (não bloqueiam o sucesso desta função)
-        if (typeof propagateUpdatesToMicas === 'function') propagateUpdatesToMicas(targetId, finalContent);
-        if (typeof propagateUpdatesToBible === 'function') propagateUpdatesToBible(targetId, finalContent, finalTitle);
+        // 4. PROPAGAÇÕES EM SEGUNDO PLANO (Não bloqueantes)
+        // Atualiza as Micas (Dossiê) se houver alterações
+        if (typeof propagateUpdatesToMicas === 'function') {
+            propagateUpdatesToMicas(targetId, finalContent);
+        }
+        
+        // Atualiza a Bíblia se houver referências
+        if (typeof propagateUpdatesToBible === 'function') {
+            propagateUpdatesToBible(targetId, finalContent, finalTitle);
+        }
 
-        // Sincronização Pública (se existir)
+        // Atualiza a Partilha Pública (se ativa)
         if (currentNoteShareData && currentNoteShareData.shared && currentNoteShareData.shareId) {
              try {
                 const shareId = currentNoteShareData.shareId;
@@ -16178,21 +16213,42 @@ async function executeSave() {
                     authorName: currentUserData?.nome || "Anónimo",
                     updatedAt: serverTimestamp(),
                     type: 'full_note' 
-                }, { merge: true }).catch(e => {});
+                }, { merge: true }).catch(e => console.warn("Erro sync public:", e));
             } catch (e) {}
         }
+        
+        // 5. ATUALIZAR CACHE LOCAL DA PESQUISA
+        // Se a variável de cache existir, atualizamos logo para a pesquisa funcionar sem refresh
+        if (window.dbContentCache && window.dbContentCache.isLoaded) {
+            const existingIndex = window.dbContentCache.data.findIndex(d => d.id === targetId);
+            const newItem = {
+                id: targetId,
+                name: finalTitle,
+                content: finalContent,
+                type: 'note'
+            };
+            if (existingIndex > -1) window.dbContentCache.data[existingIndex] = newItem;
+            else window.dbContentCache.data.push(newItem);
+        }
 
-        if (editor && editor.scrollTop !== currentScrollPos) {
+        // Restaura Scroll
+        if (editor.scrollTop !== currentScrollPos) {
             editor.scrollTop = currentScrollPos;
         }
 
         updateSaveStatus('saved');
-        return true; // Retorna SUCESSO para o navigateWithUnsavedCheck saber que pode avançar
+        return true; // Sucesso
 
     } catch (error) {
         console.error("❌ ERRO AO GUARDAR:", error);
         updateSaveStatus('error');
-        throw error; // Lança erro para o navigateWithUnsavedCheck apanhar e parar a navegação
+        
+        // Se a nota não existir (foi apagada noutra sessão), avisa o user
+        if (error.code === 'not-found') {
+            alert("Erro: Esta nota já não existe no servidor.");
+        }
+        
+        throw error; // Lança erro para controladores superiores saberem que falhou
     }
 }
 
@@ -38519,8 +38575,9 @@ if (mobileTabsContainer) {
         const btn = e.target.closest('button');
         if (!btn) return;
 
-        // 1. GERAR SENHA ÚNICA PARA ESTE CLIQUE (Evita conflitos de rapidez)
+        // 1. GERAR SENHA ÚNICA (Segurança contra cliques rápidos)
         const myRequestId = ++currentMobileRequestId;
+        const isObsolete = () => myRequestId !== currentMobileRequestId;
 
         // Atualiza visual
         newTabs.querySelectorAll('button').forEach(b => b.classList.remove('active'));
@@ -38533,10 +38590,7 @@ if (mobileTabsContainer) {
         // Limpa e põe o spinner
         contentEl.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar...</span></div>';
 
-        // Função de segurança
-        const isObsolete = () => myRequestId !== currentMobileRequestId;
-
-        // --- LÓGICA DO ÍNDICE ---
+        // --- ABA: ÍNDICE ---
         if (viewType === 'index') {
             titleEl.textContent = "Índice da Nota";
             detectActiveScrollElement();
@@ -38548,7 +38602,7 @@ if (mobileTabsContainer) {
                 
                 if (source && source.innerHTML.trim()) {
                     contentEl.innerHTML = source.innerHTML;
-                    // Lógica de Scroll (Scrollspy)
+                    // Scrollspy Mobile
                     if (currentActiveScrollId) {
                         const activeItem = contentEl.querySelector(`.index-item[data-target-id="${currentActiveScrollId}"]`);
                         if (activeItem) {
@@ -38564,43 +38618,55 @@ if (mobileTabsContainer) {
             }, 50);
         }
         
-        // --- LÓGICA DE TEXTOS / NAVEGA (CORRIGIDA) ---
+        // --- ABA: TEXTOS / NAVEGA / MISTO (A CORREÇÃO PRINCIPAL) ---
         else if (viewType === 'texts') {
             
-            // Verifica se há âncoras ativas na nota
-            const hasAnchors = activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0;
-
-            if (hasAnchors) {
-                // MODO: NAVEGAÇÃO POR ÂNCORAS
+            // 1. VERIFICA MODO HÍBRIDO (Prioridade Máxima)
+            if (window.currentNoteHybridMode === true) {
+                titleEl.textContent = "Modo Misto (Temas + Bíblia)";
+                
+                // Gera no contentor oculto do PC
+                await generateHybridView(); 
+                
+                if (isObsolete()) return;
+                
+                // Copia para o Mobile
+                const source = document.getElementById('note-texts-view');
+                contentEl.innerHTML = source ? source.innerHTML : '<div style="padding:20px;text-align:center;">Vazio.</div>';
+            }
+            
+            // 2. VERIFICA MODO NAVEGAÇÃO (Âncoras ativas)
+            else if (activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0) {
                 titleEl.textContent = "Navegação por Âncoras";
                 
-                // Gera a lista de navegação
                 generateAnchorNavigation();
                 
-                // Copia do contentor PC para o Mobile
                 setTimeout(() => {
                     if (isObsolete()) return;
                     const source = document.getElementById('note-texts-view');
-                    contentEl.innerHTML = source ? source.innerHTML : '<div style="padding:20px;text-align:center;color:#888">Sem resultados.</div>';
+                    contentEl.innerHTML = source ? source.innerHTML : '<div style="padding:20px;text-align:center;">Sem resultados.</div>';
                 }, 50);
-
-            } else {
-                // MODO: TEXTOS BÍBLICOS
+            } 
+            
+            // 3. MODO PADRÃO (Textos Bíblicos)
+            else {
                 titleEl.textContent = "Textos Bíblicos";
-                await generateNoteTexts(); // Esta função é lenta (async)
+                await generateNoteTexts(); 
                 
                 if (isObsolete()) return;
                 const source = document.getElementById('note-texts-view');
-                contentEl.innerHTML = source ? source.innerHTML : "Vazio.";
+                contentEl.innerHTML = source ? source.innerHTML : '<div style="padding:20px;text-align:center;">Vazio.</div>';
             }
         } 
         
-        // --- OUTRAS ABAS ---
+        // --- ABA: FICHEIROS ---
         else if (viewType === 'files') {
             titleEl.textContent = "Ficheiros";
             const fileList = document.getElementById('file-list');
             if (fileList) contentEl.innerHTML = fileList.innerHTML;
         }
+
+        // --- ABA: FONTES ---
         else if (viewType === 'sources') {
             titleEl.textContent = "Fontes";
             generateNoteSources();
@@ -49429,6 +49495,150 @@ window.openCardPopup = function(btn) {
     if (typeof makeElementDraggable === 'function') makeElementDraggable(popup);
     popup.onmousedown = () => { popup.style.zIndex = ++window.highestZIndex; };
 };
+
+// ============================================================
+// FUNÇÃO OTIMIZADA: PESQUISA CIRÚRGICA (GPS)
+// ============================================================
+window.findBoxDetailsById = async function(targetBoxId) {
+    if (!auth.currentUser) return null;
+    
+    console.log(`🛰️ [GPS] Localizando ID: ${targetBoxId}...`);
+    const myUid = auth.currentUser.uid;
+
+    try {
+        const { collection, query, where, getDocs, collectionGroup } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // --- TENTATIVA 1: PROCURAR EM NOTAS (Usando Índice) ---
+        // Esta query custa apenas o número de documentos encontrados (geralmente 1)
+        const qNotes = query(
+            collection(db, 'pastas'),
+            where('userId', '==', myUid),
+            where('boxIds', 'array-contains', targetBoxId) // <--- A MÁGICA
+        );
+
+        const snapNotes = await getDocs(qNotes);
+
+        if (!snapNotes.empty) {
+            // Encontrou!
+            const doc = snapNotes.docs[0];
+            return parseBoxDetails(doc.data().conteudo, targetBoxId, doc.id, doc.data().nome, false);
+        }
+
+        // --- TENTATIVA 2: PROCURAR EM POSTS (Arquivos) ---
+        // Procura em todas as sub-coleções 'posts' que tenham este ID na lista
+        const qPosts = query(
+            collectionGroup(db, 'posts'),
+            where('userId', '==', myUid),
+            where('boxIds', 'array-contains', targetBoxId) // <--- A MÁGICA NOS POSTS
+        );
+
+        const snapPosts = await getDocs(qPosts);
+
+        if (!snapPosts.empty) {
+            const doc = snapPosts.docs[0];
+            // Para posts, precisamos do nome do arquivo pai ou do título do post
+            const postTitle = doc.data().title || "Post no Arquivo";
+            // O parentId é o ID do arquivo (pasta pai)
+            const archiveId = doc.ref.parent.parent.id;
+            
+            return parseBoxDetails(doc.data().content, targetBoxId, archiveId, postTitle, true);
+        }
+
+    } catch (e) {
+        console.error("❌ Erro na pesquisa GPS:", e);
+        // Se der erro (ex: índice em falta), pode fazer fallback para a pesquisa lenta aqui
+    }
+    
+    console.log("❌ ID não encontrado (ou ainda não indexado).");
+    return null;
+};
+
+// Função auxiliar para extrair título e tipo do HTML (para não repetir código)
+function parseBoxDetails(html, id, noteId, noteName, isPost) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const box = doc.getElementById(id);
+
+    if (box) {
+        let type = "Caixa";
+        if (box.classList.contains('question-mode')) type = "Questão";
+        else if (box.classList.contains('mini-note-wrapper')) type = "SubNota";
+        else if (box.classList.contains('redator-wrapper')) type = "Redator";
+        else if (box.classList.contains('journal-sign-wrapper')) type = "Raciocínio";
+        else if (box.classList.contains('journal-id-card')) type = "Cartão";
+        else if (box.tagName === 'DETAILS') type = "Secção";
+
+        const titleInput = box.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2, strong');
+        let title = titleInput ? (titleInput.value || titleInput.textContent || "").trim() : "Sem Título";
+        
+        let bodyHTML = "";
+        const contentDiv = box.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content');
+        if (contentDiv) bodyHTML = contentDiv.innerHTML;
+
+        return {
+            id: id,
+            title: title,
+            content: bodyHTML,
+            type: type,
+            noteId: noteId,
+            noteName: noteName + (isPost ? " (Post)" : "")
+        };
+    }
+    return null;
+}
+
+
+
+// --- SCRIPT DE MIGRAÇÃO (Correr uma vez) ---
+async function indexAllNotesForGPS() {
+    console.log("🚀 Iniciando indexação de todas as notas...");
+    
+    if (!auth.currentUser) return;
+    const { collection, getDocs, writeBatch, doc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+    
+    // 1. Buscar todas as notas
+    const q = query(collection(db, 'pastas'), where('userId', '==', auth.currentUser.uid), where('tipo', 'in', ['nota', 'jornal', 'aquario']));
+    const snapshot = await getDocs(q);
+    
+    const batchSize = 400; 
+    let batch = writeBatch(db);
+    let count = 0;
+    let totalUpdated = 0;
+
+    for (const docSnap of snapshot.docs) {
+        const data = docSnap.data();
+        
+        // Só processa se ainda não tiver indexado ou se quiser forçar
+        if (!data.boxIds) { 
+            const ids = extractBoxIdsFromHTML(data.conteudo || "");
+            
+            if (ids.length > 0) {
+                const ref = doc(db, 'pastas', docSnap.id);
+                batch.update(ref, { boxIds: ids });
+                count++;
+                totalUpdated++;
+            }
+        }
+
+        // Commit a cada 400 operações
+        if (count >= batchSize) {
+            await batch.commit();
+            console.log(`💾 Lote gravado: ${count} notas indexadas.`);
+            batch = writeBatch(db);
+            count = 0;
+        }
+    }
+
+    if (count > 0) {
+        await batch.commit();
+    }
+    
+    console.log(`✅ Indexação concluída! Total atualizado: ${totalUpdated} notas.`);
+    alert("Indexação GPS concluída. A pesquisa rápida está ativa.");
+}
+
+// Para correr a migração, pode criar um botão temporário ou correr na consola:
+// window.indexAllNotesForGPS();
 
     </script>
 </body>
