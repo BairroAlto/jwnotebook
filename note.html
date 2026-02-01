@@ -19882,7 +19882,6 @@ window.openNoteFromBoard = function(noteId, encodedSearchTerm = null) {
 
 // --- LÓGICA DO POPUP DE SELEÇÃO DE REFERÊNCIAS ---
 async function openReferenceSelectionPopup() {
-    // --- LOG INICIAL ---
     console.group("🔍 [DEBUG REF] Iniciando Pesquisa de Referências");
     
     const modal = document.getElementById('puzzle-ref-selection-modal');
@@ -19895,11 +19894,6 @@ async function openReferenceSelectionPopup() {
         return;
     }
 
-    console.log("🎯 Entidade Alvo:", activeReferenceEntity);
-    console.log("🆔 ID a procurar:", activeReferenceEntity.id);
-    console.log("🔤 Nome a procurar:", activeReferenceEntity.name.toLowerCase().trim());
-
-    // A. FORÇA HIERARQUIA
     document.body.appendChild(modal);
     modal.style.cssText = `
         display: flex !important;
@@ -19952,8 +19946,6 @@ async function openReferenceSelectionPopup() {
                 if(match) existingIDs.add(match[1]);
             }
         });
-        
-        console.log("🧩 Itens já existentes no quadro:", existingIDs);
 
         // 2. PESQUISA GLOBAL
         let q = query(collection(db, 'pastas'), 
@@ -19964,8 +19956,6 @@ async function openReferenceSelectionPopup() {
         
         const snapshot = await getDocs(q);
         const parser = new DOMParser();
-
-        console.log(`📚 Total de documentos a analisar: ${snapshot.size}`);
 
         snapshot.forEach(docSnap => {
             const data = docSnap.data();
@@ -19990,21 +19980,21 @@ async function openReferenceSelectionPopup() {
                 
                 allWrappers.forEach((w) => {
                     let match = false;
-                    let matchReason = "";
+                    let matchSource = "text"; 
 
-                    // A. Match por Cor
+                    // A. MATCH POR COR
                     if (isHighlightSearch) {
                         const elColor = w.getAttribute('data-highlight');
                         if (elColor && elColor.toUpperCase() === hexToFind) {
                             match = true;
-                            matchReason = "Cor";
+                            matchSource = "color";
                         }
                     } 
                     
-                    // B. Match por Texto
-                    // Extração de texto para comparação
+                    // B. MATCH POR TEXTO
                     let boxTitle = "";
                     let boxContentOnly = "";
+                    
                     if (w.tagName === 'DETAILS') {
                         const h2 = w.querySelector('h2');
                         boxTitle = h2 ? h2.textContent : "";
@@ -20016,49 +20006,31 @@ async function openReferenceSelectionPopup() {
                         const contentDiv = w.querySelector('.mini-note-content, .redator-content, .sign-content, .cube-content, .card-desc-content');
                         boxContentOnly = contentDiv ? contentDiv.textContent : "";
                     }
+                    
                     const boxFullText = (boxTitle + " " + boxContentOnly).toLowerCase();
 
                     if (!match && boxFullText.includes(searchTerm)) {
                         match = true;
-                        matchReason = "Texto";
+                        matchSource = "text";
                     }
 
-                    // >>> C. LOG DE MATCH POR CATEGORIA <<<
+                    // C. MATCH POR CATEGORIA
                     const boxLinksRaw = w.getAttribute('data-box-links');
-                    
                     if (!match && boxLinksRaw && boxLinksRaw !== '{}') {
                         try {
                             const boxData = JSON.parse(boxLinksRaw);
-                            
                             if (boxData.categories && Array.isArray(boxData.categories)) {
-                                
-                                // LOG EXTRA SE TIVER CATEGORIAS
-                                if (boxData.categories.length > 0) {
-                                    console.groupCollapsed(`📦 Caixa c/ Categorias em "${item.originName}"`);
-                                    console.log("Categorias da Caixa:", boxData.categories);
-                                    
-                                    const catMatch = boxData.categories.some(cat => {
-                                        // Compara ID (String vs String)
-                                        const idMatch = (cat.id && String(cat.id) === String(id));
-                                        
-                                        // Compara Nome (Trim + Lowercase)
-                                        const nameMatch = (cat.name && cat.name.toLowerCase().trim() === searchTerm);
-                                        
-                                        console.log(`   👉 Teste: [${cat.name}] -> ID Match: ${idMatch} | Nome Match: ${nameMatch}`);
-                                        return idMatch || nameMatch;
-                                    });
-                                    
-                                    if (catMatch) {
-                                        match = true;
-                                        matchReason = "Categoria (JSON)";
-                                        console.log("   ✅ SUCESSO: Match Confirmado!");
-                                    }
-                                    console.groupEnd();
+                                const catMatch = boxData.categories.some(cat => {
+                                    const idMatch = (cat.id && String(cat.id) === String(id));
+                                    const nameMatch = (cat.name && cat.name.toLowerCase().trim() === searchTerm);
+                                    return idMatch || nameMatch;
+                                });
+                                if (catMatch) {
+                                    match = true;
+                                    matchSource = "category";
                                 }
                             }
-                        } catch (e) { 
-                            console.warn("Erro ao ler JSON da caixa:", e);
-                        }
+                        } catch (e) {}
                     }
 
                     if (match) {
@@ -20068,7 +20040,7 @@ async function openReferenceSelectionPopup() {
                         const originalIsPresent = isClone && existingIDs.has(originId);
                         const selfIsPresent = existingIDs.has(currentId);
 
-                        // Tipos
+                        // Identifica o Tipo
                         let boxType = "Bloco"; let boxIcon = "📦";
                         if (w.tagName === 'DETAILS') { boxType = "Secção"; boxIcon = "☂️"; }
                         else if (w.classList.contains('question-mode')) { boxType = "Questão"; boxIcon = "📗"; }
@@ -20078,17 +20050,46 @@ async function openReferenceSelectionPopup() {
                         else if (w.classList.contains('journal-id-card')) { boxType = "Cartão"; boxIcon = "🪪"; }
                         else { boxType = "SubNota"; boxIcon = "📘"; }
 
-                        let displayTitle = boxTitle.trim();
-                        if (!displayTitle) displayTitle = boxContentOnly.trim().substring(0, 40) + "...";
+                        // ============================================================
+                        // >>> LÓGICA DE TEXTO DO SNIPPET (ATUALIZADA) <<<
+                        // ============================================================
                         
-                        // LOG DO RESULTADO
-                        console.log(`✅ Adicionado aos resultados: "${displayTitle}" (Motivo: ${matchReason})`);
+                        let displaySnippet = "";
+                        const cleanTitle = boxTitle.trim();
+                        const cleanBody = boxContentOnly.trim().replace(/\s+/g, ' ');
+
+                        // 1. É Contentor Livre ou Redator? (Estes podem não ter título)
+                        const isFreeOrRedator = (w.classList.contains('free-mode') || w.classList.contains('redator-wrapper'));
+
+                        if (isFreeOrRedator) {
+                            if (cleanTitle) {
+                                // Tem título -> Mostra Título
+                                displaySnippet = cleanTitle;
+                            } else {
+                                // Não tem título -> Mostra primeiras 12 palavras do texto como "Título Falso"
+                                if (cleanBody) {
+                                    const words = cleanBody.split(' ').slice(0, 12).join(' ');
+                                    displaySnippet = `<em>${words}...</em>`;
+                                } else {
+                                    displaySnippet = `<em>${boxType} vazio</em>`;
+                                }
+                            }
+                        } 
+                        else {
+                            // 2. Outros (Questões, Subnotas, etc) -> Mostra SEMPRE o Título
+                            displaySnippet = cleanTitle || "Sem Título";
+                        }
+                        
+                        // Formatação final (Negrito e tamanho)
+                        displaySnippet = `<span style="font-weight:600; color:var(--text-color); font-size:1em;">${displaySnippet}</span>`;
+
+                        // ============================================================
 
                         allFoundReferenceBoxes.push({
                             id: docSnap.id, 
                             name: item.originName, 
-                            snippet: w.outerHTML,
-                            displaySnippet: displayTitle,
+                            snippet: w.outerHTML, 
+                            displaySnippet: displaySnippet, 
                             typeName: boxType, 
                             typeIcon: boxIcon, 
                             updatedTime: updatedTime,
@@ -20102,8 +20103,7 @@ async function openReferenceSelectionPopup() {
             });
         });
 
-        // Ordena e mostra
-        console.log(`🏁 Fim da pesquisa. Total: ${allFoundReferenceBoxes.length} caixas.`);
+        console.log(`🏁 Fim da pesquisa. Total: ${allFoundReferenceBoxes.length}`);
         console.groupEnd();
         
         allFoundReferenceBoxes.sort((a, b) => b.updatedTime - a.updatedTime);
@@ -20112,7 +20112,6 @@ async function openReferenceSelectionPopup() {
 
     } catch (e) {
         console.error("❌ Erro na pesquisa de referências:", e);
-        console.groupEnd();
         list.innerHTML = '<li style="color:red; padding:10px;">Erro ao carregar resultados.</li>';
     }
 }
@@ -32347,57 +32346,38 @@ window.removeManualField = function(closeBtn, type) {
 };
 
 window.openBoxLinkManager = async function(wrapper) {
-    // 🛡️ SEGURANÇA DE ID
+    // 1. SEGURANÇA DE ID
     if (!wrapper.id || wrapper.id.trim() === "") {
         const prefix = wrapper.classList.contains('redator-wrapper') ? 'red' : 'mn';
         wrapper.id = `${prefix}_${Date.now()}`;
     }
     const currentBoxId = wrapper.id;
-
-    console.log("🚀 [GESTOR] Abertura iniciada para caixa:", currentBoxId);
-
-    // --- LÓGICA DE MEMÓRIA DE ABA ---
-    if (window.lastBoxLinkManagerId !== currentBoxId) {
-        window.lastBoxLinkManagerId = currentBoxId;
-        window.lastBoxLinkManagerTab = 'refs';
-    }
+    console.group(`🚀 [GESTOR LINKS] A abrir caixa: ${currentBoxId}`);
 
     const modal = document.getElementById('link-modal');
-    if (!modal) return;
+    if (!modal) return console.error("Modal não encontrado");
 
-    // 1. ATUALIZAÇÃO DO TÍTULO
-    const modalTitle = document.getElementById('link-modal-title');
-    if (modalTitle) modalTitle.textContent = "Gestão de Conexões";
+    // ============================================================
+    // 1. LIMPEZA DE ESTADO GLOBAL
+    // ============================================================
+    window.selectedCategoriesForBox = []; 
+    window.tempAssociations = [];
+    
+    const searchInput = document.getElementById('category-search-input');
+    const searchResults = document.getElementById('category-search-results');
+    if (searchInput) searchInput.value = "";
+    if (searchResults) searchResults.innerHTML = "";
 
+    // ============================================================
     // 2. CONFIGURAÇÃO VISUAL DO MODAL
+    // ============================================================
     document.body.appendChild(modal); 
     modal.style.cssText = `display: flex !important; z-index: 2147483647 !important; visibility: visible !important; opacity: 1 !important; position: fixed !important; top: 0; left: 0; width: 100vw; height: 100dvh !important; background: rgba(0, 0, 0, 0.9) !important; justify-content: center !important; align-items: center !important;`;
-    
-    const modalContent = modal.querySelector('.modal-content');
-    modalContent.style.position = 'relative';
 
-    // 3. BADGE DE ID (FLUTUANTE NO TOPO)
-    let idBadge = document.getElementById('box-link-id-badge');
-    if (!idBadge) {
-        idBadge = document.createElement('div');
-        idBadge.id = 'box-link-id-badge';
-        idBadge.style.cssText = `
-            position: absolute; top: 20px; right: 50px;
-            background: var(--panel-color); border: 1px solid var(--accent-color); 
-            border-radius: 20px; padding: 6px 15px; display: none; 
-            align-items: center; gap: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); z-index: 50;
-        `;
-        modalContent.appendChild(idBadge);
-    }
-    idBadge.innerHTML = `
-        <span style="color:var(--text-muted-color); font-size: 0.7em; text-transform:uppercase; letter-spacing:1px; font-weight:bold;">ID CAIXA</span>
-        <strong style="color: white; font-family: monospace; letter-spacing: 0.5px; font-size: 0.9em; border-right:1px solid var(--border-color); padding-right:10px;">${currentBoxId}</strong>
-        <button onclick="window.copyToClipboard('${currentBoxId}')" title="Copiar ID" style="background:none; border:none; cursor:pointer; color:var(--accent-color); font-size:1.3em; padding:0; line-height:1; display:flex; align-items:center;">⇝</button>
-    `;
-
-    // 4. GESTÃO DAS ABAS
+    // --- MANUTENÇÃO DA ABA ASSOCIAR (NÃO REMOVER) ---
     const tabHeader = document.getElementById('box-link-tabs');
-    // Verifica se a aba associar existe, senão cria
+    
+    // Verifica se o botão "Associar" já existe, se não, cria-o
     if (!tabHeader.querySelector('[data-box-tab="associar"]')) {
         const assocTabBtn = document.createElement('button');
         assocTabBtn.dataset.boxTab = 'associar';
@@ -32423,201 +32403,190 @@ window.openBoxLinkManager = async function(wrapper) {
             <label style="font-size:0.8em; color:var(--text-muted-color); font-weight:bold; text-transform:uppercase;">Caixas Associadas:</label>
             <div id="assoc-list-container" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-height: 200px; overflow-y: auto;"></div>
         `;
-        document.getElementById('box-content-categories').after(assocContent);
+        
+        const catContent = document.getElementById('box-content-categories');
+        if (catContent) catContent.after(assocContent);
     }
+    // ----------------------------------------------------
 
-    // 5. CARREGAR DADOS EXISTENTES
+    // ============================================================
+    // 3. CARREGAR DADOS DO HTML DA CAIXA
+    // ============================================================
     let currentData = {};
+    const rawAttr = wrapper.getAttribute('data-box-links');
     try {
-        currentData = JSON.parse(wrapper.getAttribute('data-box-links') || '{}');
+        currentData = JSON.parse(rawAttr || '{}');
     } catch (e) { currentData = {}; }
 
-    window.tempAssociations = currentData.associations || [];
-    if (typeof window.renderExistingAssociationsList === 'function') window.renderExistingAssociationsList();
-
-    // Reset Campos Básicos
+    // Título e URLs
     document.getElementById('link-title-input').value = currentData.title || "";
-    
-    // --- URLs ---
     const urlsContainer = document.getElementById('link-urls-container');
     if(urlsContainer) urlsContainer.innerHTML = '';
-    
-    // Recria botão adicionar URL para limpar eventos
-    const addUrlBtn = document.getElementById('add-url-btn');
-    if (addUrlBtn) {
-        const newAddUrlBtn = addUrlBtn.cloneNode(true);
-        addUrlBtn.parentNode.replaceChild(newAddUrlBtn, addUrlBtn);
-        newAddUrlBtn.onclick = (e) => { e.preventDefault(); window.addUrlField(); };
-    }
-
     const urls = currentData.urls ? Object.values(currentData.urls) : [];
     if (urls.length > 0) urls.forEach(url => window.addUrlField(url));
     else window.addUrlField(); 
 
-    // --- CODEX ---
+    // Codex
     const codexContainer = document.getElementById('codex-rows-container');
     if(codexContainer) codexContainer.innerHTML = '';
-    
-    const addCodexBtn = document.getElementById('add-codex-row-btn');
-    if (addCodexBtn) {
-        const newAddCodexBtn = addCodexBtn.cloneNode(true);
-        addCodexBtn.parentNode.replaceChild(newAddCodexBtn, addCodexBtn);
-        newAddCodexBtn.onclick = (e) => { e.preventDefault(); window.createCodexRow(); };
-    }
-
     if (currentData.codex && currentData.codex.length > 0) {
         currentData.codex.forEach(item => window.createCodexRow(item));
     } else { 
         window.createCodexRow(); 
     }
-    
-    // --- CATEGORIAS ---
-    window.selectedCategoriesForBox = currentData.categories || [];
-    if (typeof renderAttachedCategories === 'function') renderAttachedCategories();
 
-    // 6. NAVEGAÇÃO DE ABAS
-    const tabButtons = tabHeader.querySelectorAll('button');
-    const activateTab = (targetTab) => {
-        tabButtons.forEach(b => {
-            if (b.dataset.boxTab === targetTab) b.classList.add('active');
-            else b.classList.remove('active');
-        });
+    // Associações
+    window.tempAssociations = currentData.associations || [];
+    if (typeof window.renderExistingAssociationsList === 'function') window.renderExistingAssociationsList();
+
+    // ============================================================
+    // 4. CARREGAR CATEGORIAS
+    // ============================================================
+    const savedCategories = Array.isArray(currentData.categories) ? currentData.categories : [];
+    const allKnownEntities = (typeof allEntities !== 'undefined') ? Object.values(allEntities).flat() : [];
+
+    window.selectedCategoriesForBox = savedCategories.map(savedCat => {
+        const freshEntity = allKnownEntities.find(e => e.id === savedCat.id);
+        return freshEntity 
+            ? { id: savedCat.id, name: freshEntity.nome, type: freshEntity.tipo || savedCat.type } 
+            : savedCat;
+    });
+
+    // Renderiza a lista visualmente
+    setTimeout(() => window.renderAttachedCategories(), 50);
+
+    // ============================================================
+    // 5. GESTÃO DE ABAS (CORRIGIDO: EVENT DELEGATION)
+    // ============================================================
+    // Clonamos o CONTAINER das abas (não os botões) para limpar listeners velhos
+    const newTabHeader = tabHeader.cloneNode(true);
+    tabHeader.parentNode.replaceChild(newTabHeader, tabHeader);
+
+    // Adiciona um listener único ao PAI
+    newTabHeader.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return; // Se clicou no vazio entre botões, ignora
+        
+        e.preventDefault();
+
+        console.log(`🔘 Aba clicada: ${btn.dataset.boxTab}`);
+
+        // 1. Atualiza visual dos botões
+        newTabHeader.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        // 2. Esconde todos os conteúdos
         document.querySelectorAll('.box-tab-content').forEach(div => div.style.display = 'none');
         
-        const contentMap = {
-            'associar': 'box-content-associar',
-            'refs': 'box-content-refs',
-            'codex': 'box-content-codex',
-            'categories': 'box-content-categories'
-        };
-        const targetId = contentMap[targetTab];
-        if (targetId) document.getElementById(targetId).style.display = 'block';
-        if (idBadge) idBadge.style.display = (targetTab === 'associar') ? 'flex' : 'none';
-        window.lastBoxLinkManagerTab = targetTab;
-    };
-
-    tabButtons.forEach(btn => {
-        btn.onclick = (e) => {
-            e.preventDefault();
-            activateTab(btn.dataset.boxTab);
-        };
-    });
-    activateTab(window.lastBoxLinkManagerTab);
-
-    // 7. LISTENER DA LUPA (ASSOCIAÇÃO)
-    const verifyBtn = document.getElementById('btn-verify-assoc');
-    if (verifyBtn) {
-        const newVerifyBtn = verifyBtn.cloneNode(true);
-        verifyBtn.parentNode.replaceChild(newVerifyBtn, verifyBtn);
-        newVerifyBtn.onclick = async () => {
-            const targetId = document.getElementById('assoc-search-id').value.trim();
-            if (!targetId) return;
-            if (targetId === currentBoxId) return alert("Não pode associar uma caixa a ela própria.");
-            if (window.tempAssociations.includes(targetId)) return alert("Esta caixa já está associada.");
-
-            newVerifyBtn.disabled = true;
-            newVerifyBtn.textContent = "⌛";
-            const resultDiv = document.getElementById('assoc-search-result');
-            resultDiv.style.display = 'block';
-            resultDiv.innerHTML = '<span style="color:#888;">A procurar...</span>';
-
-            const foundBox = await window.findBoxDetailsById(targetId);
-            if (foundBox) {
-                resultDiv.innerHTML = `
-                    <div style="background:rgba(255,255,255,0.05); border:1px solid #ccc; padding:8px; border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
-                        <div style="overflow:hidden;">
-                            <div style="font-weight:bold; color:var(--text-color);">${foundBox.title}</div>
-                            <div style="font-size:0.8em; color:var(--text-muted-color);">${foundBox.type} • ${foundBox.noteName}</div>
-                        </div>
-                        <button class="modal-btn primary" id="confirm-add-assoc" style="padding:4px 10px; font-size:0.8em; flex-shrink:0;">Adicionar</button>
-                    </div>`;
-                document.getElementById('confirm-add-assoc').onclick = () => {
-                    window.tempAssociations.push(targetId);
-                    window.renderExistingAssociationsList();
-                    resultDiv.style.display = 'none';
-                    document.getElementById('assoc-search-id').value = '';
-                };
-            } else {
-                resultDiv.innerHTML = '<span style="color:#e74c3c;">❌ ID não encontrado.</span>';
+        // 3. Mostra o conteúdo correto
+        const target = btn.dataset.boxTab;
+        const targetContentId = `box-content-${target === 'refs' ? 'refs' : target === 'codex' ? 'codex' : target === 'categories' ? 'categories' : 'associar'}`;
+        
+        const contentDiv = document.getElementById(targetContentId);
+        if (contentDiv) {
+            contentDiv.style.display = 'block';
+            console.log(`✅ Conteúdo ${targetContentId} visível.`);
+            
+            // Se for Categorias, força renderização
+            if (target === 'categories') {
+                window.renderAttachedCategories();
+                // Foca na pesquisa
+                setTimeout(() => document.getElementById('category-search-input')?.focus(), 50);
             }
-            newVerifyBtn.disabled = false;
-            newVerifyBtn.textContent = "🔍";
-        };
-    }
-
-    // 8. BOTÃO GRAVAR - CORRIGIDO
-   const saveBtn = document.getElementById('link-save-btn');
-const newSaveBtn = saveBtn.cloneNode(true);
-saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
-
-newSaveBtn.onclick = async () => {
-    newSaveBtn.disabled = true;
-    newSaveBtn.textContent = "A criar conexões...";
-
-    try {
-        const titleInput = document.getElementById('link-title-input');
-        
-        // --- A. RECOLHA DE CODEX ---
-        const codexToSave = []; 
-        modal.querySelectorAll('.codex-row').forEach(row => {
-             if(typeof getCodexDataFromRow === 'function') {
-                 const rowData = getCodexDataFromRow(row);
-                 if (rowData.serie || rowData.manualYear || rowData.capitulo) {
-                     const originalId = row.getAttribute('data-firestore-id');
-                     if(originalId) rowData.id = originalId;
-                     codexToSave.push(rowData);
-                 }
-             }
-        });
-        
-        // --- B. RECOLHA DE URLs ---
-        const urlsToSave = {}; 
-        const urlsContainer = document.getElementById('link-urls-container');
-        urlsContainer.querySelectorAll('input').forEach((inp, i) => {
-            if(inp.value.trim()) {
-                let val = inp.value.trim();
-                if(!val.startsWith('http')) val = 'https://' + val;
-                urlsToSave[`url_${Date.now()}_${i}`] = val;
-            }
-        });
-
-        // --- C. MONTAGEM DO JSON FINAL ---
-        const finalJson = { 
-            title: titleInput.value.trim(), 
-            urls: urlsToSave, 
-            codex: codexToSave, 
-            categories: window.selectedCategoriesForBox || [],
-            associations: window.tempAssociations // Lista de IDs associados
-        };
-        
-        // --- D. GRAVAÇÃO NA CAIXA ATUAL (Box A) ---
-        wrapper.setAttribute('data-box-links', JSON.stringify(finalJson));
-        
-        if (typeof updateBoxLinkButtonState === 'function') updateBoxLinkButtonState(wrapper);
-
-        // ============================================================
-        // E. GRAVAÇÃO RECÍPROCA NAS CAIXAS REMOTAS (Box B -> Box A)
-        // ============================================================
-        if (window.tempAssociations && window.tempAssociations.length > 0) {
-            await window.updateRemoteAssociations(currentBoxId, window.tempAssociations);
+        } else {
+            console.error(`❌ Erro: ID ${targetContentId} não encontrado!`);
         }
-        // ============================================================
+    });
 
-        // --- F. GRAVAÇÃO FINAL NO FIREBASE ---
-        const isAquarium = document.getElementById('aquarium-environment').style.display !== 'none';
-        if (isAquarium && typeof saveAquariumState === 'function') await window.saveAquariumState();
-        else if (typeof saveNote === 'function') await saveNote(true);
-
-        modal.style.display = 'none';
-
-    } catch (err) {
-        console.error(err);
-        alert("Erro ao gravar.");
-    } finally {
-        newSaveBtn.textContent = "Gravar";
-        newSaveBtn.disabled = false;
+    // Ativa a aba inicial (Referências) via simulação de clique
+    const defaultTab = newTabHeader.querySelector('[data-box-tab="refs"]');
+    if(defaultTab) {
+        // Simula o estado visual inicial sem disparar o evento completo para ser mais rápido
+        newTabHeader.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        defaultTab.classList.add('active');
+        document.querySelectorAll('.box-tab-content').forEach(div => div.style.display = 'none');
+        const refsContent = document.getElementById('box-content-refs');
+        if(refsContent) refsContent.style.display = 'block';
     }
-};
+
+    // ============================================================
+    // 6. BOTÃO GRAVAR
+    // ============================================================
+    const saveBtn = document.getElementById('link-save-btn');
+    const newSaveBtn = saveBtn.cloneNode(true);
+    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+
+    newSaveBtn.onclick = async () => {
+        newSaveBtn.disabled = true;
+        newSaveBtn.textContent = "A gravar...";
+        
+        try {
+            const titleInput = document.getElementById('link-title-input');
+            const urlsToSave = {}; 
+            const urlsContainer = document.getElementById('link-urls-container');
+            if(urlsContainer) {
+                urlsContainer.querySelectorAll('input').forEach((inp, i) => {
+                    if(inp.value.trim()) {
+                        let val = inp.value.trim();
+                        if(!val.startsWith('http')) val = 'https://' + val;
+                        urlsToSave[`url_${Date.now()}_${i}`] = val;
+                    }
+                });
+            }
+
+            const codexToSave = []; 
+            modal.querySelectorAll('.codex-row').forEach(row => {
+                 if(typeof getCodexDataFromRow === 'function') {
+                     const rowData = getCodexDataFromRow(row);
+                     if (rowData.serie || rowData.manualYear || rowData.capitulo) {
+                         const originalId = row.getAttribute('data-firestore-id');
+                         if(originalId) rowData.id = originalId;
+                         codexToSave.push(rowData);
+                     }
+                 }
+            });
+
+            // LER CATEGORIAS DA MEMÓRIA GLOBAL
+            const categoriesToSave = window.selectedCategoriesForBox || [];
+            console.log("💾 A gravar categorias:", categoriesToSave);
+
+            const finalJson = { 
+                title: titleInput.value.trim(), 
+                urls: urlsToSave, 
+                codex: codexToSave, 
+                categories: categoriesToSave, 
+                associations: window.tempAssociations || [] 
+            };
+            
+            wrapper.setAttribute('data-box-links', JSON.stringify(finalJson));
+            
+            if (typeof updateBoxLinkButtonState === 'function') updateBoxLinkButtonState(wrapper);
+            if (categoriesToSave.length > 0 && typeof syncCategoriesToFirestore === 'function') await syncCategoriesToFirestore(categoriesToSave);
+            
+            if (window.tempAssociations && window.tempAssociations.length > 0) {
+                 if(typeof window.updateRemoteAssociations === 'function') {
+                     await window.updateRemoteAssociations(currentBoxId, window.tempAssociations);
+                 }
+            }
+
+            const isAquarium = document.getElementById('aquarium-environment').style.display !== 'none';
+            if (isAquarium) {
+                if (typeof window.saveAquariumState === 'function') await window.saveAquariumState();
+            } else {
+                if (typeof saveNote === 'function') await saveNote(true);
+            }
+
+            modal.style.display = 'none';
+
+        } catch (err) {
+            console.error("Erro gravar:", err);
+            alert("Erro ao gravar.");
+        } finally {
+            newSaveBtn.disabled = false;
+            newSaveBtn.textContent = "Gravar";
+            console.groupEnd();
+        }
+    };
 };
 
 
@@ -33259,7 +33228,7 @@ async function renderUniversalTextSearch(name) {
         const snapshot = await getDocs(q);
         allCitationsResults = []; // Limpa resultados anteriores
 
-        const wholeWordRegex = new RegExp(`\\b${escapeRegExp(name)}\\b`, 'i');
+        const wholeWordRegex = new RegExp(`\\b(${escapeRegExp(name)})\\b`, 'i');
         const parser = new DOMParser();
 
         snapshot.forEach(docSnap => {
@@ -33268,8 +33237,8 @@ async function renderUniversalTextSearch(name) {
             let isProtected = (data.passe && data.passe.trim() !== "");
             if (isProtected && !appSettings.searchAnchorsInProtected) return;
 
-            // 1. Verificamos se o nome aparece no texto bruto
-            let hasTextMatch = wholeWordRegex.test(content);
+            // 1. Verificamos se o nome aparece no texto bruto (para performance)
+            // Se não aparecer no texto mas estiver numa categoria, o passo 2 apanha.
             
             // 2. Analisar o HTML para encontrar as caixas
             const docHTML = parser.parseFromString(content, 'text/html');
@@ -33277,56 +33246,66 @@ async function renderUniversalTextSearch(name) {
             
             boxes.forEach(box => {
                 let match = false;
-                let matchSource = "text"; // 'text' ou 'category'
+                let matchType = ""; // Para debug, se necessário
 
-
-                 if (box.classList.contains('statue-card-wrapper')) return; 
+                if (box.classList.contains('statue-card-wrapper')) return; 
 
                 // A. Verifica Texto dentro da caixa
                 if (wholeWordRegex.test(box.textContent)) {
                     match = true;
+                    matchType = "text";
                 }
 
                 // B. Verifica Vínculo de Categoria (⚡)
-                const boxLinksRaw = box.getAttribute('data-box-links');
-                if (boxLinksRaw) {
-                    try {
-                        const boxData = JSON.parse(boxLinksRaw);
-                        if (boxData.categories && Array.isArray(boxData.categories)) {
-                            // Verifica match por ID ou por Nome
-                            const catMatch = boxData.categories.some(cat => 
-                                (cat.id && cat.id === activeReferenceEntity.id) || 
-                                (cat.name && cat.name.toLowerCase().trim() === name.toLowerCase().trim())
-                            );
-                            if (catMatch) {
-                                match = true;
-                                matchSource = "category";
+                if (!match) {
+                    const boxLinksRaw = box.getAttribute('data-box-links');
+                    if (boxLinksRaw) {
+                        try {
+                            const boxData = JSON.parse(boxLinksRaw);
+                            if (boxData.categories && Array.isArray(boxData.categories)) {
+                                // Verifica match por ID ou por Nome
+                                const catMatch = boxData.categories.some(cat => 
+                                    (cat.id && cat.id === activeReferenceEntity.id) || 
+                                    (cat.name && cat.name.toLowerCase().trim() === name.toLowerCase().trim())
+                                );
+                                if (catMatch) {
+                                    match = true;
+                                    matchType = "category";
+                                }
                             }
-                        }
-                    } catch (e) { }
+                        } catch (e) { }
+                    }
                 }
 
-                // Se encontrou, adiciona aos resultados
+                // Se encontrou (seja por texto ou categoria), adiciona aos resultados
                 if (match) {
+                    
+                    // --- GERAÇÃO DO CONTEÚDO VISUAL (CORRIGIDO) ---
+                    // Independentemente de como foi encontrado, mostramos sempre o conteúdo real.
+                    
                     let finalSnippet = "";
-                    let boxTitle = "";
-
-                    // Tenta obter título
-                    const titleInput = box.querySelector('.mini-note-title-input, .redator-input, h2');
-                    if (titleInput) boxTitle = titleInput.value || titleInput.textContent;
-
-                    // Gera o snippet visual
-                    if (matchSource === "category") {
-                        // Se for vínculo por ID, mostra aviso especial
-                        finalSnippet = `<p style="color:var(--accent-color); font-weight:500;">⚡ ${boxTitle || 'Caixa Vinculada'}</p><p style="font-size:0.8em; opacity:0.7;">(Vínculo manual via Categorias)</p>`;
-                    } else {
-                        // Se for texto, gera contexto normal
+                    
+                    // Se for match de texto direto, podemos usar o highlight inteligente
+                    if (matchType === "text") {
                         finalSnippet = generateReferenceContext(box.outerHTML, name);
+                    } 
+                    // Se for match de categoria, mostramos o conteúdo da caixa
+                    else {
+                        // Tenta extrair texto limpo da caixa
+                        const contentDiv = box.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content');
+                        let rawText = contentDiv ? contentDiv.innerText : box.innerText;
+                        
+                        // Limpa espaços e limita tamanho
+                        rawText = rawText.replace(/\s+/g, ' ').trim();
+                        if (rawText.length > 200) rawText = rawText.substring(0, 200) + "...";
+                        
+                        // Envolve num parágrafo para consistência visual
+                        finalSnippet = `<p>${rawText || '<em style="color:gray">Caixa sem texto.</em>'}</p>`;
                     }
 
                     allCitationsResults.push({
-                        id: docSnap.id, // ID da Nota
-                        boxId: box.id,  // NOVO: ID da Caixa Específica
+                        id: docSnap.id, 
+                        boxId: box.id,  
                         name: data.nome,
                         isProtected: isProtected,
                         snippet: finalSnippet,
@@ -35120,249 +35099,232 @@ document.getElementById('puzzle-board-container').addEventListener('click', (e) 
 // GESTÃO DE CATEGORIAS ANEXADAS (FUNÇÕES GLOBAIS)
 // ============================================================
 
-async function searchCategories(queryText) { // Mudamos 'query' para 'queryText' para evitar conflito
+window.searchCategories = async function(queryText) {
     const resultsContainer = document.getElementById('category-search-results');
-    const isBibleSearch = document.getElementById('search-bible-toggle').checked;
+    const isBibleSearch = document.getElementById('search-bible-toggle')?.checked;
     
     if (!resultsContainer) return;
 
-    // Se o texto for pequeno, limpa e sai
+    // Reset se vazio
     if (!queryText || queryText.length < 2) {
         resultsContainer.innerHTML = '';
-        categoryFullResults = [];
-        categoryDisplayCount = 0;
+        window.categoryFullResults = [];
+        window.categoryDisplayCount = 0;
         return;
     }
 
     const term = queryText.toLowerCase();
-    categoryFullResults = [];
-    categoryDisplayCount = 0;
+    window.categoryFullResults = [];
+    window.categoryDisplayCount = 0;
+
+    console.log(`🔍 [PESQUISA] Procurando por: "${term}"...`);
 
     if (isBibleSearch) {
-        // --- MODO BÍBLIA: PESQUISA NO FIREBASE GLOBAL ---
-        resultsContainer.innerHTML = '<div style="padding:20px; text-align:center;"><div class="spinner" style="width:20px; height:20px; border-width:2px; display:inline-block;"></div><p style="font-size:0.8em; margin-top:10px; color:var(--accent-color);">A consultar biblioteca bíblica...</p></div>';
-        
+        // --- MODO BÍBLIA ---
+        resultsContainer.innerHTML = '<div style="padding:10px; text-align:center;"><div class="spinner"></div></div>';
         try {
-            // Importante: Usamos o parâmetro queryText aqui
-            const q = query(
-                collection(db, "bible_verses_public"), 
-                where("nome", ">=", queryText), 
-                where("nome", "<=", queryText + '\uf8ff'),
-                limit(50)
-            );
-            
+            const { collection, query, where, limit, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            const q = query(collection(db, "bible_verses_public"), where("nome", ">=", queryText), where("nome", "<=", queryText + '\uf8ff'), limit(50));
             const snap = await getDocs(q);
-            snap.forEach(docSnap => {
-                categoryFullResults.push({ 
-                    id: docSnap.id, 
-                    name: docSnap.data().nome, 
-                    type: 'bible_public' 
-                });
+            snap.forEach(doc => {
+                window.categoryFullResults.push({ id: doc.id, name: doc.data().nome, type: 'bible_public' });
             });
-            
-            if (categoryFullResults.length === 0) {
-                resultsContainer.innerHTML = '<div style="padding:20px; color:#888; text-align:center; font-size:0.9em;">Nenhum versículo encontrado com este nome.</div>';
-                return;
-            }
-        } catch (e) { 
-            console.error("Erro busca bíblia:", e); 
-            resultsContainer.innerHTML = '<div style="padding:20px; color:red; text-align:center;">Erro ao ligar à biblioteca.</div>';
-            return;
-        }
+        } catch (e) { console.error("Erro bíblia:", e); }
     } else {
-        // --- MODO NORMAL: PESQUISA LOCAL (SEM BÍBLIA) ---
+        // --- MODO LOCAL ---
+        // Varre todas as entidades locais carregadas
         Object.keys(allEntities).forEach(type => {
-            if (type === 'textobiblico') return; // Esconde Bíblia se o toggle estiver desligado
-
+            if (type === 'textobiblico') return; 
             allEntities[type].forEach(ent => {
                 if (ent.nome.toLowerCase().includes(term)) {
-                    categoryFullResults.push({ id: ent.id, name: ent.nome, type: type });
+                    window.categoryFullResults.push({ id: ent.id, name: ent.nome, type: type });
                 }
             });
         });
 
-        allTags.forEach(tag => {
-            if (tag.nome.toLowerCase().includes(term)) {
-                categoryFullResults.push({ id: tag.id, name: tag.nome, type: 'tag' });
-            }
-        });
-        
-        // Pesquisa no Cosmos (Temas)
-        if (allEntities['cosmos']) {
-            allEntities['cosmos'].forEach(tema => {
-                if (tema.nome.toLowerCase().includes(term)) {
-                    categoryFullResults.push({ id: tema.id, name: tema.nome, type: 'cosmos' });
+        // Varre Tags
+        if (typeof allTags !== 'undefined') {
+            allTags.forEach(tag => {
+                if (tag.nome.toLowerCase().includes(term)) {
+                    window.categoryFullResults.push({ id: tag.id, name: tag.nome, type: 'tag' });
                 }
             });
         }
     }
 
-    // Ordenar resultados alfabeticamente
-    categoryFullResults.sort((a, b) => a.name.localeCompare(b.name));
-
+    // Ordena e Renderiza
+    window.categoryFullResults.sort((a, b) => a.name.localeCompare(b.name));
     resultsContainer.innerHTML = '';
-    renderCategoryBatch(); // Desenha os primeiros 30
-}
+    window.renderCategoryBatch(); // Chama o renderizador corrigido abaixo
+};
 
 // FUNÇÃO PARA RENDERIZAR UM LOTE DE 30 ITENS
- async function renderCategoryBatch() {
+ window.renderCategoryBatch = function() {
     const resultsContainer = document.getElementById('category-search-results');
-    const isBibleSearch = document.getElementById('search-bible-toggle').checked;
     
-    // Remove o botão "Ver mais" antigo se ele existir
+    // Remove botão "Ver mais" antigo
     const oldBtn = document.getElementById('btn-categories-more');
     if (oldBtn) oldBtn.remove();
 
-    const start = categoryDisplayCount;
+    const start = window.categoryDisplayCount || 0;
     const end = start + 30;
-    const batch = categoryFullResults.slice(start, end);
+    const batch = window.categoryFullResults.slice(start, end);
 
-    for (const res of batch) {
-        // VERIFICAÇÃO DE DUPLICADO: 
-        // Se for Bíblia Global, comparamos pelo NOME (já que o ID global é diferente do ID privado)
-        // Se for categoria normal, comparamos pelo ID.
-        const isAlreadyAdded = selectedCategoriesForBox.some(c => 
+    batch.forEach(res => {
+        // VERIFICAÇÃO ROBUSTA: Vê se já está no array global
+        const isAlreadyAdded = window.selectedCategoriesForBox.some(c => 
             (res.type === 'bible_public' ? c.name === res.name : c.id === res.id)
         );
         
         const div = document.createElement('div');
         
-        // Definição de Ícones e Labels
-        let icon = "🔹";
-        let typeLabel = res.type;
-        let color = "var(--accent-color)";
-
-        switch (res.type) {
-            case 'personagem': icon = "👤"; typeLabel = "Personagem"; break;
-            case 'local': icon = "📍"; typeLabel = "Local"; break;
-            case 'data': icon = "📅"; typeLabel = "Data"; break;
-            case 'tag': icon = "🏷️"; typeLabel = "Tag"; break;
-            case 'textobiblico': icon = "📖"; typeLabel = "Bíblia"; break;
-            case 'bible_public': icon = "📖"; typeLabel = "Bíblia (Global)"; color = "#e67e22"; break;
-            case 'cosmos': icon = "🪐"; typeLabel = "Tema"; break;
-            case 'subcosmos': icon = "🧬"; typeLabel = "Subtema"; break;
-        }
+        // Estilos e Ícones
+        let icon = "🔹"; let typeLabel = res.type; let color = "var(--accent-color)";
+        if (res.type === 'personagem') { icon = "👤"; typeLabel = "Personagem"; color="#e67e22"; }
+        else if (res.type === 'local') { icon = "📍"; typeLabel = "Local"; color="#e74c3c"; }
+        else if (res.type === 'tag') { icon = "🏷️"; typeLabel = "Tag"; color="#f1c40f"; }
+        else if (res.type === 'textobiblico') { icon = "📖"; typeLabel = "Bíblia"; color="#2ecc71"; }
 
         div.style.cssText = `
-            padding: 10px 15px;
-            cursor: ${isAlreadyAdded ? 'default' : 'pointer'};
-            border-bottom: 1px solid rgba(255,255,255,0.05);
+            padding: 10px 15px; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.05);
             display: flex; align-items: center; gap: 12px; transition: all 0.2s;
-            opacity: ${isAlreadyAdded ? '0.4' : '1'};
-            filter: ${isAlreadyAdded ? 'grayscale(1)' : 'none'};
+            opacity: ${isAlreadyAdded ? '0.5' : '1'};
         `;
 
-        if (!isAlreadyAdded) {
-            div.onmouseenter = () => { div.style.backgroundColor = "rgba(74, 144, 226, 0.1)"; div.style.paddingLeft = "20px"; };
-            div.onmouseleave = () => { div.style.backgroundColor = "transparent"; div.style.paddingLeft = "15px"; };
-        }
-
         div.innerHTML = `
-            <span style="font-size: 1.4em; flex-shrink: 0;">${icon}</span>
-            <div style="display: flex; flex-direction: column; overflow: hidden;">
-                <span style="font-size: 0.65em; text-transform: uppercase; color: ${color}; font-weight: bold; letter-spacing: 0.5px;">${typeLabel}</span>
-                <strong style="color: var(--text-color); font-size: 0.95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${res.name}</strong>
+            <span style="font-size: 1.4em;">${icon}</span>
+            <div style="display: flex; flex-direction: column; overflow: hidden; flex: 1;">
+                <span style="font-size: 0.65em; text-transform: uppercase; color: ${color}; font-weight: bold;">${typeLabel}</span>
+                <strong style="color: var(--text-color); font-size: 0.95em;">${res.name}</strong>
             </div>
-            <span style="margin-left: auto; color: ${isAlreadyAdded ? '#2ecc71' : 'var(--text-muted-color)'}; font-size: 0.9em; font-weight: bold;">
+            <span class="status-icon" style="font-size: 1.2em; font-weight: bold; color: ${isAlreadyAdded ? '#2ecc71' : 'var(--text-muted-color)'};">
                 ${isAlreadyAdded ? '✓' : '+'}
             </span>
         `;
 
-        div.onclick = async () => {
-            if (isAlreadyAdded) return;
+        // --- OUVINTE DE CLIQUE CORRIGIDO ---
+        div.onclick = async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
 
-            // --- LÓGICA ESPECIAL: IMPORTAR BÍBLIA GLOBAL PARA PRIVADA ---
-            if (res.type === 'bible_public') {
-                div.style.pointerEvents = 'none';
-                div.innerHTML = `<span style="font-size: 1.4em;">⏳</span><div style="display:flex; flex-direction:column;"><small style="color:orange; font-size:10px; font-weight:bold;">A IMPORTAR...</small><strong>${res.name}</strong></div>`;
-                
-                try {
-                    // 1. Verificar se o utilizador já tem este versículo na sua lista privada
-                    const qPrivate = query(collection(db, 'textosbiblicos'), 
-                        where('nome', '==', res.name), 
-                        where('userId', '==', auth.currentUser.uid)
-                    );
-                    const privateSnap = await getDocs(qPrivate);
+            console.log("👉 [CLIQUE] Item clicado:", res.name);
 
-                    let privateId;
-                    if (privateSnap.empty) {
-                        // 2. Criar o documento privado com o userId do utilizador atual
-                        const newDoc = await addDoc(collection(db, 'textosbiblicos'), {
-                            nome: res.name,
-                            userId: auth.currentUser.uid,
-                            createdAt: serverTimestamp(),
-                            puzzleBoard: [], // Começa com quadro vazio
-                            marcadoresAssociados: {}
-                        });
-                        privateId = newDoc.id;
-                        
-                        // 3. Atualizar o cache local (allEntities) para que a 4ª coluna o encontre agora
-                        if(!allEntities['textobiblico']) allEntities['textobiblico'] = [];
-                        allEntities['textobiblico'].push({ id: privateId, nome: res.name, tipo: 'textobiblico' });
-                        console.log(`✅ Versículo ${res.name} migrado para coleção privada.`);
-                    } else {
-                        privateId = privateSnap.docs[0].id;
-                    }
-                    
-                    // Adicionar ao array do modal como tipo privado
-                    selectedCategoriesForBox.push({ id: privateId, name: res.name, type: 'textobiblico' });
-
-                } catch (err) {
-                    console.error("Erro na migração bíblica:", err);
-                    alert("Erro ao importar versículo.");
-                    return;
-                }
-            } else {
-                // Caso normal (Personagens, Locais, etc.)
-                selectedCategoriesForBox.push(res);
+            // 1. Evita duplicados
+            const existsNow = window.selectedCategoriesForBox.some(c => c.id === res.id);
+            if (existsNow) {
+                console.warn("⚠️ Item já estava selecionado.");
+                return;
             }
 
-            // Finalizar adição
-            renderAttachedCategories();
-            document.getElementById('category-search-input').value = '';
-            resultsContainer.innerHTML = '';
-            document.getElementById('category-search-input').focus();
+            // 2. ADICIONA AO ARRAY GLOBAL (O Passo que faltava)
+            window.selectedCategoriesForBox.push({
+                id: res.id,
+                name: res.name,
+                type: res.type
+            });
+
+            console.log("✅ [MEMÓRIA] Array atualizado:", window.selectedCategoriesForBox);
+
+            // 3. Atualiza Visualmente a Linha (Imediato)
+            div.style.opacity = '0.5';
+            div.querySelector('.status-icon').textContent = '✓';
+            div.querySelector('.status-icon').style.color = '#2ecc71';
+
+            // 4. Atualiza os "Chips" na área de cima
+            window.renderAttachedCategories();
+            
+            // 5. Limpa a pesquisa para facilitar a próxima
+            const input = document.getElementById('category-search-input');
+            if(input) {
+                input.value = "";
+                input.focus();
+            }
+            resultsContainer.innerHTML = ''; // Limpa resultados para forçar nova pesquisa limpa
         };
         
         resultsContainer.appendChild(div);
-    }
+    });
 
-    categoryDisplayCount += batch.length;
+    window.categoryDisplayCount += batch.length;
 
-    // Criar botão "Ver mais" se ainda houver resultados no array full
-    if (categoryDisplayCount < categoryFullResults.length) {
+    // Botão Ver Mais
+    if (window.categoryDisplayCount < window.categoryFullResults.length) {
         const moreBtn = document.createElement('button');
         moreBtn.id = 'btn-categories-more';
-        moreBtn.textContent = `Ver mais (${categoryFullResults.length - categoryDisplayCount} restantes)`;
-        moreBtn.style.cssText = `
-            width: 100%; padding: 12px; background: rgba(255,255,255,0.05); 
-            border: none; color: var(--accent-color); cursor: pointer; 
-            font-weight: bold; font-size: 0.85em; text-transform: uppercase;
-        `;
-        moreBtn.onclick = (e) => {
-            e.preventDefault();
-            renderCategoryBatch();
-        };
+        moreBtn.textContent = "Ver mais resultados...";
+        moreBtn.className = "modal-btn secondary";
+        moreBtn.style.width = "100%";
+        moreBtn.style.marginTop = "10px";
+        moreBtn.onclick = (e) => { e.preventDefault(); window.renderCategoryBatch(); };
         resultsContainer.appendChild(moreBtn);
     }
-}
+};
 
-function renderAttachedCategories() {
-    const list = document.getElementById('attached-categories-list');
-    if (!list) return;
+window.renderAttachedCategories = function() {
+    console.log("🎨 [UI] Desenhando chips...");
+    
+    // Procura o contentor
+    let list = document.getElementById('attached-categories-list');
+    
+    // Se não existir, cria-o (Segurança contra falhas de DOM)
+    if (!list) {
+        const parent = document.getElementById('box-content-categories');
+        if (!parent) return; // Se nem a aba existe, sai
+        
+        const label = parent.querySelector('label'); // "Categorias Anexadas:"
+        list = document.createElement('div');
+        list.id = 'attached-categories-list';
+        list.style.cssText = "display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; min-height: 40px;";
+        if (label) label.after(list);
+        else parent.appendChild(list);
+    }
+
     list.innerHTML = '';
-    selectedCategoriesForBox.forEach(cat => {
+    
+    if (!window.selectedCategoriesForBox || window.selectedCategoriesForBox.length === 0) {
+        list.innerHTML = '<span style="color:#666; font-size:0.85em; font-style:italic; padding:5px;">Nenhuma categoria selecionada.</span>';
+        return;
+    }
+
+    window.selectedCategoriesForBox.forEach(cat => {
         const chip = document.createElement('div');
-        chip.style.cssText = "background:var(--selected-color); color:white; padding:5px 12px; border-radius:20px; font-size:0.85em; display:flex; align-items:center; gap:8px; border: 1px solid rgba(255,255,255,0.1);";
-        chip.innerHTML = `${cat.name} <span style="cursor:pointer; font-weight:bold; font-size:1.2em;">×</span>`;
-        chip.querySelector('span').onclick = (e) => {
-            e.stopPropagation();
-            selectedCategoriesForBox = selectedCategoriesForBox.filter(c => c.id !== cat.id);
-            renderAttachedCategories();
+        
+        let color = "var(--selected-color)";
+        if (cat.type === 'personagem') color = "rgba(230, 126, 34, 0.4)";
+        if (cat.type === 'local') color = "rgba(231, 76, 60, 0.4)";
+        if (cat.type === 'tag') color = "rgba(241, 196, 15, 0.2)";
+
+        chip.style.cssText = `
+            background: ${color}; 
+            color: white; 
+            padding: 4px 10px; 
+            border-radius: 15px; 
+            font-size: 0.85em; 
+            display: flex; align-items: center; gap: 6px; 
+            border: 1px solid rgba(255,255,255,0.2);
+            animation: fadeIn 0.2s;
+        `;
+        
+        chip.innerHTML = `
+            <span>${cat.name}</span> 
+            <span class="remove-btn" style="cursor:pointer; font-weight:bold; opacity:0.7;">×</span>
+        `;
+        
+        // Remover Chip
+        chip.querySelector('.remove-btn').onclick = (e) => {
+            e.preventDefault(); e.stopPropagation();
+            console.log("🗑️ Removendo chip:", cat.name);
+            window.selectedCategoriesForBox = window.selectedCategoriesForBox.filter(c => c.id !== cat.id);
+            window.renderAttachedCategories(); // Redesenha os chips
+            
+            // Opcional: Se a pesquisa estiver aberta, atualiza o ícone de volta para "+"
+            const searchInput = document.getElementById('category-search-input');
+            if(searchInput && searchInput.value) window.searchCategories(searchInput.value);
         };
+        
         list.appendChild(chip);
     });
-}
+};
 
 // ============================================================
 // NOVO SISTEMA DE HISTÓRICO: ABAS + TIMELINE + AÇÕES
@@ -49620,8 +49582,133 @@ async function indexAllNotesForGPS() {
     alert("Indexação GPS concluída. A pesquisa rápida está ativa.");
 }
 
-// Para correr a migração, pode criar um botão temporário ou correr na consola:
-// window.indexAllNotesForGPS();
+// ============================================================
+// SOLUÇÃO PROBLEMA 1: SINCRONIZAR CATEGORIAS (BIDIRECIONAL)
+// ============================================================
+async function syncCategoriesToFirestore(categories) {
+    if (!categories || categories.length === 0 || !selectedNoteId) return;
+
+    console.log("🔄 [SYNC] A criar referências inversas nas entidades...");
+
+    // Importação necessária para falar com a base de dados
+    const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+
+    // Função para saber qual a tabela correta
+    const getCollectionName = (type) => {
+        if (type === 'personagem') return 'personagens';
+        if (type === 'local') return 'locais';
+        if (type === 'data') return 'datas';
+        if (type === 'cosmos') return 'cosmos';
+        if (type === 'subcosmos') return 'subcosmos';
+        if (type === 'textobiblico' || type === 'bible_public') return 'textosbiblicos';
+        if (type === 'tag') return 'tags';
+        if (type === 'topico') return 'topicos';
+        if (type === 'marcadores') return 'marcadores';
+        return null; // Tipo desconhecido
+    };
+
+    // Percorre cada categoria escolhida (ex: David, Jerusalém)
+    for (const cat of categories) {
+        const collectionName = getCollectionName(cat.type);
+        
+        if (collectionName && cat.id) {
+            try {
+                const ref = doc(db, collectionName, cat.id);
+                
+                // Escreve na ficha da entidade que esta nota a está a usar
+                // A sintaxe [`referencias.${selectedNoteId}`] cria ou atualiza esse campo específico
+                await updateDoc(ref, {
+                    [`referencias.${selectedNoteId}`]: true
+                });
+                
+                console.log(`✅ Referência criada em: ${cat.name} (${collectionName})`);
+            } catch (e) {
+                console.warn(`⚠️ Não foi possível atualizar ${cat.name}:`, e);
+            }
+        }
+    }
+}
+
+window.renderAttachedCategories = function() {
+    console.log("🎨 [RENDER] A desenhar lista de categorias anexadas...");
+    
+    let list = document.getElementById('attached-categories-list');
+    
+    // --- CORREÇÃO: SE A DIV NÃO EXISTE, CRIA-A ---
+    // Isto acontece porque às vezes o HTML é re-escrito e perde-se a div
+    if (!list) {
+        console.warn("⚠️ Contentor não encontrado. A criar novo...");
+        const boxContentCats = document.getElementById('box-content-categories');
+        if (boxContentCats) {
+            const label = boxContentCats.querySelectorAll('label')[0]; // "Categorias Anexadas:"
+            list = document.createElement('div');
+            list.id = 'attached-categories-list';
+            list.style.cssText = "display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; min-height: 40px;";
+            if (label) label.after(list);
+            else boxContentCats.appendChild(list);
+        } else {
+            console.error("❌ Aba 'box-content-categories' não existe no DOM.");
+            return;
+        }
+    }
+
+    list.innerHTML = '';
+    
+    // Verifica se há dados
+    if (!window.selectedCategoriesForBox || window.selectedCategoriesForBox.length === 0) {
+        console.log("ℹ️ Lista vazia.");
+        list.innerHTML = '<span style="color:#666; font-size:0.85em; font-style:italic; padding:5px;">Nenhuma categoria selecionada.</span>';
+        return;
+    }
+
+    console.log("🔢 Itens a desenhar:", window.selectedCategoriesForBox.length);
+
+    // Desenha os chips
+    window.selectedCategoriesForBox.forEach(cat => {
+        const chip = document.createElement('div');
+        
+        // Cores por tipo
+        let color = "var(--selected-color)";
+        if (cat.type === 'bible_public' || cat.type === 'textobiblico') color = "rgba(46, 204, 113, 0.2)";
+        if (cat.type === 'personagem') color = "rgba(230, 126, 34, 0.2)";
+        
+        chip.style.cssText = `
+            background: ${color}; 
+            color: white; 
+            padding: 5px 12px; 
+            border-radius: 20px; 
+            font-size: 0.85em; 
+            display: flex; 
+            align-items: center; 
+            gap: 8px; 
+            border: 1px solid rgba(255,255,255,0.2);
+            white-space: nowrap;
+        `;
+        
+        chip.innerHTML = `
+            <span>${cat.name}</span> 
+            <span class="remove-cat-btn" style="cursor:pointer; font-weight:bold; font-size:1.2em; opacity:0.7;">×</span>
+        `;
+        
+        // Botão Remover
+        chip.querySelector('.remove-cat-btn').onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log("🗑️ Removendo:", cat.name);
+            
+            window.selectedCategoriesForBox = window.selectedCategoriesForBox.filter(c => c.id !== cat.id);
+            window.renderAttachedCategories();
+            
+            // Atualiza os "+" na pesquisa se estiverem visíveis
+            const input = document.getElementById('category-search-input');
+            if (input && input.value && typeof searchCategories === 'function') {
+                 searchCategories(input.value); 
+            }
+        };
+        
+        list.appendChild(chip);
+    });
+};
 
     </script>
 </body>
