@@ -14565,8 +14565,11 @@ async function fetchAllEntities() {
 }
 
 function resetEditor() {
-    // 1. LIMPEZA DE POPUPS (NOVO)
+    // 1. LIMPEZA DE POPUPS
     window.closeAllFloatingPopups();
+
+    // >>> REINICIAR MEMÓRIA DA ABA MOBILE <<<
+    window.lastActiveMobileTab = 'index'; 
 
     // 2. Desliga o ouvinte da nota em tempo real
     if (unsubscribeCurrentNote) {
@@ -14597,7 +14600,6 @@ function resetEditor() {
     const filesTabBtn = document.querySelector('button[data-mid-tab="files"]');
     if (filesTabBtn) filesTabBtn.click();
 
-    // Limpa seleções visuais
     document.querySelectorAll('#middle-panel-list .list-item.selected').forEach(el => el.classList.remove('selected'));
     document.querySelectorAll('#file-list .list-item.selected').forEach(el => el.classList.remove('selected', 'selected-red'));
     
@@ -38104,7 +38106,7 @@ async function generateNoteTexts() {
                 `|` +
                 `\\s*;\\s*\\d+(?::\\d+)?` + 
                 `|` +
-                `\\s*,\\s*\\d+(?!\\s*:)` + // Aceita vírgula seguida de número (versículo)
+                `\\s*,\\s*\\d+(?!\\s*:)` + 
             `)*` +
         `)`, 
     'gi');
@@ -38140,7 +38142,6 @@ async function generateNoteTexts() {
             const normalizedBook = normalizeStr(originalBookName);
             const canonicalBook = canonicalBookMap[normalizedBook] || originalBookName;
 
-            // Divide por PONTO E VÍRGULA (;) para criar blocos separados
             const segments = numbersPart.split(';');
             let currentRefBuffer = ""; 
 
@@ -38178,6 +38179,9 @@ async function generateNoteTexts() {
 
     list.innerHTML = ''; 
     let elementToScrollTo = null;
+    
+    // ARRAY PARA GUARDAR AS PROMESAS (O FIX PARA MOBILE)
+    const renderPromises = [];
 
     for (const cleanRef of uniqueRefs) {
         
@@ -38186,26 +38190,18 @@ async function generateNoteTexts() {
         
         if (newRefFound && cleanRef === newRefFound) elementToScrollTo = itemDiv;
 
-        // ============================================================
-        // CORREÇÃO VISUAL: LIMPAR O TÍTULO NA VISTA
-        // ============================================================
-        // O `cleanRef` contém "Jó 1:2 , 2-1".
-        // Vamos cortar na primeira vírgula para mostrar apenas "Jó 1:2"
         let displayTitle = cleanRef.split(',')[0].trim();
-
-        // Se o título ficou igual ao livro (ex: erro de split), mantém o original
         if (displayTitle === cleanRef.split(' ')[0]) displayTitle = cleanRef;
 
         const title = document.createElement('div');
         title.className = 'bible-ref-title';
         title.style.cssText = `font-weight: bold; color: var(--accent-color); cursor: pointer; font-size: 0.95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: sticky; top: 0; background-color: var(--panel-color); z-index: 5; padding: 12px 0 8px 0;`;
         
-        title.textContent = displayTitle; // Usa o título curto
-        title.title = cleanRef; // Mostra o completo ao passar o rato (tooltip)
+        title.textContent = displayTitle; 
+        title.title = cleanRef;
         
         title.onclick = () => {
             if (typeof scrollToAndHighlightText === 'function') {
-                // Tenta pesquisar pelo versículo específico do título curto
                 scrollToAndHighlightText(displayTitle.split(' ').pop());
             }
         };
@@ -38218,11 +38214,12 @@ async function generateNoteTexts() {
         itemDiv.appendChild(contentDiv);
         list.appendChild(itemDiv);
 
-        // AQUI MANTEMOS 'cleanRef' (O COMPLETO) PARA BUSCAR OS TEXTOS TODOS
+        // --- BUSCA ASSÍNCRONA ---
         const individualVerses = expandVerseReference(cleanRef);
         const textPromises = individualVerses.map(v => fetchPublicBibleText(v));
         
-        Promise.all(textPromises).then(texts => {
+        // ADICIONAMOS A PROMESA AO ARRAY DE ESPERA
+        const p = Promise.all(textPromises).then(texts => {
             const fullText = texts.filter(t => t).join(" ");
             if (fullText.trim()) {
                 contentDiv.textContent = fullText;
@@ -38230,8 +38227,11 @@ async function generateNoteTexts() {
                 contentDiv.innerHTML = '<span style="opacity:0.5; font-size:0.8em;">Texto não disponível.</span>';
             }
         });
+        
+        renderPromises.push(p);
     }
 
+    // Scroll para novo item (se houver)
     if (elementToScrollTo) {
         setTimeout(() => {
             elementToScrollTo.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -38242,6 +38242,10 @@ async function generateNoteTexts() {
     }
 
     list.setAttribute('data-prev-refs', JSON.stringify(uniqueRefs));
+    
+    // --- O CORAÇÃO DA CORREÇÃO ---
+    // Aguarda que todos os textos sejam carregados antes de permitir que o código do Mobile copie o HTML.
+    await Promise.all(renderPromises);
 }
 
 // 3. FUNÇÃO: GERAR FONTES (VISTA 4)
@@ -38394,96 +38398,101 @@ document.getElementById('mobile-views-btn').addEventListener('click', (e) => {
 });
 
 // 2. Gerir Cliques nas Abas do Modal Mobile
- document.querySelector('#mobile-views-modal .middle-bottom-tabs').addEventListener('click', async (e) => {
+document.addEventListener('click', async (e) => {
+    
+    const tabsContainer = e.target.closest('#mobile-views-modal .middle-bottom-tabs');
+    if (!tabsContainer) return; 
+
     const btn = e.target.closest('button');
     if (!btn) return;
 
-    // 1. GERAR SENHA ÚNICA PARA ESTE CLIQUE
-    const myRequestId = ++currentMobileRequestId;
-    console.log(`🎫 Clique ID: ${myRequestId} (Aba: ${btn.dataset.mobTab})`);
+    e.preventDefault();
+    e.stopPropagation();
 
-    // Atualiza classes ativas
-    e.currentTarget.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    // GRAVAR NA MEMÓRIA
+    window.lastActiveMobileTab = btn.dataset.mobTab;
+    
+    // Atualiza Visual
+    tabsContainer.querySelectorAll('button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+
+    // Senha de Segurança
+    const myRequestId = ++currentMobileRequestId;
+    const isObsolete = () => myRequestId !== currentMobileRequestId;
 
     const viewType = btn.dataset.mobTab;
     const titleEl = document.getElementById('mobile-views-title');
     const contentEl = document.getElementById('mobile-views-content');
     
-    // Limpa e põe o spinner IMEDIATAMENTE
+    // Spinner
     contentEl.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A carregar...</span></div>';
 
-    // --- FUNÇÃO DE SEGURANÇA SUPREMA ---
-    // Se o ID global mudou, significa que houve outro clique depois deste.
-    const isObsolete = () => {
-        return myRequestId !== currentMobileRequestId;
-    };
-
     if (viewType === 'files') {
-        titleEl.textContent = "Ficheiros na Pasta";
+        titleEl.textContent = "Ficheiros";
         const fileList = document.getElementById('file-list');
-        
-        // Verifica se ainda é válido antes de escrever
-        if (!isObsolete() && fileList) contentEl.innerHTML = fileList.innerHTML;
+        if (fileList) contentEl.innerHTML = fileList.innerHTML;
     } 
     else if (viewType === 'index') {
         titleEl.textContent = "Índice da Nota";
-        
-        // Processos síncronos
         detectActiveScrollElement();
         generateNoteIndex(); 
-        
         setTimeout(() => {
-            // SEGURANÇA
             if (isObsolete()) return;
-
             const source = document.getElementById('note-index-list');
-            if (source && source.innerHTML.trim()) {
-                contentEl.innerHTML = source.innerHTML;
-
-                // Scroll Matemático
-                if (currentActiveScrollId) {
-                    const activeMobileItem = contentEl.querySelector(`.index-item[data-target-id="${currentActiveScrollId}"]`);
-                    if (activeMobileItem) {
-                        activeMobileItem.classList.add('active-scroll');
-                        activeMobileItem.style.backgroundColor = "rgba(74, 144, 226, 0.3)";
-                        activeMobileItem.style.borderLeft = "4px solid #4a90e2";
-                        
-                        setTimeout(() => {
-                            if (!isObsolete()) activeMobileItem.scrollIntoView({ behavior: 'auto', block: 'center' });
-                        }, 50);
-                    } 
+            contentEl.innerHTML = source ? source.innerHTML : "Vazio.";
+            if (currentActiveScrollId) {
+                const activeItem = contentEl.querySelector(`.index-item[data-target-id="${currentActiveScrollId}"]`);
+                if (activeItem) {
+                    activeItem.classList.add('active-scroll');
+                    activeItem.style.backgroundColor = "rgba(74, 144, 226, 0.3)";
+                    activeItem.style.borderLeft = "4px solid #4a90e2";
+                    activeItem.scrollIntoView({ behavior: 'auto', block: 'center' });
                 }
-            } else {
-                contentEl.innerHTML = "<p style='color:#888; text-align:center; padding:30px;'>Sem estrutura.</p>";
             }
-        }, 100);
-    } 
+        }, 50);
+    }
+    // --- LÓGICA MISTO/TEXTOS CORRIGIDA ---
     else if (viewType === 'texts') {
-        titleEl.textContent = "Textos Bíblicos";
         
-        // Esta função demora tempo (await)
-        await generateNoteTexts(); 
-        
-        // 🛡️ BLOQUEIO FINAL (O SEGREDO) 🛡️
-        if (isObsolete()) {
-            console.log(`🛑 Pedido ${myRequestId} (Textos) cancelado. O utilizador já está no pedido ${currentMobileRequestId}.`);
-            return; // Sai da função sem tocar no HTML
-        }
-
-        const source = document.getElementById('note-texts-view');
-        contentEl.innerHTML = source ? source.innerHTML : "Vazio.";
-    } 
-    else if (viewType === 'sources') {
-        titleEl.textContent = "Fontes e Links";
-        
-        // Gera as fontes (pode ter micro-atraso)
-        generateNoteSources(); 
-        
-        setTimeout(() => {
-            // SEGURANÇA
+        // Verifica se é MODO MISTO
+        if (window.currentNoteHybridMode === true) {
+            titleEl.textContent = "Modo Misto (Temas + Bíblia)";
+            
+            // O 'await' agora funciona porque atualizámos a função generateHybridView
+            await generateHybridView();
+            
             if (isObsolete()) return;
 
+            // Copia o resultado final
+            const source = document.getElementById('note-texts-view');
+            contentEl.innerHTML = source ? source.innerHTML : '<div style="padding:20px;text-align:center;">Vazio.</div>';
+        } 
+        
+        // MODO NAVEGAÇÃO
+        else if (activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0) {
+            titleEl.textContent = "Navegação por Âncoras";
+            generateAnchorNavigation();
+            setTimeout(() => {
+                 if (isObsolete()) return;
+                 const source = document.getElementById('note-texts-view');
+                 contentEl.innerHTML = source ? source.innerHTML : "Vazio.";
+            }, 50);
+        } 
+        
+        // MODO PADRÃO (TEXTOS)
+        else {
+            titleEl.textContent = "Textos Bíblicos";
+            await generateNoteTexts();
+            if (isObsolete()) return;
+            const source = document.getElementById('note-texts-view');
+            contentEl.innerHTML = source ? source.innerHTML : '<div style="padding:20px;text-align:center;">Vazio.</div>';
+        }
+    }
+    else if (viewType === 'sources') {
+        titleEl.textContent = "Fontes";
+        generateNoteSources();
+        setTimeout(() => {
+            if (isObsolete()) return;
             const source = document.getElementById('note-sources-list');
             contentEl.innerHTML = source ? source.innerHTML : "Vazio.";
         }, 50);
@@ -38979,7 +38988,6 @@ if (editorForGlow) {
 const btnOpenMobile = document.getElementById('mobile-views-btn');
 
 if (btnOpenMobile) {
-    // Clonamos para limpar eventos antigos
     const newBtn = btnOpenMobile.cloneNode(true);
     btnOpenMobile.parentNode.replaceChild(newBtn, btnOpenMobile);
 
@@ -38987,42 +38995,55 @@ if (btnOpenMobile) {
         e.preventDefault();
         e.stopPropagation();
         
-        // 1. Deteção de posição de scroll (Scrollspy)
+        console.log("🔘 [DEBUG ⛶] Botão clicado. A iniciar abertura...");
+
+        // 1. Deteção de posição de scroll
         detectActiveScrollElement();
 
-        // ============================================================
-        // 2. ATUALIZAR ÍCONES (GARANTIA DE SYNC)
-        // ============================================================
-        // Garante que o botão dentro do modal tem o ícone certo (🛳️/⚓/📜) antes de aparecer
+        // 2. Atualizar Ícones
         refreshMiddlePanelTabIcon();
-        // ============================================================
 
         const modal = document.getElementById('mobile-views-modal');
         if (modal) {
-            // A. Força visibilidade e move para o topo
+            // A. Força visibilidade
             document.body.appendChild(modal);
             modal.style.cssText = `
                 display: flex !important;
                 position: fixed !important;
-                top: 0 !important;
-                left: 0 !important;
-                width: 100vw !important;
-                height: 100vh !important;
+                top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important;
                 background-color: rgba(0, 0, 0, 0.85) !important;
                 z-index: 2147483647 !important;
-                align-items: center !important;
-                justify-content: center !important;
-                visibility: visible !important;
-                opacity: 1 !important;
+                align-items: center !important; justify-content: center !important;
+                visibility: visible !important; opacity: 1 !important;
             `;
 
-            // B. Abre por defeito na aba "Índice" (ou simula clique)
+            // >>> LÓGICA DE MEMÓRIA DA ABA <<<
             setTimeout(() => {
-                const indexTabBtn = modal.querySelector('[data-mob-tab="index"]');
-                if (indexTabBtn) {
-                    indexTabBtn.click();
+                // Lê o valor cru da variável
+                const rawMemory = window.lastActiveMobileTab;
+                console.log("💾 [DEBUG ⛶] Valor em memória (window.lastActiveMobileTab):", rawMemory);
+
+                // Decide qual usar (Memória ou Padrão)
+                const targetTab = rawMemory || 'index';
+                console.log("🎯 [DEBUG ⛶] Aba Alvo definida como:", targetTab);
+                
+                // Tenta encontrar o botão no HTML
+                const selector = `.middle-bottom-tabs button[data-mob-tab="${targetTab}"]`;
+                const tabToClick = modal.querySelector(selector);
+
+                if (tabToClick) {
+                    console.log("✅ [DEBUG ⛶] Botão encontrado no DOM. Simulando clique...");
+                    tabToClick.click();
+                } else {
+                    console.error("❌ [DEBUG ⛶] Botão NÃO encontrado para o seletor:", selector);
+                    console.log("⚠️ [DEBUG ⛶] Ativando fallback (Índice)...");
+                    
+                    const defaultBtn = modal.querySelector('[data-mob-tab="index"]');
+                    if(defaultBtn) defaultBtn.click();
                 }
             }, 50);
+        } else {
+            console.error("❌ [DEBUG ⛶] Erro Crítico: Modal #mobile-views-modal não existe!");
         }
     });
 }
@@ -40302,25 +40323,25 @@ async function generateHybridView() {
     
     if (!editor || !list) return;
 
-    // 1. Indicador de Carregamento
-    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar Misto...</span></div>';
+    // 1. Indicador de Carregamento (Só se não for chamada oculta)
+    if (list.offsetParent !== null) {
+        list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar Misto...</span></div>';
+    }
 
-    // 2. EXTRAÇÃO DE TEXTO (Método Rápido para Misto)
+    // 2. EXTRAÇÃO DE TEXTO
     let textContent = editor.innerText;
-    // Adiciona texto dos inputs (títulos)
     editor.querySelectorAll('input, textarea').forEach(el => {
         if (el.value) textContent += " " + el.value;
     });
     
-    // Normaliza espaços
     textContent = textContent.replace(/\s+/g, ' '); 
     const textContentLower = textContent.toLowerCase();
 
-    // ============================================================
-    // FASE A: DETEÇÃO DE ÂNCORAS (MANTÉM-SE IGUAL)
-    // ============================================================
+    // 3. PREPARAÇÃO DE DADOS
     let anchorItems = [];
+    let bibleItems = [];
     
+    // --- FASE A: ÂNCORAS ---
     if (activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0) {
         const allCandidates = Object.values(allEntities).flat();
         const addedNames = new Set();
@@ -40355,67 +40376,43 @@ async function generateHybridView() {
         });
     }
 
-    // ============================================================
-    // FASE B: DETEÇÃO BÍBLICA (COM CORREÇÃO DE ACENTOS)
-    // ============================================================
-    let bibleItems = [];
+    // --- FASE B: BÍBLIA ---
+    const renderPromises = []; // Array para esperar textos
     
     if (typeof BIBLICAL_BOOKS !== 'undefined' && BIBLICAL_BOOKS.length > 0) {
-        
-        // 1. Configurar Mapa Canónico e Regex Flexível (Igual à aba Textos)
         const canonicalBookMap = {};
         const flexiblePatterns = [];
         const sortedBooks = [...BIBLICAL_BOOKS].sort((a, b) => b.length - a.length);
 
         sortedBooks.forEach(book => {
-            const normalized = normalizeStr(book); // ex: "exodo"
-            canonicalBookMap[normalized] = book;   // ex: "exodo" -> "Êxodo"
+            const normalized = normalizeStr(book); 
+            canonicalBookMap[normalized] = book;   
             flexiblePatterns.push(getFlexibleRegexStr(book));
         });
 
-        // 2. Regex Poderosa (Aceita acentos errados e pontuação antes)
         const booksPattern = flexiblePatterns.join('|');
         const regex = new RegExp(`(?:^|[\\s"'(])((?:${booksPattern})\\s+\\d+:\\d+(?:\\s*[-–,;]\\s*\\d+)*)`, 'gi');
         
-        // 3. Captura
         const rawMatches = textContent.match(regex) || [];
-
-        // 4. Processamento e Normalização
         const uniqueRefs = [...new Set(rawMatches.map(r => {
-            // A. Limpa lixo do início
             let foundText = r.replace(/^[ "((]+/, '').trim();
-
-            // B. Tenta corrigir o nome do livro (Exodo -> Êxodo)
             const splitMatch = foundText.match(/^(.+?)\s+(\d+:.*)$/);
-            
             if (splitMatch) {
                 const foundBookName = splitMatch[1]; 
                 const numbers = splitMatch[2];       
-                
                 const normalizedFound = normalizeStr(foundBookName);
                 const officialName = canonicalBookMap[normalizedFound];
-                
-                if (officialName) {
-                    return `${officialName} ${numbers}`; // Devolve nome corrigido
-                }
+                if (officialName) return `${officialName} ${numbers}`;
             }
             return foundText;
         }))];
 
-        // 5. Adicionar à lista
         uniqueRefs.forEach(ref => {
-            bibleItems.push({ 
-                type: 'bible', 
-                name: ref, 
-                icon: "📜", 
-                desc: "A carregar texto..." 
-            });
+            bibleItems.push({ type: 'bible', name: ref, icon: "📜", desc: "A carregar..." });
         });
     }
 
-    // ============================================================
-    // FASE C: RENDERIZAÇÃO FINAL
-    // ============================================================
+    // --- FASE C: RENDERIZAÇÃO FINAL ---
     list.innerHTML = '';
 
     if (anchorItems.length === 0 && bibleItems.length === 0) {
@@ -40426,7 +40423,6 @@ async function generateHybridView() {
     const createRow = (item) => {
         const div = document.createElement('div');
         div.style.cssText = "padding: 12px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px; position: relative;";
-        
         const borderSide = item.type === 'anchor' ? '4px solid var(--accent-color)' : '4px solid #e67e22';
         div.style.borderLeft = borderSide;
         div.style.paddingLeft = "10px";
@@ -40442,21 +40438,27 @@ async function generateHybridView() {
 
         const descDiv = document.createElement('div');
         descDiv.style.cssText = "font-size: 0.85em; color: var(--text-muted-color); cursor: pointer; line-height: 1.4;";
-        
         if (item.type === 'bible') {
-            // ID seguro para injetar o texto depois
-            // Remove espaços e dois pontos para o ID do HTML
             const safeId = item.name.replace(/[^a-zA-Z0-9]/g, '');
             descDiv.id = `hybrid-preview-${safeId}`;
+            
+            // --- AQUI ESTÁ O TRUQUE: Adiciona a promessa ao array ---
+            const verses = typeof expandVerseReference === 'function' ? expandVerseReference(item.name) : [item.name];
+            const p = Promise.all(verses.map(v => fetchPublicBibleText(v))).then(texts => {
+                const fullText = texts.filter(t => t).join(" ");
+                if (document.getElementById(`hybrid-preview-${safeId}`)) {
+                    document.getElementById(`hybrid-preview-${safeId}`).textContent = fullText || "Texto não disponível.";
+                }
+            });
+            renderPromises.push(p);
+        } else {
+            descDiv.textContent = item.desc || "Sem descrição.";
         }
         
-        descDiv.innerHTML = item.desc || '<span style="opacity:0.5; font-style:italic;">Sem descrição.</span>';
-
         descDiv.onclick = (e) => {
             e.stopPropagation();
             const targetType = item.type === 'bible' ? 'textobiblico' : item.entityType;
             const targetId = item.type === 'bible' ? null : item.id;
-            
             showReferencesPanel(targetId, item.name, targetType);
         };
 
@@ -40465,7 +40467,6 @@ async function generateHybridView() {
         return div;
     };
 
-    // Renderizar Âncoras
     if (anchorItems.length > 0) {
         const header = document.createElement('div');
         header.innerHTML = "TEMAS";
@@ -40474,38 +40475,20 @@ async function generateHybridView() {
         anchorItems.forEach(item => list.appendChild(createRow(item)));
     }
 
-    // Renderizar Bíblia
     if (bibleItems.length > 0) {
         const header = document.createElement('div');
         header.innerHTML = "BÍBLIA";
         header.style.cssText = "font-size:0.7em; font-weight:bold; color:var(--text-muted-color); padding:5px 10px; background:rgba(0,0,0,0.2); margin-top:10px; letter-spacing:1px;";
         list.appendChild(header);
-        
         bibleItems.forEach(item => list.appendChild(createRow(item)));
-
-        // Buscar textos em background
-        for (const item of bibleItems) {
-            const verses = typeof expandVerseReference === 'function' ? expandVerseReference(item.name) : [item.name];
-            
-            const textPromises = verses.map(v => fetchPublicBibleText(v));
-            
-            Promise.all(textPromises).then(texts => {
-                const fullText = texts.filter(t => t).join(" ");
-                // Usa o mesmo ID seguro gerado acima
-                const safeId = item.name.replace(/[^a-zA-Z0-9]/g, '');
-                const el = document.getElementById(`hybrid-preview-${safeId}`);
-                
-                if (el) {
-                    if (fullText) {
-                        el.textContent = fullText;
-                    } else {
-                        el.innerHTML = '<span style="opacity:0.5; font-style:italic;">Texto não disponível. Clique para adicionar.</span>';
-                    }
-                }
-            }).catch(err => console.error("Erro ao carregar texto híbrido:", err));
-        }
     }
+    
+    // Espera que todos os textos bíblicos carreguem antes de dizer "pronto"
+    await Promise.all(renderPromises);
 }
+
+
+
 
 // --- OBSERVADOR DE LEITURA (REMOVE PONTOS AO LER) ---
 const postObserver = new IntersectionObserver((entries) => {
