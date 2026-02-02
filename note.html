@@ -13042,6 +13042,8 @@ const MAX_POPUPS = 3;
 const AUTO_BACKUP_INTERVAL = 50; 
 const aqCanvasListener = document.getElementById('aquarium-content-canvas');
 const MAX_AQ_POPUPS = 6;
+const GLOBAL_SQUID_ID = 'SHARED_GLOBAL_SQUID';
+
 
 
 // --- ESTADO DA APLICAÇÃO ---
@@ -13186,6 +13188,7 @@ window.isSwitchingNote = false;
 window.currentNavRequest = 0;
 window.lastBoxLinkManagerId = null;
 window.lastBoxLinkManagerTab = 'refs'; // Padrão
+window.shellStack = [];
 
 
 // Função: Gravação Silenciosa (Mantém o editor aberto)
@@ -43342,6 +43345,7 @@ window.renderAquariumStore = async function() {
             <button class="store-tab-btn ${window.currentStoreTab === 'shells' ? 'active' : ''}" onclick="window.switchStoreTab('shells')">🫧</button>
             <button class="store-tab-btn ${window.currentStoreTab === 'paragraphs' ? 'active' : ''}" onclick="window.switchStoreTab('paragraphs')">🎐</button>
             <button class="store-tab-btn ${window.currentStoreTab === 'media' ? 'active' : ''}" onclick="window.switchStoreTab('media')">📷</button>
+            <button class="store-tab-btn ${window.currentStoreTab === 'squid' ? 'active' : ''}" onclick="window.switchStoreTab('squid')" style="margin-left:auto; color:#9b59b6;">🦑</button>
         </div>
         <div id="store-content-list" class="store-content-area" style="flex:1; overflow-y:auto;">
             <div class="spinner-container"><div class="spinner"></div></div>
@@ -43373,28 +43377,44 @@ async function loadStoreContent() {
     // 2. IMPORTAÇÃO DOS MÓDULOS
     const { collection, query, where, getDocs, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
+    // --- ID GLOBAL EXCLUSIVO DO UTILIZADOR ---
+    // Isto garante que a "Mochila" é transversal a todos os aquários DESTE user,
+    // mas não mistura com as mochilas de outros users.
+    const GLOBAL_SQUID_ID = 'SHARED_SQUID_' + auth.currentUser.uid;
+
     try {
         listDiv.innerHTML = ''; 
         const collRef = collection(db, 'aquarium_annotations');
         let q;
 
         // ============================================================
-        // [ESTRATÉGIA] DELEGAÇÃO DE CLIQUES (MAIS ROBUSTO)
+        // [ESTRATÉGIA] DELEGAÇÃO DE CLIQUES (BOTÕES DE CRIAÇÃO)
         // ============================================================
-        // Removemos o onclick do botão e usamos este ouvinte no pai:
-       listDiv.addEventListener('click', async (e) => {
+        // Removemos ouvintes antigos clonando o elemento
+        const newListDiv = listDiv.cloneNode(true);
+        listDiv.parentNode.replaceChild(newListDiv, listDiv);
+        
+        // Atualiza a referência para usar no resto da função
+        const activeListDiv = document.getElementById('store-content-list');
+
+        activeListDiv.addEventListener('click', async (e) => {
             const btn = e.target.closest('.store-create-btn');
             if (!btn) return;
 
-            // PÁRA TUDO O RESTO NO SITE
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
 
             const action = btn.dataset.action;
-            console.log("%c🎯 [CLIQUE] Capturado no Armazém: " + action, "color: yellow; font-weight: bold;");
+            console.log("%c🎯 [CLIQUE] Ação Armazém: " + action, "color: yellow; font-weight: bold;");
 
-          if (action === 'add-global-note') {
+            // --- AÇÕES GLOBAIS (SQUID) ---
+            if (action === 'add-global-shell') {
+                const res = await window.showCustomInput("Nova Concha Partilhada", "Nome da concha...");
+                if (res && res.name) window.createStoreItem('shell', { name: res.name });
+            }
+            // --- AÇÕES LOCAIS ---
+            else if (action === 'add-global-note') {
                 const res = await window.showCustomInput("Nova Anotação Global", "Título da nota...");
                 if (res && res.name) window.createStoreItem('note', { title: res.name });
             } 
@@ -43410,74 +43430,99 @@ async function loadStoreContent() {
                 const res = await window.showCustomInput("Inserir Vídeo", "Link YouTube...");
                 if (res && res.name) window.createStoreItem('media', { url: res.name, mediaType: 'video' });
             }
-        }, true); // O 'true' aqui é o segredo: ele captura o clique antes das outras camadas!
+        });
 
         // ============================================================
-        // [PARTE 1] INSERÇÃO DOS BOTÕES (Sem onclick direto)
+        // CONFIGURAÇÃO DAS QUERIES E BOTÕES POR ABA
         // ============================================================
         
-        if (window.currentStoreTab === 'notes') {
+        // --- ABA SQUID (🦑) ---
+        if (window.currentStoreTab === 'squid') {
             const btn = document.createElement('button');
             btn.className = 'store-create-btn';
-            btn.dataset.action = 'add-global-note'; // Identificador para a delegação
+            btn.dataset.action = 'add-global-shell';
+            btn.innerHTML = "<strong style='color:#9b59b6;'>+ Concha Partilhada</strong>";
+            btn.style.borderColor = "#9b59b6";
+            btn.style.backgroundColor = "rgba(155, 89, 182, 0.1)";
+            activeListDiv.appendChild(btn);
+
+            // Query: Usa o ID Global + Filtro de Raiz (parentId == null)
+            q = query(collRef, 
+                where('noteId', '==', GLOBAL_SQUID_ID),
+                where('type', '==', 'store_shell'),
+                where('parentId', '==', null), // OBRIGATÓRIO: Esconde subconchas da raiz
+                orderBy('createdAt', 'desc')
+            );
+        }
+        
+        // --- ABA NOTAS (🗒️) ---
+        else if (window.currentStoreTab === 'notes') {
+            const btn = document.createElement('button');
+            btn.className = 'store-create-btn';
+            btn.dataset.action = 'add-global-note';
             btn.innerHTML = "<strong>+ Anotação Global</strong>";
-            listDiv.appendChild(btn);
+            activeListDiv.appendChild(btn);
 
            q = query(collRef, 
                 where('noteId', '==', selectedNoteId),
                 where('type', '==', 'store_note'),
                 where('blockId', '==', null), // Não mostra notas de parágrafos
-                
-                // >>> O FILTRO NOVO: <<<
-                where('parentId', '==', null), // Só mostra notas que NÃO têm concha (Raiz)
-                
+                where('parentId', '==', null), // Só mostra notas que NÃO têm concha
                 orderBy('createdAt', 'desc')
             );
         }
 
+        // --- ABA CONCHAS (🫧) ---
         else if (window.currentStoreTab === 'shells') {
             const btn = document.createElement('button');
             btn.className = 'store-create-btn';
             btn.dataset.action = 'add-shell';
-            btn.innerHTML = "<strong>+ Concha</strong>";
-            btn.style.color = "#e67e22"; btn.style.borderColor = "#e67e22";
-            listDiv.appendChild(btn);
+            btn.innerHTML = "<strong style='color:#e67e22;'>+ Concha</strong>";
+            btn.style.borderColor = "#e67e22";
+            activeListDiv.appendChild(btn);
 
             q = query(collRef, 
                 where('noteId', '==', selectedNoteId),
                 where('type', '==', 'store_shell'),
+                where('parentId', '==', null), // OBRIGATÓRIO: Esconde subconchas locais
                 orderBy('createdAt', 'desc')
             );
         }
-     else if (window.currentStoreTab === 'media') {
+
+        // --- ABA PARÁGRAFOS (🎐) ---
+        else if (window.currentStoreTab === 'paragraphs') {
+            // Sem botão de criar (cria-se via contexto do bloco)
+            q = query(collRef,
+                where('noteId', '==', selectedNoteId),
+                where('type', '==', 'store_note'),
+                orderBy('createdAt', 'desc')
+            );
+        }
+
+        // --- ABA MEDIA (📷) ---
+        else if (window.currentStoreTab === 'media') {
             const btnDiv = document.createElement('div');
             btnDiv.style.cssText = "display:flex; gap:10px; margin-bottom:15px;";
             
             const btnImg = document.createElement('button');
             btnImg.className = 'store-create-btn'; 
             btnImg.style.flex = "1";
-            btnImg.dataset.action = 'add-media-image'; // <--- ESTA LINHA É OBRIGATÓRIA
+            btnImg.dataset.action = 'add-media-image';
             btnImg.innerHTML = "<strong>+ Imagem</strong>";
 
             const btnVid = document.createElement('button');
             btnVid.className = 'store-create-btn'; 
             btnVid.style.flex = "1";
-            btnVid.dataset.action = 'add-media-video'; // <--- ESTA LINHA É OBRIGATÓRIA
+            btnVid.dataset.action = 'add-media-video';
             btnVid.innerHTML = "<strong>+ Vídeo</strong>";
 
             btnDiv.append(btnImg, btnVid);
-            listDiv.appendChild(btnDiv);
+            activeListDiv.appendChild(btnDiv);
 
             q = query(collRef, 
                 where('noteId', '==', selectedNoteId),
                 where('type', '==', 'store_media'),
-                orderBy('createdAt', 'desc')
-            );
-        }
-        else if (window.currentStoreTab === 'paragraphs') {
-            q = query(collRef,
-                where('noteId', '==', selectedNoteId),
-                where('type', '==', 'store_note'),
+                where('parentId', '==', null), // Apenas items na raiz
                 orderBy('createdAt', 'desc')
             );
         }
@@ -43493,44 +43538,46 @@ async function loadStoreContent() {
         snap.forEach(docSnap => {
             const data = docSnap.data();
             
-            // Filtro de aba Parágrafos
-            if (window.currentStoreTab === 'paragraphs') {
-                if (!data.blockId) return;
-            } else if (window.currentStoreTab === 'notes') {
-                if (data.blockId) return;
-            }
+            // Filtros manuais extra para garantir limpeza
+            if (window.currentStoreTab === 'paragraphs' && !data.blockId) return;
+            if (window.currentStoreTab === 'notes' && data.blockId) return;
 
             hasItems = true;
-
+            
             if (data.type === 'store_shell') {
-                listDiv.appendChild(createStoreShellCard(docSnap.id, data));
+                activeListDiv.appendChild(createStoreShellCard(docSnap.id, data));
             } else if (data.type === 'store_media') {
-                listDiv.appendChild(createStoreMediaCard(docSnap.id, data));
+                activeListDiv.appendChild(createStoreMediaCard(docSnap.id, data));
             } else {
                 const card = createStoreNoteCard(docSnap.id, data);
+                
                 // Injeta alvo 🎯 se tiver vínculo com parágrafo
                 if (data.blockId) {
-                    const h = card.querySelector('div');
+                    const h = card.querySelector('div'); // Header
                     const locateBtn = document.createElement('button');
                     locateBtn.className = 'store-link-indicator-btn';
                     locateBtn.innerHTML = '🎯';
+                    locateBtn.title = "Localizar no texto";
                     locateBtn.onclick = (e) => {
                         e.stopPropagation();
                         const el = document.getElementById(data.blockId);
                         if (el) {
                             el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            el.style.outline = "2px solid var(--accent-color)";
-                            setTimeout(() => el.style.outline = "none", 2000);
+                            el.style.transition = "box-shadow 0.5s";
+                            el.style.boxShadow = "0 0 30px var(--accent-color)";
+                            setTimeout(() => el.style.boxShadow = "", 2000);
+                        } else {
+                            alert("O bloco original foi apagado.");
                         }
                     };
                     if(h) h.insertBefore(locateBtn, h.firstChild);
                 }
-                listDiv.appendChild(card);
+                activeListDiv.appendChild(card);
             }
         });
 
         if (!hasItems) {
-            listDiv.innerHTML += '<p style="text-align:center; color:#666; margin-top:40px; font-style:italic;">Vazio.</p>';
+            activeListDiv.innerHTML += '<p style="text-align:center; color:#666; margin-top:40px; font-style:italic;">Vazio.</p>';
         }
 
     } catch (e) {
@@ -43542,31 +43589,23 @@ async function loadStoreContent() {
 
 
 
-
-
-
-
-
-
-
-
-
-
 // 4. CRIAR ITEM NO FIREBASE
 window.createStoreItem = async function(type, extraData = {}) {
     const { addDoc, collection, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
     
-    // Mostra status visual de gravação no Aquário
     if (typeof updateAquariumStatus === 'function') updateAquariumStatus('saving');
 
+    // --- CORREÇÃO AQUI ---
+    const GLOBAL_SQUID_ID = 'SHARED_SQUID_' + auth.currentUser.uid;
+    const targetNoteId = (window.currentStoreTab === 'squid') ? GLOBAL_SQUID_ID : selectedNoteId;
+
     const baseData = {
-        noteId: selectedNoteId,     
+        noteId: targetNoteId, // Grava no ID pessoal do Squid
         type: `store_${type}`, 
         createdAt: serverTimestamp(),
         parentId: window.currentShellId || null,
         userId: auth.currentUser.uid,
-        // Só vincula ao parágrafo se estivermos explicitamente na aba parágrafos ou se vier do clique na concha
-        blockId: (window.currentStoreTab === 'paragraphs' || extraData.autoCreated) ? window.activeStoreGhostId : null
+        blockId: (window.currentStoreTab === 'paragraphs' && window.currentStoreTab !== 'squid') ? window.activeStoreGhostId : null
     };
 
     if (type === 'note') {
@@ -43582,9 +43621,14 @@ window.createStoreItem = async function(type, extraData = {}) {
     try {
         await addDoc(collection(db, 'aquarium_annotations'), baseData);
         if (typeof updateAquariumStatus === 'function') updateAquariumStatus('saved');
-        window.renderAquariumStore(); // Atualiza a lista
+        
+        if (window.currentShellId) {
+            renderInsideShell(document.getElementById('aq-store-view'));
+        } else {
+            window.renderAquariumStore();
+        }
     } catch (e) {
-        console.error("Erro ao criar item no armazém:", e);
+        console.error(e);
         if (typeof updateAquariumStatus === 'function') updateAquariumStatus('error');
     }
 };
@@ -43857,85 +43901,158 @@ function createStoreMediaCard(id, data) {
 
 // 8. NAVEGAÇÃO NA CONCHA
 window.enterShell = function(id, name) {
+    // Guarda o local onde estávamos antes de entrar
+    window.shellStack.push({
+        id: window.currentShellId, // Pode ser null (Raiz) ou um ID (Concha Pai)
+        name: window.currentShellName
+    });
+
     window.currentShellId = id;
     window.currentShellName = name;
+    
+    // Atualiza a vista
     window.renderAquariumStore();
+};
+
+// Voltar atrás (Um nível de cada vez)
+window.backToStoreRoot = function() {
+    if (window.shellStack.length > 0) {
+        // Tira o último local da memória
+        const prev = window.shellStack.pop();
+        
+        window.currentShellId = prev.id;
+        window.currentShellName = prev.name;
+        
+        // Se o ID for null, significa que voltámos à raiz das abas
+        if (window.currentShellId === null) {
+            window.renderAquariumStore(); // Renderiza abas (renderAquariumStore lida com null)
+        } else {
+            // Se ainda tem ID, renderiza o interior da concha pai
+            renderInsideShell(document.getElementById('aq-store-view'));
+        }
+    } else {
+        // Segurança: Se a pilha estiver vazia, vai para a raiz absoluta
+        window.currentShellId = null;
+        window.renderAquariumStore();
+    }
 };
 
 async function renderInsideShell(container) {
     const { collection, query, where, getDocs, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
+    const isSquid = window.currentStoreTab === 'squid';
+    const themeColor = isSquid ? '#9b59b6' : '#e67e22';
+
+    // (O HTML do Header mantém-se igual...)
     container.innerHTML = `
-        <div class="store-nav-header">
+        <div class="store-nav-header" style="border-bottom-color:${themeColor};">
             <button class="store-icon-btn" style="font-size:18px; margin-right:10px;" onclick="window.backToStoreRoot()">⬅</button>
-            <span style="font-weight:bold; color:#e67e22;">🐚 ${window.currentShellName || 'Concha'}</span>
+            <span style="font-weight:bold; color:${themeColor};">
+                ${isSquid ? '🦑' : '🐚'} ${window.currentShellName || 'Concha'}
+            </span>
         </div>
         <div class="store-content-area" id="shell-content">
-            <div style="display:flex; gap:10px; margin-bottom:10px;">
-                <button class="store-create-btn" style="flex:1; margin:0;" onclick="window.createStoreItem('note')">+ Anotação</button>
-                
-                <!-- NOVO BOTÃO DE VÍDEO -->
-                <button class="store-create-btn" style="flex:1; margin:0;" onclick="window.createStoreItem('media', {mediaType: 'video'})">+ Vídeo</button>
+             <!-- BOTÕES (Mantêm-se iguais) -->
+             <div style="display:flex; flex-wrap:wrap; gap:5px; margin-bottom:10px;">
+                <button class="store-create-btn" data-action="add-sub-shell" style="flex:1; margin:0; padding:8px; border-color:${themeColor}; color:${themeColor}; min-width: 45%;"><strong>+ SubConcha</strong></button>
+                <button class="store-create-btn" data-action="add-sub-note" style="flex:1; margin:0; padding:8px; min-width: 45%;">+ Nota</button>
+                <button class="store-create-btn" data-action="add-sub-video" style="flex:1; margin:0; padding:8px;">+ Vídeo</button>
+                <button class="store-create-btn" data-action="add-sub-image" style="flex:1; margin:0; padding:8px;">+ Img</button>
             </div>
-            
             <div class="spinner-container"><div class="spinner"></div></div>
         </div>
     `;
 
     const contentDiv = document.getElementById('shell-content');
 
+    // ============================================================
+    // 2. LISTENER DE EVENTOS (AQUI ESTÁ A MÁGICA DOS POPUPS)
+    // ============================================================
+    // Clonamos para limpar listeners antigos
+   const newContentDiv = contentDiv.cloneNode(true);
+    contentDiv.parentNode.replaceChild(newContentDiv, contentDiv);
+    
+    newContentDiv.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.store-create-btn');
+        if (!btn) return;
+        e.preventDefault(); e.stopPropagation();
+        const action = btn.dataset.action;
+
+        if (action === 'add-sub-note') window.createStoreItem('note');
+        else if (action === 'add-sub-video') {
+             const res = await window.showCustomInput("Inserir Vídeo", "Link do YouTube...");
+             if (res && res.name) window.createStoreItem('media', { mediaType: 'video', url: res.name });
+        }
+        else if (action === 'add-sub-image') {
+             const res = await window.showCustomInput("Inserir Imagem", "Link da Imagem...");
+             if (res && res.name) window.createStoreItem('media', { mediaType: 'image', url: res.name });
+        }
+        else if (action === 'add-sub-shell') window.createSubShell();
+    });
+
+    // --- CORREÇÃO AQUI ---
+    const GLOBAL_SQUID_ID = 'SHARED_SQUID_' + auth.currentUser.uid;
+    const targetNoteId = isSquid ? GLOBAL_SQUID_ID : selectedNoteId;
+
     try {
-        // --- QUERY ATUALIZADA: BUSCAR NOTAS E MEDIA ---
         const q = query(
             collection(db, 'aquarium_annotations'),
-            where('noteId', '==', selectedNoteId),
-            where('parentId', '==', window.currentShellId),
-            // where('type', 'in', ['store_note', 'store_media']), // O Firebase pode reclamar de índices com 'in' e 'orderBy'
-            // Se der erro de índice, removemos o 'orderBy' e ordenamos no JS
+            where('noteId', '==', targetNoteId), // <--- Usa o ID privado do user
+            where('parentId', '==', window.currentShellId)
         );
 
         const snap = await getDocs(q);
-        
-        // Remove spinner
-        const spinner = contentDiv.querySelector('.spinner-container');
+        const spinner = newContentDiv.querySelector('.spinner-container');
         if(spinner) spinner.remove();
 
         if (snap.empty) {
-            contentDiv.innerHTML += '<p style="text-align:center; color:#666; margin-top:20px; font-style:italic;">Concha vazia.</p>';
+            const msg = document.createElement('p');
+            msg.style.cssText = 'text-align:center; color:#666; margin-top:20px; font-style:italic;';
+            msg.textContent = 'Concha vazia.';
+            newContentDiv.appendChild(msg);
             return;
         }
 
-        // Converter para array e ordenar manualmente (Mais seguro sem índices complexos)
         let items = [];
-        snap.forEach(docSnap => {
-            const data = docSnap.data();
-            // Filtrar apenas o que queremos (caso existam outros tipos perdidos)
-            if (data.type === 'store_note' || data.type === 'store_media') {
-                items.push({ id: docSnap.id, ...data });
-            }
-        });
+        snap.forEach(docSnap => items.push({ id: docSnap.id, ...docSnap.data() }));
 
-        // Ordenar do mais recente para o mais antigo
         items.sort((a, b) => {
-            const timeA = a.createdAt?.seconds || 0;
-            const timeB = b.createdAt?.seconds || 0;
-            return timeB - timeA;
+            if (a.type === 'store_shell' && b.type !== 'store_shell') return -1;
+            if (a.type !== 'store_shell' && b.type === 'store_shell') return 1;
+            return (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0);
         });
 
-        // Renderizar
         items.forEach(item => {
-            if (item.type === 'store_note') {
-                contentDiv.appendChild(createStoreNoteCard(item.id, item));
+            if (item.type === 'store_shell') {
+                newContentDiv.appendChild(createStoreShellCard(item.id, item));
+            } else if (item.type === 'store_note') {
+                newContentDiv.appendChild(createStoreNoteCard(item.id, item));
             } else if (item.type === 'store_media') {
-                contentDiv.appendChild(createStoreMediaCard(item.id, item));
+                newContentDiv.appendChild(createStoreMediaCard(item.id, item));
             }
         });
 
     } catch (e) {
-        console.error("Erro ao ler concha:", e);
-        contentDiv.innerHTML += `<p style="color:red; text-align:center;">Erro ao carregar dados: ${e.message}</p>`;
+        console.error(e);
+        newContentDiv.innerHTML += `<p style="color:red;">Erro ao ler dados.</p>`;
     }
 }
+
+
+window.createSubShell = async function() {
+    const isSquid = window.currentStoreTab === 'squid';
+    const contextName = isSquid ? "SubConcha Global" : "SubConcha";
+    
+    // Pede o nome
+    const res = await window.showCustomInput(contextName, "Nome da pasta...");
+    
+    if (res && res.name) {
+        // Chama a função principal. 
+        // Como 'currentShellId' já está definido (porque estamos dentro de uma), 
+        // o createStoreItem vai usar esse ID como parentId automaticamente.
+        window.createStoreItem('shell', { name: res.name });
+    }
+};
 
 window.backToStoreRoot = function() {
     window.currentShellId = null;
