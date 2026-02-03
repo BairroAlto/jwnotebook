@@ -32999,7 +32999,7 @@ window.removeManualField = function(closeBtn, type) {
 };
 
 window.openBoxLinkManager = async function(wrapper) {
-    // 1. SEGURANÇA DE ID
+    // 1. SEGURANÇA DE ID (Gera um se não existir)
     if (!wrapper.id || wrapper.id.trim() === "") {
         const prefix = wrapper.classList.contains('redator-wrapper') ? 'red' : 'mn';
         wrapper.id = `${prefix}_${Date.now()}`;
@@ -33009,6 +33009,9 @@ window.openBoxLinkManager = async function(wrapper) {
 
     const modal = document.getElementById('link-modal');
     if (!modal) return console.error("Modal não encontrado");
+    
+    // Referência ao conteúdo interno (caixa branca/escura) para posicionamento
+    const modalContent = modal.querySelector('.modal-content');
 
     // ============================================================
     // 1. LIMPEZA DE ESTADO GLOBAL
@@ -33026,11 +33029,63 @@ window.openBoxLinkManager = async function(wrapper) {
     // ============================================================
     document.body.appendChild(modal); 
     modal.style.cssText = `display: flex !important; z-index: 2147483647 !important; visibility: visible !important; opacity: 1 !important; position: fixed !important; top: 0; left: 0; width: 100vw; height: 100dvh !important; background: rgba(0, 0, 0, 0.9) !important; justify-content: center !important; align-items: center !important;`;
-
-    // --- MANUTENÇÃO DA ABA ASSOCIAR (NÃO REMOVER) ---
-    const tabHeader = document.getElementById('box-link-tabs');
     
-    // Verifica se o botão "Associar" já existe, se não, cria-o
+    // IMPORTANTE: Define relative para que o ID Flutuante se posicione dentro desta caixa
+    modalContent.style.position = 'relative';
+
+    // ============================================================
+    // 3. PÍLULA FLUTUANTE DO ID (CANTO SUPERIOR DIREITO)
+    // ============================================================
+    let idPill = document.getElementById('floating-id-pill');
+    
+    // Se não existir, cria o elemento
+    if (!idPill) {
+        idPill = document.createElement('div');
+        idPill.id = 'floating-id-pill';
+        
+        // Estilos para fixar no canto
+        idPill.style.cssText = `
+            position: absolute;
+            top: 20px;
+            right: 60px; /* Margem direita para não tapar o botão 'X' de fechar */
+            display: none; /* Começa escondido */
+            align-items: center;
+            gap: 12px;
+            background-color: #121214; 
+            border: 1px solid #333;
+            border-radius: 50px; 
+            padding: 6px 16px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            z-index: 100;
+        `;
+        modalContent.appendChild(idPill);
+    }
+
+    // Atualiza o conteúdo HTML com o ID atual e o botão de copiar
+    idPill.innerHTML = `
+        <span style="font-size: 0.65em; color: #666; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;">ID CAIXA</span>
+        <span style="font-family: monospace; font-size: 1.1em; color: white;">${currentBoxId}</span>
+        
+        <!-- Ícone Onda Azul (Botão de Copiar) -->
+        <span title="Copiar ID" 
+              onclick="window.copyToClipboard('${currentBoxId}'); this.textContent='✅'; setTimeout(() => this.textContent='〰', 1500);"
+              style="color: #3498db; font-size: 1.2em; opacity: 0.8; font-weight:bold; cursor: pointer; margin-left: 5px; line-height: 0.8; transition: transform 0.2s;"
+              onmouseover="this.style.transform='scale(1.2)'"
+              onmouseout="this.style.transform='scale(1)'">
+            〰
+        </span>
+    `;
+
+    // Garante que começa escondido (pois a aba padrão não é a Associar)
+    idPill.style.display = 'none';
+
+
+    // ============================================================
+    // 4. CONFIGURAÇÃO DA ABA "ASSOCIAR"
+    // ============================================================
+   const tabHeader = document.getElementById('box-link-tabs');
+    
+    // --- PARTE 1: ESTRUTURA (Só cria se não existir) ---
     if (!tabHeader.querySelector('[data-box-tab="associar"]')) {
         const assocTabBtn = document.createElement('button');
         assocTabBtn.dataset.boxTab = 'associar';
@@ -33043,7 +33098,7 @@ window.openBoxLinkManager = async function(wrapper) {
         assocContent.style.display = 'none';
         
         assocContent.innerHTML = `
-            <div style="border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 15px; margin-top: 15px;">
+            <div style="border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 15px; margin-top: 25px;">
                 <label style="font-size:0.8em; color:var(--text-muted-color);">Associar com outra Caixa (Colar ID)</label>
                 <div style="display: flex; gap: 0; margin-top: 5px; align-items: stretch;">
                     <input type="text" id="assoc-search-id" class="redator-input" placeholder="mn_12345..." 
@@ -33053,6 +33108,7 @@ window.openBoxLinkManager = async function(wrapper) {
                 </div>
                 <div id="assoc-search-result" style="margin-top: 10px; display:none;"></div>
             </div>
+            
             <label style="font-size:0.8em; color:var(--text-muted-color); font-weight:bold; text-transform:uppercase;">Caixas Associadas:</label>
             <div id="assoc-list-container" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-height: 200px; overflow-y: auto;"></div>
         `;
@@ -33060,10 +33116,85 @@ window.openBoxLinkManager = async function(wrapper) {
         const catContent = document.getElementById('box-content-categories');
         if (catContent) catContent.after(assocContent);
     }
-    // ----------------------------------------------------
+
+    // --- PARTE 2: LÓGICA (Executa SEMPRE para atualizar o ID atual) ---
+    // [CORREÇÃO] Movemos isto para fora do 'if' acima
+    setTimeout(() => {
+        const verifyBtn = document.getElementById('btn-verify-assoc');
+        const searchInput = document.getElementById('assoc-search-id');
+        const resultDiv = document.getElementById('assoc-search-result');
+
+        // Limpa resultados anteriores ao reabrir
+        if (resultDiv) {
+            resultDiv.style.display = 'none';
+            resultDiv.innerHTML = '';
+        }
+        if (searchInput) searchInput.value = '';
+
+        if (verifyBtn) {
+            // CLONAGEM CRÍTICA: Remove o ouvinte da caixa anterior e cria um novo para a atual
+            const newVerifyBtn = verifyBtn.cloneNode(true);
+            verifyBtn.parentNode.replaceChild(newVerifyBtn, verifyBtn);
+
+            newVerifyBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const targetId = searchInput.value.trim();
+
+                // 1. Validações Locais
+                if (!targetId) return;
+                
+                // Agora 'currentBoxId' refere-se corretamente à caixa aberta neste momento
+                if (targetId === currentBoxId) {
+                    resultDiv.style.display = 'block';
+                    resultDiv.innerHTML = '<span style="color:#e74c3c;">Não pode associar uma caixa a si mesma.</span>';
+                    return;
+                }
+                
+                if (window.tempAssociations && window.tempAssociations.includes(targetId)) {
+                    resultDiv.style.display = 'block';
+                    resultDiv.innerHTML = '<span style="color:#f39c12;">Esta caixa já está associada.</span>';
+                    return;
+                }
+
+                // 2. Pesquisa na Base de Dados
+                newVerifyBtn.textContent = "⌛";
+                
+                const details = await window.findBoxDetailsById(targetId);
+                
+                newVerifyBtn.textContent = "🔍";
+                resultDiv.style.display = 'block';
+
+                if (details) {
+                    // Sucesso
+                    resultDiv.innerHTML = `
+                        <div style="background:rgba(46, 204, 113, 0.1); border:1px solid #2ecc71; padding:8px; border-radius:4px; margin-bottom:10px;">
+                            <div style="font-weight:bold; color:#2ecc71;">✅ Encontrado: ${details.title}</div>
+                            <div style="font-size:0.8em; color:#ccc;">Em: ${details.noteName} (${details.type})</div>
+                            <button id="confirm-add-assoc" style="width:100%; margin-top:5px; background:#2ecc71; border:none; color:white; padding:5px; border-radius:4px; cursor:pointer; font-weight:bold;">
+                                + Adicionar à Lista
+                            </button>
+                        </div>
+                    `;
+
+                    document.getElementById('confirm-add-assoc').onclick = () => {
+                        if (!window.tempAssociations) window.tempAssociations = [];
+                        window.tempAssociations.push(targetId);
+                        window.renderExistingAssociationsList();
+                        
+                        searchInput.value = "";
+                        resultDiv.style.display = 'none';
+                        resultDiv.innerHTML = "";
+                    };
+                } else {
+                    // Erro
+                    resultDiv.innerHTML = '<span style="color:#e74c3c;">❌ ID não encontrado em nenhuma nota.</span>';
+                }
+             });
+        }
+    }, 50);
 
     // ============================================================
-    // 3. CARREGAR DADOS DO HTML DA CAIXA
+    // 5. CARREGAR DADOS EXISTENTES DA CAIXA
     // ============================================================
     let currentData = {};
     const rawAttr = wrapper.getAttribute('data-box-links');
@@ -33071,7 +33202,7 @@ window.openBoxLinkManager = async function(wrapper) {
         currentData = JSON.parse(rawAttr || '{}');
     } catch (e) { currentData = {}; }
 
-    // Título e URLs
+    // Preenche Título e URLs (Aba Referências)
     document.getElementById('link-title-input').value = currentData.title || "";
     const urlsContainer = document.getElementById('link-urls-container');
     if(urlsContainer) urlsContainer.innerHTML = '';
@@ -33079,8 +33210,8 @@ window.openBoxLinkManager = async function(wrapper) {
     if (urls.length > 0) urls.forEach(url => window.addUrlField(url));
     else window.addUrlField(); 
 
-    // Codex
-    const codexContainer = document.getElementById('codex-rows-container');
+    // Preenche Codex (Aba Codex)
+    const codexContainer = document.getElementById('ref-codex-rows-container');
     if(codexContainer) codexContainer.innerHTML = '';
     if (currentData.codex && currentData.codex.length > 0) {
         currentData.codex.forEach(item => window.createCodexRow(item));
@@ -33088,13 +33219,11 @@ window.openBoxLinkManager = async function(wrapper) {
         window.createCodexRow(); 
     }
 
-    // Associações
+    // Preenche Associações (Aba Associar)
     window.tempAssociations = currentData.associations || [];
     if (typeof window.renderExistingAssociationsList === 'function') window.renderExistingAssociationsList();
 
-    // ============================================================
-    // 4. CARREGAR CATEGORIAS
-    // ============================================================
+    // Preenche Categorias (Aba Categorias)
     const savedCategories = Array.isArray(currentData.categories) ? currentData.categories : [];
     const allKnownEntities = (typeof allEntities !== 'undefined') ? Object.values(allEntities).flat() : [];
 
@@ -33104,97 +33233,79 @@ window.openBoxLinkManager = async function(wrapper) {
             ? { id: savedCat.id, name: freshEntity.nome, type: freshEntity.tipo || savedCat.type } 
             : savedCat;
     });
-
-    // Renderiza a lista visualmente
     setTimeout(() => window.renderAttachedCategories(), 50);
 
     // ============================================================
-    // 5. GESTÃO DE ABAS (CORRIGIDO: EVENT DELEGATION)
+    // 6. GESTÃO DE ABAS E EVENTOS
     // ============================================================
-    // Clonamos o CONTAINER das abas (não os botões) para limpar listeners velhos
     const newTabHeader = tabHeader.cloneNode(true);
     tabHeader.parentNode.replaceChild(newTabHeader, tabHeader);
 
-    // Adiciona um listener único ao PAI
     newTabHeader.addEventListener('click', (e) => {
         const btn = e.target.closest('button');
-        if (!btn) return; // Se clicou no vazio entre botões, ignora
+        if (!btn) return; 
         
         e.preventDefault();
 
-        console.log(`🔘 Aba clicada: ${btn.dataset.boxTab}`);
-
-        // 1. Atualiza visual dos botões
+        // UI das abas
         newTabHeader.querySelectorAll('button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
 
-        // 2. Esconde todos os conteúdos
+        // Conteúdos
         document.querySelectorAll('.box-tab-content').forEach(div => div.style.display = 'none');
         
-        // 3. Mostra o conteúdo correto
         const target = btn.dataset.boxTab;
-        const targetContentId = `box-content-${target === 'refs' ? 'refs' : target === 'codex' ? 'codex' : target === 'categories' ? 'categories' : 'associar'}`;
         
+        // >>> LÓGICA DE VISIBILIDADE DO ID FLUTUANTE <<<
+        if (target === 'associar') {
+            document.getElementById('floating-id-pill').style.display = 'flex';
+        } else {
+            document.getElementById('floating-id-pill').style.display = 'none';
+        }
+        // ----------------------------------------------
+
+        const targetContentId = `box-content-${target === 'refs' ? 'refs' : target === 'codex' ? 'codex' : target === 'categories' ? 'categories' : 'associar'}`;
         const contentDiv = document.getElementById(targetContentId);
+        
         if (contentDiv) {
             contentDiv.style.display = 'block';
-            console.log(`✅ Conteúdo ${targetContentId} visível.`);
-            
-            // Se for Categorias, força renderização
             if (target === 'categories') {
                 window.renderAttachedCategories();
-                // Foca na pesquisa
                 setTimeout(() => document.getElementById('category-search-input')?.focus(), 50);
             }
-        } else {
-            console.error(`❌ Erro: ID ${targetContentId} não encontrado!`);
         }
     });
 
-    // Ativa a aba inicial (Referências) via simulação de clique
+    // Reset para aba padrão (Referências) ao abrir
     const defaultTab = newTabHeader.querySelector('[data-box-tab="refs"]');
     if(defaultTab) {
-        // Simula o estado visual inicial sem disparar o evento completo para ser mais rápido
-        newTabHeader.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-        defaultTab.classList.add('active');
-        document.querySelectorAll('.box-tab-content').forEach(div => div.style.display = 'none');
-        const refsContent = document.getElementById('box-content-refs');
-        if(refsContent) refsContent.style.display = 'block';
+        defaultTab.click(); // Isto dispara o evento acima e garante que o ID começa escondido
     }
 
     // ============================================================
-    // 6. BOTÃO GRAVAR
+    // 7. CONFIGURAÇÃO DOS BOTÕES DE AÇÃO (SALVAR, REMOVER, ETC)
     // ============================================================
     const saveBtn = document.getElementById('link-save-btn');
     const newSaveBtn = saveBtn.cloneNode(true);
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
 
-     // 2. Configurar Botão REMOVER (Limpar Tudo)
     const removeBtn = document.getElementById('link-remove-btn');
     const newRemoveBtn = removeBtn.cloneNode(true);
     removeBtn.parentNode.replaceChild(newRemoveBtn, removeBtn);
 
-    // 3. Configurar Botão + ADICIONAR URL (CORRIGIDO)
     const addUrlBtn = document.getElementById('add-url-btn');
     const newAddUrlBtn = addUrlBtn.cloneNode(true);
     addUrlBtn.parentNode.replaceChild(newAddUrlBtn, addUrlBtn);
-    
-    newAddUrlBtn.onclick = (e) => { 
-        e.preventDefault(); 
-        window.addUrlField(); // Chama a função global que cria o input
-    };
+    newAddUrlBtn.onclick = (e) => { e.preventDefault(); window.addUrlField(); };
 
-    // 4. Configurar Botão + CODEX (CORRIGIDO ANTERIORMENTE)
     const addCodexBtn = document.getElementById('add-codex-row-btn');
     if (addCodexBtn) {
         const newAddCodexBtn = addCodexBtn.cloneNode(true);
         addCodexBtn.parentNode.replaceChild(newAddCodexBtn, addCodexBtn);
-        newAddCodexBtn.onclick = (e) => { 
-            e.preventDefault(); 
-            window.createCodexRow(); 
-        };
+        newAddCodexBtn.onclick = (e) => { e.preventDefault(); window.createCodexRow(); };
     }
 
+    // Lógica do botão GRAVAR
     newSaveBtn.onclick = async () => {
         newSaveBtn.disabled = true;
         newSaveBtn.textContent = "A gravar...";
@@ -33225,9 +33336,7 @@ window.openBoxLinkManager = async function(wrapper) {
                  }
             });
 
-            // LER CATEGORIAS DA MEMÓRIA GLOBAL
             const categoriesToSave = window.selectedCategoriesForBox || [];
-            console.log("💾 A gravar categorias:", categoriesToSave);
 
             const finalJson = { 
                 title: titleInput.value.trim(), 
@@ -33264,6 +33373,20 @@ window.openBoxLinkManager = async function(wrapper) {
             newSaveBtn.disabled = false;
             newSaveBtn.textContent = "Gravar";
             console.groupEnd();
+        }
+    };
+    
+    // Lógica do botão REMOVER (Limpar tudo)
+    newRemoveBtn.onclick = async () => {
+        const confirmModal = document.getElementById('confirm-modal');
+        if(confirmModal) confirmModal.style.zIndex = '3200';
+        const confirmed = await showConfirmation("Limpar Links", "Tem a certeza que deseja remover todos os links desta caixa?");
+        if(confirmModal) confirmModal.style.zIndex = '';
+        if (confirmed) {
+            wrapper.setAttribute('data-box-links', '{}');
+            updateBoxLinkButtonState(wrapper);
+            modal.style.display = 'none';
+            saveNote(true);
         }
     };
 };
