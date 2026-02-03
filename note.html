@@ -29233,11 +29233,10 @@ async function checkIfBoxIsLinked(boxId, modalElement) {
                 50% { transform: translateY(-3px) rotate(10deg); text-shadow: 0 0 15px rgba(74, 144, 226, 1); }
                 100% { transform: translateY(0) rotate(0deg); text-shadow: 0 0 5px rgba(74, 144, 226, 0.5); }
             }
-            /* Classe da Onda Azul */
             .electromagnetic-wave {
                 box-shadow: 0 0 0 0 rgba(74, 144, 226, 0.7);
                 animation: wavePulse 2s infinite;
-                border: 2px solid #4a90e2 !important; /* Borda azul pulsante */
+                border: 2px solid #4a90e2 !important;
             }
             @keyframes wavePulse {
                 0% { box-shadow: 0 0 0 0 rgba(74, 144, 226, 0.4); }
@@ -29249,15 +29248,17 @@ async function checkIfBoxIsLinked(boxId, modalElement) {
         document.head.appendChild(style);
     }
 
-    // 2. RESET VISUAL (LIMPEZA TOTAL)
-    const oldIcons = content.querySelectorAll('#satellite-indicator, #clone-indicator, .sat-loader');
+    // 2. RESET VISUAL
+    const oldIcons = content.querySelectorAll('#satellite-indicator, #clone-indicator, .sat-loader, #master-indicator');
     oldIcons.forEach(el => el.remove());
     
-    content.classList.remove('electromagnetic-wave'); // Remove a classe da onda
+    content.classList.remove('electromagnetic-wave');
     content.style.boxShadow = '';
     content.style.borderColor = '';
 
     const liveBox = document.getElementById(boxId);
+    
+    // Verifica se SOU um clone
     let originId = liveBox ? liveBox.getAttribute('data-origin-id') : null;
     if (originId === boxId) originId = null; 
 
@@ -29280,54 +29281,131 @@ async function checkIfBoxIsLinked(boxId, modalElement) {
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
         let directLinks = [];
+        let clonesFound = []; // Lista de locais onde existem cópias disto
+        
+ // A. PROCURAR ENTIDADES (Satélite)
         const collectionsToCheck = ['textosbiblicos', 'topicos', 'personagens', 'locais', 'cosmos', 'subcosmos'];
         
-        const promises = collectionsToCheck.map(async (colName) => {
+        const entityPromises = collectionsToCheck.map(async (colName) => {
             const q = query(collection(db, colName), where('userId', '==', myUid));
             const snap = await getDocs(q);
+            
             snap.forEach(doc => {
                 const data = doc.data();
+                
+                // 1. VERIFICAÇÃO NO QUADRO (PUZZLE)
                 if (data.puzzleBoard && Array.isArray(data.puzzleBoard)) {
+                    // Verifica se o ID da caixa está no snippet guardado
                     const hasRef = data.puzzleBoard.some(item => item.snippet && decodeURIComponent(item.snippet).includes(`id="${boxId}"`));
                     if (hasRef) {
-                        directLinks.push({ id: doc.id, name: data.nome, type: colName, icon: getIconForCollection(colName) });
+                        directLinks.push({ 
+                            id: doc.id, 
+                            name: `${data.nome} (Quadro)`, // Indica origem
+                            type: colName, 
+                            icon: getIconForCollection(colName) 
+                        });
                     }
+                }
+
+                // 2. VERIFICAÇÃO NO DOSSIÉ (MICAS/ABAS) - NOVO!
+                if (data.dossie && Array.isArray(data.dossie)) {
+                    data.dossie.forEach(mica => {
+                        if (mica.items && Array.isArray(mica.items)) {
+                            // Verifica se a caixa está dentro desta Mica específica
+                            const hasRefMica = mica.items.some(item => 
+                                item.snippet && decodeURIComponent(item.snippet).includes(`id="${boxId}"`)
+                            );
+
+                            if (hasRefMica) {
+                                directLinks.push({ 
+                                    id: doc.id, 
+                                    name: `${data.nome} > 📂 ${mica.name}`, // Mostra Entidade > Mica
+                                    type: colName, 
+                                    icon: getIconForCollection(colName) 
+                                });
+                            }
+                        }
+                    });
                 }
             });
         });
 
+        // B. PROCURAR CLONES (Sou o Pai?)
+        // Procura em todas as notas ativas se alguém tem um elemento com data-origin-id igual ao meu ID
+        const clonesPromise = (async () => {
+             const qNotes = query(
+                collection(db, 'pastas'), 
+                where('userId', '==', myUid),
+                where('estado', '==', 'ativa'),
+                where('tipo', 'in', ['nota', 'jornal', 'aquario'])
+             );
+             
+             const snapNotes = await getDocs(qNotes);
+             
+             snapNotes.forEach(doc => {
+                 // Ignora a própria nota
+                 if (doc.id === selectedNoteId) return;
+                 
+                 const content = doc.data().conteudo || "";
+                 // Procura a string específica: data-origin-id="MEU_ID"
+                 if (content.includes(`data-origin-id="${boxId}"`)) {
+                     clonesFound.push({ 
+                         id: doc.id, 
+                         name: doc.data().nome || "Nota Sem Título", 
+                         type: 'clone_location', 
+                         icon: '📄' 
+                     });
+                 }
+             });
+        })();
+
+        // C. PROCURAR O MEU PAI (Se eu for clone)
         let originalLocationItem = null;
         if (originId) {
             originalLocationItem = await findOriginalNoteLocation(originId);
         }
 
-        await Promise.all(promises);
+        // Aguarda tudo
+        await Promise.all([...entityPromises, clonesPromise]);
 
         if (document.getElementById(loaderId)) document.getElementById(loaderId).remove();
 
         // 3. APLICAÇÃO FINAL
         const isSatellite = directLinks.length > 0;
         const isClone = !!originId;
+        const isMaster = clonesFound.length > 0; // Sou o original e tenho filhos
 
-        // A. SATÉLITE 🛰️
+        let rightPos = 60; // Posição base (à esquerda do ID flutuante)
+
+        // I. ÍCONE SATÉLITE 🛰️ (Ligação a Entidades)
         if (isSatellite) {
-            // APLICAÇÃO FORÇADA DA CLASSE
             content.classList.add('electromagnetic-wave'); 
-            
-            const satBtn = createStatusIcon('🛰️', 60, "Ligações diretas.");
+            const satBtn = createStatusIcon('🛰️', rightPos, `Ligado a ${directLinks.length} entidades.`);
             satBtn.id = "satellite-indicator";
             satBtn.onclick = (e) => { 
                 e.stopPropagation(); 
                 showSatelliteLinksPopup(directLinks, satBtn, "LIGAÇÕES DIRETAS"); 
             };
             content.appendChild(satBtn);
+            rightPos += 40; // Empurra o próximo
         }
 
-        // B. CLONE ⚗️
+        // II. ÍCONE MASTER 💠 (Tenho Clones)
+        if (isMaster) {
+            const masterBtn = createStatusIcon('💠', rightPos, `Existem ${clonesFound.length} cópias disto.`);
+            masterBtn.id = "master-indicator";
+            masterBtn.style.color = "#00d2d3"; // Ciano
+            masterBtn.onclick = (e) => { 
+                e.stopPropagation(); 
+                showSatelliteLinksPopup(clonesFound, masterBtn, "CÓPIAS DETETADAS"); 
+            };
+            content.appendChild(masterBtn);
+            rightPos += 40;
+        }
+
+        // III. ÍCONE CLONE ⚗️ (Sou uma Cópia)
         if (isClone) {
-            const rightPos = isSatellite ? 100 : 60;
-            
-            if (!isSatellite) {
+            if (!isSatellite && !isMaster) {
                 content.style.boxShadow = "0 0 0 2px #9b59b6"; 
             }
 
@@ -33092,6 +33170,12 @@ window.openBoxLinkManager = async function(wrapper) {
     document.body.appendChild(modal); 
     modal.style.cssText = `display: flex !important; z-index: 2147483647 !important; visibility: visible !important; opacity: 1 !important; position: fixed !important; top: 0; left: 0; width: 100vw; height: 100dvh !important; background: rgba(0, 0, 0, 0.9) !important; justify-content: center !important; align-items: center !important;`;
     
+    if (typeof checkIfBoxIsLinked === 'function') {
+        // Passa o ID da caixa e o elemento do modal onde os ícones devem aparecer
+        checkIfBoxIsLinked(currentBoxId, modal);
+    }
+
+
     // IMPORTANTE: Define relative para que o ID Flutuante se posicione dentro desta caixa
     modalContent.style.position = 'relative';
 
