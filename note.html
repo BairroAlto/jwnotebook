@@ -29332,7 +29332,7 @@ async function checkIfBoxIsLinked(boxId, modalElement) {
 
         // B. PROCURAR CLONES (Sou o Pai?)
         // Procura em todas as notas ativas se alguém tem um elemento com data-origin-id igual ao meu ID
-        const clonesPromise = (async () => {
+ const clonesPromise = (async () => {
              const qNotes = query(
                 collection(db, 'pastas'), 
                 where('userId', '==', myUid),
@@ -29341,16 +29341,28 @@ async function checkIfBoxIsLinked(boxId, modalElement) {
              );
              
              const snapNotes = await getDocs(qNotes);
-             
+             const parser = new DOMParser(); // Necessário para encontrar o ID exato
+
              snapNotes.forEach(doc => {
                  // Ignora a própria nota
                  if (doc.id === selectedNoteId) return;
                  
                  const content = doc.data().conteudo || "";
-                 // Procura a string específica: data-origin-id="MEU_ID"
+                 
+                 // Verifica se contém o atributo de origem apontando para mim
                  if (content.includes(`data-origin-id="${boxId}"`)) {
+                     
+                     // Extrai o ID da caixa clonada para podermos fazer scroll até ela
+                     let targetBoxId = null;
+                     try {
+                         const docDOM = parser.parseFromString(content, 'text/html');
+                         const cloneElement = docDOM.querySelector(`[data-origin-id="${boxId}"]`);
+                         if (cloneElement) targetBoxId = cloneElement.id;
+                     } catch(e) {}
+
                      clonesFound.push({ 
-                         id: doc.id, 
+                         id: doc.id, // ID da Nota
+                         boxId: targetBoxId, // ID da Caixa dentro da nota (para scroll)
                          name: doc.data().nome || "Nota Sem Título", 
                          type: 'clone_location', 
                          icon: '📄' 
@@ -29485,15 +29497,21 @@ function showSatelliteLinksPopup(links, targetElement, titleText = "A TRANSMITIR
 
     uniqueLinks.forEach(link => {
         
-        // --- DECISÃO DE AÇÃO ---
+        // --- DECISÃO DE AÇÃO (CORRIGIDA) ---
         let onclickAction = "";
         
-        if (link.type === 'source') {
-            // É o ORIGINAL: Navega para a nota e faz scroll para a caixa (boxId)
-            // Fecha o modal de links primeiro para limpar o ecrã
-            onclickAction = `document.getElementById('link-modal').style.display='none'; this.parentElement.remove(); window.handleGoToNote('${link.id}', '${link.boxId}');`;
+        // Se for a ORIGEM ('source') ou uma LOCALIZAÇÃO DE CLONE ('clone_location')
+        // Devemos navegar para a nota e não abrir o painel lateral
+        if (link.type === 'source' || link.type === 'clone_location') {
+            
+            // Navega para a nota e faz scroll para a caixa (link.boxId)
+            onclickAction = `
+                document.getElementById('sat-links-popup').remove(); 
+                const lm = document.getElementById('link-modal'); if(lm) lm.style.display='none';
+                window.handleGoToNote('${link.id}', '${link.boxId || ''}');
+            `;
         } else {
-            // É UMA ENTIDADE: Abre a 4ª Coluna
+            // É UMA ENTIDADE (Personagem, Tópico, etc): Abre a 4ª Coluna
             onclickAction = `window.goToEntityFromSat('${link.id}', '${link.name}', '${link.type}')`;
         }
 
