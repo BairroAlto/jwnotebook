@@ -28014,47 +28014,86 @@ if (deleteBtn) {
 // PROTEÇÃO: DETETAR DELETE EM MASSA DE MINI-NOTAS
 // ====================================================================
 noteContentEditor.addEventListener('keydown', async (event) => {
-    // Apenas nos interessa Backspace ou Delete
+    // 1. Filtro de Teclas
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+    if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
 
     const selection = window.getSelection();
     if (!selection.rangeCount) return;
-
     const range = selection.getRangeAt(0);
-    const anchorNode = selection.anchorNode;
-    // Garante que temos o elemento HTML
-    const currentEl = anchorNode.nodeType === 3 ? anchorNode.parentElement : anchorNode;
-
-    // --- [MANTÉM-SE A PROTEÇÃO DE TOGGLES/BACKSPACE ANTERIOR AQUI] ---
-    // (Pode manter o código do bloco 1.1, 1.2 e 1.3 que já tinha para proteção de Toggles, 
-    //  pois ele lida com cursor colapsado. O foco agora é a seleção expandida.)
     
-    // SE NÃO HOUVER SELEÇÃO DE TEXTO (CURSOR APENAS A PISCAR), SAI
-    if (selection.isCollapsed) return;
+    // Se for apenas cursor a piscar (sem seleção azul), sai.
+    if (range.collapsed) return;
 
-    // --- VERIFICAÇÃO DE SEGURANÇA PARA EDIÇÃO INTERNA ---
-    const focusNode = selection.focusNode;
-    const endEl = focusNode.nodeType === 3 ? focusNode.parentElement : focusNode;
+    const safeSelectors = '.mini-note-wrapper, details.toggle-section, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, .jwn-timeline-wrapper, .jwn-table-wrapper, .store-note-card';
 
-    const startWrapper = currentEl.closest('.mini-note-wrapper, details.toggle-section, .redator-wrapper');
-    const endWrapper = endEl.closest('.mini-note-wrapper, details.toggle-section, .redator-wrapper');
+    // 2. IDENTIFICAR PONTOS DE INÍCIO E FIM
+    const startContainer = range.startContainer;
+    const endContainer = range.endContainer;
 
-    // Se a seleção começa e acaba DENTRO da mesma caixa, é edição de texto normal. Permitir.
-    if (startWrapper && startWrapper === endWrapper) {
+    // Encontra os wrappers onde a seleção começa e acaba (se existirem)
+    const startEl = (startContainer.nodeType === 3) ? startContainer.parentElement : startContainer;
+    const endEl = (endContainer.nodeType === 3) ? endContainer.parentElement : endContainer;
+    
+    const startWrapper = startEl.closest(safeSelectors);
+    const endWrapper = endEl.closest(safeSelectors);
+
+    // --- CASO 1: EDIÇÃO SEGURA (DENTRO DA MESMA CAIXA) ---
+    // Se começa e acaba dentro da mesma caixa, é texto normal. Deixa apagar.
+    if (startWrapper && endWrapper && startWrapper === endWrapper) {
         return; 
     }
 
-    // 3. PROCURAR SELEÇÃO EM MASSA
-    const allWrappers = noteContentEditor.querySelectorAll('.mini-note-wrapper, details.toggle-section, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, .ref-depot-wrapper, .jwn-timeline-wrapper, .jwn-table-wrapper');
-    
+    // --- CASO 2: SELEÇÃO EM MASSA (VARREDURA) ---
+    console.group("🧹 [DEBUG DELETE] Análise de Sanduíche");
+
+    const allWrappers = Array.from(noteContentEditor.querySelectorAll(safeSelectors));
     const wrappersToDelete = [];
+    
+    // Para cada caixa na nota, perguntamos: "Estás dentro da seleção?"
     allWrappers.forEach(wrapper => {
-        if (selection.containsNode(wrapper, true)) {
+        let shouldDelete = false;
+
+        // A. O Método Nativo (funciona para seleções parciais)
+        if (range.intersectsNode(wrapper)) {
+            shouldDelete = true;
+        }
+        
+        // B. O Método Visual (funciona para Select All)
+        else if (selection.containsNode(wrapper, true)) {
+            shouldDelete = true;
+        }
+
+        // C. O Método "Sanduíche" (INFALÍVEL PARA ESTRUTURAS COMPLEXAS)
+        // Se a caixa está DEPOIS do início da seleção E ANTES do fim da seleção.
+        else {
+            // compareDocumentPosition retorna bitmask:
+            // 4 (FOLLOWING) -> wrapper vem depois de startContainer
+            // 2 (PRECEDING) -> wrapper vem antes de endContainer
+            
+            const positionRelToStart = startContainer.compareDocumentPosition(wrapper);
+            const positionRelToEnd = wrapper.compareDocumentPosition(endContainer); // Invertido para verificar se end vem depois do wrapper
+
+            const isAfterStart = (positionRelToStart & Node.DOCUMENT_POSITION_FOLLOWING);
+            const isBeforeEnd = (positionRelToEnd & Node.DOCUMENT_POSITION_FOLLOWING);
+
+            if (isAfterStart && isBeforeEnd) {
+                shouldDelete = true;
+            }
+        }
+        
+        // FILTRO DE SEGURANÇA FINAL:
+        // Não marcar para apagar se a seleção está APENAS a tocar no texto interior 
+        // (Isso já foi tratado no CASO 1, mas serve de reforço para seleções parciais)
+        if (shouldDelete) {
             wrappersToDelete.push(wrapper);
         }
     });
 
-    // 4. SE A SELEÇÃO CONTÉM ITENS COMPLEXOS:
+    console.log(`Itens na sanduíche: ${wrappersToDelete.length}`);
+    console.groupEnd();
+
+    // 3. AÇÃO DE PROTEÇÃO
     if (wrappersToDelete.length > 0) {
         event.preventDefault();
         event.stopPropagation();
@@ -28062,65 +28101,50 @@ noteContentEditor.addEventListener('keydown', async (event) => {
         const count = wrappersToDelete.length;
         const totalInEditor = allWrappers.length;
         
-        // DETEÇÃO DE "SELECIONAR TUDO" (Ou quase tudo)
-        // Se a quantidade de itens a apagar for igual ao total, ou se for uma quantidade grande (> 2)
-        const isMassiveDelete = (count === totalInEditor) || (count >= 3);
+        // Critério: Mais de 1 item OU Selecionar Tudo (1 item único na nota)
+        const isMassive = (count >= 2) || (count === 1 && totalInEditor === 1 && !startWrapper);
 
-        if (isMassiveDelete) {
-            // --- CENÁRIO A: APAGAR TUDO (BACKUP DE SEGURANÇA) ---
+        if (isMassive) {
+            // Z-Index Fix
+            const confirmModal = document.getElementById('confirm-modal');
+            if(confirmModal) confirmModal.style.zIndex = "2147483647";
+
             const confirmed = await showConfirmation(
-                "⚠️ Atenção: Dados Importantes", 
-                `Está prestes a apagar ${count} blocos de conteúdo complexo.\n\nPara segurança, será criado um Backup Automático antes de limpar a nota. Deseja continuar?`
+                "⚠️ Atenção: Apagar Conteúdo", 
+                `A seleção abrange ${count} blocos estruturados.\nSerá criado um Backup Automático antes de limpar. Continuar?`
             );
-
-            if (!confirmed) return;
-
-            // Feedback visual no botão do modal (caso ainda estivesse visível)
-            const modalBtn = document.querySelector('#confirm-modal .modal-btn.primary');
-            if(modalBtn) modalBtn.textContent = "A Criar Backup...";
-
-            // 1. Criar o Backup Completo
-            const currentHTML = noteContentEditor.innerHTML;
-            const currentTitle = document.getElementById('note-title-input').value;
             
-            await performSafetyBackup(selectedNoteId, currentHTML, currentTitle);
+            if(confirmModal) confirmModal.style.zIndex = "";
 
-            // 2. Limpar o Editor
-            // Se for "Selecionar Tudo", limpa tudo. Se for parcial, apaga só a seleção.
-            if (count === totalInEditor) {
-                noteContentEditor.innerHTML = '<p><br></p>';
-            } else {
-                range.deleteContents();
+            if (confirmed) {
+                // 1. Backup
+                const currentHTML = noteContentEditor.innerHTML;
+                const currentTitle = document.getElementById('note-title-input').value;
+                if (typeof performSafetyBackup === 'function') {
+                    await performSafetyBackup(selectedNoteId, currentHTML, currentTitle);
+                }
+
+                // 2. Limpar
+                // Se detetou que estamos a apagar quase tudo
+                if (count >= totalInEditor - 1) {
+                    noteContentEditor.innerHTML = '<p><br></p>';
+                } else {
+                    range.deleteContents();
+                }
+                saveNote(true);
             }
-
-            // 3. Gravar o estado "Vazio"
-            saveNote(true);
-
-            // Feedback visual
-            const statusEl = document.getElementById('save-status-indicator');
-            if(statusEl) {
-                statusEl.textContent = "Backup Criado & Nota Limpa";
-                setTimeout(() => statusEl.textContent = "Guardado", 3000);
-            }
-
         } else {
-            // --- CENÁRIO B: APAGAR 1 OU 2 ITENS (LÓGICA ORIGINAL DE RECICLAGEM) ---
-            // Mantém a lógica de enviar para a lixeira individualmente
+            // Caso Simples: 1 Item (clicado por fora)
             const confirmDelete = await showConfirmation(
                 "Mover para a Lixeira?", 
-                `A seleção contém ${count} item(s). Eles serão movidos para o Histórico/Reciclagem.`
+                `1 item estruturado selecionado. Mover para o Histórico?`
             );
 
-            if (!confirmDelete) return;
-
-            const modalBtn = document.querySelector('#confirm-modal .modal-btn.primary');
-            if(modalBtn) modalBtn.textContent = "A Arquivar...";
-
-            const archivePromises = wrappersToDelete.map(wrapper => archiveMiniNote(wrapper, true)); 
-            await Promise.all(archivePromises);
-
-            range.deleteContents();
-            saveNote();
+            if (confirmDelete) {
+                await archiveMiniNote(wrappersToDelete[0], true);
+                try { range.deleteContents(); } catch(e) {}
+                saveNote();
+            }
         }
     }
 });
