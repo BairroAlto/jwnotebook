@@ -48289,6 +48289,8 @@ window.removeCollaborator = async function(docId, userIdToRemove, btnElement) {
 
 // 1. ABRIR O GESTOR
 window.openSourceManager = function() {
+    console.group("🚀 [GESTOR] Abrindo Gestor de Fontes...");
+    
     const modal = document.getElementById('source-manager-modal');
     const nameInput = document.getElementById('source-link-name');
     const removeBtn = document.getElementById('source-remove-btn');
@@ -48296,28 +48298,37 @@ window.openSourceManager = function() {
     const addUrlBtn = document.getElementById('source-add-url-btn');
     const actionsDiv = modal.querySelector('.modal-actions');
     
+    if (!modal) return console.error("Modal não encontrado.");
+
     // ============================================================
-    // CORREÇÃO CRÍTICA DE SELEÇÃO
+    // 1. CORREÇÃO CRÍTICA DE SELEÇÃO (CONGELAMENTO)
     // ============================================================
-    // 1. Tenta usar a seleção nativa do browser AGORA
+    // Tenta obter a seleção atual do navegador
     let selection = window.getSelection();
     
-    // 2. Se não houver, tenta usar a variável global (backup)
+    // Se não houver, tenta usar o backup global (criado pelo handleTextSelection)
     if ((!selection || selection.rangeCount === 0) && currentSelectionRange) {
         selection.removeAllRanges();
         selection.addRange(currentSelectionRange);
-        selection = window.getSelection(); // Atualiza a referência
+        selection = window.getSelection();
     }
 
-    // 3. Garante que guardamos o range para usar no botão gravar
-    savedRange = (selection && selection.rangeCount > 0) ? selection.getRangeAt(0).cloneRange() : null;
-    
-    // Se mesmo assim for null, avisa (mas deixa abrir para edição manual)
-    if (!savedRange) {
-        console.warn("⚠️ Nenhuma seleção de texto encontrada.");
+    // CONGELA A SELEÇÃO AGORA (Antes que o utilizador clique em inputs e a perca)
+    if (selection && selection.rangeCount > 0) {
+        // Para Links Normais
+        savedRange = selection.getRangeAt(0).cloneRange();
+        // Para SuperLinks (Correção do erro "Origem Nula")
+        currentSuperLinkRange = savedRange.cloneRange();
+        
+        console.log("🧊 [SELEÇÃO] Texto congelado:", currentSuperLinkRange.toString());
+    } else {
+        savedRange = null;
+        currentSuperLinkRange = null;
+        console.warn("⚠️ Nenhuma seleção de texto detetada.");
     }
     // ============================================================
 
+    // 2. DETETAR CONTEXTO (Edição vs Criação)
     let existingLink = null;
     let existingSuperLink = null;
 
@@ -48327,17 +48338,17 @@ window.openSourceManager = function() {
         existingSuperLink = node.closest('.superlink-dotted');
     }
 
-    // Reset UI
+    // 3. RESET UI
     document.getElementById('source-urls-list').innerHTML = '';
     currentEditingSuperLinkId = null;
     selectedSentenceNodes = [];
     removeBtn.style.display = 'none';
 
-    // LIMPEZA DE BOTÕES ANTIGOS DE APAGAR (Para não duplicar)
+    // Limpeza de botões antigos de apagar (para não duplicar)
     const oldDelRefBtn = actionsDiv.querySelector('.btn-delete-link-ref');
     if (oldDelRefBtn) oldDelRefBtn.remove();
 
-    // --- MODO EDIÇÃO (LINK NORMAL) ---
+    // --- CENÁRIO A: EDITAR LINK NORMAL ---
     if (existingLink) {
         switchSourceTab('links');
         nameInput.value = existingLink.textContent;
@@ -48354,44 +48365,52 @@ window.openSourceManager = function() {
         } catch (e) {
             window.addSourceUrlField(existingLink.href);
         }
-
     } 
-    // --- MODO EDIÇÃO (SUPERLINK) ---
+    // --- CENÁRIO B: EDITAR SUPERLINK ---
     else if (existingSuperLink) {
         switchSourceTab('superlink');
         nameInput.value = existingSuperLink.textContent;
         currentEditingSuperLinkId = existingSuperLink.dataset.slId;
         removeBtn.style.display = 'block';
         
-        // Carrega frases para edição/reparação
+        // Carrega frases e destaca as que já estão ligadas
         loadEditorSentences(currentEditingSuperLinkId);
     } 
-    // --- MODO CRIAÇÃO ---
+    // --- CENÁRIO C: CRIAR NOVO ---
     else {
-        switchSourceTab('links');
-        // Se houver seleção, usa o texto como título inicial
+        switchSourceTab('links'); // Padrão
+        // Usa o texto selecionado como título inicial
         nameInput.value = selection.toString().trim();
         window.addSourceUrlField();
+        
+        // Prepara a lista de frases caso o user mude de aba para SuperLink
         loadEditorSentences(null);
     }
 
-    // Configurar Botão URL
+    // 4. CONFIGURAR BOTÕES
+
+    // Botão Adicionar URL (+)
     const newAddUrlBtn = addUrlBtn.cloneNode(true);
     addUrlBtn.parentNode.replaceChild(newAddUrlBtn, addUrlBtn);
     newAddUrlBtn.onclick = (e) => { e.preventDefault(); window.addSourceUrlField(); };
 
-    // Configurar Botão Remover
+    // Botão Remover (Lixo)
     const newRemoveBtn = removeBtn.cloneNode(true);
     removeBtn.parentNode.replaceChild(newRemoveBtn, removeBtn);
     
     newRemoveBtn.onclick = async () => {
         const confirmModal = document.getElementById('confirm-modal');
-        if (confirmModal) document.body.appendChild(confirmModal);
+        if (confirmModal) {
+            document.body.appendChild(confirmModal);
+            confirmModal.style.zIndex = "2147483647";
+        }
         
         const confirmed = await showConfirmation(
             "Remover Vínculo?", 
             "Isto irá apagar a ligação entre estes textos."
         );
+        
+        if (confirmModal) confirmModal.style.zIndex = "";
 
         if (confirmed) {
             if (currentEditingSuperLinkId) {
@@ -48402,20 +48421,22 @@ window.openSourceManager = function() {
     };
 
     // ============================================================
-    // BOTÃO GRAVAR (CORRIGIDO COM INSERT HTML)
+    // 5. BOTÃO GRAVAR (O CÉREBRO)
     // ============================================================
     const newSaveBtn = saveBtn.cloneNode(true);
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
 
-newSaveBtn.onclick = async () => {
+    newSaveBtn.onclick = async () => {
         const activeTabBtn = document.querySelector('#source-tabs button.active');
         const activeTab = activeTabBtn ? activeTabBtn.dataset.tab : 'links';
 
+        // ROTA 1: SUPERLINK (Aba 2)
         if (activeTab === 'superlink') {
-            saveSuperLink();
+            saveSuperLink(); // Chama a função corrigida
             return;
         }
 
+        // ROTA 2: LINK NORMAL (Aba 1)
         const titleVal = nameInput.value.trim();
         const urls = [];
         document.querySelectorAll('.source-url-input').forEach(inp => {
@@ -48429,22 +48450,21 @@ newSaveBtn.onclick = async () => {
         if (!titleVal) return alert("Insira um nome para o link.");
         if (urls.length === 0) return alert("Insira pelo menos um URL.");
 
-        // Dados e Estilo
         const jsonEncoded = encodeURIComponent(JSON.stringify(urls));
         const linkStyle = "color:inherit; text-decoration:none; border-bottom:1px solid rgba(200, 200, 200, 0.4); cursor:pointer;";
 
-        // 1. APLICAÇÃO NO DOM
+        // A. Atualizar Existente
         if (existingLink) {
-            // Edição
             existingLink.textContent = titleVal;
             existingLink.href = urls[0];
             existingLink.dataset.json = jsonEncoded;
             existingLink.style.cssText = linkStyle;
-        } else {
-            // Criação (DOM Injection)
+        } 
+        // B. Criar Novo (Usa savedRange)
+        else {
             if (savedRange) {
                 try {
-                    savedRange.deleteContents(); // Limpa seleção
+                    savedRange.deleteContents(); // Remove texto selecionado
                     
                     const a = document.createElement('a');
                     a.href = urls[0];
@@ -48455,35 +48475,31 @@ newSaveBtn.onclick = async () => {
                     a.style.cssText = linkStyle;
 
                     savedRange.insertNode(a);
-                    
-                    // Normaliza para fundir nós de texto adjacentes
                     a.parentNode.normalize(); 
                 } catch(e) {
                     console.error("Erro DOM:", e);
                 }
+            } else {
+                alert("Erro: Seleção de texto perdida. Selecione novamente.");
+                return;
             }
         }
 
-        // 2. FECHAR MODAL IMEDIATAMENTE (Visual)
         modal.style.display = 'none';
 
-        // 3. GRAVAÇÃO COM DELAY DE SEGURANÇA
-        // Isto dá tempo ao browser para renderizar o novo elemento <a> antes de o lermos
+        // Gravação com pequeno delay para o DOM atualizar
         if (typeof saveNote === 'function') {
-            setTimeout(() => {
-                console.log("💾 Gravação atrasada executada (Link Seguro).");
-                saveNote(true);
-            }, 100); 
+            setTimeout(() => saveNote(true), 100); 
         }
     };
 
-
-
-
-    // Mostrar Modal
+    // 6. MOSTRAR MODAL
     document.body.appendChild(modal);
-    modal.style.display = 'flex';
+    modal.style.setProperty('display', 'flex', 'important');
+    console.groupEnd();
 };
+
+
 
 
 
@@ -48674,127 +48690,125 @@ function setupSentenceClick(divElement, textNode) {
 
 // 4. GRAVAR SUPERLINK (A MAGIA)
 function saveSuperLink() {
-    console.group("💾 [SUPERLINK] Gravação Frase-a-Frase...");
+    console.group("%c🕵️‍♂️ [DIAGNÓSTICO] A Criar SuperLink...", "background: #333; color: #bada55; font-size: 14px; padding: 4px;");
+
+    // 1. RECUPERAÇÃO SEGURA DA SELEÇÃO
+    // Tenta currentSuperLinkRange, se falhar tenta savedRange
+    const rangeToUse = currentSuperLinkRange || savedRange;
+
+    console.log("1. Estado Inicial:");
+    console.log("   - ID de Edição:", currentEditingSuperLinkId);
+    console.log("   - Seleção (Range) Disponível:", rangeToUse ? "✅ Sim" : "❌ Nula");
+    console.log("   - Quantidade de Alvos:", selectedSentenceNodes.length);
+
+    if (selectedSentenceNodes.length === 0) {
+        console.warn("⚠️ AVISO: Nenhum texto de destino selecionado.");
+    }
 
     const modal = document.getElementById('source-manager-modal');
-    // Se for edição, usa o ID existente. Se for novo, gera um.
     const linkId = currentEditingSuperLinkId || `sl_${Date.now()}`;
-    console.log(`🆔 ID do Link: ${linkId}`);
-
     let targetsCreated = 0;
+    let sourceCreated = false;
 
-    // 1. APLICA NOS ALVOS (Frases da lista)
-    // selectedSentenceNodes agora é um array de objetos: { tempId: "...", text: "Frase..." }
-    
-    // Filtra duplicados (para evitar erros se clicou duas vezes sem querer)
-    // A função findIndex compara se já existe um objeto com o mesmo ID temporário e o mesmo texto
+    // 2. PROCESSAR ALVOS (Laranjas)
     const uniqueSelections = selectedSentenceNodes.filter((v,i,a) => 
         a.findIndex(t => (t.tempId === v.tempId && t.text === v.text)) === i
     );
     
     uniqueSelections.forEach(selection => {
         const { tempId, text } = selection;
-        
-        // 1. Encontra o contentor pai onde a frase vive (marcado com ID temporário)
         const container = document.querySelector(`[data-temp-sl="${tempId}"]`);
 
         if (container) {
-            // 2. Procura o nó de texto exato que contém a frase dentro do pai
-            // Usamos TreeWalker porque o pai pode ter outros spans, links ou negritos misturados
             const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
             let targetNode = null;
-            
             while(targetNode = walker.nextNode()) {
-                // Verifica se este pedaço de texto contém a nossa frase
                 if (targetNode.textContent.includes(text)) {
-                    
-                    // --- AQUI ACONTECE A MAGIA (RANGE) ---
-                    // Criamos um intervalo de seleção invisível à volta apenas da frase
                     const range = document.createRange();
                     const startPos = targetNode.textContent.indexOf(text);
                     const endPos = startPos + text.length;
-                    
                     try {
                         range.setStart(targetNode, startPos);
                         range.setEnd(targetNode, endPos);
                         
-                        // Verifica se o pai imediato já é um superlink (para evitar aninhar links)
                         const parent = targetNode.parentElement;
                         if (parent.classList.contains('superlink-dotted') && parent.textContent === text) {
-                            // Se já é um link, só atualiza o ID e garante que é 'target'
                             parent.dataset.slId = linkId;
                             parent.classList.add('target');
                             parent.classList.remove('source');
+                            parent.style.borderBottom = "2px dotted #e67e22"; 
                         } else {
-                            // Se é texto limpo, envolve num novo span picotado
                             const span = document.createElement('span');
                             span.className = "superlink-dotted target";
                             span.dataset.slId = linkId;
-                            
-                            // surroundContents remove o texto do nó original e põe dentro do span
+                            span.style.borderBottom = "2px dotted #e67e22"; 
                             range.surroundContents(span);
                         }
                         targetsCreated++;
-                        
-                        // Sai do loop while assim que encontrar e processar a frase
                         break; 
-                    } catch(e) {
-                        console.warn(`⚠️ Erro ao envolver "${text}":`, e);
-                        // Geralmente acontece se a frase estiver dividida por tags (ex: metade bold, metade normal)
-                    }
+                    } catch(e) {}
                 }
             }
-            
-            // Remove o ID temporário do pai (limpeza)
             container.removeAttribute('data-temp-sl');
-        } else {
-            console.warn(`⚠️ Contentor original ${tempId} não encontrado.`);
         }
     });
 
-    // 2. APLICA NA ORIGEM (Apenas se for Novo)
-    // Se for edição/reparação, a origem já existe, não mexemos nela
-    if (!currentEditingSuperLinkId && currentSuperLinkRange) {
-        const selection = window.getSelection();
-        selection.removeAllRanges();
-        selection.addRange(currentSuperLinkRange);
+    // 3. PROCESSAR ORIGEM (Amarelo)
+    // Se não estivermos a editar um existente, temos de criar a origem
+    if (!currentEditingSuperLinkId) {
+        if (rangeToUse) {
+            console.group("📍 Criando Origem (Source)");
+            try {
+                // Remove qualquer seleção do user para não interferir
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                
+                // Restaura a seleção "congelada"
+                selection.addRange(rangeToUse);
+                
+                // Cria o span amarelo
+                const html = `<span class="superlink-dotted source" data-sl-id="${linkId}" style="border-bottom: 2px dotted #f1c40f;">${rangeToUse.toString()}</span>`;
+                document.execCommand('insertHTML', false, html);
+                
+                sourceCreated = true;
+                console.log("   ✅ Origem criada com sucesso.");
+            } catch(e) {
+                console.error("   ❌ Erro ao criar origem:", e);
+            }
+            console.groupEnd();
+        } else {
+            console.error("❌ FALHA FATAL: Não há seleção de texto para criar a origem!");
+            alert("Erro: A seleção de texto foi perdida. Por favor, cancele e selecione o texto novamente.");
+        }
+    } else {
+        sourceCreated = true; // Edição assume que já existe
+    }
+
+    // 4. LIMPEZA E GRAVAÇÃO
+    document.querySelectorAll('span[data-temp-sl]').forEach(el => el.removeAttribute('data-temp-sl'));
+
+    // Verificação Final
+    setTimeout(() => {
+        const domSources = document.querySelectorAll(`.superlink-dotted.source[data-sl-id="${linkId}"]`);
+        const domTargets = document.querySelectorAll(`.superlink-dotted.target[data-sl-id="${linkId}"]`);
         
-        const html = `<span class="superlink-dotted source" data-sl-id="${linkId}">${currentSuperLinkRange.toString()}</span>`;
-        document.execCommand('insertHTML', false, html);
-    }
-
-    // 3. LIMPEZA FINAL DE LIXO
-    // Remove spans temporários vazios que possam ter sobrado da função load
-    // (ex: spans criados para envolver texto solto mas que não foram selecionados)
-    document.querySelectorAll('span[data-temp-sl]').forEach(el => {
-        // Se for um span que criámos só para isto (sem classe de link), desfazemo-lo
-        if (el.tagName === 'SPAN' && !el.classList.contains('superlink-dotted')) {
-            const parent = el.parentNode;
-            while (el.firstChild) parent.insertBefore(el.firstChild, el);
-            el.remove();
+        if (domSources.length > 0 && domTargets.length > 0) {
+            console.log("%c✅ SUCESSO: Link Completo.", "color: #2ecc71; font-weight: bold;");
         } else {
-            // Se for um elemento estrutural (p, div), só remove o atributo
-            el.removeAttribute('data-temp-sl');
+            console.warn(`⚠️ Resultado: ${domSources.length} Origens, ${domTargets.length} Destinos.`);
         }
-    });
+        console.groupEnd();
+    }, 500);
 
-    // 4. AVISO DE ERRO
-    if (targetsCreated === 0 && uniqueSelections.length > 0) {
-        alert("Aviso: Algumas frases não puderam ser vinculadas.\nO texto pode ter sido alterado ou estar dividido por formatação complexa.");
-    }
-
-    // 5. GRAVAR NO FIREBASE
-    if (typeof saveNote === 'function') {
-        saveNote(true);
-    }
+    if (typeof saveNote === 'function') saveNote(true);
     
-    // Fechar modal e resetar variáveis
     modal.style.display = 'none';
     selectedSentenceNodes = [];
     currentEditingSuperLinkId = null;
-    console.groupEnd();
+    // IMPORTANTE: Limpa as globais para não afetar a próxima criação
+    currentSuperLinkRange = null;
+    savedRange = null;
 }
-
 
 
 // 5. APAGAR SUPERLINK
