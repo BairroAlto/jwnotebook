@@ -28016,102 +28016,87 @@ if (deleteBtn) {
 noteContentEditor.addEventListener('keydown', async (event) => {
     // 1. Filtro de Teclas
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+
+    // Se estiver a editar um input nativo (ex: Título do Raciocínio), deixa o browser tratar
     if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
 
     const selection = window.getSelection();
     if (!selection.rangeCount) return;
-    const range = selection.getRangeAt(0);
-    
-    // Se for apenas cursor a piscar (sem seleção azul), sai.
-    if (range.collapsed) return;
 
+    const range = selection.getRangeAt(0);
     const safeSelectors = '.mini-note-wrapper, details.toggle-section, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, .jwn-timeline-wrapper, .jwn-table-wrapper, .store-note-card';
 
-    // 2. IDENTIFICAR PONTOS DE INÍCIO E FIM
-    const startContainer = range.startContainer;
-    const endContainer = range.endContainer;
+    // 2. VERIFICAÇÃO CRÍTICA: A SELEÇÃO É INTERNA?
+    // Verifica o "Ancestral Comum" da seleção (o elemento pai mais próximo que contém todo o texto selecionado)
+    const commonAncestor = range.commonAncestorContainer;
+    const commonEl = (commonAncestor.nodeType === 3) ? commonAncestor.parentElement : commonAncestor;
 
-    // Encontra os wrappers onde a seleção começa e acaba (se existirem)
-    const startEl = (startContainer.nodeType === 3) ? startContainer.parentElement : startContainer;
-    const endEl = (endContainer.nodeType === 3) ? endContainer.parentElement : endContainer;
-    
-    const startWrapper = startEl.closest(safeSelectors);
-    const endWrapper = endEl.closest(safeSelectors);
+    // Procura se esse ancestral está DENTRO de uma caixa segura
+    const parentWrapper = commonEl.closest(safeSelectors);
 
-    // --- CASO 1: EDIÇÃO SEGURA (DENTRO DA MESMA CAIXA) ---
-    // Se começa e acaba dentro da mesma caixa, é texto normal. Deixa apagar.
-    if (startWrapper && endWrapper && startWrapper === endWrapper) {
+    if (parentWrapper) {
+        // --- CENÁRIO A: EDIÇÃO DE TEXTO ---
+        // Se a seleção está inteiramente contida numa caixa, NÃO É um delete em massa.
+        // É apenas o utilizador a apagar texto ou parágrafos lá dentro.
+        // Permitimos a ação imediatamente e saímos da função.
         return; 
     }
 
-    // --- CASO 2: SELEÇÃO EM MASSA (VARREDURA) ---
-    console.group("🧹 [DEBUG DELETE] Análise de Sanduíche");
-
-    const allWrappers = Array.from(noteContentEditor.querySelectorAll(safeSelectors));
+    // 3. DETEÇÃO DE DELETE EM MASSA (Se chegou aqui, a seleção está FORA ou ENTRE caixas)
+    console.group("🗑️ [DEBUG DELETE] Verificação Externa");
+    
+    const allWrappers = noteContentEditor.querySelectorAll(safeSelectors);
     const wrappersToDelete = [];
     
-    // Para cada caixa na nota, perguntamos: "Estás dentro da seleção?"
+    // Obtém o retângulo visual da seleção
+    const rangeRect = range.getBoundingClientRect();
+    const hasVisualSelection = rangeRect.width > 0 && rangeRect.height > 0;
+
     allWrappers.forEach(wrapper => {
-        let shouldDelete = false;
+        // Se a seleção está DENTRO deste wrapper (verificação extra), ignora-o
+        if (wrapper.contains(range.commonAncestorContainer)) return;
 
-        // A. O Método Nativo (funciona para seleções parciais)
-        if (range.intersectsNode(wrapper)) {
-            shouldDelete = true;
-        }
+        let isHit = false;
+
+        // A. Método Nativo (Intersect)
+        if (range.intersectsNode(wrapper)) isHit = true;
         
-        // B. O Método Visual (funciona para Select All)
-        else if (selection.containsNode(wrapper, true)) {
-            shouldDelete = true;
+        // B. Método Visual (Sobreposição de Retângulos) - Para apanhar "Select All"
+        else if (hasVisualSelection) {
+            const boxRect = wrapper.getBoundingClientRect();
+            const overlap = !(
+                rangeRect.right < boxRect.left || 
+                rangeRect.left > boxRect.right || 
+                rangeRect.bottom < boxRect.top + 10 || 
+                rangeRect.top > boxRect.bottom - 10
+            );
+            if (overlap) isHit = true;
         }
 
-        // C. O Método "Sanduíche" (INFALÍVEL PARA ESTRUTURAS COMPLEXAS)
-        // Se a caixa está DEPOIS do início da seleção E ANTES do fim da seleção.
-        else {
-            // compareDocumentPosition retorna bitmask:
-            // 4 (FOLLOWING) -> wrapper vem depois de startContainer
-            // 2 (PRECEDING) -> wrapper vem antes de endContainer
-            
-            const positionRelToStart = startContainer.compareDocumentPosition(wrapper);
-            const positionRelToEnd = wrapper.compareDocumentPosition(endContainer); // Invertido para verificar se end vem depois do wrapper
-
-            const isAfterStart = (positionRelToStart & Node.DOCUMENT_POSITION_FOLLOWING);
-            const isBeforeEnd = (positionRelToEnd & Node.DOCUMENT_POSITION_FOLLOWING);
-
-            if (isAfterStart && isBeforeEnd) {
-                shouldDelete = true;
-            }
-        }
-        
-        // FILTRO DE SEGURANÇA FINAL:
-        // Não marcar para apagar se a seleção está APENAS a tocar no texto interior 
-        // (Isso já foi tratado no CASO 1, mas serve de reforço para seleções parciais)
-        if (shouldDelete) {
+        if (isHit) {
             wrappersToDelete.push(wrapper);
         }
     });
 
-    console.log(`Itens na sanduíche: ${wrappersToDelete.length}`);
+    console.log(`Itens afetados externamente: ${wrappersToDelete.length}`);
     console.groupEnd();
 
-    // 3. AÇÃO DE PROTEÇÃO
+    // 4. AÇÃO DE BLOQUEIO (Só se houver wrappers selecionados POR FORA)
     if (wrappersToDelete.length > 0) {
         event.preventDefault();
         event.stopPropagation();
 
         const count = wrappersToDelete.length;
         const totalInEditor = allWrappers.length;
-        
-        // Critério: Mais de 1 item OU Selecionar Tudo (1 item único na nota)
-        const isMassive = (count >= 2) || (count === 1 && totalInEditor === 1 && !startWrapper);
+        const isMassive = (count >= 2) || (count === 1 && totalInEditor === 1);
 
         if (isMassive) {
-            // Z-Index Fix
             const confirmModal = document.getElementById('confirm-modal');
             if(confirmModal) confirmModal.style.zIndex = "2147483647";
 
             const confirmed = await showConfirmation(
                 "⚠️ Atenção: Apagar Conteúdo", 
-                `A seleção abrange ${count} blocos estruturados.\nSerá criado um Backup Automático antes de limpar. Continuar?`
+                `A seleção abrange ${count} caixas estruturadas.\n\nSerá criado um Backup Automático antes de limpar. Deseja continuar?`
             );
             
             if(confirmModal) confirmModal.style.zIndex = "";
@@ -28125,16 +28110,15 @@ noteContentEditor.addEventListener('keydown', async (event) => {
                 }
 
                 // 2. Limpar
-                // Se detetou que estamos a apagar quase tudo
-                if (count >= totalInEditor - 1) {
-                    noteContentEditor.innerHTML = '<p><br></p>';
+                if (count === totalInEditor) {
+                     noteContentEditor.innerHTML = '<p><br></p>';
                 } else {
-                    range.deleteContents();
+                     range.deleteContents();
                 }
                 saveNote(true);
             }
         } else {
-            // Caso Simples: 1 Item (clicado por fora)
+            // Caso Simples: 1 Item selecionado por fora (ex: clicou na margem para o apagar)
             const confirmDelete = await showConfirmation(
                 "Mover para a Lixeira?", 
                 `1 item estruturado selecionado. Mover para o Histórico?`
@@ -47978,7 +47962,6 @@ if (protectedEditor) {
             if (contentDiv) {
                 // Se estamos no início absoluto da caixa
                 if (isCursorAtStart(selection, contentDiv)) {
-                    console.log("🛡️ [BARREIRA] Backspace bloqueado no topo da entidade.");
                     e.preventDefault(); // IMPEDE A AÇÃO
                     e.stopPropagation();
                 }
