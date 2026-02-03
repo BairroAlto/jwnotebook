@@ -11349,7 +11349,7 @@ div[id^="subs-"] div[style*="font-style:italic"] {
     <!-- MODAL PARA CRIAR/EDITAR LINK (ANEXO) -->
 <div id="link-modal" class="modal-overlay">
     <div class="modal-content" style="max-width: 650px; width: 95%;">
-        <h3 id="link-modal-title">Gestão</h3>
+        <h3 id="link-modal-title">Gestão de Fontes</h3>
         
         <!-- ABAS ATUALIZADAS -->
         <div class="tabs-container" id="box-link-tabs" style="margin-top: 15px;">
@@ -11371,7 +11371,7 @@ div[id^="subs-"] div[style*="font-style:italic"] {
         <!-- CONTEÚDO ABA CODEX -->
         <div id="box-content-codex" class="box-tab-content" style="display: none; margin-top: 15px;">
             <div id="codex-rows-container" style="display: flex; flex-direction: column; gap: 15px; max-height: 40vh; overflow-y: auto; padding-right: 5px;"></div>
-            <button id="add-codex-row-btn" class="modal-btn" style="width: 100%; margin-top: 10px; border: 1px dashed var(--accent-color); color: var(--accent-color);">+ Adicionar Nova Linha Codex</button>
+            <button id="add-codex-row-btn" class="modal-btn" onclick="window.createCodexRow()" style="width: 100%; margin-top: 10px; border: 1px dashed var(--accent-color); color: var(--accent-color);">+ Adicionar Nova Linha Codex</button>
         </div>
 
         <!-- NOVA ABA: CONTEÚDO CATEGORIAS -->
@@ -12804,7 +12804,44 @@ div[id^="subs-"] div[style*="font-style:italic"] {
     </div>
 </div>
 
+<!-- MODAL ESPECÍFICO PARA REFERÊNCIAS DA 4ª COLUNA -->
+<div id="ref-panel-creator-modal" class="modal-overlay" style="z-index: 20000000;">
+    <div class="modal-content" style="max-width: 600px; width: 95%;">
+        <h3 id="ref-creator-title">Adicionar Referência</h3>
+        
+        <!-- Abas de Contexto -->
+        <div class="tabs-container" id="ref-creator-tabs" style="margin-top: 15px;">
+            <button class="active" data-type="codex">📚 Codex</button>
+            <button data-type="link">🔗 Link Web</button>
+        </div>
 
+        <!-- CONTEÚDO CODEX -->
+      <div id="ref-creator-codex-area" style="display: block; margin-top: 15px; max-height: 50vh; overflow-y: auto;">
+    <div id="ref-codex-rows-container" style="display: flex; flex-direction: column; gap: 15px;">
+        <!-- As linhas do Codex serão injetadas aqui -->
+    </div>
+    <!-- Botão removido -->
+</div>
+
+        <!-- CONTEÚDO LINKS WEB -->
+        <div id="ref-creator-link-area" style="display: none; margin-top: 15px;">
+            <label style="font-size:0.8em; color:var(--text-muted-color);">Título</label>
+            <input type="text" id="ref-link-title" class="redator-input" style="border:1px solid var(--border-color); padding:8px; margin-bottom:10px; width:100%;">
+            
+            <div id="ref-link-urls-container" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            
+            <button class="modal-btn" onclick="window.addRefUrlRow()" 
+                    style="width: 100%; margin-top: 10px; border: 1px dashed var(--text-muted-color); background:none; color:var(--text-muted-color);">
+                + URL
+            </button>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+            <button class="modal-btn secondary" onclick="document.getElementById('ref-panel-creator-modal').style.display='none'">Cancelar</button>
+            <button class="modal-btn primary" id="ref-creator-save-btn">Gravar</button>
+        </div>
+    </div>
+</div>
 
 </body>
 
@@ -13180,6 +13217,7 @@ let currentSuperLinkRange = null;
 let currentEditingSuperLinkId = null;
 let selectedSentenceNodes = []; // Guarda os nós de texto selecionados na lista
 let currentNoteTags = [];
+let editingLinkIndex = -1; 
 
 
 window.currentNoteHybridMode = false;
@@ -17977,124 +18015,536 @@ document.getElementById('toggle-links-edit-btn').addEventListener('click', (e) =
 });
 
 // 3. Abrir Criadores (Reaproveita os modais existentes com contextos diferentes)
-window.openPanelLinkCreator = function(type) {
-    const modal = document.getElementById('link-modal');
-    const titleInput = document.getElementById('link-title-input');
-    const urlsContainer = document.getElementById('link-urls-container');
-    const saveBtn = document.getElementById('link-save-btn');
-    const modalTitle = document.getElementById('link-modal-title');
+// ABRIR O GESTOR (Modo Seguro)
+window.openPanelLinkCreator = async function(type, index = -1) {
+    const modal = document.getElementById('ref-panel-creator-modal');
+    const titleEl = document.getElementById('ref-creator-title');
+    const saveBtn = document.getElementById('ref-creator-save-btn');
+    
+    // Elementos das Abas
+    const tabCodexBtn = document.querySelector('#ref-creator-tabs button[data-type="codex"]');
+    const tabLinkBtn = document.querySelector('#ref-creator-tabs button[data-type="link"]');
 
-    // 1. Configuração Visual para ENTIDADE
-    urlsContainer.innerHTML = '';
-    document.getElementById('codex-rows-container').innerHTML = '';
-    document.getElementById('link-remove-btn').style.display = 'none';
+    // Inputs e Containers
+    const linkTitleInput = document.getElementById('ref-link-title');
+    const urlsContainer = document.getElementById('ref-link-urls-container');
+    const codexContainer = document.getElementById('ref-codex-rows-container');
 
-    if (type === 'link') {
-        modalTitle.textContent = "Documentação: " + activeReferenceEntity.name;
-        document.querySelector('[data-box-tab="refs"]').click();
-        document.querySelector('[data-box-tab="codex"]').style.display = 'none'; // Esconde Codex
-        addUrlField();
+    // 1. PREPARAÇÃO VISUAL
+    document.body.appendChild(modal);
+    modal.style.display = 'flex';
+    
+    // Limpeza
+    linkTitleInput.value = "";
+    urlsContainer.innerHTML = "";
+    codexContainer.innerHTML = "";
+    editingLinkIndex = index;
+
+    // Configuração de Título
+    titleEl.textContent = (index > -1 ? "Editar " : "Novo ") + (type === 'codex' ? "Codex" : "Link");
+    
+    // --- CORREÇÃO 1: EXCLUSIVIDADE DAS ABAS ---
+    if (type === 'codex') {
+        // Mostra Aba Codex, Esconde Aba Link
+        tabCodexBtn.style.display = 'block';
+        tabLinkBtn.style.display = 'none';
+        switchRefCreatorTab('codex');
+        
+        // Se for criação nova, adiciona logo uma linha
+        if (index === -1) window.addRefCodexRow();
     } else {
-        modalTitle.textContent = "Codex: " + activeReferenceEntity.name;
-        document.querySelector('[data-box-tab="codex"]').click();
-        document.querySelector('[data-box-tab="refs"]').style.display = 'none'; // Esconde Links
-        window.createCodexRow();
+        // Mostra Aba Link, Esconde Aba Codex
+        tabCodexBtn.style.display = 'none';
+        tabLinkBtn.style.display = 'block';
+        switchRefCreatorTab('link');
+        
+        // Se for criação nova, adiciona logo um campo URL
+        if (index === -1) window.addRefUrlRow();
     }
 
-    // 2. LIMPAR MEMÓRIA DO BOTÃO (O SEGREDO)
+    // 2. CARREGAR DADOS (SE FOR EDIÇÃO)
+    if (index > -1) {
+        try {
+            const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            const collectionName = window.getCollectionFromType(activeReferenceEntity.type);
+            const docSnap = await getDoc(doc(db, collectionName, activeReferenceEntity.id));
+            
+            if (docSnap.exists()) {
+                const links = docSnap.data().panelLinks || [];
+                const item = links[index];
+
+                if (type === 'link') {
+                    linkTitleInput.value = item.title || "";
+                    if (item.urls) Object.values(item.urls).forEach(u => window.addRefUrlRow(u));
+                    else if (item.url) window.addRefUrlRow(item.url);
+                } 
+                else if (type === 'codex') {
+                    // Preenche a linha do Codex
+                    window.addRefCodexRow(item); 
+                }
+            }
+        } catch (e) { console.error("Erro ao carregar dados:", e); }
+    }
+
+    // 3. CONFIGURAR BOTÃO GRAVAR
     const newSaveBtn = saveBtn.cloneNode(true);
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
 
-    // 3. Lógica de Gravar da ENTIDADE
     newSaveBtn.onclick = async () => {
-        let dataToSave = null;
+        newSaveBtn.textContent = "A gravar...";
+        newSaveBtn.disabled = true;
 
-        if (type === 'link') {
-            const urlsMap = {};
-            urlsContainer.querySelectorAll('input').forEach((inp, i) => {
-                if(inp.value.trim()) urlsMap[`url_${i}`] = inp.value.trim();
-            });
-            dataToSave = { type: 'link', title: titleInput.value.trim() || "Link", urls: urlsMap };
-        } else {
-            const row = document.querySelector('.codex-row');
-            const rowData = getCodexDataFromRow(row);
-            dataToSave = { type: 'codex', ...rowData, total: rowData.serie + (rowData.paginas.length ? `, pág. ${rowData.paginas.join(',')}` : '') };
+        try {
+            let dataToSave = null;
+
+            if (type === 'link') {
+                const urlsMap = {};
+                urlsContainer.querySelectorAll('input').forEach((inp, i) => {
+                    if (inp.value.trim()) urlsMap[`url_${i}`] = inp.value.trim();
+                });
+                
+                if (Object.keys(urlsMap).length === 0) throw new Error("Insira pelo menos um URL.");
+                
+                dataToSave = { 
+                    type: 'link', 
+                    title: linkTitleInput.value.trim() || "Link Web", 
+                    urls: urlsMap 
+                };
+            } 
+            else {
+                // Captura dados do Codex (Apenas a primeira linha para simplificar a estrutura de dados)
+                const row = codexContainer.querySelector('.codex-row');
+                if (!row) throw new Error("Erro na estrutura do formulário.");
+                
+                const rowData = window.getCodexDataFromRow(row);
+                if (!rowData.serie) throw new Error("A Série/Publicação é obrigatória.");
+
+                // Gera o texto de exibição
+                let displayTxt = `${rowData.serie}`;
+                if (rowData.capitulo) displayTxt += ` cap.${rowData.capitulo}`;
+                if (rowData.paginas.length) displayTxt += `, pg ${rowData.paginas.join(',')}`;
+                if (rowData.tempo) displayTxt += ` [${rowData.tempo}]`; // Adiciona tempo se existir
+
+                dataToSave = { 
+                    type: 'codex', 
+                    ...rowData, 
+                    codiceshow: displayTxt
+                };
+            }
+
+            // Grava no Firebase
+            await savePanelLinkToFirebase(dataToSave, editingLinkIndex);
+            
+            modal.style.display = 'none';
+            window.renderPanelLinks(); // Atualiza a lista na 4ª coluna
+
+        } catch (err) {
+            alert(err.message);
+        } finally {
+            newSaveBtn.textContent = "Gravar";
+            newSaveBtn.disabled = false;
         }
-
-        await saveLinkToEntity(dataToSave); // Usa a tua função do print!
-        modal.style.display = 'none';
-        renderPanelLinks(); // Atualiza a lista na 4ª coluna
     };
-
-    modal.style.display = 'flex';
 };
 
-// 4. Renderizar Lista de Links/Codex da Entidade
-async function renderPanelLinks() {
+// --- HELPERS EXCLUSIVOS DESTE MODAL (Para não misturar com o editor) ---
+
+// 1. Alternar Abas (Visual)
+window.switchRefCreatorTab = function(type) {
+    const btns = document.querySelectorAll('#ref-creator-tabs button');
+    btns.forEach(b => {
+        if (b.dataset.type === type) b.classList.add('active');
+        else b.classList.remove('active');
+    });
+
+    document.getElementById('ref-creator-codex-area').style.display = (type === 'codex') ? 'block' : 'none';
+    document.getElementById('ref-creator-link-area').style.display = (type === 'link') ? 'block' : 'none';
+};
+
+// 2. Adicionar Linha URL
+window.addRefUrlRow = function(val = "") {
+    const container = document.getElementById('ref-link-urls-container');
+    const div = document.createElement('div');
+    div.style.cssText = "display:flex; gap:5px;";
+    div.innerHTML = `
+        <input type="text" class="redator-input" value="${val}" placeholder="https://..." style="flex:1; border:1px solid var(--border-color); padding:8px; background:var(--bg-color);">
+        <button onclick="this.parentElement.remove()" style="border:1px solid #e74c3c; color:#e74c3c; background:transparent; padding:0 10px; border-radius:4px; cursor:pointer;">×</button>
+    `;
+    container.appendChild(div);
+};
+
+// 3. Adicionar Linha Codex (Reutiliza a estrutura HTML mas num container isolado)
+window.addRefCodexRow = function(data = null) {
+    const container = document.getElementById('ref-codex-rows-container');
+    if (!container) return; // Segurança
+
+    // Se estivermos a editar ou a criar, limpamos o container primeiro para garantir
+    // que só há uma linha principal (a estrutura de dados atual suporta 1 objeto por item).
+    // Se quiser suportar múltiplas linhas num só item, remova esta linha:
+    container.innerHTML = ""; 
+
+    const row = document.createElement('div');
+    row.className = 'codex-row';
+    
+    // --- CORREÇÃO 2: HTML COM BOTÃO 'T' (TEMPO) ---
+    row.innerHTML = `
+        <div class="codex-header-grid">
+            <div class="serie-wrapper">
+                <label class="codex-label">SÉRIE / PUBLICAÇÃO</label>
+                <input type="text" class="codex-input-modern serie-main" placeholder="Ex: w24 05" value="${data ? data.serie : ''}">
+            </div>
+            <div class="manual-controls">
+                <label class="codex-label">OPÇÕES</label>
+                <div style="display:flex; gap:4px;">
+                    <button class="btn-control-small" onclick="window.toggleManual(this, 'A')" title="Ano">A</button>
+                    <button class="btn-control-small" onclick="window.toggleManual(this, 'M')" title="Mês">M</button>
+                    <button class="btn-control-small" onclick="window.toggleManual(this, 'C')" title="Capítulo">C</button>
+                    <!-- BOTÃO T ADICIONADO -->
+                    <button class="btn-control-small" onclick="window.toggleManual(this, 'T')" title="Tempo (H:M:S)">T</button>
+                </div>
+            </div>
+        </div>
+        <div class="manual-inputs-area"></div> 
+        <div class="codex-content-grid">
+            <div class="unit-section">
+                <label class="codex-label">PÁGINAS</label>
+                <div class="pages-container">
+                    <button class="btn-unit-add" onclick="window.addCodexUnit(this.parentElement, 'Pág')">+</button>
+                </div>
+            </div>
+            <div class="unit-section">
+                <label class="codex-label">PARÁGRAFOS</label>
+                <div class="paragraphs-container">
+                    <button class="btn-unit-add" onclick="window.addCodexUnit(this.parentElement, 'Par')">+</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    container.appendChild(row);
+
+    // Restaurar dados se existirem
+    if (data) {
+        const pContainer = row.querySelector('.pages-container');
+        const pgContainer = row.querySelector('.paragraphs-container');
+        if (data.paginas) data.paginas.forEach(p => window.addCodexUnit(pContainer, 'Pág', p));
+        if (data.paragrafos) data.paragrafos.forEach(p => window.addCodexUnit(pgContainer, 'Par', p));
+        
+        // Restaurar campos manuais
+        setTimeout(() => {
+            if(data.manualYear) restoreManualField(row, 'A', '.manual-year', data.manualYear);
+            if(data.manualMonth) restoreManualField(row, 'M', '.manual-month', data.manualMonth);
+            if(data.capitulo) restoreManualField(row, 'C', '.manual-chapter', data.capitulo);
+            
+            // RESTAURAR TEMPO
+            if(data.tempo) {
+                const btn = row.querySelector("button[onclick*=\"'T'\"]");
+                if(btn) { 
+                    window.toggleManual(btn, 'T', data.tempo);
+                }
+            }
+        }, 50);
+    }
+};
+
+// Helper para restaurar campos simples
+function restoreManualField(row, type, selector, value) {
+    const btn = row.querySelector(`button[onclick*="'${type}'"]`);
+    if(btn) { 
+        window.toggleManual(btn, type);
+        const input = row.querySelector(selector);
+        if(input) input.value = value;
+    }
+}
+
+// 4. FUNÇÃO GLOBAL PARA LER DADOS DA LINHA (Atualizada com Tempo)
+window.getCodexDataFromRow = function(row) {
+    const serieInput = row.querySelector('.serie-main');
+    const serieVal = serieInput ? serieInput.value.trim() : "";
+    
+    const paginas = Array.from(row.querySelectorAll('.pages-container input')).map(i => i.value.trim()).filter(v => v !== "");
+    const paragrafos = Array.from(row.querySelectorAll('.paragraphs-container input')).map(i => i.value.trim()).filter(v => v !== "");
+
+    const yearInput = row.querySelector('.manual-year');
+    const monthInput = row.querySelector('.manual-month');
+    const chapInput = row.querySelector('.manual-chapter');
+    
+    // Captura Tempo
+    const hInput = row.querySelector('.h-input');
+    const mInput = row.querySelector('.m-input');
+    const sInput = row.querySelector('.s-input');
+    
+    let tempoStr = "";
+    if (hInput || mInput || sInput) {
+        const h = (hInput && hInput.value) ? hInput.value.padStart(2, '0') : "00";
+        const m = (mInput && mInput.value) ? mInput.value.padStart(2, '0') : "00";
+        const s = (sInput && sInput.value) ? sInput.value.padStart(2, '0') : "00";
+        // Só guarda se houver algum valor diferente de zero
+        if (h !== "00" || m !== "00" || s !== "00") {
+            tempoStr = `${h}:${m}:${s}`;
+        }
+    }
+
+    return {
+        serie: serieVal,
+        paginas: paginas,
+        paragrafos: paragrafos,
+        manualYear: yearInput ? yearInput.value : null,
+        manualMonth: monthInput ? monthInput.value : null,
+        capitulo: chapInput ? chapInput.value : null,
+        tempo: tempoStr
+    };
+};
+
+// 5. FUNÇÃO PARA CRIAR INPUTS MANUAIS (Atualizada para Tempo)
+window.toggleManual = function(btn, type, val = '') {
+    const row = btn.closest('.codex-row');
+    const area = row.querySelector('.manual-inputs-area');
+    
+    // Se já estiver ativo, removemos
+    if (btn.classList.contains('active')) {
+        // Se a chamada vier com valor (restauro), ignoramos o toggle off
+        if (val === '') {
+            const selector = type === 'A' ? '.manual-year' : (type === 'M' ? '.manual-month' : (type === 'C' ? '.manual-chapter' : '.manual-time-group'));
+            const el = area.querySelector(selector)?.closest('.manual-field-group');
+            if (el) el.remove();
+            btn.classList.remove('active');
+            return;
+        }
+    } else {
+        btn.classList.add('active');
+    }
+
+    // Se estamos a restaurar e já existe, não cria duplicado
+    if (type === 'T' && area.querySelector('.manual-time-group')) return;
+
+    const group = document.createElement('div');
+    group.className = 'manual-field-group';
+
+    if (type === 'A') {
+        group.innerHTML = `<input type="text" class="codex-input-manual manual-year" placeholder="Ano" value="${val}" style="width: 45px;">`;
+    } 
+    else if (type === 'M') {
+        // (Lógica de Mês mantém-se igual...)
+        const MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+        group.innerHTML = `
+            <select class="codex-input-manual manual-month" style="cursor:pointer;">
+                <option value="">Mês...</option>
+                ${MESES.map(m => `<option value="${m}" ${val===m?'selected':''}>${m}</option>`).join('')}
+            </select>`;
+    } 
+    else if (type === 'C') {
+        group.innerHTML = `<input type="text" class="codex-input-manual manual-chapter" placeholder="Cap." value="${val}" style="width: 45px;">`;
+    }
+    // --- LÓGICA DO TEMPO (T) ---
+    else if (type === 'T') {
+        const t = val ? val.split(':') : ['', '', ''];
+        group.classList.add('manual-time-group');
+        group.innerHTML = `
+            <input type="text" class="codex-input-manual h-input" placeholder="00" maxlength="2" value="${t[0]}" style="width:20px; text-align:center;">:
+            <input type="text" class="codex-input-manual m-input" placeholder="00" maxlength="2" value="${t[1]}" style="width:20px; text-align:center;">:
+            <input type="text" class="codex-input-manual s-input" placeholder="00" maxlength="2" value="${t[2]}" style="width:20px; text-align:center;">
+        `;
+    }
+
+    // Botão Fechar
+    group.innerHTML += `<button class="btn-close-manual" onclick="window.removeManualField(this, '${type}')">×</button>`;
+    area.appendChild(group);
+};
+
+// Funções de suporte
+window.switchRefCreatorTab = function(type) {
+    const btns = document.querySelectorAll('#ref-creator-tabs button');
+    btns.forEach(b => {
+        if (b.dataset.type === type) b.classList.add('active');
+        else b.classList.remove('active');
+    });
+
+    document.getElementById('ref-creator-codex-area').style.display = (type === 'codex') ? 'block' : 'none';
+    document.getElementById('ref-creator-link-area').style.display = (type === 'link') ? 'block' : 'none';
+};
+
+window.addRefUrlRow = function(val = "") {
+    const container = document.getElementById('ref-link-urls-container');
+    const div = document.createElement('div');
+    div.style.cssText = "display:flex; gap:5px;";
+    div.innerHTML = `
+        <input type="text" class="redator-input" value="${val}" placeholder="https://..." style="flex:1; border:1px solid var(--border-color); padding:8px; background:var(--bg-color);">
+        <button onclick="this.parentElement.remove()" style="border:1px solid #e74c3c; color:#e74c3c; background:transparent; padding:0 10px; border-radius:4px; cursor:pointer;">×</button>
+    `;
+    container.appendChild(div);
+};
+// ============================================================
+// FUNÇÃO EM FALTA: RENDERIZAR LISTA DA 4ª COLUNA
+// ============================================================
+
+// 1. Função Auxiliar para saber qual a coleção (caso não tenha)
+window.getCollectionFromType = function(type) {
+    if (type === 'personagem') return 'personagens';
+    if (type === 'local') return 'locais';
+    if (type === 'data') return 'datas';
+    if (type === 'cosmos') return 'cosmos';
+    if (type === 'subcosmos') return 'subcosmos';
+    if (type === 'textobiblico' || type === 'bible_public') return 'textosbiblicos';
+    if (type === 'topico') return 'topicos';
+    if (type === 'tag') return 'tags';
+    if (type === 'marcadores') return 'marcadores';
+    return 'pastas'; // Fallback
+};
+
+// 2. A Função Principal que estava a faltar
+window.renderPanelLinks = async function() {
     const container = document.getElementById('panel-links-list');
     if (!container) return;
 
-    // --- 1. EFEITO VISUAL DE LOADING (Igual ao Dossié) ---
+    // 1. Loading
     container.innerHTML = `
         <div class="spinner-container" style="margin-top: 50px; display: flex; flex-direction: column; align-items: center;">
             <div class="spinner"></div>
             <span style="font-style: italic; font-size: 0.9em; margin-top:10px; color: var(--text-muted-color);">A carregar documentação...</span>
         </div>`;
 
-    if (!activeReferenceEntity.id) {
+    if (!activeReferenceEntity || !activeReferenceEntity.id) {
         container.innerHTML = ''; 
         return;
     }
 
     try {
-        const collectionName = getCollectionFromType(activeReferenceEntity.type);
-        const docSnap = await getDoc(doc(db, collectionName, activeReferenceEntity.id));
+        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const collectionName = window.getCollectionFromType(activeReferenceEntity.type);
+        const docRef = doc(db, collectionName, activeReferenceEntity.id);
+        const docSnap = await getDoc(docRef);
 
-        // --- 2. LIMPEZA DO LOADING APÓS RECEBER DADOS ---
         container.innerHTML = ''; 
 
-        if (!docSnap.exists() || !docSnap.data().panelLinks || docSnap.data().panelLinks.length === 0) {
-            container.innerHTML = '<p style="text-align:center; color:#888; font-size:0.9em; margin-top:20px; font-style: italic;">Nenhuma documentação associada.</p>';
-            return;
+        if (!docSnap.exists()) {
+             container.innerHTML = '<p style="text-align:center; color:#888; padding:20px;">Entidade não encontrada.</p>';
+             return;
         }
 
         const links = docSnap.data().panelLinks || [];
 
+        if (links.length === 0) {
+            container.innerHTML = '<p style="text-align:center; color:#888; font-size:0.9em; margin-top:20px; font-style: italic;">Nenhuma documentação associada.</p>';
+            return;
+        }
+
+        // 2. Renderizar Itens
         links.forEach((item, index) => {
             const div = document.createElement('div');
-            div.className = 'board-card'; 
+            div.className = 'board-card'; // Reutiliza estilo dos cartões
+            
+            // Cor da borda baseada no tipo
             div.style.borderLeft = item.type === 'codex' ? '3px solid #d35400' : '3px solid #795548';
+            div.style.marginBottom = "8px";
+            div.style.padding = "10px";
+            div.style.backgroundColor = "var(--panel-color)";
+            div.style.borderRadius = "6px";
             
             let contentHTML = "";
+            
+            // --- RENDERIZAR CODEX ---
             if (item.type === 'codex') {
-                contentHTML = `<strong>${item.serie}</strong><br><small>${item.codiceshow || item.total}</small>`;
-            } else {
-                const urls = item.urls ? Object.values(item.urls) : [item.url];
-                const linksList = urls.map(u => 
-                    `<div style="color:var(--accent-color); cursor:pointer; font-size:0.85em; margin-top:4px; word-break:break-all;" 
-                          onclick="window.open('${u}', '_blank')">🔗 ${u}</div>`
-                ).join('');
-                contentHTML = `<strong>${item.title}</strong>${linksList}`;
+                // Tenta usar o campo pré-formatado 'codiceshow' ou monta na hora
+                const displayInfo = item.codiceshow || `${item.serie}${item.capitulo ? ' cap.'+item.capitulo : ''}${item.paginas && item.paginas.length ? ', pg '+item.paginas : ''}`;
+                
+                contentHTML = `
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:1.2em;">📚</span>
+                        <div>
+                            <strong style="color:var(--text-color);">${item.serie}</strong>
+                            <div style="font-size:0.85em; color:var(--text-muted-color);">${displayInfo}</div>
+                        </div>
+                    </div>`;
+            } 
+            // --- RENDERIZAR LINK WEB ---
+            else {
+                // Suporta formato novo (urls map) e antigo (single url)
+                const urls = item.urls ? Object.values(item.urls) : (item.url ? [item.url] : []);
+                
+                let linksListHTML = "";
+                urls.forEach(u => {
+                    linksListHTML += `
+                        <a href="${u}" target="_blank" style="display:block; color:var(--accent-color); text-decoration:none; font-size:0.85em; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                            🔗 ${u}
+                        </a>`;
+                });
+
+                contentHTML = `
+                    <div style="margin-bottom:4px;">
+                        <strong style="color:var(--text-color);">${item.title || "Link"}</strong>
+                    </div>
+                    ${linksListHTML}
+                `;
             }
 
+            // HTML Final do Cartão
             div.innerHTML = `
                 <div style="font-size:0.9em;">${contentHTML}</div>
+                
+                <!-- BOTÕES DE EDIÇÃO (Só aparecem se o modo de edição estiver ativo) -->
                 ${isPanelEditMode ? `
-                    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px; border-top:1px solid var(--border-color); padding-top:5px;">
-                        <button onclick="movePanelLink(${index}, -1)" ${index === 0 ? 'style="display:none"' : ''} style="background:none; border:none; cursor:pointer; font-size:14px;">🔺</button>
-                        <button onclick="movePanelLink(${index}, 1)" ${index === links.length - 1 ? 'style="display:none"' : ''} style="background:none; border:none; cursor:pointer; font-size:14px;">🔻</button>
-                        <div style="flex-grow:1"></div>
-                        <button onclick="window.openPanelLinkCreator('${item.type}', ${index})" style="background:none; border:none; color:var(--accent-color); cursor:pointer; font-size:12px; font-weight:bold;">Editar</button>
-                        <button onclick="deletePanelLink(${index})" style="background:none; border:none; color:#e74c3c; cursor:pointer; font-size:12px; font-weight:bold;">Remover</button>
+                    <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:10px; border-top:1px solid var(--border-color); padding-top:6px;">
+                        <button onclick="window.movePanelLink(${index}, -1)" ${index === 0 ? 'disabled style="opacity:0.3"' : ''} style="background:none; border:none; cursor:pointer;">⬆️</button>
+                        <button onclick="window.movePanelLink(${index}, 1)" ${index === links.length - 1 ? 'disabled style="opacity:0.3"' : ''} style="background:none; border:none; cursor:pointer;">⬇️</button>
+                        <div style="width:1px; background:var(--border-color); margin:0 5px;"></div>
+                        <button onclick="window.openPanelLinkCreator('${item.type}', ${index})" style="background:none; border:none; color:var(--accent-color); font-weight:bold; cursor:pointer; font-size:0.8em;">EDITAR</button>
+                        <button onclick="window.deletePanelLink(${index})" style="background:none; border:none; color:#e74c3c; font-weight:bold; cursor:pointer; font-size:0.8em;">APAGAR</button>
                     </div>
                 ` : ''}
             `;
             container.appendChild(div);
         });
+
     } catch (e) {
         console.error("Erro ao carregar links:", e);
         container.innerHTML = '<p style="text-align:center; color:red; padding:20px;">Erro ao carregar documentação.</p>';
     }
+};
+
+// 3. Função de Apagar (Se ainda não existir)
+window.deletePanelLink = async function(index) {
+    if (!confirm("Apagar este item?")) return;
+
+    try {
+        const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const collectionName = window.getCollectionFromType(activeReferenceEntity.type);
+        const docRef = doc(db, collectionName, activeReferenceEntity.id);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+            const links = docSnap.data().panelLinks || [];
+            links.splice(index, 1); // Remove o item
+            
+            await updateDoc(docRef, { panelLinks: links });
+            window.renderPanelLinks(); // Recarrega a lista
+        }
+    } catch(e) {
+        console.error(e);
+        alert("Erro ao apagar.");
+    }
+};
+
+// 4. FUNÇÃO DE GRAVAÇÃO (FIREBASE)
+async function savePanelLinkToFirebase(newLinkObj, indexToUpdate) {
+    const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+    const collectionName = getCollectionFromType(activeReferenceEntity.type);
+    const docRef = doc(db, collectionName, activeReferenceEntity.id);
+    
+    const docSnap = await getDoc(docRef);
+    if (!docSnap.exists()) throw new Error("Entidade não encontrada.");
+
+    let links = docSnap.data().panelLinks || [];
+
+    if (indexToUpdate > -1) {
+        // Atualizar existente
+        links[indexToUpdate] = newLinkObj;
+    } else {
+        // Criar novo
+        links.push(newLinkObj);
+    }
+
+    await updateDoc(docRef, { panelLinks: links });
 }
 
 
@@ -25147,13 +25597,9 @@ addItemBtn.addEventListener('click', async () => {
         await saveNote(true); 
     }
 
-    // --- CÓDIGO DA ABA LISTS (CORRIGIDO E EXPANDIDO) ---
+    // --- CÓDIGO DA ABA LISTS (CORRIGIDO) ---
     if (currentTab === 'lists') {
-        // Verifica se há navegação ativa ou se foi selecionado algo na lista lateral
-        // A navigationStack[0] diz-nos em que categoria principal estamos (ex: 'personagem')
-        const rootCategoryId = navigationStack.length > 0 ? navigationStack[0].id : null;
-
-        if (!rootCategoryId) return; // Segurança
+        const rootCategoryId = navigationStack[0]?.id;
 
         // 1. MARCADORES
         if (rootCategoryId === 'marcadores') { 
@@ -25161,106 +25607,84 @@ addItemBtn.addEventListener('click', async () => {
             return; 
         }
 
-        // 2. TÓPICOS
-        if (rootCategoryId === 'topico') { 
-            // Verifica o que está selecionado na lista do meio para saber se cria Tópico ou Subtópico
-            const selectedItem = document.querySelector('#file-list .list-item.selected');
-            
-            let mode = 'new-topic'; // Padrão: Criar Tópico Raiz
-            let parentId = null;
-            let parentName = "";
+        // 2. TÓPICOS (A CORREÇÃO ESTÁ AQUI)
+  if (rootCategoryId === 'topico') { 
+    
+    // Verifica o que está selecionado na lista do meio
+    const selectedItem = document.querySelector('#file-list .list-item.selected');
+    
+    let mode = 'new-topic'; // Padrão: Criar Tópico Raiz
+    let parentId = null;
+    let parentName = "";
 
-            if (selectedItem) {
-                const type = selectedItem.getAttribute('data-type');
-                
-                // Se selecionou um Tópico Pai -> Cria Subtópico nele
-                if (type === 'topico') {
-                    mode = 'new-subtopic';
-                    parentId = selectedItem.getAttribute('data-id');
-                    parentName = selectedItem.getAttribute('data-name');
-                } 
-                // Se selecionou um Subtópico -> Cria Subtópico no MESMO pai (irmão)
-                else if (type === 'subtopico') {
-                    mode = 'new-subtopic';
-                    parentId = selectedItem.getAttribute('data-parent-id');
-                    parentName = selectedItem.getAttribute('data-parent-name');
-                }
-            }
-
-            // EXECUÇÃO
-            if (mode === 'new-subtopic' && parentId) {
-                // CRIAR SUBTÓPICO
-                const result = await showCustomInput("Novo Subtópico", `Adicionar em "${parentName}"...`);
-                if (result && result.name) {
-                    try {
-                        const { addDoc, collection, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-                        await addDoc(collection(db, 'subtopicos'), {
-                            nome: result.name,
-                            descricao: result.description || "",
-                            topicId: parentId,
-                            userId: auth.currentUser.uid,
-                            estado: 'ativa',
-                            createdAt: serverTimestamp()
-                        });
-                        
-                        // Força a reabertura da árvore para mostrar o novo item
-                        const parentLi = document.querySelector(`.list-item[data-id="${parentId}"]`);
-                        if (parentLi) {
-                            const container = document.getElementById(`subs-${parentId}`);
-                            const icon = parentLi.querySelector('.tree-toggle-icon');
-                            // Fecha e abre para recarregar
-                            if(container) {
-                                container.style.display = 'none'; 
-                                container.innerHTML = ''; 
-                                toggleTopicTree(parentId, parentName, container, icon);
-                            }
-                        }
-
-                    } catch (e) { console.error(e); alert("Erro ao criar subtópico."); }
-                }
-            } else {
-                // CRIAR TÓPICO
-                const result = await showCustomInput("Novo Tópico", "Ex: Doutrina, Estudo Pessoal...");
-                if (result && result.name) {
-                    try {
-                        const { addDoc, collection, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-                        await addDoc(collection(db, 'topicos'), {
-                            nome: result.name,
-                            descricao: result.description || "",
-                            userId: auth.currentUser.uid,
-                            estado: 'ativa',
-                            createdAt: serverTimestamp()
-                        });
-                        // Recarrega a lista principal
-                        renderListCategoryItems('topico');
-                    } catch (e) { console.error(e); alert("Erro ao criar tópico."); }
-                }
-            }
-            return; 
-        }
-
-        // 3. ENTIDADES (Personagens, Locais, Datas) - ADICIONADO AQUI
-        if (['personagem', 'local', 'data'].includes(rootCategoryId)) {
-            // Abre o modal de criar entidade com o tipo correto
-            openEntityModal(rootCategoryId, "");
-            return;
-        }
-
-        // 4. COSMOS - ADICIONADO AQUI
-        if (rootCategoryId === 'cosmos') {
-            // Se o nível de navegação for maior que 1, estamos DENTRO de um tema -> criar Subtema
-            // Se for 1, estamos na raiz -> criar Tema Principal
-            if (navigationStack.length > 1) {
-                const parentThemeId = navigationStack[navigationStack.length - 1].id;
-                openCosmosCreator('subcosmos', parentThemeId);
-            } else {
-                openCosmosCreator('cosmos');
-            }
-            return;
-        }
+    if (selectedItem) {
+        const type = selectedItem.getAttribute('data-type');
         
-        // Se for Tag ou Texto Bíblico (não editável por aqui), não faz nada
-        return; 
+        // Se selecionou um Tópico Pai -> Cria Subtópico nele
+        if (type === 'topico') {
+            mode = 'new-subtopic';
+            parentId = selectedItem.getAttribute('data-id');
+            parentName = selectedItem.getAttribute('data-name');
+        } 
+        // Se selecionou um Subtópico -> Cria Subtópico no MESMO pai (irmão)
+        else if (type === 'subtopico') {
+            mode = 'new-subtopic';
+            parentId = selectedItem.getAttribute('data-parent-id');
+            parentName = selectedItem.getAttribute('data-parent-name');
+        }
+    }
+
+    // EXECUÇÃO
+    if (mode === 'new-subtopic' && parentId) {
+        // CRIAR SUBTÓPICO
+        const result = await showCustomInput("Novo Subtópico", `Adicionar em "${parentName}"...`);
+        if (result && result.name) {
+            try {
+                const { addDoc, collection, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+                await addDoc(collection(db, 'subtopicos'), {
+                    nome: result.name,
+                    descricao: result.description || "",
+                    topicId: parentId,
+                    userId: auth.currentUser.uid,
+                    estado: 'ativa',
+                    createdAt: serverTimestamp()
+                });
+                
+                // Força a reabertura da árvore para mostrar o novo item
+                const parentLi = document.querySelector(`.list-item[data-id="${parentId}"]`);
+                if (parentLi) {
+                    const container = document.getElementById(`subs-${parentId}`);
+                    const icon = parentLi.querySelector('.tree-toggle-icon');
+                    // Fecha e abre para recarregar
+                    container.style.display = 'none'; 
+                    container.innerHTML = ''; 
+                    toggleTopicTree(parentId, parentName, container, icon);
+                }
+
+            } catch (e) { console.error(e); alert("Erro ao criar subtópico."); }
+        }
+    } else {
+        // CRIAR TÓPICO
+        const result = await showCustomInput("Novo Tópico", "Ex: Doutrina, Estudo Pessoal...");
+        if (result && result.name) {
+            try {
+                const { addDoc, collection, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+                await addDoc(collection(db, 'topicos'), {
+                    nome: result.name,
+                    descricao: result.description || "",
+                    userId: auth.currentUser.uid,
+                    estado: 'ativa',
+                    createdAt: serverTimestamp()
+                });
+                // Recarrega a lista principal
+                renderListCategoryItems('topico');
+            } catch (e) { console.error(e); alert("Erro ao criar tópico."); }
+        }
+    }
+    return; 
+}
+
+        return; // Sai se não for nenhuma das categorias acima
     }
 
     // ============================================================
@@ -27131,7 +27555,7 @@ window.openBoardLinkModal = function(isEdit, data) {
     document.body.appendChild(modal); // Move para o body para evitar cortes de layout
 
     // Clonar botões para limpar eventos antigos de cliques anteriores
-    const newSaveBtn = saveBtn.cloneNode(true);
+  const newSaveBtn = saveBtn.cloneNode(true);
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
     
     const newRemoveBtn = removeBtn.cloneNode(true);
@@ -27141,7 +27565,20 @@ window.openBoardLinkModal = function(isEdit, data) {
     const addUrlBtn = document.getElementById('add-url-btn');
     const newAddUrlBtn = addUrlBtn.cloneNode(true);
     addUrlBtn.parentNode.replaceChild(newAddUrlBtn, addUrlBtn);
-    newAddUrlBtn.onclick = (e) => { e.preventDefault(); addUrlField(); };
+    newAddUrlBtn.onclick = (e) => { e.preventDefault(); window.addUrlField(); };
+
+    // --- ADICIONE ESTE BLOCO AQUI ---
+    // Configurar o botão de adicionar Linha Codex
+    const addCodexBtn = document.getElementById('add-codex-row-btn');
+    if (addCodexBtn) {
+        const newAddCodexBtn = addCodexBtn.cloneNode(true);
+        addCodexBtn.parentNode.replaceChild(newAddCodexBtn, addCodexBtn);
+        newAddCodexBtn.onclick = (e) => { 
+            e.preventDefault(); 
+            window.createCodexRow(); // Chama a função que cria a linha
+        };
+    }
+    // ---------------------------------
 
     let existingLinkElement = null;
 
@@ -32756,6 +33193,32 @@ window.openBoxLinkManager = async function(wrapper) {
     const saveBtn = document.getElementById('link-save-btn');
     const newSaveBtn = saveBtn.cloneNode(true);
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+
+     // 2. Configurar Botão REMOVER (Limpar Tudo)
+    const removeBtn = document.getElementById('link-remove-btn');
+    const newRemoveBtn = removeBtn.cloneNode(true);
+    removeBtn.parentNode.replaceChild(newRemoveBtn, removeBtn);
+
+    // 3. Configurar Botão + ADICIONAR URL (CORRIGIDO)
+    const addUrlBtn = document.getElementById('add-url-btn');
+    const newAddUrlBtn = addUrlBtn.cloneNode(true);
+    addUrlBtn.parentNode.replaceChild(newAddUrlBtn, addUrlBtn);
+    
+    newAddUrlBtn.onclick = (e) => { 
+        e.preventDefault(); 
+        window.addUrlField(); // Chama a função global que cria o input
+    };
+
+    // 4. Configurar Botão + CODEX (CORRIGIDO ANTERIORMENTE)
+    const addCodexBtn = document.getElementById('add-codex-row-btn');
+    if (addCodexBtn) {
+        const newAddCodexBtn = addCodexBtn.cloneNode(true);
+        addCodexBtn.parentNode.replaceChild(newAddCodexBtn, addCodexBtn);
+        newAddCodexBtn.onclick = (e) => { 
+            e.preventDefault(); 
+            window.createCodexRow(); 
+        };
+    }
 
     newSaveBtn.onclick = async () => {
         newSaveBtn.disabled = true;
@@ -49075,31 +49538,47 @@ window.addUrlField = function(urlValue = '') {
     if (!container) return;
 
     const div = document.createElement('div');
+    div.className = 'url-field-wrapper';
+    // Align-items center garante alinhamento vertical
     div.style.cssText = "display:flex; gap:5px; align-items:center; margin-bottom:8px;";
     
-    // O Input
+    // 1. O Input (Altura fixa 42px)
     const input = document.createElement('input');
     input.type = "text";
     input.value = urlValue;
     input.placeholder = "https://...";
-    input.className = "source-url-input"; // Classe usada na gravação
-    input.style.cssText = "flex:1; padding:10px; background:var(--bg-color); border:1px solid var(--border-color); border-radius:4px; color:var(--text-color);";
+    input.className = "source-url-input"; 
+    // box-sizing: border-box é crucial para a altura incluir a borda
+    input.style.cssText = "flex:1; height:42px; padding:0 12px; background:var(--bg-color); border:1px solid var(--border-color); border-radius:4px; color:var(--text-color); box-sizing:border-box;";
     
-    // O Botão de Remover
+    // 2. O Botão de Remover (Altura fixa 42px)
     const removeBtn = document.createElement('button');
     removeBtn.innerHTML = "×";
-    removeBtn.tabIndex = -1; // Para não ser focado com Tab
-    removeBtn.style.cssText = "color:#e74c3c; border:1px solid #e74c3c; background:rgba(231, 76, 60, 0.1); cursor:pointer; padding:0 12px; height:38px; border-radius:4px; font-weight:bold;";
+    removeBtn.tabIndex = -1;
+    // Largura mínima e altura iguais ao input
+    removeBtn.style.cssText = "width:42px; height:42px; color:#e74c3c; border:1px solid #e74c3c; background:rgba(231, 76, 60, 0.1); cursor:pointer; border-radius:4px; font-weight:bold; font-size:20px; display:flex; align-items:center; justify-content:center; padding:0; box-sizing:border-box;";
     
-    removeBtn.onclick = function() {
-        div.remove();
+    // 3. Lógica de Confirmação
+    removeBtn.onclick = async function() {
+        // Truque de Z-Index: Põe a confirmação acima do modal de links (que tem z-index alto)
+        const confirmModal = document.getElementById('confirm-modal');
+        if(confirmModal) confirmModal.style.zIndex = "2147483650";
+
+        const confirmed = await showConfirmation("Remover URL?", "Tem a certeza que deseja remover esta linha?");
+        
+        // Restaura Z-Index
+        if(confirmModal) confirmModal.style.zIndex = "";
+
+        if (confirmed) {
+            div.remove();
+        }
     };
 
     div.appendChild(input);
     div.appendChild(removeBtn);
     container.appendChild(div);
     
-    // Foca no input se for novo (vazio)
+    // Foca no input se for novo
     if (!urlValue) {
         setTimeout(() => input.focus(), 50);
     }
