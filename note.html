@@ -25732,7 +25732,7 @@ addItemBtn.addEventListener('click', async () => {
 // ====================================================================
 // FORÇAR COLAGEM COMO TEXTO SIMPLES (PLAIN TEXT)
 // ====================================================================
- document.addEventListener('paste', (e) => {
+document.addEventListener('paste', (e) => {
     // 1. Verifica se estamos num campo editável
     const target = e.target;
     const isEditable = target.isContentEditable || 
@@ -25741,34 +25741,39 @@ addItemBtn.addEventListener('click', async () => {
 
     if (!isEditable) return;
 
-    // 2. Impede o comportamento padrão (colar com formatação HTML)
+    // 2. Impede o comportamento padrão (colar com formatação HTML suja)
     e.preventDefault();
 
-    // 3. Obtém apenas o texto limpo da área de transferência
+    // 3. Obtém apenas o texto limpo
     let text = (e.clipboardData || window.clipboardData).getData('text/plain');
-
-    // Remove espaços vazios antes e depois
     text = text.trim(); 
 
-    // 4. Se estiver dentro de Toggle ou Mini-Nota (Corpo), usa <br> para quebras de linha
-    if (target.closest('.toggle-content') || target.closest('.mini-note-content')) {
-        // Substitui quebras de linha por <br> para manter paragrafos visuais
+    // 4. LISTA DE CAIXAS QUE PRECISAM DE TRATAMENTO ESPECIAL
+    // Adicionámos .sign-content (Raciocínio) aqui para resolver o problema
+    if (target.closest('.toggle-content') || 
+        target.closest('.mini-note-content') || 
+        target.closest('.sign-content') ||       // <--- ADICIONADO AQUI
+        target.closest('.card-desc-content') ||  // <--- ADICIONADO AQUI
+        target.closest('.cube-content')          // <--- ADICIONADO AQUI
+       ) {
+        
+        // Substitui quebras de linha por <br> para manter parágrafos visuais
+        // sem criar blocos div/p que bloqueiam o apagar
         const htmlContent = text.replace(/\r\n|\r|\n/g, '<br>');
         document.execCommand('insertHTML', false, htmlContent);
+        
     } else {
-        // Nos outros sítios (incluindo títulos), insere texto normal
+        // Nos outros sítios (inputs, títulos), insere texto normal
         document.execCommand('insertText', false, text);
     }
 
-    // >>> CORREÇÃO PARA TÍTULOS LONGOS <<<
-    // Se colou num título de entidade, força o ajuste de altura imediato
+    // Ajuste para títulos longos
     if (target.classList.contains('mini-note-title-input') && typeof autoResizeTitle === 'function') {
         setTimeout(() => autoResizeTitle(target), 10);
     }
     
     // 5. Grava a nota
     if (typeof saveNote === 'function') {
-        // Verifica se o alvo faz parte do editor principal
         if (target.id === 'note-content-editor' || target.closest('#note-content-editor')) {
             saveNote(); 
         }
@@ -47910,87 +47915,125 @@ if (protectedEditor) {
     const protectedClasses = [
         '.mini-note-content', 
         '.redator-content', 
-        '.sign-content', 
+        '.sign-content',     // <--- A tua caixa de Raciocínio
         '.toggle-content',
         '.card-desc-content',
         '.cube-content'
     ];
 
-    // FUNÇÃO: Verifica se o cursor está no início absoluto da caixa
-    function isCursorAtStart(selection, contentDiv) {
-        if (!selection.isCollapsed) return false; // Se selecionou texto, deixa apagar
+    // FUNÇÃO MELHORADA: Verifica se o cursor está no início ABSOLUTO da caixa
+ function isCursorAtStart(selection, contentDiv) {
+        if (!selection.isCollapsed) return false; 
         
         const range = selection.getRangeAt(0);
         const node = range.startContainer;
         const offset = range.startOffset;
 
-        // 1. Se o offset > 0, não estamos no início
-        if (offset > 0) return false;
-
-        // 2. Se o nó atual não for o primeiro filho, verifica se os anteriores estão vazios
-        // (Simplificação: Se estamos no primeiro parágrafo <p>, é o início)
-        const firstBlock = contentDiv.firstElementChild; // Geralmente um <p>
+        console.group("🔍 [DEBUG BACKSPACE]");
+        console.log("Nó Atual:", node);
+        console.log("Tipo do Nó:", node.nodeType === 3 ? "Texto" : "Elemento");
+        console.log("Offset:", offset);
         
-        // Verifica se o nó onde está o cursor está dentro do primeiro bloco
-        if (firstBlock && (firstBlock === node || firstBlock.contains(node))) {
-            return true;
-        }
-        
-        // Caso não tenha <p> e seja texto direto
-        if (contentDiv.firstChild === node && offset === 0) {
-            return true;
+        // 1. Se o offset > 0, não é o início da linha. Deixa apagar.
+        if (offset > 0) {
+            console.log("✅ Offset > 0. Permitido.");
+            console.groupEnd();
+            return false;
         }
 
-        return false;
+        // 2. Navegar para cima para encontrar o bloco direto
+        let currentBlock = (node.nodeType === 3) ? node.parentElement : node;
+
+        // Sobe até encontrar o filho direto da contentDiv
+        while (currentBlock && currentBlock.parentElement !== contentDiv && currentBlock !== contentDiv) {
+            currentBlock = currentBlock.parentElement;
+        }
+
+        console.log("Bloco Pai Direto:", currentBlock);
+        
+        // 3. VERIFICAÇÃO DE IRMÃO ANTERIOR (A Chave)
+        if (currentBlock && currentBlock.previousElementSibling) {
+            console.log("✅ Tem irmão anterior (Linha acima). Permitido fundir.");
+            console.log("Irmão Anterior:", currentBlock.previousElementSibling);
+            console.groupEnd();
+            return false; 
+        }
+
+        // 4. VERIFICAÇÃO DE TEXTO ANTERIOR (Caso de <br>)
+        // Se estivermos no mesmo bloco, mas houver um <br> ou texto antes de nós
+        if (currentBlock === contentDiv || currentBlock.parentElement === contentDiv) {
+            // Cria um range que vai do início da caixa até onde estamos
+            const preRange = document.createRange();
+            preRange.selectNodeContents(contentDiv);
+            preRange.setEnd(range.startContainer, range.startOffset);
+            
+            const textBefore = preRange.toString();
+            // Verifica se o HTML antes contém <br>
+            const htmlBefore = (() => {
+                const div = document.createElement('div');
+                div.appendChild(preRange.cloneContents());
+                return div.innerHTML;
+            })();
+
+            console.log("Texto Antes:", textBefore.length);
+            console.log("HTML Antes:", htmlBefore);
+
+            if (textBefore.length > 0 || htmlBefore.includes('<br') || htmlBefore.includes('<p') || htmlBefore.includes('<div')) {
+                console.log("✅ Existe conteúdo antes (Texto ou <br>). Permitido apagar.");
+                console.groupEnd();
+                return false;
+            }
+        }
+
+        console.warn("🛡️ [BLOQUEIO] Topo Absoluto detetado.");
+        console.groupEnd();
+        return true;
     }
 
     // 1. EVENTO MODERNO (MOBILE - iOS/Android)
     protectedEditor.addEventListener('beforeinput', (e) => {
-        // Só nos interessa se a ação for "Apagar para trás"
         if (e.inputType === 'deleteContentBackward') {
-            
             const selection = window.getSelection();
             if (!selection.rangeCount) return;
             
             const anchorNode = selection.anchorNode;
-            // Garante que pegamos o elemento HTML
             const el = anchorNode.nodeType === 3 ? anchorNode.parentElement : anchorNode;
-            
-            // Encontra a caixa de conteúdo mais próxima
             const contentDiv = el.closest(protectedClasses.join(','));
 
             if (contentDiv) {
-                // Se estamos no início absoluto da caixa
+                // Só bloqueia se for o INÍCIO ABSOLUTO (Linha 1, Letra 1)
                 if (isCursorAtStart(selection, contentDiv)) {
-                    e.preventDefault(); // IMPEDE A AÇÃO
-                    e.stopPropagation();
-                }
-            }
-        }
-    });
-
-    // 2. EVENTO CLÁSSICO (PC / Teclados Físicos no Mobile)
-    protectedEditor.addEventListener('keydown', (e) => {
-        if (e.key === 'Backspace') {
-            
-            const selection = window.getSelection();
-            if (!selection.rangeCount) return;
-
-            const anchorNode = selection.anchorNode;
-            const el = anchorNode.nodeType === 3 ? anchorNode.parentElement : anchorNode;
-            
-            const contentDiv = el.closest(protectedClasses.join(','));
-
-            if (contentDiv) {
-                if (isCursorAtStart(selection, contentDiv)) {
-                    // Impede de apagar a fronteira
                     e.preventDefault(); 
                     e.stopPropagation();
                 }
             }
         }
     });
+
+    // 2. EVENTO CLÁSSICO (PC / Teclados Físicos)
+    protectedEditor.addEventListener('keydown', (e) => {
+        if (e.key === 'Backspace') {
+            const selection = window.getSelection();
+            if (!selection.rangeCount) return;
+
+            const anchorNode = selection.anchorNode;
+            const el = anchorNode.nodeType === 3 ? anchorNode.parentElement : anchorNode;
+            const contentDiv = el.closest(protectedClasses.join(','));
+
+            if (contentDiv) {
+                // Só bloqueia se for o INÍCIO ABSOLUTO
+                if (isCursorAtStart(selection, contentDiv)) {
+                    console.log("🛡️ [BARREIRA] Cursor no topo da caixa. Apagar bloqueado.");
+                    e.preventDefault(); 
+                    e.stopPropagation();
+                } else {
+                    // Se estiver na linha 2, permite apagar (o que vai fundir com a linha 1)
+                }
+            }
+        }
+    });
 }
+
 
 window.renameMica = async function(id, currentName) {
     // Usa o seu modal bonito de input
