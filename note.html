@@ -25424,8 +25424,13 @@ async function updateSharingSettings() {
     if (!selectedNoteId || !auth.currentUser) return;
 
     try {
-        // 1. Obter Estado Atual
+        // 1. Obter Estados Atuais
         const isShared = document.getElementById('note-share-toggle').checked;
+        
+        // NOVO: Captura o estado do All Unlock
+        const allUnlockCheckbox = document.getElementById('share-allunlock-toggle');
+        const isAllUnlock = allUnlockCheckbox ? allUnlockCheckbox.checked : true;
+
         const noteRef = doc(db, 'pastas', selectedNoteId);
         
         // Referências Visuais
@@ -25436,8 +25441,9 @@ async function updateSharingSettings() {
 
         // 2. Atualizar Nota Privada (Base de Dados)
         const newSettings = {
-            ...currentNoteShareData, // Mantém definições existentes (como collab)
+            ...currentNoteShareData, 
             shared: isShared,
+            allunlock: isAllUnlock, // <--- GRAVA AQUI
             shareId: shareId,
             updatedAt: serverTimestamp()
         };
@@ -25445,21 +25451,18 @@ async function updateSharingSettings() {
         await updateDoc(noteRef, { shareSettings: newSettings });
         currentNoteShareData = newSettings;
 
-        // 3. Gerir Documento Público e Visual
+        // 3. Gerir Documento Público
         if (isShared) {
             
-            // --- A. ATUALIZAÇÃO VISUAL (ATIVO) ---
+            // Visual
             if (urlInput) {
-                urlInput.style.color = "#4a90e2";       // Texto Azul
-                urlInput.style.borderColor = "#4a90e2"; // Borda Azul
+                urlInput.style.color = "#4a90e2";
+                urlInput.style.borderColor = "#4a90e2";
                 urlInput.style.fontWeight = "bold";
             }
-            if (toolbarLockBtn) {
-                toolbarLockBtn.textContent = '🔓';      // Abre o cadeado
-            }
-            // -------------------------------------
+            if (toolbarLockBtn) toolbarLockBtn.textContent = '🔓';
 
-            // B. Preparar Dados
+            // Dados Públicos
             const currentTitle = document.getElementById('archive-title-input')?.value || 
                                document.getElementById('note-title-input')?.value || 
                                "Sem Título";
@@ -25476,39 +25479,33 @@ async function updateSharingSettings() {
                 authorName: finalAuthorName,
                 authorId: auth.currentUser.uid,
                 isPublic: true,
+                allunlock: isAllUnlock, // <--- ENVIA PARA O PÚBLICO TAMBÉM
                 sharedAt: serverTimestamp(),
                 type: docType,
                 originalNoteId: selectedNoteId
             };
 
-            // Se for arquivo, anexa posts; se for nota, anexa conteúdo HTML
             if (isArchive) {
                 publicData.posts = currentArchiveData.posts || [];
             } else {
                 publicData.conteudo = document.getElementById('note-content-editor').innerHTML;
             }
             
-            // C. Gravar na Base de Dados Pública
             await setDoc(doc(db, 'shared_notes', shareId), publicData, { merge: true });
             
-            // D. Gerar Link no Input
             const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
             if (urlInput) urlInput.value = `${baseUrl}/sharenote.html?id=${shareId}`;
 
         } else {
-            // --- A. ATUALIZAÇÃO VISUAL (INATIVO) ---
+            // Reset Visual
             if (urlInput) {
-                urlInput.style.color = "";       // Reset cor
-                urlInput.style.borderColor = ""; // Reset borda
+                urlInput.style.color = "";
+                urlInput.style.borderColor = "";
                 urlInput.style.fontWeight = "";
-                urlInput.value = "";             // Limpa o link
+                urlInput.value = "";
             }
-            if (toolbarLockBtn) {
-                toolbarLockBtn.textContent = '🔐'; // Fecha o cadeado
-            }
-            // ---------------------------------------
+            if (toolbarLockBtn) toolbarLockBtn.textContent = '🔐';
 
-            // B. Apagar Documento Público
             await deleteDoc(doc(db, 'shared_notes', shareId));
         }
 
@@ -30721,74 +30718,7 @@ document.getElementById('archive-toolbar').addEventListener('click', (e) => {
     }
 });
 
-// Função Auxiliar para abrir Partilha (Cópia adaptada da Nota)
-async function openShareModalForArchive() {
-    if (!selectedNoteId) return;
 
-    const modal = document.getElementById('note-share-popup');
-    if (!modal) return console.error("Modal #note-share-popup não encontrado!");
-
-    // 1. FORÇA HIERARQUIA (Move para o body e define Z-Index alto)
-    document.body.appendChild(modal);
-    modal.style.setProperty('display', 'flex', 'important');
-    modal.style.zIndex = "8500000"; // Acima do editor e abas
-    modal.style.visibility = "visible";
-    modal.style.opacity = "1";
-
-    try {
-        const docRef = doc(db, 'pastas', selectedNoteId);
-        const docSnap = await getDoc(docRef);
-        
-        if (docSnap.exists()) {
-            const data = docSnap.data();
-            // Carrega definições existentes ou inicia padrão
-            currentNoteShareData = data.shareSettings || { shared: false, shareId: null };
-            
-            // 2. CONFIGURA O TOGGLE DE LEITURA
-            const mainToggle = document.getElementById('note-share-toggle');
-            mainToggle.checked = currentNoteShareData.shared;
-
-            // Atualiza o efeito visual do popup baseado no estado inicial
-const modalContent = document.querySelector('#note-share-popup .modal-content');
-if (currentNoteShareData.shared) {
-    modalContent.classList.add('share-active-wave');
-} else {
-    modalContent.classList.remove('share-active-wave');
-}
-
-            const linkContainer = document.getElementById('note-share-link-container');
-            if (currentNoteShareData.shared) {
-                linkContainer.style.display = 'block';
-                const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
-                const shareId = currentNoteShareData.shareId || selectedNoteId;
-                document.getElementById('note-share-url').value = `${baseUrl}/sharenote.html?id=${shareId}`;
-            } else {
-                linkContainer.style.display = 'none';
-            }
-
-            // 3. CONFIGURA SECÇÃO DE COLABORAÇÃO (Apenas para Arquivos)
-            const collabSection = document.getElementById('archive-collab-section');
-            if ((data.tipo === 'arquivo' || data.tipo === 'partilhado') && currentViewMode === 'shared') {
-                collabSection.style.display = 'block';
-                const collabToggle = document.getElementById('collab-share-toggle');
-                collabToggle.checked = (data.partilhado === "ativo");
-                
-                const collabLinkContainer = document.getElementById('collab-share-link-container');
-                if (data.partilhado === "ativo") {
-                    collabLinkContainer.style.display = 'block';
-                    const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
-                    document.getElementById('collab-share-url').value = `${baseUrl}/note.html?openArchive=${selectedNoteId}&mode=collab`;
-                } else {
-                    collabLinkContainer.style.display = 'none';
-                }
-            } else {
-                collabSection.style.display = 'none';
-            }
-        }
-    } catch (err) {
-        console.error("Erro ao carregar dados de partilha:", err);
-    }
-}
 
 // --- ADICIONE ESTE LISTENER NO FINAL DO SCRIPT (Para o novo Toggle de Colaboração) ---
 
@@ -35652,9 +35582,10 @@ window.openShareModalForArchive = async function() {
     const modal = document.getElementById('note-share-popup');
     if (!modal) return console.error("Modal #note-share-popup não encontrado!");
 
+    // 1. FORÇA HIERARQUIA (Move para o body e define Z-Index alto)
     document.body.appendChild(modal);
     modal.style.setProperty('display', 'flex', 'important');
-    modal.style.zIndex = "8500000"; 
+    modal.style.zIndex = "8500000"; // Acima do editor e abas
     modal.style.visibility = "visible";
     modal.style.opacity = "1";
 
@@ -35674,23 +35605,73 @@ window.openShareModalForArchive = async function() {
                 return;
             }
 
+            // ============================================================
+            // 2. INJEÇÃO DA OPÇÃO "TODAS AS SUBNOTAS" (ALL UNLOCK)
+            // ============================================================
+            const mainToggleRow = document.getElementById('note-share-toggle').closest('.share-toggle-row');
+            let allUnlockWrapper = document.getElementById('allunlock-wrapper');
+
+            if (!allUnlockWrapper && mainToggleRow) {
+                allUnlockWrapper = document.createElement('div');
+                allUnlockWrapper.id = 'allunlock-wrapper';
+                allUnlockWrapper.style.display = 'none'; // Começa escondido (só aparece se partilha ativa)
+                
+                // HTML da nova opção (Caixa pontilhada azul)
+                allUnlockWrapper.innerHTML = `
+                    <div style="background-color: rgba(74, 144, 226, 0.05); padding: 8px 12px; border-radius: 8px; border: 1px dashed var(--accent-color); display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; margin-top: 5px;">
+                        <div style="padding-right: 10px;">
+                            <span style="font-size:0.85em; font-weight:bold; color: var(--accent-color); display:block;">Todas as Subnotas, Questões etc...</span>
+                            <small style="color:var(--text-muted-color); font-size:0.7em;"></small>
+                        </div>
+                        <label class="setting-switch" style="transform: scale(0.8);">
+                            <input type="checkbox" id="share-allunlock-toggle">
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                `;
+                // Insere logo abaixo da linha principal
+                mainToggleRow.insertAdjacentElement('afterend', allUnlockWrapper);
+                
+                // Adiciona o listener para gravar assim que mudar
+                const newCheck = allUnlockWrapper.querySelector('input');
+                newCheck.addEventListener('change', updateSharingSettings);
+            }
+
+            // ============================================================
+            // 3. CARREGAR DADOS E ESTADOS
+            // ============================================================
+            
             // A. Link de Leitura (Azul)
             currentNoteShareData = data.shareSettings || { shared: false, shareId: null };
+            
+            // Define estado da checkbox "All Unlock" (Padrão: true)
+            const isAllUnlock = (currentNoteShareData.allunlock !== undefined) ? currentNoteShareData.allunlock : true;
+
             const mainToggle = document.getElementById('note-share-toggle');
             if(mainToggle) mainToggle.checked = currentNoteShareData.shared || false;
             
+            const allUnlockToggle = document.getElementById('share-allunlock-toggle');
+            if(allUnlockToggle) allUnlockToggle.checked = isAllUnlock;
+            
+            // Efeitos Visuais (Onda Azul)
             const modalContent = document.querySelector('#note-share-popup .modal-content');
             if (currentNoteShareData.shared) modalContent.classList.add('share-active-wave');
             else modalContent.classList.remove('share-active-wave');
 
             const linkContainer = document.getElementById('note-share-link-container');
+            const unlockContainer = document.getElementById('allunlock-wrapper');
+
+            // Mostrar/Esconder secções baseado no estado principal
             if (currentNoteShareData.shared) {
                 if(linkContainer) linkContainer.style.display = 'block';
+                if(unlockContainer) unlockContainer.style.display = 'block'; // Mostra a nova opção
+                
                 const baseUrl = window.location.origin + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
                 const shareId = currentNoteShareData.shareId || targetId;
                 document.getElementById('note-share-url').value = `${baseUrl}/sharenote.html?id=${shareId}`;
             } else {
                 if(linkContainer) linkContainer.style.display = 'none';
+                if(unlockContainer) unlockContainer.style.display = 'none';
             }
 
             // ============================================================
@@ -35702,7 +35683,7 @@ window.openShareModalForArchive = async function() {
             const oldList = document.getElementById('collab-users-manager');
             if (oldList) oldList.remove();
 
-            if (data.tipo === 'partilhado') {
+            if (data.tipo === 'partilhado' || data.tipo === 'arquivo') {
                 if(collabSection) collabSection.style.display = 'block';
                 
                 const collabToggle = document.getElementById('collab-share-toggle');
@@ -35718,7 +35699,7 @@ window.openShareModalForArchive = async function() {
                     const collabInput = document.getElementById('collab-share-url');
                     if(collabInput) collabInput.value = collabUrl;
 
-                    // >>> NOVO: INJETAR LISTA DE UTILIZADORES <<<
+                    // >>> INJETAR LISTA DE UTILIZADORES <<<
                     const usersContainer = document.createElement('div');
                     usersContainer.id = 'collab-users-manager';
                     usersContainer.style.cssText = "margin-top: 15px; border-top: 1px dashed #e74c3c; padding-top: 10px;";
@@ -35733,11 +35714,12 @@ window.openShareModalForArchive = async function() {
                         </ul>
                     `;
                     
-                    // Adiciona a lista logo abaixo do link de colaboração
                     collabLinkContainer.appendChild(usersContainer);
 
                     // Chama a função assíncrona para preencher os nomes
-                    window.renderCollaboratorsList(targetId, data.colaboradores);
+                    if (typeof window.renderCollaboratorsList === 'function') {
+                        window.renderCollaboratorsList(targetId, data.colaboradores);
+                    }
 
                 } else {
                     if(collabLinkContainer) collabLinkContainer.style.display = 'none';
@@ -47279,7 +47261,6 @@ window.showSuccessAlert = function(title, message) {
 const shareToggleBtn = document.getElementById('note-share-toggle');
 
 if (shareToggleBtn) {
-    // Removemos ouvintes antigos clonando (opcional, mas boa prática)
     const newToggle = shareToggleBtn.cloneNode(true);
     shareToggleBtn.parentNode.replaceChild(newToggle, shareToggleBtn);
 
@@ -47287,17 +47268,17 @@ if (shareToggleBtn) {
         const isChecked = newToggle.checked;
         const modalContent = document.querySelector('#note-share-popup .modal-content');
         const linkContainer = document.getElementById('note-share-link-container');
-        const urlInput = document.getElementById('note-share-url');
         
-        // Botão do Cadeado na Toolbar Principal
+        // NOVO: Referência ao contentor da checkbox
+        const allUnlockWrapper = document.getElementById('allunlock-wrapper');
+        
+        const urlInput = document.getElementById('note-share-url');
         const toolbarLockBtn = document.querySelector('button[data-action="note-sharing-settings"]');
 
-        // 1. EFEITO VISUAL DA ONDA E LINK
         if (isChecked) {
-            // A. Ativa a Onda Azul
+            // Ativa
             modalContent.classList.add('share-active-wave');
             
-            // B. Mostra o Contentor do Link
             if(linkContainer) {
                 linkContainer.style.display = 'block';
                 linkContainer.style.opacity = '0';
@@ -47309,40 +47290,36 @@ if (shareToggleBtn) {
                 }, 10);
             }
 
-            // C. MUDANÇA PEDIDA: Link a Azul
+            // MOSTRA A NOVA OPÇÃO
+            if (allUnlockWrapper) {
+                allUnlockWrapper.style.display = 'block';
+            }
+
             if (urlInput) {
-                urlInput.style.color = "#4a90e2";       // Azul
-                urlInput.style.borderColor = "#4a90e2"; // Borda Azul
+                urlInput.style.color = "#4a90e2";
+                urlInput.style.borderColor = "#4a90e2";
                 urlInput.style.fontWeight = "bold";
             }
-
-            // D. MUDANÇA PEDIDA: Cadeado Aberto na Toolbar
-            if (toolbarLockBtn) {
-                toolbarLockBtn.textContent = '🔓'; // Abre o cadeado
-                // Opcional: Adiciona cor azul ao botão também para indicar atividade
-                // toolbarLockBtn.style.color = "#4a90e2"; 
-            }
+            if (toolbarLockBtn) toolbarLockBtn.textContent = '🔓';
 
         } else {
-            // Desativa tudo
+            // Desativa
             modalContent.classList.remove('share-active-wave');
             if(linkContainer) linkContainer.style.display = 'none';
+            
+            // ESCONDE A NOVA OPÇÃO
+            if (allUnlockWrapper) {
+                allUnlockWrapper.style.display = 'none';
+            }
 
-            // Reseta estilos do Link
             if (urlInput) {
                 urlInput.style.color = "";
                 urlInput.style.borderColor = "";
                 urlInput.style.fontWeight = "";
             }
-
-            // Fecha o cadeado na Toolbar
-            if (toolbarLockBtn) {
-                toolbarLockBtn.textContent = '🔐'; 
-                toolbarLockBtn.style.color = ""; 
-            }
+            if (toolbarLockBtn) toolbarLockBtn.textContent = '🔐';
         }
 
-        // 2. CHAMA A FUNÇÃO DE GRAVAÇÃO ORIGINAL
         await updateSharingSettings();
     });
 }
