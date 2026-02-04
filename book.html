@@ -2874,6 +2874,70 @@ li.bible-grid-container:hover {
     color: #2ecc71 !important; /* Verde */
     border-bottom-color: #2ecc71 !important;
 }
+
+/* ============================================================
+   GRELHA DE LIVROS (VISTA COMPACTA - IGUAL À IMAGEM 1)
+   ============================================================ */
+.bible-books-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr); /* Mantém 5 colunas */
+    gap: 4px;             /* Espaço reduzido entre botões */
+    padding: 10px 8px;    /* Padding menor para poupar espaço */
+    background-color: var(--sidebar-color);
+}
+
+.bible-book-btn {
+    aspect-ratio: 1 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75em;    /* Fonte mais pequena */
+    font-weight: 600;
+    cursor: pointer;
+    color: white;
+    text-align: center;
+    border-radius: 6px;   /* Cantos menos arredondados, como no original */
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    transition: transform 0.1s, filter 0.2s;
+    border: 1px solid rgba(255,255,255,0.05);
+}
+
+/* ============================================================
+   GRELHA DE CAPÍTULOS/VERSÍCULOS (VISTA COMPACTA - IMAGEM 2)
+   ============================================================ */
+.bible-verses-grid {
+    display: grid !important;
+    /* Reduzimos o mínimo de 45px para 35px para caberem mais botões por linha */
+    grid-template-columns: repeat(auto-fill, minmax(35px, 1fr)) !important;
+    gap: 4px !important;   /* Gap reduzido */
+    padding: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+.verse-btn {
+    aspect-ratio: 1 / 1;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;   /* Cantos consistentes */
+    cursor: pointer;
+    font-size: 0.8em;     /* Fonte mais pequena */
+    font-weight: 500;
+    background-color: var(--panel-color);
+    color: var(--text-muted);
+    transition: all 0.2s;
+    height: auto !important;
+}
+
+/* Ajuste no título da seção para não ocupar tanto espaço vertical */
+.bible-section-title {
+    grid-column: span 5;
+    padding: 10px 5px 4px 5px;
+    font-size: 0.7em;
+}
+
     </style>
 
 
@@ -2938,7 +3002,7 @@ li.bible-grid-container:hover {
 
         <div id="book-content-scroll">
             <div id="empty-placeholder" class="empty-state">
-                <span>📖</span>
+                <span>📜</span>
                 <h2>Selecione uma nota para ler</h2>
                 <p>Use o menu lateral para navegar.</p>
             </div>
@@ -3254,6 +3318,7 @@ li.bible-grid-container:hover {
    // Apenas UMA linha de importação com tudo o que é necessário
 import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
    import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
+import { BIBLE_DATA } from './js/bible-data.js';
 
     // --- COLE O CÓDIGO NOVO AQUI ---
   const tabButtons = document.querySelectorAll('#book-sidebar .tab-btn');
@@ -3322,6 +3387,7 @@ let tfDeck = []; // Baralho Verdadeiro/Falso
 let tfCurrentRound = 0;
 let tfScore = 0;
 let tfIsCorrectRound = false; // Se a resposta atual é verdadeira
+let allEntities = {}; // Esta é a que está a faltar!
 
 
 const REFS_PER_PAGE = 15;  // Limite por página
@@ -3351,6 +3417,8 @@ const RESULTS_PER_PAGE = 15;  // Limite por página
    const searchInput = document.getElementById('global-search-input');
    const BIBLICAL_BOOKS = ['Génesis', 'Êxodo', 'Levítico', 'Números', 'Deuteronómio', 'Josué', 'Juízes', 'Rute', '1 Samuel', '2 Samuel', '1 Reis', '2 Reis', '1 Crónicas', '2 Crónicas', 'Esdras', 'Neemias', 'Ester', 'Jó', 'Salmos', 'Provérbios', 'Eclesiastes', 'Cântico de Salomão', 'Isaías', 'Jeremias', 'Lamentações', 'Ezequiel', 'Daniel', 'Oseias', 'Joel', 'Amós', 'Obadias', 'Jonas', 'Miqueias', 'Naum', 'Habacuque', 'Sofonias', 'Ageu', 'Zacarias', 'Malaquias', 'Mateus', 'Marcos', 'Lucas', 'João', 'Atos', 'Romanos', '1 Coríntios', '2 Coríntios', 'Gálatas', 'Efésios', 'Filipenses', 'Colossenses', '1 Tessalonicenses', '2 Tessalonicenses', '1 Timóteo', '2 Timóteo', 'Tito', 'Filémom', 'Hebreus', 'Tiago', '1 Pedro', '2 Pedro', '1 João', '2 João', '3 João', 'Judas', 'Apocalipse'];
 const BIBLE_DATA_SIMPLE = BIBLICAL_BOOKS.map(name => ({ nome: name, caps: 50 })); 
+const localBibleCache = {}; 
+
 
  onAuthStateChanged(auth, async (user) => {
     const loader = document.getElementById('app-loader');
@@ -3575,12 +3643,11 @@ function processContentForReading(htmlContent) {
    });
 
    // =======================================================
-   // 1. AUTO-LINKER BÍBLICO (TEXTO SIMPLES -> LINK)
+   // 1. AUTO-LINKER BÍBLICO (TEXTO SIMPLES -> LINK DISCRETO)
    // =======================================================
    if (typeof BIBLICAL_BOOKS !== 'undefined' && BIBLICAL_BOOKS.length > 0) {
        const walker = document.createTreeWalker(docDOM.body, NodeFilter.SHOW_TEXT, {
            acceptNode: (node) => {
-               // Ignora se já estiver dentro de um link, botão ou tag técnica
                if (node.parentElement.closest('a, .entity-link, button, script, style, .tag')) {
                    return NodeFilter.FILTER_REJECT;
                }
@@ -3592,19 +3659,15 @@ function processContentForReading(htmlContent) {
        let currentNode;
        while (currentNode = walker.nextNode()) textNodes.push(currentNode);
 
-       // Prepara Regex Dinâmica (Livros e Abreviações)
        const sortedBooks = [...BIBLICAL_BOOKS].sort((a, b) => b.length - a.length);
        const booksPattern = sortedBooks.map(b => {
-           // Aceita "Daniel" ou "Dan." (3 primeiras letras + ponto opcional)
            return b.substring(0, 3) + "[a-zçãõ]*\\.?"
        }).join('|');
 
-       // Regex: Livro + Cap:Vers + Intervalos opcionais (ex: 9:20-23, 25)
        const bibleRegex = new RegExp(`\\b((?:${booksPattern})\\s+\\d+:\\d+(?:\\s*[-–,;]\\s*\\d+)*)`, 'gi');
 
        textNodes.forEach(node => {
            const text = node.textContent;
-           // Só mexe se encontrar uma referência
            if (bibleRegex.test(text)) {
                const fragment = document.createDocumentFragment();
                let lastIndex = 0;
@@ -3613,31 +3676,28 @@ function processContentForReading(htmlContent) {
                let match;
                
                while ((match = bibleRegex.exec(text)) !== null) {
-                   // Adiciona o texto antes do match
                    const before = text.substring(lastIndex, match.index);
                    if (before) fragment.appendChild(document.createTextNode(before));
                    
-                   // Cria o LINK automático
                    const span = document.createElement('span');
                    span.className = 'entity-link';
                    span.dataset.entityType = 'textobiblico';
                    
-                   // Limpa pontuação final (ex: "9:23." -> "9:23")
                    const cleanName = match[0].trim().replace(/[.,;]+$/, ''); 
                    span.dataset.entityName = cleanName;
                    
                    span.textContent = match[0];
                    
-                   // Estilo visual de link
-                   span.style.color = "var(--accent-color)";
-                   span.style.borderBottom = "1px dashed var(--accent-color)";
+                   // --- AQUI ESTÁ A MUDANÇA ---
+                   span.style.color = "inherit"; // Mantém a cor original do texto
+                   span.style.borderBottom = "1px dashed var(--accent-color)"; // Apenas a linha é colorida
                    span.style.cursor = "pointer";
+                   // ---------------------------
                    
                    fragment.appendChild(span);
                    lastIndex = bibleRegex.lastIndex;
                }
                
-               // Adiciona o resto do texto
                const remaining = text.substring(lastIndex);
                if (remaining) fragment.appendChild(document.createTextNode(remaining));
                
@@ -3649,7 +3709,7 @@ function processContentForReading(htmlContent) {
    // =======================================================
    // 2. PROCESSAMENTO DE AQUÁRIO (GHOST BLOCKS)
    // =======================================================
-   const ghosts = docDOM.querySelectorAll('.ghost-block');
+    const ghosts = docDOM.querySelectorAll('.ghost-block');
    if (ghosts.length > 0) {
        let refCounterGlobal = 0;
        ghosts.forEach((ghost, index) => {
@@ -5387,11 +5447,11 @@ window.renderListsRoot = () => {
         
         <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">
         
-        <li onclick="openListCategory('biblia', '📔 Bíblia (Leitura)')">
-            <span class="list-icon">📔</span> Bíblia
+        <li onclick="openListCategory('biblia', '📖 Bíblia (Leitura)')">
+            <span class="list-icon">📖</span> Bíblia
         </li>
-        <li onclick="openListCategory('textobiblico', '📖 Textos Bíblicos')">
-            <span class="list-icon">📖</span> Textos Bíblicos
+        <li onclick="openListCategory('textobiblico', '📜 Textos Bíblicos')">
+            <span class="list-icon">📜</span> Textos Bíblicos
         </li>
         <li onclick="openListCategory('marcadores', '🔖 Marcadores')">
             <span class="list-icon">🔖</span> Marcadores
@@ -5420,164 +5480,73 @@ window.renderListsRoot = () => {
 window.openListCategory = async (type, title, contextId = null) => {
     // 1. Gerir a Pilha de Navegação (Stack)
     listsStack.push({ type, title, contextId });
-    
-    // CHAMAR A ATUALIZAÇÃO DO CABEÇALHO (O que estava a faltar)
     updateListsHeader();
     
     const ul = document.getElementById('lists-content');
-    
-    // Feedback visual de carregamento
-    ul.innerHTML = `
-        <div class="sidebar-loading">
-            <div class="spinner"></div>
-            <span>A carregar ${title}...</span>
-        </div>
-    `;
+    ul.innerHTML = `<div class="sidebar-loading"><div class="spinner"></div><span>A carregar ${title}...</span></div>`;
 
     try {
         const myUid = auth.currentUser.uid;
 
-
-           // ============================================================
-        // NOVO CASO: COSMOS
         // ============================================================
-        if (type === 'cosmos') {
+        // CASO: BÍBLIA (NAVEGAÇÃO COM CORES DO BIBLE.HTML)
+        // ============================================================
+        if (type === 'biblia') {
             ul.innerHTML = '';
-            // Nível 1: Temas Pai
-            const q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('nome'));
-            const snap = await getDocs(q);
-            
-            if (snap.empty) {
-                ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Nenhum tema criado.</li>';
-            } else {
-                snap.forEach(docSnap => {
-                    const item = docSnap.data();
-                    const li = document.createElement('li');
-                    li.innerHTML = `<span>${item.emoji || '🪐'} ${item.nome}</span> <span style="opacity:0.3">❯</span>`;
-                    // Ao clicar, avança para o nível de SubTemas
-                    li.onclick = () => window.openListCategory('subcosmos-list', item.nome, docSnap.id);
-                    ul.appendChild(li);
-                });
-            }
-        }
-        else if (type === 'subcosmos-list') {
-            ul.innerHTML = '';
-            // Nível 2: SubTemas dentro de um Tema
-            const q = query(collection(db, 'subcosmos'), where('cosmosId', '==', contextId), where('userId', '==', myUid), orderBy('nome'));
-            const snap = await getDocs(q);
-            
-            if (snap.empty) {
-                ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Nenhum subtema encontrado.</li>';
-            } else {
-                snap.forEach(docSnap => {
-                    const item = docSnap.data();
-                    const li = document.createElement('li');
-                    li.innerHTML = `<span>${item.emoji || '🔹'} ${item.nome}</span> <span style="opacity:0.3">❯</span>`;
-                    // Ao clicar, abre o painel de Referências (4ª Coluna)
-                    li.onclick = () => window.showReferencesPanel(docSnap.id, item.nome, 'subcosmos');
-                    ul.appendChild(li);
-                });
-            }
-        }
-
-        // ------------------------------------------------------------
-        // CASO: DESTAQUES (🎨 CORES)
-        // ------------------------------------------------------------
-        if (type === 'destaque') {
-            ul.innerHTML = '';
-            const allColors = [...DEFAULT_HIGHLIGHTS];
-            allColors.sort((a, b) => a.name.localeCompare(b.name));
-            
-            allColors.forEach(color => {
-                const displayName = globalHighlightsCache[color.code] || color.name;
-                const li = document.createElement('li');
-                li.innerHTML = `
-                    <span style="display:inline-block; width:18px; height:18px; background:${color.code}; border-radius:50%; margin-right:12px; border:1px solid rgba(128,128,128,0.3);"></span>
-                    <span style="flex-grow:1;">${displayName}</span>
-                    <span style="opacity:0.3">❯</span>
-                `;
-                li.onclick = () => window.showHighlightRef(color.code, displayName);
-                ul.appendChild(li);
-            });
-        }
-
-        // ------------------------------------------------------------
-        // CASO: BÍBLIA (📔 NAVEGAÇÃO DE LEITURA)
-        // ------------------------------------------------------------
-         else if (type === 'biblia') {
-            ul.innerHTML = ''; // Limpa a lista padrão
-            
-            // 1. Mapeamento de Abreviaturas e Grupos (Pentateuco, Históricos, etc. simplificados em 2)
-            const BIBLE_MAP = [
-                // ESCRITURAS HEBRAICO-ARAMAICAS
-                { name: 'Génesis', abbr: 'Gén', group: 'hebrew' }, { name: 'Êxodo', abbr: 'Êx', group: 'hebrew' }, { name: 'Levítico', abbr: 'Le', group: 'hebrew' }, { name: 'Números', abbr: 'Núm', group: 'hebrew' }, { name: 'Deuteronómio', abbr: 'De', group: 'hebrew' },
-                { name: 'Josué', abbr: 'Jos', group: 'hebrew-alt' }, { name: 'Juízes', abbr: 'Jz', group: 'hebrew-alt' }, { name: 'Rute', abbr: 'Ru', group: 'hebrew-alt' }, { name: '1 Samuel', abbr: '1Sa', group: 'hebrew-alt' }, { name: '2 Samuel', abbr: '2Sa', group: 'hebrew-alt' },
-                { name: '1 Reis', abbr: '1Rs', group: 'hebrew-alt' }, { name: '2 Reis', abbr: '2Rs', group: 'hebrew-alt' }, { name: '1 Crónicas', abbr: '1Cr', group: 'hebrew-alt' }, { name: '2 Crónicas', abbr: '2Cr', group: 'hebrew-alt' }, { name: 'Esdras', abbr: 'Esd', group: 'hebrew-alt' },
-                { name: 'Neemias', abbr: 'Ne', group: 'hebrew-alt' }, { name: 'Ester', abbr: 'Est', group: 'hebrew-alt' }, { name: 'Jó', abbr: 'Jó', group: 'hebrew-alt' }, { name: 'Salmos', abbr: 'Sal', group: 'hebrew-alt' }, { name: 'Provérbios', abbr: 'Pr', group: 'hebrew-alt' },
-                { name: 'Eclesiastes', abbr: 'Ec', group: 'hebrew-alt' }, { name: 'Cântico de Salomão', abbr: 'Cân', group: 'hebrew-alt' }, { name: 'Isaías', abbr: 'Is', group: 'hebrew-alt' }, { name: 'Jeremias', abbr: 'Je', group: 'hebrew-alt' }, { name: 'Lamentações', abbr: 'La', group: 'hebrew-alt' },
-                { name: 'Ezequiel', abbr: 'Ez', group: 'hebrew-alt' }, { name: 'Daniel', abbr: 'Da', group: 'hebrew-alt' }, { name: 'Oseias', abbr: 'Os', group: 'hebrew-alt' }, { name: 'Joel', abbr: 'Jl', group: 'hebrew-alt' }, { name: 'Amós', abbr: 'Am', group: 'hebrew-alt' },
-                { name: 'Obadias', abbr: 'Ob', group: 'hebrew-alt' }, { name: 'Jonas', abbr: 'Jon', group: 'hebrew-alt' }, { name: 'Miqueias', abbr: 'Miq', group: 'hebrew-alt' }, { name: 'Naum', abbr: 'Na', group: 'hebrew-alt' }, { name: 'Habacuque', abbr: 'Hab', group: 'hebrew-alt' },
-                { name: 'Sofonias', abbr: 'Sof', group: 'hebrew-alt' }, { name: 'Ageu', abbr: 'Ag', group: 'hebrew-alt' }, { name: 'Zacarias', abbr: 'Za', group: 'hebrew-alt' }, { name: 'Malaquias', abbr: 'Mal', group: 'hebrew-alt' },
-
-                // ESCRITURAS GREGAS CRISTÃS
-                { name: 'Mateus', abbr: 'Mt', group: 'greek' }, { name: 'Marcos', abbr: 'Mr', group: 'greek' }, { name: 'Lucas', abbr: 'Lu', group: 'greek' }, { name: 'João', abbr: 'Jo', group: 'greek' }, { name: 'Atos', abbr: 'At', group: 'greek-alt' },
-                { name: 'Romanos', abbr: 'Ro', group: 'greek-alt' }, { name: '1 Coríntios', abbr: '1Co', group: 'greek-alt' }, { name: '2 Coríntios', abbr: '2Co', group: 'greek-alt' }, { name: 'Gálatas', abbr: 'Gál', group: 'greek-alt' }, { name: 'Efésios', abbr: 'Ef', group: 'greek-alt' },
-                { name: 'Filipenses', abbr: 'Fil', group: 'greek-alt' }, { name: 'Colossenses', abbr: 'Col', group: 'greek-alt' }, { name: '1 Tessalonicenses', abbr: '1Te', group: 'greek-alt' }, { name: '2 Tessalonicenses', abbr: '2Te', group: 'greek-alt' }, { name: '1 Timóteo', abbr: '1Ti', group: 'greek-alt' },
-                { name: '2 Timóteo', abbr: '2Ti', group: 'greek-alt' }, { name: 'Tito', abbr: 'Tit', group: 'greek-alt' }, { name: 'Filémom', abbr: 'Flm', group: 'greek-alt' }, { name: 'Hebreus', abbr: 'He', group: 'greek-alt' }, { name: 'Tiago', abbr: 'Tg', group: 'greek-alt' },
-                { name: '1 Pedro', abbr: '1Pe', group: 'greek-alt' }, { name: '2 Pedro', abbr: '2Pe', group: 'greek-alt' }, { name: '1 João', abbr: '1Jo', group: 'greek-alt' }, { name: '2 João', abbr: '2Jo', group: 'greek-alt' }, { name: '3 João', abbr: '3Jo', group: 'greek-alt' },
-                { name: 'Judas', abbr: 'Ju', group: 'greek-alt' }, { name: 'Apocalipse', abbr: 'Ap', group: 'greek-alt' }
-            ];
-
-            // 2. Criar Contentor da Grelha
             const gridContainer = document.createElement('div');
             gridContainer.className = 'bible-books-grid';
 
-            // Função auxiliar para inserir título de secção
-            const addTitle = (text) => {
-                const title = document.createElement('div');
-                title.className = 'bible-section-title';
-                title.textContent = text;
-                gridContainer.appendChild(title);
+            const addSectionTitle = (text) => {
+                const div = document.createElement('div');
+                div.className = 'bible-section-title';
+                div.textContent = text;
+                gridContainer.appendChild(div);
             };
 
-            addTitle('Escrituras Hebraico-Aramaicas');
-
+            addSectionTitle('Escrituras Hebraico-Aramaicas');
             let greekTitleAdded = false;
 
-            BIBLE_MAP.forEach(book => {
-                // Ao chegar em Mateus, adiciona o título das Escrituras Gregas
-                if (book.name === 'Mateus' && !greekTitleAdded) {
-                    addTitle('Escrituras Gregas Cristãs');
+            BIBLE_DATA.forEach(book => {
+                if (book.id === 40 && !greekTitleAdded) {
+                    addSectionTitle('Escrituras Gregas Cristãs');
                     greekTitleAdded = true;
                 }
 
                 const btn = document.createElement('div');
-                btn.className = `bible-book-btn bg-${book.group}`;
-                btn.textContent = book.abbr;
-                btn.title = book.name; // Mostra nome completo ao passar o rato no PC
-                
-                // Ao clicar, avança para a escolha do capítulo (comportamento original)
-                btn.onclick = () => window.openListCategory('bible-book', book.name, book.name);
-                
+                btn.className = 'bible-book-btn';
+                btn.textContent = book.abrev;
+                btn.title = book.nome;
+
+                // --- CORES PADRÃO BIBLE.HTML ---
+                let bgColor = "#7e6b99"; 
+                const id = book.id;
+                if ((id >= 1 && id <= 5) || id === 44) bgColor = "#3b2e44"; // Roxo Escuro
+                else if ((id >= 6 && id <= 17) || (id >= 45 && id <= 58)) bgColor = "#7e6b99"; // Lilás Médio
+                else if ((id >= 18 && id <= 22) || (id >= 59 && id <= 65)) bgColor = "#4f5b66"; // Azul Ardósia
+                else if ((id >= 23 && id <= 27) || (id >= 40 && id <= 43) || id === 66) bgColor = "#a3552d"; // Ferrugem
+                else if (id >= 28 && id <= 39) bgColor = "#6d4c33"; // Castanho
+
+                btn.style.backgroundColor = bgColor;
+                btn.onclick = () => window.openListCategory('bible-book', book.nome, book.nome);
                 gridContainer.appendChild(btn);
             });
 
-            // Adiciona a grelha ao elemento de lista
             const liWrapper = document.createElement('li');
             liWrapper.className = 'bible-grid-container';
             liWrapper.appendChild(gridContainer);
             ul.appendChild(liWrapper);
         }
 
+        // NIVEL CAPÍTULOS: Respeita BIBLE_DATA
         else if (type === 'bible-book') {
-            ul.innerHTML = '<li class="list-group-header">Escolha o Capítulo</li>';
+            const bookObj = BIBLE_DATA.find(b => b.nome === contextId);
+            ul.innerHTML = `<li class="list-group-header">Capítulos de ${contextId}</li>`;
             const gridLi = document.createElement('li');
             gridLi.className = 'bible-grid-container';
             const grid = document.createElement('div');
             grid.className = 'bible-verses-grid';
 
-            // Criamos 50 capítulos (padrão) ou podes importar dados reais de capítulos
-            for (let i = 1; i <= 50; i++) { 
+            for (let i = 1; i <= bookObj.caps; i++) { 
                 const btn = document.createElement('div');
                 btn.className = 'verse-btn';
                 btn.textContent = i;
@@ -5588,111 +5557,114 @@ window.openListCategory = async (type, title, contextId = null) => {
             ul.appendChild(gridLi);
         }
 
+        // NIVEL VERSÍCULOS: Respeita BIBLE_DATA e marca existentes
         else if (type === 'bible-chapter') {
             const { book, cap } = contextId;
-            ul.innerHTML = `<li class="list-group-header">Versículos de ${book} ${cap}</li>`;
+            const bookObj = BIBLE_DATA.find(b => b.nome === book);
+            const totalVerses = bookObj.versiculos[cap - 1];
+
+            ul.innerHTML = `<li class="list-group-header">${book} ${cap}</li>`;
             const gridLi = document.createElement('li');
             gridLi.className = 'bible-grid-container';
             const grid = document.createElement('div');
             grid.className = 'bible-verses-grid';
 
-            // Criamos 40 versículos (padrão)
-            for (let v = 1; v <= 40; v++) {
+            // Proteção contra o erro 'allEntities is not defined'
+            const safeEntities = (typeof allEntities !== 'undefined' && allEntities['textobiblico']) ? allEntities['textobiblico'] : [];
+
+            for (let v = 1; v <= totalVerses; v++) {
                 const verseName = `${book} ${cap}:${v}`;
+                const exists = safeEntities.some(e => e.nome === verseName);
+                
                 const btn = document.createElement('div');
-                btn.className = 'verse-btn';
+                btn.className = `verse-btn ${exists ? 'exists' : ''}`;
                 btn.textContent = v;
-                // Abre diretamente a 4ª coluna pesquisando por texto
-                btn.onclick = () => window.findAndShowEntity(verseName, 'textobiblico');
+                btn.onclick = () => window.showReferencesPanel(null, verseName, 'textobiblico');
                 grid.appendChild(btn);
             }
             gridLi.appendChild(grid);
             ul.appendChild(gridLi);
         }
 
-        // ------------------------------------------------------------
-        // CASO: ENTIDADES (👤 PERSONAGENS, 📍 LOCAIS, 📅 DATAS, 📖 TEXTOS)
-        // ------------------------------------------------------------
-     else if (['personagem', 'local', 'data', 'textobiblico', 'marcadores'].includes(type)) {
-    ul.innerHTML = '';
-    const config = type === 'marcadores' ? { collection: 'marcadores' } : ENTITY_CONFIG[type];
-    const q = query(collection(db, config.collection), where('userId', '==', auth.currentUser.uid), orderBy('nome'));
-    const snap = await getDocs(q);
-    
-    if (snap.empty) {
-        ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Sem registos.</li>';
-    } else {
-        snap.forEach(docSnap => {
-            const item = docSnap.data();
-            const li = document.createElement('li');
-            li.style.display = 'flex';
-            li.style.justifyContent = 'space-between';
-            
-            // Define o ícone com base no tipo
-            let icon = '🔹';
-            if (type === 'marcadores') icon = '🔖';
-            if (type === 'textobiblico') icon = '📜';
-
-            li.innerHTML = `<span>${icon} ${item.nome}</span> <span style="opacity:0.3">❯</span>`;
-            
-            // CORREÇÃO DO CLIQUE:
-            li.onclick = () => {
-                if (type === 'marcadores') {
-                    // Se for marcador, chama a função correta
-                    window.showMarkerReferencesPanel(docSnap.id, item.nome);
-                } else {
-                    // Para os outros, mantém a pesquisa de texto
-                    window.showReferencesPanel(docSnap.id, item.nome, type);
-                }
-            };
-            ul.appendChild(li);
-        });
-    }
-}
-
-        // ------------------------------------------------------------
-        // CASO: TAGS (🏷️)
-        // ------------------------------------------------------------
+        // ============================================================
+        // RESTANTES CATEGORIAS (Tópicos, Personagens, etc.)
+        // ============================================================
+        else if (type === 'cosmos') {
+            ul.innerHTML = '';
+            const { collection, getDocs, query, where, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            const q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('nome'));
+            const snap = await getDocs(q);
+            if (snap.empty) ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Sem temas.</li>';
+            else snap.forEach(docSnap => {
+                const item = docSnap.data();
+                const li = document.createElement('li');
+                li.innerHTML = `<span>${item.emoji || '🪐'} ${item.nome}</span> <span style="opacity:0.3">❯</span>`;
+                li.onclick = () => window.openListCategory('subcosmos-list', item.nome, docSnap.id);
+                ul.appendChild(li);
+            });
+        }
+        else if (type === 'subcosmos-list') {
+            ul.innerHTML = '';
+            const { collection, getDocs, query, where, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            const q = query(collection(db, 'subcosmos'), where('cosmosId', '==', contextId), where('userId', '==', myUid), orderBy('nome'));
+            const snap = await getDocs(q);
+            if (snap.empty) ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Sem subtemas.</li>';
+            else snap.forEach(docSnap => {
+                const item = docSnap.data();
+                const li = document.createElement('li');
+                li.innerHTML = `<span>${item.emoji || '🔹'} ${item.nome}</span> <span style="opacity:0.3">❯</span>`;
+                li.onclick = () => window.showReferencesPanel(docSnap.id, item.nome, 'subcosmos');
+                ul.appendChild(li);
+            });
+        }
+        else if (type === 'destaque') {
+            ul.innerHTML = '';
+            DEFAULT_HIGHLIGHTS.forEach(color => {
+                const displayName = globalHighlightsCache[color.code] || color.name;
+                const li = document.createElement('li');
+                li.innerHTML = `<span style="display:inline-block; width:18px; height:18px; background:${color.code}; border-radius:50%; margin-right:12px; border:1px solid rgba(128,128,128,0.3);"></span><span>${displayName}</span>`;
+                li.onclick = () => window.showHighlightRef(color.code, displayName);
+                ul.appendChild(li);
+            });
+        }
+        else if (['personagem', 'local', 'data', 'textobiblico', 'marcadores'].includes(type)) {
+            ul.innerHTML = '';
+            const collName = (type === 'marcadores') ? 'marcadores' : ENTITY_CONFIG[type].collection;
+            const { collection, getDocs, query, where, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            const q = query(collection(db, collName), where('userId', '==', myUid), orderBy('nome'));
+            const snap = await getDocs(q);
+            if (snap.empty) ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Sem registos.</li>';
+            else snap.forEach(docSnap => {
+                const item = docSnap.data();
+                const li = document.createElement('li');
+                li.innerHTML = `<span>${type==='marcadores'?'🔖':'🔹'} ${item.nome}</span> <span style="opacity:0.3">❯</span>`;
+                li.onclick = () => type === 'marcadores' ? window.showMarkerReferencesPanel(docSnap.id, item.nome) : window.showReferencesPanel(docSnap.id, item.nome, type);
+                ul.appendChild(li);
+            });
+        }
         else if (type === 'tag') {
             ul.innerHTML = '';
+            const { collection, getDocs, query, where, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
             const q = query(collection(db, 'tags'), where('userId', '==', myUid), orderBy('nome'));
             const snap = await getDocs(q);
-            
-            if (snap.empty) {
-                ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Sem tags.</li>';
-            } else {
-                snap.forEach(docSnap => {
-                    const tag = docSnap.data();
-                    const li = document.createElement('li');
-                    li.style.display = 'flex';
-                    li.style.justifyContent = 'space-between';
-                    li.innerHTML = `<span>#${tag.nome}</span> <span style="opacity:0.3">❯</span>`;
-                    li.onclick = () => window.showReferencesPanel(tag.nome, tag.nome, 'tag');
-                    ul.appendChild(li);
-                });
-            }
+            if (snap.empty) ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Sem tags.</li>';
+            else snap.forEach(docSnap => {
+                const li = document.createElement('li');
+                li.innerHTML = `<span>🏷️ #${docSnap.data().nome}</span> <span style="opacity:0.3">❯</span>`;
+                li.onclick = () => window.showReferencesPanel(docSnap.data().nome, docSnap.data().nome, 'tag');
+                ul.appendChild(li);
+            });
         }
-
-        // ------------------------------------------------------------
-        // CASO: TÓPICOS (📑)
-        // ------------------------------------------------------------
-   if (type === 'topico') {
+        else if (type === 'topico') {
             ul.innerHTML = '';
-            const sortedIds = Object.keys(globalTopicsCache).sort((a,b) => 
-                globalTopicsCache[a].localeCompare(globalTopicsCache[b])
-            );
-            if (sortedIds.length === 0) {
-                ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Sem tópicos.</li>';
-            } else {
-                sortedIds.forEach(tId => {
-                    const tName = globalTopicsCache[tId];
-                    const li = document.createElement('li');
-                    li.style.borderLeft = '4px solid var(--accent-color)';
-                    li.innerHTML = `<strong>${tName}</strong>`;
-                    li.onclick = () => window.showTopicRef(tId, tName, 'topico');
-                    ul.appendChild(li);
-                });
-            }
+            const sortedIds = Object.keys(globalTopicsCache).sort((a,b) => globalTopicsCache[a].localeCompare(globalTopicsCache[b]));
+            if (sortedIds.length === 0) ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Sem tópicos.</li>';
+            else sortedIds.forEach(tId => {
+                const li = document.createElement('li');
+                li.innerHTML = `<strong>📑 ${globalTopicsCache[tId]}</strong>`;
+                li.onclick = () => window.showTopicRef(tId, globalTopicsCache[tId], 'topico');
+                ul.appendChild(li);
+            });
         }
 
     } catch (error) {
@@ -6456,7 +6428,7 @@ window.renderBibleTextInPanel = async function(fullReference) {
         if (foundCount === 0) {
             container.innerHTML = `
                 <div style="text-align:center; padding:30px; color:#888;">
-                    <div style="font-size:2em; margin-bottom:10px;">📖</div>
+                    <div style="font-size:2em; margin-bottom:10px;">📜</div>
                     Texto não encontrado na biblioteca.<br>
                     <small>Tente sincronizar a base de dados.</small>
                 </div>`;
@@ -8494,41 +8466,43 @@ function generateBibleId(name) {
 
 // A FUNÇÃO QUE ESTAVA EM FALTA
 async function fetchPublicBibleText(verseName) {
-    // 1. Verifica cache local
+    // 1. Verifica cache de texto rápido
     if (bibleTextCache[verseName]) return bibleTextCache[verseName];
 
+    // 2. Separar Nome do Livro, Capítulo e Versículo (ex: "Êxodo 1:1")
+    const match = verseName.match(/^(.+?)\s+(\d+):(\d+)$/);
+    if (!match) return null;
+
+    const bookName = match[1].trim(); 
+    const chapter = match[2];         
+    const verse = match[3];           
+
+    // 3. Obter nome do ficheiro (ex: "exodo")
+    const filename = getBibleFilename(bookName);
+
     try {
-        const { collection, query, where, getDocs, doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        
-        // --- TENTATIVA A: Busca Exata pelo Nome ---
-        // Ex: Procura documento onde nome == "João 3:16"
-        const q = query(collection(db, 'bible_verses_public'), where('nome', '==', verseName));
-        const snap = await getDocs(q);
-        
-        if (!snap.empty) {
-            const text = snap.docs[0].data().texto;
-            bibleTextCache[verseName] = text; // Guarda na cache
-            return text;
+        // 4. Carregar o ficheiro JSON se não estiver em memória
+        if (!localBibleCache[filename]) {
+            const response = await fetch(`./js/bible/${filename}.json`);
+            if (!response.ok) throw new Error(`Ficheiro ${filename}.json não encontrado`);
+            localBibleCache[filename] = await response.json();
         }
 
-        // --- TENTATIVA B: Busca pelo ID Gerado ---
-        // Ex: Procura documento com ID "joao_3_16"
-        const generatedId = generateBibleId(verseName);
-        const docRef = doc(db, 'bible_verses_public', generatedId);
-        const docSnap = await getDoc(docRef);
-
-        if (docSnap.exists()) {
-            const text = docSnap.data().texto;
-            bibleTextCache[verseName] = text;
+        // 5. Aceder aos dados: [Ficheiro][Chave do Livro][Capítulo][Versículo]
+        const bookData = localBibleCache[filename][bookName];
+        if (bookData && bookData[chapter] && bookData[chapter][verse]) {
+            const text = bookData[chapter][verse];
+            bibleTextCache[verseName] = text; // Guarda para cliques futuros
             return text;
         }
-
-        console.warn(`❌ Texto não encontrado na base de dados: ${verseName}`);
+        
+        console.warn(`Versículo não encontrado no JSON: ${verseName}`);
+        return null;
 
     } catch (e) {
-        console.error("🔥 Erro na busca bíblica:", e);
+        console.error("Erro ao carregar bíblia local:", e);
+        return null;
     }
-    return null; // Retorna null se falhar
 }
 
 // Expõe a função globalmente para garantir que o renderBibleTextInPanel a encontra
@@ -8590,6 +8564,12 @@ window.expandVerseReference = function(fullRef) {
     return expandedVerses.length > 0 ? expandedVerses : [fullRef];
 };
 
+function getBibleFilename(bookName) {
+    return bookName.toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Remove acentos
+        .trim()
+        .replace(/\s+/g, "_"); // Troca espaços por _ (ex: "1 João" -> "1_joao")
+}
 
 </script>
 </body>
