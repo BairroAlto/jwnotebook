@@ -10709,6 +10709,23 @@ div[id^="subs-"] div[style*="font-style:italic"] {
     border-bottom: none;
 }
 
+/* Garante que o conteúdo do parágrafo ocupa o espaço todo e tem scroll */
+#ref-content-book-text {
+    height: 100%;
+    scrollbar-width: thin;
+    scrollbar-color: var(--text-muted-color) var(--panel-color);
+}
+
+.book-text-box {
+    background: rgba(74, 144, 226, 0.08);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 15px;
+    line-height: 1.6;
+    color: var(--text-color);
+    font-size: 1.05em;
+}
+
 </style>
 
 
@@ -11043,7 +11060,6 @@ div[id^="subs-"] div[style*="font-style:italic"] {
                 <button id="references-panel-close-btn" title="Fechar">×</button>
             </div>
             
-            <p id="references-panel-description"></p>
             
             <hr class="references-separator">
             <div id="references-toolbar">
@@ -11052,6 +11068,7 @@ div[id^="subs-"] div[style*="font-style:italic"] {
                 <button id="references-search-btn" title="Pesquisar na JW">🔍</button>
                  <button id="references-anchor-btn" title="Anexar Âncora" style="display: none;">⚓</button>
                 <button id="references-edit-btn" title="Editar">✏️</button>
+                <button id="references-target-btn" title="Ver Parágrafo Original" style="display:none;">🎯</button>
                 <button id="references-bookmark-btn" title="Marcadores" style="display: none;">🔖</button> 
                 <button id="references-toggle-btn" title="Expandir/Recolher">↕️</button>
             </div>
@@ -11063,6 +11080,10 @@ div[id^="subs-"] div[style*="font-style:italic"] {
                 <button data-ref-tab="dossie">📼 Dossié</button>
                 <button data-ref-tab="references">❝ Cita</button>
             </div>
+
+             <!-- O CONTEÚDO DO PARÁGRAFO APARECE AQUI AGORA -->
+              <div id="ref-content-book-text" class="ref-tab-content" style="display: none; flex-grow: 1; overflow-y: auto; padding: 15px;"></div>
+    <p id="references-panel-description" style="display:none;"></p>
 
             <!-- ABA 1: PUZZLE (QUADRO) -->
             <div id="ref-content-puzzle" class="ref-tab-content active" style="flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; padding: 0 10px;">
@@ -18945,32 +18966,45 @@ async function showTopicReferencesPanel(id, name, description, type) {
         name: name 
     };
 
+    // RESET DE SEGURANÇA: Se não for livro, esconde o botão 🎯 e limpa texto
+    document.getElementById('references-target-btn').style.display = 'none';
+    document.getElementById('ref-content-book-text').style.display = 'none';
+
     // 3. Configuração Visual da 4ª Coluna
     document.getElementById('references-panel-description').style.display = 'block';
     document.getElementById('references-toolbar').style.display = 'flex';
     document.querySelectorAll('.references-separator').forEach(el => el.style.display = 'block');
     
-    // Mostra o painel lateral
+    // 1. Mostrar o painel lateral
     notebookContainer.classList.add('references-panel-visible');
     
-    // Define o Título do painel (ex: Tópico: Santificação)
-referencesPanelTitle.textContent = `Citações: ${name}`;
-    document.getElementById('references-panel-description').textContent = description || 'Sem descrição definida.';
+    // 2. Mostrar o botão 🎯 (Exclusivo para este modo)
+    document.getElementById('references-target-btn').style.display = 'block';
 
-    // 4. Sincronizar Abas: Abre sempre na aba "Puzzle" (Quadro)
-    document.querySelectorAll('#ref-tabs button').forEach(b => b.classList.remove('active'));
-    const puzzleTabBtn = document.querySelector('[data-ref-tab="puzzle"]');
-    if (puzzleTabBtn) puzzleTabBtn.classList.add('active');
+    // 3. Definir o título do painel
+    document.getElementById('references-panel-title').innerHTML = `🎯 ${fullName}`;
 
-    document.getElementById('ref-content-puzzle').style.display = 'flex';
-    document.getElementById('ref-content-references').style.display = 'none';
+    // 4. Injetar o texto no contentor de scroll (ref-content-book-text)
+    document.getElementById('ref-content-book-text').innerHTML = `
+        <div class="book-text-box">
+            <small style="color: var(--accent-color); font-weight: bold;">CONTEÚDO DO PARÁGRAFO:</small>
+            <p style="margin-top:10px; font-style: normal;">"${text}"</p>
+        </div>
+    `;
 
-    // 5. Carregar os dados do Quadro (Puzzle) salvos para este tópico
-    loadPuzzleData(id, type || 'topico');
-    
-    // 6. Pesquisar e listar as notas que usam este tópico (para a aba Referências)
-    // Esta função analisa o campo 'topicosSelecionados' de todas as notas
-    renderTopicResultsList(id, type || 'topico'); 
+    // 5. Carregar dados das outras abas em background
+    loadPuzzleData(activeReferenceEntity.id, 'livro_ref');
+    renderBookCodexCitations(bookId, chapterNum, paragraphNum);
+
+    // 6. DECISÃO FINAL DE VISIBILIDADE (O que abre predefinidamente)
+    if (openDirectToTarget) {
+        // Se vieste das FONTES (⚡), abre no modo Texto 🎯
+        window.showParagraphContentMode(); 
+    } else {
+        // Se vieste da BIBLIOTECA, abre no modo Puzzle 🧩
+        document.getElementById('ref-content-book-text').style.display = 'none';
+        switchRefTab('puzzle');
+    }
 }
 
 // Função Auxiliar para preencher a lista de referências (Aba 2)
@@ -20865,6 +20899,7 @@ async function reconstructNavigationPath(noteId) {
 // 1. Mapear tipos para nomes de coleções no Firebase
 function getCollectionFromType(type) {
     if (ENTITY_CONFIG[type]) return ENTITY_CONFIG[type].collection;
+      if (type === 'livro_ref') return 'livros';
     
     // Casos especiais
     if (type === 'topico') return 'topicos';
@@ -21241,174 +21276,72 @@ function resetReferencesPanelUI() {
 
 
 async function showReferencesPanel(entityId, entityName, entityType, anexoId = null) {
-    // --- CORREÇÃO: Forçar altura e reset no Mobile ao abrir ---
-    if (window.innerWidth <= 768) {
-        const p = document.getElementById('references-panel');
-        if (p) {
-            // Remove qualquer estilo de arrasto anterior
-            p.classList.remove('is-dragging');
-            p.style.transition = "transform 0.3s ease, height 0.3s ease";
-            
-            // Define a altura padrão se estiver muito pequena ou fechada
-            if (!p.style.height || parseInt(p.style.height) < 100) {
-                p.style.height = "60vh"; 
-            }
-            // Força o transform para garantir que sobe
-            p.style.transform = "translateY(0)";
-        }
-        
-        // Fecha o teclado se estiver aberto
-        if (document.activeElement && typeof document.activeElement.blur === 'function') {
-            document.activeElement.blur();
-        }
-    }
-    // 2. Gravar estado anterior e limpar UI
+    // --- 1. RESET E SEGURANÇA ---
     await forceSaveAndClosePuzzleMode();
     resetReferencesPanelUI(); 
 
-    // --- MODO AQUÁRIO ---
+    const targetBtn = document.getElementById('references-target-btn');
+    const bookmarkBtn = document.getElementById('references-bookmark-btn');
+    const bookTextContainer = document.getElementById('ref-content-book-text');
+
+    // ESCONDER o 🎯 (exclusivo de Livros)
+    if (targetBtn) targetBtn.style.display = 'none';
+    if (bookTextContainer) bookTextContainer.style.display = 'none';
+
+    // --- 2. MODO AQUÁRIO ---
     const aquariumEnv = document.getElementById('aquarium-environment');
     const refPanel = document.getElementById('references-panel');
 
     if (aquariumEnv && aquariumEnv.style.display !== 'none') {
         refPanel.classList.add('aquarium-overlay-mode');
-        aquariumEnv.appendChild(refPanel);
-
+        if (refPanel.parentElement !== aquariumEnv) aquariumEnv.appendChild(refPanel);
         aquariumEnv.classList.add('right-open');
-
-
     } else {
         refPanel.classList.remove('aquarium-overlay-mode');
         const mainContainer = document.querySelector('.notebook-container');
-        if (mainContainer && refPanel.parentElement !== mainContainer) {
-            mainContainer.appendChild(refPanel);
-        }
+        if (mainContainer && refPanel.parentElement !== mainContainer) mainContainer.appendChild(refPanel);
     }
 
-    // 3. Definir Entidade Ativa
-    activeReferenceEntity = { 
-        id: entityId || entityName, 
-        type: entityType, 
-        name: entityName 
-    };
-
-    // 4. Mostrar Painel
+    // --- 3. CONFIGURAÇÃO DE ESTADO ---
+    activeReferenceEntity = { id: entityId || entityName, type: entityType, name: entityName };
     notebookContainer.classList.add('references-panel-visible');
 
-    // 5. Reset de Abas (Abre sempre no Puzzle)
-    document.querySelectorAll('#ref-tabs button').forEach(b => b.classList.remove('active'));
-    const puzzleTab = document.querySelector('[data-ref-tab="puzzle"]');
-    if (puzzleTab) puzzleTab.classList.add('active');
-
-    const contentPuzzle = document.getElementById('ref-content-puzzle');
-    const contentRefs = document.getElementById('ref-content-references');
-    
-    if (contentPuzzle) contentPuzzle.style.display = 'flex';
-    if (contentRefs) contentRefs.style.display = 'none';
-
-    // 6. CONFIGURAR TÍTULO E DESCRIÇÃO
     const titleEl = document.getElementById('references-panel-title');
-    const descElement = document.getElementById('references-panel-description');
-    
-    // Define título inicial padrão
     if (titleEl) titleEl.textContent = `Referências: ${entityName}`;
-    
-    // --- LÓGICA DO ÍCONE DE MARCADOR (🔖) ---
-    // Se for texto bíblico, verifica se tem marcadores para adicionar o ícone
-    if (entityType === 'textobiblico') {
-        // Tenta obter ID real se não tiver
-        let realId = entityId;
-        if (!realId) {
-            // Se veio sem ID (ex: clique no texto da nota), tenta encontrar no cache ou BD
-            const cached = allEntities['textobiblico']?.find(e => e.nome === entityName);
-            realId = cached ? cached.id : null;
-        }
 
-        if (realId) {
-            // Importação dinâmica para garantir acesso
-            const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-            
-            // Busca o documento para ver os marcadores
-            try {
-                const docRef = doc(db, 'textosbiblicos', realId);
-                const snap = await getDoc(docRef);
-                
-                if (snap.exists()) {
-                    const data = snap.data();
-                    const marcadores = data.marcadoresAssociados || {};
-                    const hasBookmarks = Object.keys(marcadores).length > 0;
-                    
-                    if (hasBookmarks) {
-                        titleEl.textContent = `Referências: 🔖 ${entityName}`;
-                    }
-                    
-                    // Atualiza o ID global caso estivesse em falta
-                    activeReferenceEntity.id = realId;
-                }
-            } catch (e) {
-                console.warn("Erro ao verificar marcadores:", e);
-            }
-        }
-    }
-
-    // 7. CONFIGURAR BOTÕES
+    // --- 4. GESTÃO DOS BOTÕES (🔖 vs 🎯) ---
     const editBtn = document.getElementById('references-edit-btn');
-    const anchorBtn = document.getElementById('references-anchor-btn'); 
     const wolBtn = document.getElementById('references-wol-btn');
-    const bookmarkBtn = document.getElementById('references-bookmark-btn');
-    
-    if (editBtn) editBtn.style.display = 'block';
-    if (wolBtn) wolBtn.style.display = 'none';
-    if (bookmarkBtn) bookmarkBtn.style.display = 'none';
 
-    const noAnchorTypes = ['textobiblico', 'topico', 'destaque', 'marcadores', 'tag'];
-
-    if (anchorBtn) {
-        if (noAnchorTypes.includes(entityType)) {
-            anchorBtn.style.display = 'none'; 
-        } else {
-            anchorBtn.style.display = 'block'; 
-        }
-    }
-
-    // 8. ROTEAMENTO DE CONTEÚDO
-    if (entityType === 'topico' || entityType === 'textobiblico') {
-        if (entityType === 'textobiblico') {
-            if (editBtn) editBtn.style.display = 'none'; 
-            if (wolBtn) wolBtn.style.display = 'block';
-            if (bookmarkBtn) bookmarkBtn.style.display = 'block';
-            
-            if (descElement) {
-                descElement.innerHTML = `<em>A consultar biblioteca...</em>`;
-                const texto = await fetchBibleText(entityName);
-                descElement.innerHTML = texto ? `<div style="color:var(--text-color); font-size:0.95em;">"${texto}"</div>` : `<em>Texto não disponível.</em>`;
-            }
+    if (entityType === 'textobiblico') {
+        // MOSTRA o 🔖 apenas para a Bíblia
+        if (bookmarkBtn) bookmarkBtn.style.display = 'block'; 
+        if (editBtn) editBtn.style.display = 'none'; 
+        if (wolBtn) wolBtn.style.display = 'block';
+        
+        const descElement = document.getElementById('references-panel-description');
+        if (descElement) {
+            descElement.innerHTML = `<em>A consultar biblioteca...</em>`;
+            const texto = await fetchBibleText(entityName);
+            descElement.innerHTML = texto ? `<div style="color:var(--text-color); font-size:0.95em;">"${texto}"</div>` : `<em>Texto não disponível.</em>`;
         }
         renderTopicResultsList(entityId, entityType); 
     } 
     else {
-        if (entityType === 'tag') {
-            showTagReferencesPanel(entityName); 
-            return;
-        }
-
-        renderUniversalTextSearch(entityName);
+        // ESCONDE o 🔖 para Personagens, Locais, etc.
+        if (bookmarkBtn) bookmarkBtn.style.display = 'none';
+        if (editBtn) editBtn.style.display = 'block';
+        if (wolBtn) wolBtn.style.display = 'none';
         
+        renderUniversalTextSearch(entityName);
+        const descElement = document.getElementById('references-panel-description');
         if (descElement) {
             try {
                 const coll = getCollectionFromType(entityType);
-                if (coll && entityId) {
-                    const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-                    const docSnap = await getDoc(doc(db, coll, entityId));
-                    if (docSnap.exists()) {
-                        descElement.textContent = docSnap.data().descricao || 'Sem descrição definida.';
-                    } else {
-                        descElement.textContent = 'Sem descrição.';
-                    }
-                }
-            } catch(e) { 
-                descElement.textContent = 'Sem descrição.'; 
-            }
+                const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+                const docSnap = await getDoc(doc(db, coll, entityId));
+                descElement.textContent = docSnap.exists() ? (docSnap.data().descricao || 'Sem descrição.') : 'Sem descrição.';
+            } catch(e) { descElement.textContent = 'Sem descrição.'; }
         }
     }
 
@@ -21461,45 +21394,34 @@ async function hideReferencesPanel() {
     const mainContainer = document.querySelector('.notebook-container');
     const aquariumEnv = document.getElementById('aquarium-environment'); 
 
-    // --- 1. AÇÃO VISUAL IMEDIATA (O SEGREDO DA VELOCIDADE) ---
-    // Remove a classe que mantém o painel aberto. O CSS vai tratar de encolher.
     if (mainContainer) mainContainer.classList.remove('references-panel-visible');
     
-    // Se estiver no modo Aquário, remove também imediatamente
     if (refPanel && refPanel.classList.contains('aquarium-overlay-mode')) {
         refPanel.classList.remove('aquarium-overlay-mode');
         if (aquariumEnv) aquariumEnv.classList.remove('right-open');
-        
-        // Devolve à estrutura principal
-        if (mainContainer && !mainContainer.contains(refPanel)) {
-            mainContainer.appendChild(refPanel);
-        }
+        if (mainContainer && !mainContainer.contains(refPanel)) mainContainer.appendChild(refPanel);
     }
 
-    // --- 2. RESET VISUAL ---
-    // Limpa seleções e variáveis de estado
+    // RESET DE BOTÕES
+    const targetBtn = document.getElementById('references-target-btn');
+    const bookmarkBtn = document.getElementById('references-bookmark-btn');
+    if (targetBtn) targetBtn.style.display = 'none';
+    if (bookmarkBtn) bookmarkBtn.style.display = 'none';
+
+    const bookTextContainer = document.getElementById('ref-content-book-text');
+    if (bookTextContainer) {
+        bookTextContainer.style.display = 'none';
+        bookTextContainer.innerHTML = '';
+    }
+
     window.isDossieEditMode = false;
     window.activeMicaId = null; 
     currentlyOpenVerseName = null;
-    
-    document.querySelectorAll('.bible-grid-btn.active-verse').forEach(btn => {
-        btn.classList.remove('active-verse');
-    });
 
-    const descriptionElement = document.getElementById('references-panel-description');
-    if (descriptionElement) descriptionElement.textContent = '';
-
-    // --- 3. GRAVAÇÃO EM BACKGROUND (Não bloqueia o fecho) ---
-    // Removemos o 'await' para não travar a animação
     if (typeof forceSaveAndClosePuzzleMode === 'function') {
-        forceSaveAndClosePuzzleMode().catch(e => console.warn("Erro ao gravar no fecho:", e));
+        forceSaveAndClosePuzzleMode().catch(e => {});
     }
 
-    if (typeof window.renderDossie === 'function') {
-        window.renderDossie();
-    }
-
-    // Ajuste de altura para Mobile (Reset do arraste)
     if (window.innerWidth <= 768 && refPanel) {
         setTimeout(() => { refPanel.style.height = "60vh"; }, 300);
     }
@@ -32425,7 +32347,7 @@ async function renderListCategoryItems(categoryId, filterText = '') {
         // ==========================================
         // 📔 LIVROS (NAVEGAÇÃO LOCAL COM MEMÓRIA)
         // ==========================================
-        if (origin === 'livros') {
+     if (origin === 'livros') {
             updateAddButtonState(false); 
             
             // NÍVEL 1: LISTA DE LIVROS (Raiz)
@@ -32436,11 +32358,23 @@ async function renderListCategoryItems(categoryId, filterText = '') {
                 JW_BOOKS_CATALOG.forEach(book => {
                     const li = document.createElement('li');
                     li.className = 'list-item';
-                    li.innerHTML = `<span>📘 ${book.name}</span><span style="font-size:0.8em; color:#888;">${book.id}</span>`;
+                    
+                    // 1. Remove o ícone automático do CSS para não duplicar
+                    li.setAttribute('data-type', 'none'); 
+
+                    // 2. Garante que a linha cresce se o título for muito longo no telemóvel
+                    li.style.height = "auto";
+                    li.style.padding = "12px 15px";
+
+                    // 3. HTML numa linha única: Título + ID entre parênteses
+                    li.innerHTML = `
+                        <span style="white-space: normal; line-height: 1.4; display: block; width: 100%;">
+                            📔 ${book.name} <span style="color: var(--text-muted-color); font-size: 0.85em; font-weight: normal;">(${book.id})</span>
+                        </span>
+                    `;
                     
                     li.onclick = () => {
                         navigateWithUnsavedCheck(() => {
-                            // Entra no livro
                             navigationStack.push({ 
                                 id: book.id, 
                                 name: book.name, 
@@ -32455,127 +32389,134 @@ async function renderListCategoryItems(categoryId, filterText = '') {
             }
 
             // NÍVEL 2: LISTA DE CAPÍTULOS (Dentro do Livro)
-            else if (lastNav.type === 'book-toc') {
-                middlePanelTitle.textContent = lastNav.name;
-                listElement.innerHTML = '<div class="panel-loader"><div class="spinner"></div><span>A abrir livro...</span></div>';
+           else if (lastNav.type === 'book-toc') {
+    middlePanelTitle.textContent = lastNav.name;
+    listElement.innerHTML = '<div class="panel-loader"><div class="spinner"></div><span>A abrir livro...</span></div>';
 
-                const bookData = await fetchLocalBook(lastNav.id);
+    const bookData = await fetchLocalBook(lastNav.id);
 
-                listElement.innerHTML = '';
-                if (!bookData || !bookData.capitulos) {
-                    listElement.innerHTML = '<li style="padding:20px; color:red;">Livro não encontrado ou JSON inválido.</li>';
-                    return;
-                }
+    listElement.innerHTML = '';
+    if (!bookData || !bookData.capitulos) {
+        listElement.innerHTML = '<li style="padding:20px; color:red;">Livro não encontrado ou JSON inválido.</li>';
+        return;
+    }
 
-                // Lista os capítulos
-                bookData.capitulos.forEach((cap, index) => {
-                    const li = document.createElement('li');
-                    li.className = 'list-item';
-                    li.innerHTML = `
-                        <div style="display:flex; flex-direction:column;">
-                            <span style="font-weight:bold;">CAPÍTULO ${cap.numero}</span>
-                            <small style="color:#aaa;">${cap.titulo}</small>
-                        </div>
-                    `;
-                    
-                    li.onclick = () => {
-                        navigateWithUnsavedCheck(() => {
-                            // Entra no capítulo
-                            navigationStack.push({ 
-                                id: `${lastNav.id}_${index}`, 
-                                name: `Cap. ${cap.numero}`, 
-                                type: 'book-chapter',
-                                bookId: lastNav.id,
-                                chapterIndex: index
-                            });
-                            updateNavigationView(true);
-                        });
-                    };
-                    listElement.appendChild(li);
+    // Lista os capítulos
+    bookData.capitulos.forEach((cap, index) => {
+        const li = document.createElement('li');
+        li.className = 'list-item';
+        li.innerHTML = `
+            <div style="display:flex; flex-direction:column;">
+                <!-- ALTERAÇÃO AQUI: De cap.numero para cap.capitulo -->
+                <span style="font-weight:bold;">CAPÍTULO ${cap.capitulo}</span>
+                <small style="color:#aaa;">${cap.titulo}</small>
+            </div>
+        `;
+        
+        li.onclick = () => {
+            navigateWithUnsavedCheck(() => {
+                navigationStack.push({ 
+                    id: `${lastNav.id}_${index}`, 
+                    name: `Cap. ${cap.capitulo}`, // TAMBÉM ALTERAR AQUI
+                    type: 'book-chapter',
+                    bookId: lastNav.id,
+                    chapterIndex: index
                 });
-                return;
-            }
+                updateNavigationView(true);
+            });
+        };
+        listElement.appendChild(li);
+    });
+    return;
+}
 
             // NÍVEL 3: CONTEÚDO DO CAPÍTULO (Leitura)
-            else if (lastNav.type === 'book-chapter') {
-                // Recupera o título completo do capítulo para o cabeçalho
-                const bookData = await fetchLocalBook(lastNav.bookId);
-                const chapter = bookData.capitulos[lastNav.chapterIndex];
+else if (lastNav.type === 'book-chapter') {
+    const bookData = await fetchLocalBook(lastNav.bookId);
+    // No seu JSON, a lista chama-se capitulos
+    const chapter = bookData.capitulos[lastNav.chapterIndex];
+    
+    // CORREÇÃO: Usar chapter.capitulo em vez de chapter.numero
+    middlePanelTitle.textContent = `Cap. ${chapter.capitulo}`; 
+    listElement.innerHTML = '';
+    
+    const headerDiv = document.createElement('div');
+    headerDiv.style.cssText = "padding: 15px; border-bottom: 2px solid var(--accent-color); margin-bottom: 10px; background: rgba(255,255,255,0.02);";
+    headerDiv.innerHTML = `<h2 style="margin:0; font-size:1.2em; color:var(--text-color);">${chapter.titulo}</h2>`;
+    listElement.appendChild(headerDiv);
+
+if (chapter.conteudo && Array.isArray(chapter.conteudo)) {
+        chapter.conteudo.forEach((block, index) => {
+            const div = document.createElement('div');
+            div.style.cssText = "padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; transition: background 0.2s;";
+            
+            let color = "var(--text-color)";
+            let weight = "normal";
+            let icon = "";
+            let bgColor = "transparent";
+            let refBadge = "";
+            let displayText = block.texto;
+
+            // --- LÓGICA POR TIPO DE BLOCO ---
+
+            if (block.tipo === 'pergunta') {
+                color = "#e67e22"; // Laranja para o texto da pergunta
+                icon = "❓ ";
+                bgColor = "rgba(230, 126, 34, 0.05)";
                 
-                middlePanelTitle.textContent = `Cap. ${chapter.numero}`;
-                listElement.innerHTML = '';
-                
-                // Cabeçalho do Texto
-                const headerDiv = document.createElement('div');
-                headerDiv.style.cssText = "padding: 15px; border-bottom: 2px solid var(--accent-color); margin-bottom: 10px; background: rgba(255,255,255,0.02);";
-                headerDiv.innerHTML = `<h2 style="margin:0; font-size:1.2em; color:var(--text-color);">${chapter.titulo}</h2>`;
-                listElement.appendChild(headerDiv);
-
-                // Renderiza os parágrafos
-                if (chapter.conteudo && Array.isArray(chapter.conteudo)) {
-                    chapter.conteudo.forEach(block => {
-                        const div = document.createElement('div');
-                        div.style.cssText = "padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; transition: background 0.2s;";
-                        
-                        // Estilo consoante o tipo (Pergunta, Parágrafo, Subtema)
-                        let color = "var(--text-color)";
-                        let weight = "normal";
-                        let icon = "";
-                        let bgColor = "transparent";
-                        
-                        if (block.tipo === 'pergunta') {
-                            color = "#e67e22"; // Laranja
-                            icon = "❓ ";
-                            bgColor = "rgba(230, 126, 34, 0.05)";
-                        } else if (block.tipo === 'subtema') {
-                            weight = "bold";
-                            div.style.marginTop = "15px";
-                            div.style.borderLeft = "3px solid var(--text-muted-color)";
-                        } else if (block.tipo === 'rodape') {
-                            color = "#888";
-                            div.style.fontSize = "0.85em";
-                            div.style.fontStyle = "italic";
-                        }
-
-                        div.style.backgroundColor = bgColor;
-
-                        // Mostra número da página se existir e tiver mudado
-                        let pageBadge = "";
-                        if (block.pagina) {
-                            pageBadge = `<span style="float:right; font-size:0.7em; color:#555; border:1px solid #444; padding:1px 4px; border-radius:3px;">p.${block.pagina}</span>`;
-                        }
-
-                        div.innerHTML = `
-                            <div style="color:${color}; font-weight:${weight}; line-height:1.5;">
-                                ${pageBadge} ${icon}${block.texto}
-                            </div>
-                        `;
-
-                        // Clique: Copia para o Editor (Opcional) ou apenas seleciona
-                        div.onclick = () => {
-                            listElement.querySelectorAll('div').forEach(el => el.style.backgroundColor = "");
-                            div.style.backgroundColor = "rgba(74, 144, 226, 0.1)";
-                        };
-
-                        listElement.appendChild(div);
-                    });
-
-                    // >>> LÓGICA DE RESTAURO DE SCROLL <<<
-                   if (window.shouldRestoreBookScroll) {
-            // Pequeno delay para o browser desenhar o texto
-            setTimeout(() => {
-                const scrollContainer = document.getElementById('middle-views-container');
-                if (scrollContainer) {
-                    // Aplica o valor guardado ao contentor correto
-                    scrollContainer.scrollTop = booksStateMemory.scrollTop;
-                    console.log("📍 Scroll Restaurado para:", booksStateMemory.scrollTop);
+                // Formatação da Pergunta: ❓ [número em rosa/roxo] Texto
+                const numRef = block.numero_ref ? `<span style="color: #d3869b; font-size: 0.85em; margin-right: 5px; font-weight: bold;">${block.numero_ref}</span>` : "";
+                displayText = numRef + block.texto;
+            } 
+            else if (block.tipo === 'subtema') {
+                weight = "bold";
+                color = "#4a90e2"; // Azul vibrante para Subtítulos
+                div.style.marginTop = "15px";
+                div.style.borderLeft = "4px solid #4a90e2";
+                div.style.backgroundColor = "rgba(74, 144, 226, 0.05)";
+                // Subtemas não levam badge "pr"
+            } 
+            else if (block.tipo === 'paragrafo') {
+                // Apenas parágrafos ganham o badge "pr" à direita
+                if (block.numero_ref) {
+                    refBadge = `<span style="float:right; font-size:0.7em; color:var(--accent-color); border:1px solid var(--border-color); padding:1px 4px; border-radius:3px; margin-left:8px; opacity: 0.8;">pr ${block.numero_ref}</span>`;
                 }
-                window.shouldRestoreBookScroll = false; // Desliga a flag
-            }, 50);
-                    }
-                }
-                return;
+            } 
+            else if (block.tipo === 'rodape') {
+                color = "#888";
+                div.style.fontSize = "0.85em";
+                div.style.fontStyle = "italic";
             }
+
+            div.style.backgroundColor = bgColor;
+
+            div.innerHTML = `
+                <div style="color:${color}; font-weight:${weight}; line-height:1.5;">
+                    ${refBadge} ${icon}${displayText}
+                </div>
+            `;
+
+            div.onclick = () => {
+                listElement.querySelectorAll('div').forEach(el => el.style.backgroundColor = "");
+                div.style.backgroundColor = "rgba(74, 144, 226, 0.15)";
+                
+                if (block.numero_ref) {
+                    const primaryRef = block.numero_ref.split(',')[0].trim();
+                    openBookParagraphPanel(
+                        lastNav.bookId, 
+                        bookData.titulo, 
+                        chapter.capitulo, 
+                        primaryRef, 
+                        block.texto, 
+                        false 
+                    );
+                }
+            };
+            listElement.appendChild(div);
+        });
+    }
+    return;
+}
         }
 
         // =========================================================
@@ -39480,11 +39421,16 @@ function generateNoteSources() {
                     if (c.tempo) shortLabel += ` [${c.tempo}]`;
 
                     itemsHTML += `
-                        <div class="source-codex-item" title="${c.codiceshow || ''}">
-                            <span>📚</span> ${shortLabel}
-                        </div>`;
-                });
-            }
+            <div class="source-codex-item" 
+                 title="${c.codiceshow || ''}" 
+                 style="cursor: pointer; transition: color 0.2s;"
+                 onmouseover="this.style.color='var(--accent-color)'"
+                 onmouseout="this.style.color='#e67e22'"
+                 onclick="window.handleCodexSourceClick('${c.serie}', '${c.capitulo}', '${c.paragrafos ? c.paragrafos[0] : ''}')">
+                <span>📚</span> ${shortLabel}
+            </div>`;
+    });
+}
 
             // 3. Categorias
             if (hasCategories) {
@@ -51241,6 +51187,262 @@ function getBibleFilename(bookName) {
         .trim()
         .replace(/\s+/g, "_"); // Substitui espaços por _ (1 Reis -> 1_reis)
 }
+
+
+    // No conteúdo do parágrafo, adicionamos o ID do parágrafo para conferência
+async function openBookParagraphPanel(bookId, bookName, chapterNum, paragraphNum, htmlContent, openDirectToTarget = false) {
+    const fullName = `${bookId} ${chapterNum}:${paragraphNum}`;
+    
+    // 1. Configura a Entidade
+    activeReferenceEntity = {
+        id: fullName,
+        type: 'livro_ref',
+        name: fullName,
+        bookId: bookId,
+        chapter: chapterNum,
+        paragraph: paragraphNum,
+        htmlOriginal: htmlContent 
+    };
+
+    const { doc, getDoc, collection, query, where, getDocs, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+    
+    const q = query(collection(db, 'livros'), where('nome', '==', fullName), where('userId', '==', auth.currentUser.uid));
+    const snap = await getDocs(q);
+    
+    if (snap.empty) {
+        const newDoc = await addDoc(collection(db, 'livros'), {
+            nome: fullName, livro: bookName, bookId: bookId, capitulo: chapterNum, paragrafo: paragraphNum,
+            userId: auth.currentUser.uid, createdAt: serverTimestamp(),
+            puzzleBoard: [], panelLinks: [], dossie: []
+        });
+        activeReferenceEntity.id = newDoc.id;
+    } else {
+        activeReferenceEntity.id = snap.docs[0].id;
+    }
+
+    // 2. UI: Ativa o modo Livro
+    notebookContainer.classList.add('references-panel-visible');
+    
+    // MOSTRAR o 🎯 e ESCONDER o 🔖
+    const targetBtn = document.getElementById('references-target-btn');
+    const bookmarkBtn = document.getElementById('references-bookmark-btn');
+    if (targetBtn) targetBtn.style.display = 'block';
+    if (bookmarkBtn) bookmarkBtn.style.display = 'none'; // <-- RIGOROSO
+
+    const titleEl = document.getElementById('references-panel-title');
+    if (titleEl) titleEl.innerHTML = `🎯 ${fullName}`;
+    
+    document.getElementById('references-panel-description').style.display = 'none';
+
+    // 3. Injeta o conteúdo no contentor de scroll
+    const bookTextContainer = document.getElementById('ref-content-book-text');
+    if (bookTextContainer) {
+        bookTextContainer.innerHTML = `
+            <div class="book-text-box" style="background: rgba(74, 144, 226, 0.08); border: 1px solid var(--border-color); border-radius: 8px; padding: 15px; line-height: 1.6; color: var(--text-color); font-size: 1.05em;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">
+                    <small style="color: var(--accent-color); font-weight: bold; text-transform: uppercase;">Conteúdo da Fonte:</small>
+                    <small style="color: var(--text-muted-color); font-size: 0.8em;">${bookName}</small>
+                </div>
+                <div style="font-style: normal;">${htmlContent}</div>
+            </div>
+        `;
+    }
+
+    loadPuzzleData(activeReferenceEntity.id, 'livro_ref');
+    renderBookCodexCitations(bookId, chapterNum, paragraphNum);
+    
+    if (openDirectToTarget) {
+        window.showParagraphContentMode(); 
+    } else {
+        if (bookTextContainer) bookTextContainer.style.display = 'none';
+        switchRefTab('puzzle');
+    }
+}
+
+
+
+async function renderBookCodexCitations(bookId, chapter, paragraph) {
+    const listElement = document.getElementById('references-list');
+    listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A localizar citações...</span></div>';
+
+    try {
+        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const q = query(collection(db, 'pastas'), where('userId', '==', auth.currentUser.uid), where('estado', '==', 'ativa'));
+        const snapshot = await getDocs(q);
+        
+        allCitationsResults = [];
+        const parser = new DOMParser();
+
+        snapshot.forEach(docSnap => {
+            const data = docSnap.data();
+            const content = data.conteudo || "";
+            
+            // Verificação rápida de string para performance (se o bookId aparece no HTML)
+            if (content.toLowerCase().includes(bookId.toLowerCase())) {
+                const docHTML = parser.parseFromString(content, 'text/html');
+                const boxes = docHTML.querySelectorAll('[data-box-links]');
+                
+                boxes.forEach(box => {
+                    const linksData = JSON.parse(box.getAttribute('data-box-links') || '{}');
+                    if (linksData.codex) {
+                        const hasMatch = linksData.codex.some(c => 
+                            c.serie.toLowerCase() === bookId.toLowerCase() && 
+                            parseInt(c.capitulo) === parseInt(chapter) && 
+                            (c.paragrafos && c.paragrafos.includes(String(paragraph)))
+                        );
+
+                        if (hasMatch) {
+                            allCitationsResults.push({
+                                id: docSnap.id,
+                                boxId: box.id,
+                                name: data.nome,
+                                snippet: `<p style="color:var(--accent-color); font-weight:bold;">📦 Citado nesta caixa (Codex ⚡)</p>`,
+                                ultimaedicao: data.ultimaedicao?.toMillis() || 0
+                            });
+                        }
+                    }
+                });
+            }
+        });
+
+        window.renderCitationsPage(false);
+
+    } catch (e) {
+        console.error("Erro ao buscar Codex:", e);
+        listElement.innerHTML = '<li>Erro ao carregar citações.</li>';
+    }
+}
+
+// Função para mostrar o texto original (Modo 🎯)
+document.getElementById('references-target-btn').addEventListener('click', async () => {
+    // 1. Salva o que estava a ser feito
+    await forceSaveAndClosePuzzleMode();
+
+    // 2. Troca de vista
+    document.querySelectorAll('.ref-tab-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('#ref-tabs button').forEach(btn => btn.classList.remove('active'));
+    
+    document.getElementById('ref-content-book-text').style.display = 'block';
+    document.getElementById('ref-content-book-text').scrollTop = 0;
+});
+
+// Listener das abas (Ajuste para esconder o texto do parágrafo)
+document.getElementById('ref-tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    
+    // Sempre que clica numa aba (Puzzle, Links, etc), esconde o modo parágrafo
+    document.getElementById('ref-content-book-text').style.display = 'none';
+});
+
+// Função auxiliar para mudar abas programaticamente
+function switchRefTab(tabName) {
+    document.querySelectorAll('#ref-tabs button').forEach(b => {
+        if(b.dataset.refTab === tabName) b.classList.add('active');
+        else b.classList.remove('active');
+    });
+    document.querySelectorAll('.ref-tab-content').forEach(c => c.style.display = 'none');
+    const target = document.getElementById(`ref-content-${tabName}`);
+    if(target) target.style.display = (tabName === 'references' ? 'block' : 'flex');
+}
+
+// Ajuste no Listener das Abas para esconder o texto quando clicar em Puzzle, Links, etc.
+document.getElementById('ref-tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    
+    // ESCONDE o texto do parágrafo original ao entrar numa aba
+    document.getElementById('references-panel-description').style.display = 'none';
+});
+
+// Listener do novo botão 🎯 na Toolbar
+document.getElementById('references-target-btn').addEventListener('click', () => {
+    window.showParagraphContentMode();
+});
+
+window.handleCodexSourceClick = async function(bookId, chapter, paragraph) {
+    if (!bookId || !chapter || !paragraph) {
+        console.warn("Codex incompleto para salto.");
+        return;
+    }
+
+    updateSaveStatus('saving');
+    saveStatusIndicator.textContent = "A reunir parágrafos e perguntas...";
+
+    try {
+        const bookData = await fetchLocalBook(bookId);
+        if (!bookData) throw new Error("Livro não encontrado");
+
+        const chapterData = bookData.capitulos.find(c => String(c.capitulo) === String(chapter));
+        if (!chapterData) throw new Error("Capítulo não encontrado");
+
+        // 1. Criar array com os números pedidos (ex: "5,6" -> ["5", "6"])
+        const requestedRefs = String(paragraph).split(',').map(r => r.trim());
+
+        // 2. Filtrar o conteúdo: Captura TUDO o que mencione esses números
+        // Mas apenas tipos 'paragrafo' e 'pergunta'
+        const matchingBlocks = chapterData.conteudo.filter(item => {
+            if (!item.numero_ref) return false;
+            if (item.tipo !== 'paragrafo' && item.tipo !== 'pergunta') return false;
+            
+            const itemRefs = item.numero_ref.split(',').map(r => r.trim());
+            // Se o bloco tiver QUALQUER um dos números que pedimos, ele entra
+            return requestedRefs.some(req => itemRefs.includes(req));
+        });
+
+        if (matchingBlocks.length > 0) {
+            // 3. Gerar HTML formatado para a 4ª coluna
+            const finalHTML = matchingBlocks.map(block => {
+                if (block.tipo === 'pergunta') {
+                    // Estilo cor de laranja para perguntas
+                    return `<div style="color: #e67e22; font-weight: bold; margin-bottom: 10px; font-size: 0.95em;">❓ ${block.texto}</div>`;
+                } else {
+                    // Estilo padrão para parágrafos
+                    return `<div style="margin-bottom: 15px; line-height: 1.6;">${block.texto}</div>`;
+                }
+            }).join('');
+            
+            const bookName = JW_BOOKS_CATALOG.find(b => b.id === bookId)?.name || bookData.titulo;
+
+            // 4. Abrir o painel com o bloco completo
+            await openBookParagraphPanel(bookId, bookName, chapter, paragraph, finalHTML, true);
+        } else {
+            throw new Error("Referências não encontradas");
+        }
+        
+        updateSaveStatus('saved');
+
+    } catch (err) {
+        console.error("Erro no salto Codex:", err);
+        alert("Erro: " + err.message);
+        updateSaveStatus('error');
+    }
+};
+
+// Esta função gere a visualização do parágrafo original
+window.showParagraphContentMode = async function() {
+    console.log("🎯 Ativando visualização do parágrafo original...");
+
+    // 1. Antes de trocar de aba, grava o que estava a ser feito no Puzzle ou Micas
+    if (typeof forceSaveAndClosePuzzleMode === 'function') {
+        await forceSaveAndClosePuzzleMode();
+    }
+
+    // 2. Esconde o conteúdo de todas as abas (Puzzle, Links, Micas, Cita)
+    document.querySelectorAll('.ref-tab-content').forEach(el => el.style.display = 'none');
+    
+    // 3. Remove o destaque azul dos botões das abas
+    document.querySelectorAll('#ref-tabs button').forEach(btn => btn.classList.remove('active'));
+
+    // 4. Mostra o contentor específico do texto do livro
+    const bookTextContent = document.getElementById('ref-content-book-text');
+    if (bookTextContent) {
+        bookTextContent.style.display = 'block';
+        bookTextContent.scrollTop = 0; // Garante que o texto começa no topo
+    } else {
+        console.error("❌ Erro: Elemento #ref-content-book-text não encontrado no HTML.");
+    }
+};
 
     </script>
 </body>
