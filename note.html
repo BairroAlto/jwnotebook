@@ -13102,7 +13102,13 @@ const AUTO_BACKUP_INTERVAL = 50;
 const aqCanvasListener = document.getElementById('aquarium-content-canvas');
 const MAX_AQ_POPUPS = 6;
 const GLOBAL_SQUID_ID = 'SHARED_GLOBAL_SQUID';
-
+const JW_BOOKS_CATALOG = [
+    { id: 'ip-1', name: 'Profecia de Isaías I' },
+    { id: 'ip-2', name: 'Profecia de Isaías II' },
+    { id: 'jy', name: 'Jesus — o Caminho' },
+    { id: 'cf', name: 'Venha Ser Meu Seguidor' }
+    // Adiciona mais livros aqui conforme tiveres os ficheiros JSON
+];
 
 
 // --- ESTADO DA APLICAÇÃO ---
@@ -13233,6 +13239,11 @@ let currentEditingSuperLinkId = null;
 let selectedSentenceNodes = []; // Guarda os nós de texto selecionados na lista
 let currentNoteTags = [];
 let editingLinkIndex = -1; 
+let booksStateMemory = {
+    stack: null,    // Guarda o histórico (Ex: [Livros, Isaías, Cap 5])
+    scrollTop: 0    // Guarda a posição da barra de scroll
+};
+let filesTabScrollMemory = 0;
 
 
 window.currentNoteHybridMode = false;
@@ -14884,7 +14895,9 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             { id: 'local', icon: '📍', name: 'Locais' },
             { id: 'data', icon: '📅', name: 'Datas' },
             { id: 'cosmos', icon: '🪐', name: 'Cosmos' },
-            { id: 'tag', icon: '🏷️', name: 'Tags' }
+            { id: 'tag', icon: '🏷️', name: 'Tags' },
+            { separator: true },
+            { id: 'livros', icon: '📔', name: 'Livros' }
         ];
 
         let categoriesHTML = '';
@@ -22824,22 +22837,59 @@ leftPanelList.addEventListener('click', async (e) => {
         }
     }
 
-    // --- D. LÓGICA DE NAVEGAÇÃO: ABA "LISTS" ---
-   if (currentTab === 'lists') {
+ // --- D. LÓGICA DE NAVEGAÇÃO: ABA "LISTS" ---
+    if (currentTab === 'lists') {
         const listNavigationAction = async () => {
-            // 1. FORÇAR A MUDANÇA DE ECRÃ NO MOBILE (A CORREÇÃO)
+            
+            // 1. AJUSTE DE VISUALIZAÇÃO MOBILE
             if (window.innerWidth <= 768) {
                 document.body.classList.remove('mobile-view-editor'); // Garante que não está no editor
                 document.body.classList.add('mobile-view-middle');    // Mostra a lista do meio
             }
 
-            // 2. Lógica de Navegação
-            if (type === 'list-category' || type === 'bible-book') {
-                if (type === 'list-category') {
-                    navigationStack = [{ id, name, type }];
+            // 2. MEMÓRIA DE SCROLL (GUARDAR AO SAIR)
+            // Verifica se estamos atualmente dentro da secção "Livros" antes de mudar
+            if (navigationStack.length > 0 && navigationStack[0].id === 'livros') {
+                
+                // O SEGREDO: O scroll pertence ao contentor pai, não à lista
+                const scrollContainer = document.getElementById('middle-views-container');
+                
+                // Só guardamos memória se estivermos dentro de um livro ou capítulo (profundidade > 1)
+                if (navigationStack.length > 1) {
+                    booksStateMemory.stack = [...navigationStack];
+                    booksStateMemory.scrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
+                    console.log("💾 Estado do Livro guardado. Scroll:", booksStateMemory.scrollTop);
                 } else {
-                    navigationStack.push({ id, name, type });
+                    // Se estivermos na raiz dos livros, limpamos para não abrir livros antigos por engano
+                    booksStateMemory.stack = null;
+                    booksStateMemory.scrollTop = 0;
                 }
+            }
+
+            // 3. LÓGICA DE NAVEGAÇÃO
+            if (type === 'list-category' || type === 'bible-book') {
+                
+                // CASO A: Estamos a voltar para "Livros"
+                if (id === 'livros') {
+                    if (booksStateMemory.stack) {
+                        // Restaura o histórico de navegação
+                        navigationStack = [...booksStateMemory.stack];
+                        // Ativa a flag para a função de renderização saber que tem de fazer scroll
+                        window.shouldRestoreBookScroll = true; 
+                    } else {
+                        // Abertura normal (Raiz)
+                        navigationStack = [{ id, name, type }];
+                    }
+                } 
+                // CASO B: Navegação normal para outras categorias
+                else {
+                    if (type === 'list-category') {
+                        navigationStack = [{ id, name, type }];
+                    } else {
+                        navigationStack.push({ id, name, type });
+                    }
+                }
+                
                 updateNavigationView(true);
             } 
             else if (type === 'cosmos-parent') {
@@ -22851,6 +22901,7 @@ leftPanelList.addEventListener('click', async (e) => {
                 showReferencesPanel(id, name, 'subcosmos');
             }
         };
+        
         navigateWithUnsavedCheck(listNavigationAction);
         return;
     }
@@ -32160,7 +32211,7 @@ async function renderListCategoryItems(categoryId, filterText = '') {
     // Identifica onde estamos na navegação
     const lastNav = navigationStack.length > 0 ? navigationStack[navigationStack.length - 1] : null;
     
-    // Identifica qual é a categoria raiz (ex: 'topico', 'personagem')
+    // Identifica qual é a categoria raiz (ex: 'topico', 'personagem', 'livros')
     const origin = (navigationStack.length > 0) ? navigationStack[0].id : categoryId;
     
     const specialCategories = ['personagem', 'local', 'data', 'cosmos', 'tag', 'topico', 'marcadores'];
@@ -32375,6 +32426,162 @@ async function renderListCategoryItems(categoryId, filterText = '') {
                        oninput="window.handleListSearch(this.value, '${categoryId}')"
                        autocomplete="off">
             </li>`;
+        }
+
+        // ==========================================
+        // 📔 LIVROS (NAVEGAÇÃO LOCAL COM MEMÓRIA)
+        // ==========================================
+        if (origin === 'livros') {
+            updateAddButtonState(false); 
+            
+            // NÍVEL 1: LISTA DE LIVROS (Raiz)
+            if (!lastNav || lastNav.type === 'list-category') {
+                middlePanelTitle.textContent = "Biblioteca";
+                listElement.innerHTML = '';
+                
+                JW_BOOKS_CATALOG.forEach(book => {
+                    const li = document.createElement('li');
+                    li.className = 'list-item';
+                    li.innerHTML = `<span>📘 ${book.name}</span><span style="font-size:0.8em; color:#888;">${book.id}</span>`;
+                    
+                    li.onclick = () => {
+                        navigateWithUnsavedCheck(() => {
+                            // Entra no livro
+                            navigationStack.push({ 
+                                id: book.id, 
+                                name: book.name, 
+                                type: 'book-toc' 
+                            });
+                            updateNavigationView(true);
+                        });
+                    };
+                    listElement.appendChild(li);
+                });
+                return;
+            }
+
+            // NÍVEL 2: LISTA DE CAPÍTULOS (Dentro do Livro)
+            else if (lastNav.type === 'book-toc') {
+                middlePanelTitle.textContent = lastNav.name;
+                listElement.innerHTML = '<div class="panel-loader"><div class="spinner"></div><span>A abrir livro...</span></div>';
+
+                const bookData = await fetchLocalBook(lastNav.id);
+
+                listElement.innerHTML = '';
+                if (!bookData || !bookData.capitulos) {
+                    listElement.innerHTML = '<li style="padding:20px; color:red;">Livro não encontrado ou JSON inválido.</li>';
+                    return;
+                }
+
+                // Lista os capítulos
+                bookData.capitulos.forEach((cap, index) => {
+                    const li = document.createElement('li');
+                    li.className = 'list-item';
+                    li.innerHTML = `
+                        <div style="display:flex; flex-direction:column;">
+                            <span style="font-weight:bold;">CAPÍTULO ${cap.numero}</span>
+                            <small style="color:#aaa;">${cap.titulo}</small>
+                        </div>
+                    `;
+                    
+                    li.onclick = () => {
+                        navigateWithUnsavedCheck(() => {
+                            // Entra no capítulo
+                            navigationStack.push({ 
+                                id: `${lastNav.id}_${index}`, 
+                                name: `Cap. ${cap.numero}`, 
+                                type: 'book-chapter',
+                                bookId: lastNav.id,
+                                chapterIndex: index
+                            });
+                            updateNavigationView(true);
+                        });
+                    };
+                    listElement.appendChild(li);
+                });
+                return;
+            }
+
+            // NÍVEL 3: CONTEÚDO DO CAPÍTULO (Leitura)
+            else if (lastNav.type === 'book-chapter') {
+                // Recupera o título completo do capítulo para o cabeçalho
+                const bookData = await fetchLocalBook(lastNav.bookId);
+                const chapter = bookData.capitulos[lastNav.chapterIndex];
+                
+                middlePanelTitle.textContent = `Cap. ${chapter.numero}`;
+                listElement.innerHTML = '';
+                
+                // Cabeçalho do Texto
+                const headerDiv = document.createElement('div');
+                headerDiv.style.cssText = "padding: 15px; border-bottom: 2px solid var(--accent-color); margin-bottom: 10px; background: rgba(255,255,255,0.02);";
+                headerDiv.innerHTML = `<h2 style="margin:0; font-size:1.2em; color:var(--text-color);">${chapter.titulo}</h2>`;
+                listElement.appendChild(headerDiv);
+
+                // Renderiza os parágrafos
+                if (chapter.conteudo && Array.isArray(chapter.conteudo)) {
+                    chapter.conteudo.forEach(block => {
+                        const div = document.createElement('div');
+                        div.style.cssText = "padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; transition: background 0.2s;";
+                        
+                        // Estilo consoante o tipo (Pergunta, Parágrafo, Subtema)
+                        let color = "var(--text-color)";
+                        let weight = "normal";
+                        let icon = "";
+                        let bgColor = "transparent";
+                        
+                        if (block.tipo === 'pergunta') {
+                            color = "#e67e22"; // Laranja
+                            icon = "❓ ";
+                            bgColor = "rgba(230, 126, 34, 0.05)";
+                        } else if (block.tipo === 'subtema') {
+                            weight = "bold";
+                            div.style.marginTop = "15px";
+                            div.style.borderLeft = "3px solid var(--text-muted-color)";
+                        } else if (block.tipo === 'rodape') {
+                            color = "#888";
+                            div.style.fontSize = "0.85em";
+                            div.style.fontStyle = "italic";
+                        }
+
+                        div.style.backgroundColor = bgColor;
+
+                        // Mostra número da página se existir e tiver mudado
+                        let pageBadge = "";
+                        if (block.pagina) {
+                            pageBadge = `<span style="float:right; font-size:0.7em; color:#555; border:1px solid #444; padding:1px 4px; border-radius:3px;">p.${block.pagina}</span>`;
+                        }
+
+                        div.innerHTML = `
+                            <div style="color:${color}; font-weight:${weight}; line-height:1.5;">
+                                ${pageBadge} ${icon}${block.texto}
+                            </div>
+                        `;
+
+                        // Clique: Copia para o Editor (Opcional) ou apenas seleciona
+                        div.onclick = () => {
+                            listElement.querySelectorAll('div').forEach(el => el.style.backgroundColor = "");
+                            div.style.backgroundColor = "rgba(74, 144, 226, 0.1)";
+                        };
+
+                        listElement.appendChild(div);
+                    });
+
+                    // >>> LÓGICA DE RESTAURO DE SCROLL <<<
+                   if (window.shouldRestoreBookScroll) {
+            // Pequeno delay para o browser desenhar o texto
+            setTimeout(() => {
+                const scrollContainer = document.getElementById('middle-views-container');
+                if (scrollContainer) {
+                    // Aplica o valor guardado ao contentor correto
+                    scrollContainer.scrollTop = booksStateMemory.scrollTop;
+                    console.log("📍 Scroll Restaurado para:", booksStateMemory.scrollTop);
+                }
+                window.shouldRestoreBookScroll = false; // Desliga a flag
+            }, 50);
+                    }
+                }
+                return;
+            }
         }
 
         // =========================================================
@@ -38645,6 +38852,16 @@ document.querySelector('.middle-bottom-tabs').addEventListener('click', (e) => {
     const btn = e.target.closest('button');
     if (!btn) return;
 
+    const container = document.getElementById('middle-views-container');
+    const previousTabBtn = document.querySelector('.middle-bottom-tabs button.active');
+
+    // --- LÓGICA DE MEMÓRIA (GUARDAR) ---
+    // Se estávamos na aba "Pastas" (files) antes de clicar na nova, guardamos o scroll atual
+    if (previousTabBtn && previousTabBtn.dataset.midTab === 'files') {
+        filesTabScrollMemory = container.scrollTop;
+        console.log("📖 Posição de leitura guardada:", filesTabScrollMemory);
+    }
+
     // 1. ATUALIZA O VISUAL (Remove active de todos, adiciona no clicado)
     document.querySelectorAll('.middle-bottom-tabs button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
@@ -38664,6 +38881,19 @@ document.querySelector('.middle-bottom-tabs').addEventListener('click', (e) => {
     // 4. MOSTRA A VISTA E DISPARA A LÓGICA
     if (targetView) {
         targetView.style.display = 'block';
+
+        // --- LÓGICA DE MEMÓRIA (RESTAURAR) ---
+        // Se estamos a voltar para a aba "Pastas", aplicamos o scroll guardado
+        if (viewId === 'files') {
+            // Pequeno timeout para garantir que o browser processou a troca de display:block
+            setTimeout(() => {
+                container.scrollTop = filesTabScrollMemory;
+            }, 0);
+        }
+        // Se formos para outras abas, normalmente queremos ver o topo (opcional)
+        else {
+            container.scrollTop = 0;
+        }
         
         // --- A. ÍNDICE ---
         if (viewId === 'index') {
@@ -38675,14 +38905,12 @@ document.querySelector('.middle-bottom-tabs').addEventListener('click', (e) => {
             generateNoteSources();
         }
         
-    // --- C. TEXTOS / NAVEGA (Lógica Tripla Corrigida) ---
+        // --- C. TEXTOS / NAVEGA (Lógica Tripla Corrigida) ---
         else if (viewId === 'texts') {
-            
-            // Verifica o modo definido no botão (pela função refreshMiddlePanelTabIcon)
-            if (btn.dataset.mode === 'hybrid') {
-                generateHybridView(); // <--- FALTAVA ESTA CHAMADA
+            if (window.currentNoteHybridMode === true) {
+                generateHybridView();
             } 
-            else if (btn.dataset.mode === 'navega') {
+            else if (activeNoteAnchorsIds && activeNoteAnchorsIds.length > 0) {
                 generateAnchorNavigation(); 
             } 
             else {
@@ -50999,6 +51227,26 @@ if (closeBtn) {
             }, 300);
         }
     });
+}
+
+// Cache para não carregar o mesmo livro várias vezes
+const booksCache = {};
+
+async function fetchLocalBook(bookId) {
+    if (booksCache[bookId]) return booksCache[bookId];
+
+    try {
+        // Assume que os ficheiros estão na pasta "js/books/"
+        const response = await fetch(`./js/books/${bookId}.json`);
+        if (!response.ok) throw new Error("Ficheiro não encontrado");
+        
+        const data = await response.json();
+        booksCache[bookId] = data;
+        return data;
+    } catch (e) {
+        console.error("Erro ao ler livro:", e);
+        return null;
+    }
 }
 
     </script>
