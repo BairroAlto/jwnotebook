@@ -1978,6 +1978,7 @@ let isFirstLoad = true;
         const btnSaveCfg = document.getElementById('btn-save-cfg');
         const btnToggleView = document.getElementById('btn-toggle-view');
 const panel = document.getElementById('side-panel');
+const localBibleCache = {}; 
 
 
 // Cores Disponíveis
@@ -2377,34 +2378,43 @@ async function openVerses(chapter) {
 }
 
 async function fetchVerseText(bookName, chapter, verse, elementId) {
-    const docId = generateDocId(bookName, chapter, verse);
     const span = document.getElementById(elementId);
-    try {
-        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        const docSnap = await getDoc(doc(db, "bible_verses_public", docId));
-        
-        if (docSnap.exists()) { 
-            let textoBiblico = docSnap.data().texto;
-            
-            // --- CORREÇÃO: NORMALIZAÇÃO DE ESPAÇOS ---
-            // Substitui quebras de linha e múltiplos espaços por um espaço simples.
-            // Isto garante que o texto no ecrã é igual ao texto que foi selecionado e gravado.
-            if (textoBiblico) {
-                textoBiblico = textoBiblico.replace(/\s+/g, ' ').trim();
-            }
-            // ------------------------------------------
+    const filename = getBibleFilename(bookName); // ex: "exodo"
 
-            span.innerText = textoBiblico; 
-            span.classList.remove('loading-text'); 
-            
-            // Nota: Não precisamos de chamar o highlight aqui, 
-            // a função loadUserDataForChapter fá-lo no final de tudo.
-        } else { 
-            span.innerText = "Texto indisponível."; 
+    try {
+        if (!localBibleCache[filename]) {
+            const response = await fetch(`./js/bible/${filename}.json`);
+            if (!response.ok) throw new Error("Livro não encontrado");
+            localBibleCache[filename] = await response.json();
         }
-    } catch (error) { 
-        console.error("Erro texto:", error);
-        span.innerText = "Erro."; 
+
+        let textoBiblico = "";
+        
+        try {
+            const capStr = chapter.toString();
+            const verStr = verse.toString();
+            
+            // CORREÇÃO AQUI: 
+            // Acessamos localBibleCache[filename] (o arquivo)
+            // Depois acessamos [bookName] (a chave "Êxodo" dentro do arquivo)
+            // Depois o capítulo e o versículo
+            if (localBibleCache[filename][bookName]) {
+                textoBiblico = localBibleCache[filename][bookName][capStr][verStr];
+            }
+        } catch (err) {
+            console.warn(`Versículo não encontrado: ${bookName} ${chapter}:${verse}`);
+        }
+
+        if (textoBiblico) {
+            span.innerText = textoBiblico.replace(/\s+/g, ' ').trim();
+            span.classList.remove('loading-text');
+        } else {
+            span.innerText = "Texto indisponível.";
+        }
+
+    } catch (error) {
+        console.error(`Erro ao carregar ${filename}:`, error);
+        span.innerText = "Erro de carregamento.";
     }
 }
 
@@ -3762,78 +3772,66 @@ window.addFlashCodexField = (data = null) => {
 window.searchFlashCategories = async (text) => {
     if (text.length < 2) return;
     
-    // Normaliza texto (Primeira letra maiúscula)
-    const searchText = text.charAt(0).toUpperCase() + text.slice(1);
+    // Normaliza texto
+    const searchText = text.toLowerCase();
     
     const resDiv = document.getElementById('flash-cat-results');
     const isGlobal = document.getElementById('flash-bible-toggle').checked;
     
     resDiv.innerHTML = '<div style="padding:10px; color:#888;">A procurar...</div>';
     
-    try {
-        const { collection, query, where, getDocs, limit, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        
-        let q;
-        let type = '';
+    let resultsArray = [];
+    let type = '';
 
+    try {
         if (isGlobal) {
-            // --- MODO LIGADO: PESQUISA VERSÍCULOS NA BÍBLIA ---
-            // AUMENTAMOS O LIMIT PARA 300
-            // Isto é necessário porque "Génesis 10" vem antes de "Génesis 1:" na base de dados.
-            // Precisamos sacar muitos versículos para garantir que o Capítulo 1 vem no pacote.
-            q = query(
-                collection(db, "bible_verses_public"), 
-                where("nome", ">=", searchText), 
-                where("nome", "<=", searchText + '\uf8ff'),
-                orderBy("nome"),
-                limit(300) 
-            );
+            // --- MODO BÍBLIA (LOCAL) ---
             type = 'bible_public';
+            // Filtra na lista estática importada de bible-data.js
+            const matches = BIBLE_DATA.filter(b => 
+                b.nome.toLowerCase().includes(searchText)
+            );
+            resultsArray = matches.map(b => ({ id: b.nome, nome: b.nome }));
         } else {
-            // --- MODO DESLIGADO: PESQUISA NOS TÓPICOS ---
-            q = query(
+            // --- MODO TÓPICOS (FIREBASE) ---
+            type = 'topic';
+            // Usa os imports já existentes no topo do script
+            const { collection, query, where, getDocs, limit, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            
+            // Primeira letra maiúscula para compatibilidade com a BD antiga se necessário
+            const searchCap = text.charAt(0).toUpperCase() + text.slice(1);
+            
+            const q = query(
                 collection(db, "topicos"),
                 where("userId", "==", currentUser.uid),
-                where("nome", ">=", searchText), 
-                where("nome", "<=", searchText + '\uf8ff'),
+                where("nome", ">=", searchCap), 
+                where("nome", "<=", searchCap + '\uf8ff'),
                 orderBy("nome"),
                 limit(20)
             );
-            type = 'topic';
+            
+            const snap = await getDocs(q);
+            snap.forEach(doc => {
+                resultsArray.push({ id: doc.id, ...doc.data() });
+            });
         }
 
-        const snap = await getDocs(q);
+        // --- RENDERIZAÇÃO ---
         resDiv.innerHTML = '';
         
-        if (snap.empty) {
+        if (resultsArray.length === 0) {
             resDiv.innerHTML = '<div style="padding:10px; color:#888;">Sem resultados.</div>';
             return;
         }
 
-        // Converter para Array
-        let resultsArray = [];
-        snap.forEach(doc => {
-            resultsArray.push({ id: doc.id, ...doc.data() });
-        });
-
-        // ORDENAÇÃO NATURAL (Corrige a ordem visualmente)
-        // Agora que temos 300 resultados, o Capítulo 1 deve estar no meio deles.
-        // Esta função coloca o 1:1 antes do 10:1.
-        resultsArray.sort((a, b) => {
-            return a.nome.localeCompare(b.nome, undefined, { numeric: true, sensitivity: 'base' });
-        });
-
-        // Cortar para mostrar apenas os primeiros 15 (para a lista não ficar gigante)
-        const displayResults = resultsArray.slice(0, 15);
-
-        // Renderizar
-        displayResults.forEach(d => {
+        resultsArray.slice(0, 20).forEach(d => {
             const div = document.createElement('div');
             div.style.cssText = "padding:8px; border-bottom:1px solid #333; cursor:pointer; display:flex; justify-content:space-between; align-items:center;";
             
             const icon = type === 'bible_public' ? '🌍' : '🏷️';
             
-            // Destaque visual
+            // Destaque visual simples
+            // Regex case-insensitive para destacar o termo
             const nomeHtml = d.nome.replace(new RegExp(`(${text})`, 'gi'), '<span style="color:#e67e22; font-weight:bold;">$1</span>');
 
             div.innerHTML = `
@@ -6559,7 +6557,14 @@ window.viewCardSources = function(encodedJson) {
     }
 };
 
-  
+  // Converte "1 João" para "1_joao"
+function getBibleFilename(bookName) {
+    return bookName.toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Remove acentos
+        .trim()
+        .replace(/\s+/g, "_"); // Substitui espaços por _
+}
+
     </script>
 </body>
 </html>
