@@ -36227,48 +36227,91 @@ window.searchCategories = async function(queryText) {
     
     if (!resultsContainer) return;
 
-    // Reset se vazio
-    if (!queryText || queryText.length < 2) {
+    const term = queryText.trim().toLowerCase();
+    if (term.length < 2) {
         resultsContainer.innerHTML = '';
         window.categoryFullResults = [];
-        window.categoryDisplayCount = 0;
         return;
     }
 
-    const term = queryText.toLowerCase();
     window.categoryFullResults = [];
     window.categoryDisplayCount = 0;
 
-    console.log(`🔍 [PESQUISA] Procurando por: "${term}"...`);
-
-   if (isBibleSearch) {
-    // --- MODO BÍBLIA (LOCAL) ---
-    // Em vez de ir à Internet, filtramos a lista que já temos no bible-data.js
-    
-    // Importante: Certifique-se que BIBLICAL_BOOKS está importado no topo do ficheiro
-    if (typeof BIBLICAL_BOOKS !== 'undefined') {
-        const term = queryText.toLowerCase();
-        
-        // Filtra livros que contêm o texto escrito
-        const matches = BIBLICAL_BOOKS.filter(b => 
-            b.toLowerCase().includes(term)
+    if (isBibleSearch) {
+        // 1. Encontrar os livros que condizem com o termo inicial (ex: "Dan" -> Daniel)
+        const matchedBooks = BIBLE_DATA.filter(book => 
+            normalizeStr(book.nome).includes(normalizeStr(term.split(' ')[0]))
         );
 
-        matches.forEach(bookName => {
-            window.categoryFullResults.push({ 
-                id: bookName, // O ID passa a ser o próprio nome
-                name: bookName, 
-                type: 'bible_public' 
+        matchedBooks.forEach(book => {
+            // NOTA: O nome do livro isolado foi removido daqui propositadamente
+
+            // Gerar Capítulos e Versículos baseados no BIBLE_DATA
+            for (let c = 1; c <= book.caps; c++) {
+                const totalVerses = book.versiculos[c - 1];
+                for (let v = 1; v <= totalVerses; v++) {
+                    const fullRef = `${book.nome} ${c}:${v}`;
+                    
+                    // Filtra apenas versículos que contenham o termo e não tenham sido selecionados
+                    if (normalizeStr(fullRef).includes(normalizeStr(term)) && !isAlreadySelected(fullRef)) {
+                        window.categoryFullResults.push({ 
+                            id: generateBibleId(fullRef), 
+                            name: fullRef, 
+                            type: 'bible_public' 
+                        });
+                    }
+                }
+            }
+        });
+
+        // 2. ORDENAÇÃO NATURAL NUMÉRICA (O Segredo para o 1:1 vir antes do 1:10)
+        window.categoryFullResults.sort((a, b) => {
+            const regex = /^(.+?)\s+(\d+):(\d+)$/;
+            const mA = a.name.match(regex);
+            const mB = b.name.match(regex);
+            
+            // Se algum não seguir o padrão, usa a ordenação de texto normal
+            if (!mA || !mB) return a.name.localeCompare(b.name);
+
+            // Compara os Nomes dos Livros
+            const bookComp = mA[1].localeCompare(mB[1]);
+            if (bookComp !== 0) return bookComp;
+
+            // Compara os Capítulos (Numericamente)
+            const capA = parseInt(mA[2]);
+            const capB = parseInt(mB[2]);
+            if (capA !== capB) return capA - capB;
+
+            // Compara os Versículos (Numericamente)
+            const verA = parseInt(mA[3]);
+            const verB = parseInt(mB[3]);
+            return verA - verB;
+        });
+
+    } else {
+        // Pesquisa normal em entidades pessoais (Personagens, Locais, etc)
+        Object.keys(allEntities).forEach(type => {
+            if (type === 'textobiblico') return; 
+            allEntities[type].forEach(ent => {
+                if (normalizeStr(ent.nome).includes(normalizeStr(term))) {
+                    window.categoryFullResults.push({ id: ent.id, name: ent.nome, type: type });
+                }
             });
         });
+        
+        // Ordenação alfabética simples para entidades
+        window.categoryFullResults.sort((a, b) => a.name.localeCompare(b.name));
     }
-}
 
-    // Ordena e Renderiza
-    window.categoryFullResults.sort((a, b) => a.name.localeCompare(b.name));
     resultsContainer.innerHTML = '';
-    window.renderCategoryBatch(); // Chama o renderizador corrigido abaixo
+    window.renderCategoryBatch(); 
 };
+
+// --- FUNÇÃO AUXILIAR: VERIFICA SE JÁ FOI ESCOLHIDO ---
+function isAlreadySelected(name) {
+    if (!window.selectedCategoriesForBox) return false;
+    return window.selectedCategoriesForBox.some(c => c.name === name);
+}
 
 // FUNÇÃO PARA RENDERIZAR UM LOTE DE 30 ITENS
  window.renderCategoryBatch = function() {
@@ -39161,7 +39204,7 @@ function getFlexibleRegexStr(str) {
 
 // Função Auxiliar: Remove acentos para comparação (Normalização)
 function normalizeStr(str) {
-    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
 async function generateNoteTexts() {
