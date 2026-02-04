@@ -13109,6 +13109,7 @@ const JW_BOOKS_CATALOG = [
     { id: 'cf', name: 'Venha Ser Meu Seguidor' }
     // Adiciona mais livros aqui conforme tiveres os ficheiros JSON
 ];
+const localBibleCache = {}; 
 
 
 // --- ESTADO DA APLICAÇÃO ---
@@ -21418,14 +21419,7 @@ async function showReferencesPanel(entityId, entityName, entityType, anexoId = n
 
 // 2. BUSCAR TEXTO NA BIBLIOTECA PÚBLICA (COMUM)
 async function fetchBibleText(fullReference) {
-    try {
-        const q = query(collection(db, 'bible_verses_public'), where('nome', '==', fullReference));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-            return snap.docs[0].data().texto;
-        }
-    } catch (e) { console.error("Erro na bibl. pública:", e); }
-    return null;
+    return await fetchPublicBibleText(fullReference);
 }
 
 // 3. GRAVAÇÃO PÚBLICA + PRIVADA
@@ -36306,38 +36300,28 @@ window.searchCategories = async function(queryText) {
 
     console.log(`🔍 [PESQUISA] Procurando por: "${term}"...`);
 
-    if (isBibleSearch) {
-        // --- MODO BÍBLIA ---
-        resultsContainer.innerHTML = '<div style="padding:10px; text-align:center;"><div class="spinner"></div></div>';
-        try {
-            const { collection, query, where, limit, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-            const q = query(collection(db, "bible_verses_public"), where("nome", ">=", queryText), where("nome", "<=", queryText + '\uf8ff'), limit(50));
-            const snap = await getDocs(q);
-            snap.forEach(doc => {
-                window.categoryFullResults.push({ id: doc.id, name: doc.data().nome, type: 'bible_public' });
-            });
-        } catch (e) { console.error("Erro bíblia:", e); }
-    } else {
-        // --- MODO LOCAL ---
-        // Varre todas as entidades locais carregadas
-        Object.keys(allEntities).forEach(type => {
-            if (type === 'textobiblico') return; 
-            allEntities[type].forEach(ent => {
-                if (ent.nome.toLowerCase().includes(term)) {
-                    window.categoryFullResults.push({ id: ent.id, name: ent.nome, type: type });
-                }
+   if (isBibleSearch) {
+    // --- MODO BÍBLIA (LOCAL) ---
+    // Em vez de ir à Internet, filtramos a lista que já temos no bible-data.js
+    
+    // Importante: Certifique-se que BIBLICAL_BOOKS está importado no topo do ficheiro
+    if (typeof BIBLICAL_BOOKS !== 'undefined') {
+        const term = queryText.toLowerCase();
+        
+        // Filtra livros que contêm o texto escrito
+        const matches = BIBLICAL_BOOKS.filter(b => 
+            b.toLowerCase().includes(term)
+        );
+
+        matches.forEach(bookName => {
+            window.categoryFullResults.push({ 
+                id: bookName, // O ID passa a ser o próprio nome
+                name: bookName, 
+                type: 'bible_public' 
             });
         });
-
-        // Varre Tags
-        if (typeof allTags !== 'undefined') {
-            allTags.forEach(tag => {
-                if (tag.nome.toLowerCase().includes(term)) {
-                    window.categoryFullResults.push({ id: tag.id, name: tag.nome, type: 'tag' });
-                }
-            });
-        }
     }
+}
 
     // Ordena e Renderiza
     window.categoryFullResults.sort((a, b) => a.name.localeCompare(b.name));
@@ -39181,44 +39165,46 @@ function expandVerseReference(fullRef) {
 // 2. Busca o texto na coleção pública (Cache simples para evitar leituras repetidas na mesma sessão)
 const bibleTextCache = {}; 
 
-async function fetchPublicBibleText(verseName) {
-    // 1. Verifica cache local
-    if (bibleTextCache[verseName]) return bibleTextCache[verseName];
-
-
-    try {
-        const { collection, query, where, getDocs, doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        
-        // --- TENTATIVA A: Busca Exata pelo Nome ---
-        const q = query(collection(db, 'bible_verses_public'), where('nome', '==', verseName));
-        const snap = await getDocs(q);
-        
-        if (!snap.empty) {
-            const text = snap.docs[0].data().texto;
-            bibleTextCache[verseName] = text;
-            return text;
-        }
-
-        // --- TENTATIVA B: Busca pelo ID Gerado (1_corintios_10_1) ---
-        const generatedId = generateBibleId(verseName);
-        console.log(`🔄 Tentando pelo ID: "${generatedId}"`);
-        
-        const docRef = doc(db, 'bible_verses_public', generatedId);
-        const docSnap = await getDoc(docRef);
-
-        if (docSnap.exists()) {
-            const text = docSnap.data().texto;
-            console.log("✅ Encontrado por ID!");
-            bibleTextCache[verseName] = text;
-            return text;
-        }
-
-        console.warn(`❌ Texto não encontrado na base de dados: ${verseName} (ID: ${generatedId})`);
-
-    } catch (e) {
-        console.error("🔥 Erro na busca bíblica:", e);
+async function fetchPublicBibleText(fullReference) {
+    // 1. Separar "Mateus" de "5:3"
+    const match = fullReference.match(/^(.+?)\s+(\d+):(\d+)$/);
+    
+    if (!match) {
+        console.warn("Formato inválido:", fullReference);
+        return null;
     }
-    return null;
+
+    const bookName = match[1].trim(); // ex: "Êxodo"
+    const chapter = match[2];
+    const verse = match[3];
+
+    // 2. Obter nome do ficheiro (ex: exodo.json)
+    const filename = getBibleFilename(bookName);
+
+    // 3. Verificar se já temos o livro na memória (Cache)
+    if (!localBibleCache[filename]) {
+        try {
+            const response = await fetch(`./js/bible/${filename}.json`);
+            if (!response.ok) throw new Error("Ficheiro não encontrado");
+            localBibleCache[filename] = await response.json();
+        } catch (e) {
+            console.error(`Erro ao carregar livro: ${filename}.json`, e);
+            return null;
+        }
+    }
+
+    // 4. Tentar ler o versículo específico do JSON
+    try {
+        // CORREÇÃO AQUI: Acessamos o arquivo, depois o NOME DO LIVRO, depois capítulo e versículo
+        if (localBibleCache[filename][bookName]) {
+            const text = localBibleCache[filename][bookName][chapter][verse];
+            return text || null;
+        }
+        return null;
+    } catch (e) {
+        console.warn(`Versículo não existe no JSON: ${fullReference}`);
+        return null;
+    }
 }
 
 // 3. FUNÇÃO PRINCIPAL: GERAR ABA TEXTOS
@@ -51247,6 +51233,13 @@ async function fetchLocalBook(bookId) {
         console.error("Erro ao ler livro:", e);
         return null;
     }
+}
+
+function getBibleFilename(bookName) {
+    return bookName.toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Remove acentos (Génesis -> Genesis)
+        .trim()
+        .replace(/\s+/g, "_"); // Substitui espaços por _ (1 Reis -> 1_reis)
 }
 
     </script>
