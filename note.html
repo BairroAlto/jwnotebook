@@ -13269,6 +13269,7 @@ let booksStateMemory = {
     scrollTop: 0    // Guarda a posição da barra de scroll
 };
 let filesTabScrollMemory = 0;
+let flashLimit = 50;
 
 
 window.currentNoteHybridMode = false;
@@ -15044,19 +15045,21 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
     // ============================================================
     
     // COLUNA 1 (ESQUERDA) - Cache Inteligente
-    if (newLeftPanelParentId !== lastRenderedLeftParentId) {
-        
-        if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
-        
-        // Se for modo partilhado na raiz, não carrega pastas normais na esquerda
-        if (newLeftPanelParentId !== "EMPTY_SIDEBAR_FOR_SHARED") {
-            unsubscribeLeftPanel = fetchAndDisplayItems(newLeftPanelParentId, leftPanelList, null);
-        } else {
-            leftPanelList.innerHTML = ''; // Limpa se for partilha raiz
-        }
-        
-        lastRenderedLeftParentId = newLeftPanelParentId;
+ if (newLeftPanelParentId !== lastRenderedLeftParentId) {
+    if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
+    
+    // ADICIONE ESTA CONDIÇÃO:
+    if (currentViewMode === 'flash') {
+        loadFlashListLeftPanel(); // Se o modo é flash, usa a função de meses
     } 
+    else if (newLeftPanelParentId !== "EMPTY_SIDEBAR_FOR_SHARED") {
+        unsubscribeLeftPanel = fetchAndDisplayItems(newLeftPanelParentId, leftPanelList, null);
+    } else {
+        leftPanelList.innerHTML = '';
+    }
+    
+    lastRenderedLeftParentId = newLeftPanelParentId;
+}
     else {
         // Apenas muda o destaque azul
         const activeId = (depth > 0) ? navigationStack[depth - 1].id : null;
@@ -26001,19 +26004,19 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
     const itemContext = { ...activeItemContext };
     hideContextMenu(); 
 
+    console.log(`%c[MENU CONTEXTO] Ação selecionada: ${action} para o item: ${itemContext.name}`, "color: #3498db; font-weight: bold;");
+
     try {
+        const { doc, updateDoc, serverTimestamp, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+
         // --- AÇÃO: RENOMEAR (✏️) ---
         if (action === 'rename') {
             openRenameModal(itemContext.name, async (newName) => {
                 const collectionName = (itemContext.type === 'cosmos-parent') ? 'cosmos' : 'pastas';
-                const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-                
                 await updateDoc(doc(db, collectionName, itemContext.id), {
                     nome: newName,
                     ultimaedicao: serverTimestamp()
                 });
-                
-                // Atualiza o título no editor se a nota renomeada for a que está aberta
                 if (selectedNoteId && itemContext.id === selectedNoteId) {
                     const titleInput = document.getElementById('note-title-input');
                     if(titleInput) titleInput.value = newName;
@@ -26033,11 +26036,8 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
 
         // --- AÇÃO: ALTERNAR PIN (📌) ---
         else if (action === 'toggle-pin') {
-            const newState = !itemContext.isPinned;
-            const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-            
             await updateDoc(doc(db, 'pastas', itemContext.id), {
-                isPinned: newState,
+                isPinned: !itemContext.isPinned,
                 ultimaedicao: serverTimestamp()
             });
         }
@@ -26046,8 +26046,6 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
         else if (action === 'protect') {
             const newPass = await requestPassword('create', itemContext.id);
             if (newPass) {
-                const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-                
                 await updateDoc(doc(db, 'pastas', itemContext.id), {
                     passe: newPass,
                     ultimaedicao: serverTimestamp()
@@ -26060,7 +26058,6 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
             const authorized = await requestPassword('remove', itemContext.id);
             if (authorized === true) {
                 sessionUnlockedFolders.delete(itemContext.id);
-                // A função requestPassword('remove') já trata a exclusão no Firebase
             }
         }
 
@@ -26071,14 +26068,11 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
 
         // --- AÇÃO: TORNAR SUPERPASTA (🗃️) ---
         else if (action === 'toggle-superfolder') {
-            const newState = !itemContext.isSuperfolder;
-            const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-            
             await updateDoc(doc(db, 'pastas', itemContext.id), {
-                superpasta: newState,
+                superpasta: !itemContext.isSuperfolder,
                 ultimaedicao: serverTimestamp()
             });
-            window.location.reload(); // Recarrega para aplicar isolamento de raiz
+            window.location.reload(); 
         }
 
         // --- AÇÃO: MUDAR ÍCONE (SUPERPASTA) ---
@@ -26087,84 +26081,79 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
             if (modal) {
                 modal.dataset.targetFolderId = itemContext.id;
                 modal.style.display = 'flex';
-                document.body.appendChild(modal); // Garante visibilidade
             }
         }
 
         // --- AÇÃO: OCULTAR/MOVER PARA LIXEIRA (🗑️) ---
-    else if (action === 'hide') {
+   else if (action === 'hide') {
             const myUid = auth.currentUser.uid;
+            
+            // Verifica se és o criador original (Dono) comparando o teu ID com o userId da nota
             const isOwner = (itemContext.userId === myUid);
+            // Verifica se o campo 'oque' no Firebase é 'flash'
+            const isFlash = (itemContext.oque === 'flash');
             const isSharedFile = (itemContext.type === 'partilhado' || itemContext.type === 'arquivo');
             
-            let confirmTitle = 'Ocultar Item?';
-            let confirmMsg = `Deseja mover "${itemContext.name}" para a lixeira?`;
+            console.group(`🎯 [RASTREIO OCULTAR] Item: ${itemContext.name}`);
+            console.log("ID da Nota:", itemContext.id);
+            console.log("Teu UID:", myUid);
+            console.log("userId da Nota:", itemContext.userId);
+            console.log("É o Dono?", isOwner ? "SIM ✅" : "NÃO ❌");
+            console.log("É Nota Flash?", isFlash ? "SIM ✅" : "NÃO ❌");
 
-            // --- NOVO: AVISO DA 4ª COLUNA PARA NOTAS/JORNAIS/AQUÁRIOS ---
-            const typesWithRefs = ['nota', 'jornal', 'aquario'];
-            if (!isSharedFile && typesWithRefs.includes(itemContext.type)) {
-                confirmMsg = `Deseja mover "${itemContext.name}" para a lixeira?\n\n` + 
-                             `⚠️ %cAtenção:%c Ao ocultar, todas as referências desta nota no %cQuadro (Puzzle)%c e %cDossié (Micas)%c serão removidas automaticamente para evitar links quebrados.`;
-            }
+            let confirmTitle = isOwner ? 'Ocultar Item?' : 'Sair da Partilha?';
+            let confirmMsg = isOwner 
+                ? `Deseja mover "${itemContext.name}" para a lixeira?`
+                : `Deseja deixar de colaborar em "${itemContext.name}"? O teu acesso será removido.`;
 
-            // Mensagens específicas para Arquivos Partilhados (mantendo a lógica que já tinhas)
-            if (isSharedFile) {
-                if (isOwner) {
-                    confirmMsg = `Como é o Dono, ao ocultar este Arquivo:\n\n1. O arquivo irá para os seus "Itens Ocultos".\n2. A lista de colaboradores será apagada (todos perdem acesso).\n\nDeseja continuar?`;
-                } else {
-                    confirmTitle = 'Sair da Partilha?';
-                    confirmMsg = `Deseja deixar de colaborar em "${itemContext.name}"?\n\nO seu acesso será removido e o arquivo sairá da sua lista.`;
+            // Adiciona avisos automáticos se fores o dono
+            if (isOwner) {
+                const typesWithRefs = ['nota', 'jornal', 'aquario'];
+                if (!isSharedFile && typesWithRefs.includes(itemContext.type)) {
+                    confirmMsg += `\n\n⚠️ Atenção: Ao ocultar, as referências desta nota no 🧩 (Quadro), 📼 (Micas), 🦉 (Biblioteca), e 📖 (BíbliaBook) serão removidas automaticamente para evitar links quebrados.`;
+                }
+                if (isFlash) {
+                    confirmMsg += `\n\n⚡ Esta nota sairá da tua lista Flash.`;
                 }
             }
 
-            // Pequeno ajuste para suportar a formatação de cores no texto do popup (se o teu modal suportar innerHTML)
-            // Caso o teu modal showConfirmation só aceite texto simples, remove os "%c" acima.
-            const confirmed = await showConfirmation(confirmTitle, confirmMsg.replace(/%c/g, ''));
+            // Se for arquivo partilhado e for dono
+            if (isSharedFile && isOwner) {
+                confirmMsg = `Como é o Dono, ao ocultar este Arquivo:\n\n1. O arquivo irá para os seus "Itens Ocultos".\n2. A lista de colaboradores será apagada.\n\nDeseja continuar?`;
+            }
+
+            const confirmed = await showConfirmation(confirmTitle, confirmMsg);
             
             if (confirmed) {
+                console.log("🚀 Ação confirmada. Comunicando com o Firebase...");
                 const collectionName = (itemContext.type === 'cosmos-parent') ? 'cosmos' : 'pastas';
-                const { doc, updateDoc, serverTimestamp, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
                 const docRef = doc(db, collectionName, itemContext.id);
 
                 try {
-                    // --- CENÁRIO A: SOU O DONO ---
-                    // Apaga para todos e move para a reciclagem do dono
                     if (isOwner) {
-                        const updateData = { 
-                            estado: 'desativa', // Isto move para Itens Ocultos
+                        // SÓ O DONO pode desativar a nota mudando o estado
+                        await updateDoc(docRef, { 
+                            estado: 'desativa', 
                             ultimaedicao: serverTimestamp()
-                        };
-
-                        // Se for partilhado, expulsa todos os colaboradores e desativa a partilha
-                        if (isSharedFile) {
-                            updateData.colaboradores = deleteField(); // Apaga o mapa inteiro
-                            updateData.partilhado = "inativo"; // Marca como inativo
-                        }
-
-                        await updateDoc(docRef, updateData);
-                        console.log("👑 Dono ocultou o item e limpou colaboradores.");
-                    } 
-                    
-                    // --- CENÁRIO B: SOU COLABORADOR ---
-                    // NÃO muda o estado (o dono continua a ver). Apenas sai da lista.
-                    else {
-                        console.log("👋 [COLABORADOR] A sair da partilha...");
+                        });
+                        console.log("☁️ Firebase: Estado alterado para 'desativa'.");
                         
-                        // FORÇA BRUTA: Atualiza APENAS o campo colaboradores.
-                        // Não enviamos 'estado' nem 'ultimaedicao' para evitar que o Firebase
-                        // interprete como uma atualização do documento inteiro que possa afetar o dono.
+                        if (collectionName === 'pastas') {
+                            console.log("🧹 Iniciando limpeza automática de referências na 4ª coluna...");
+                            if(typeof cleanUpHiddenNoteReferences === 'function') {
+                                cleanUpHiddenNoteReferences(itemContext.id);
+                            }
+                        }
+                    } 
+                    else {
+                        // COLABORADOR apenas remove o seu acesso no mapa de colaboradores
                         await updateDoc(docRef, {
                             [`colaboradores.${myUid}`]: deleteField()
                         });
-                        
-                        console.log("✅ Removido da lista de colaboradores.");
+                        console.log("👋 Firebase: Removido da lista de colaboradores.");
                     }
 
-                    // --------------------------------------------------------
-                    // ATUALIZAÇÃO VISUAL (Igual para ambos os casos)
-                    // --------------------------------------------------------
-
-                    // 1. Remove o item da lista visualmente
+                    // Remover da lista visual com animação
                     const domItem = document.querySelector(`.list-item[data-id="${itemContext.id}"]`);
                     if (domItem) {
                         domItem.style.transition = "opacity 0.3s, transform 0.3s";
@@ -26173,46 +26162,28 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
                         setTimeout(() => domItem.remove(), 300);
                     }
 
-                    // 2. Limpeza de referências (Apenas se for Dono, para não estragar o puzzle do dono)
-                    if (isOwner && collectionName === 'pastas') {
-                        if(typeof cleanUpHiddenNoteReferences === 'function') {
-                            cleanUpHiddenNoteReferences(itemContext.id);
-                        }
-                    }
+                    // Se a nota que ocultaste for a que estava aberta, fecha o editor
+                    if (selectedNoteId === itemContext.id) resetEditor();
 
-                    // 3. Recarrega a lista correta para garantir sincronia
-                    // Pequeno delay para garantir que a escrita no Firebase terminou
+                    // Sincroniza as listas após a mudança
                     setTimeout(() => {
-                        if (currentViewMode === 'flash') {
-                             if(typeof loadFlashListLeftPanel === 'function') loadFlashListLeftPanel();
-                        } else if (currentViewMode === 'shared') {
-                             if(typeof loadSharedFilesRoot === 'function') loadSharedFilesRoot(); 
-                        } else {
-                             updateNavigationView(true);
-                        }
+                        if (currentViewMode === 'flash') loadFlashListLeftPanel();
+                        else if (currentViewMode === 'shared') loadSharedFilesRoot(); 
+                        else updateNavigationView(true);
                     }, 500);
 
-                    // 4. Se o ficheiro removido estava aberto, fecha o editor
-                    if (selectedNoteId === itemContext.id) {
-                        console.log("🙈 A fechar editor pois o item foi removido.");
-                        resetEditor();
-                    }
-
                 } catch (error) {
-                    console.error("❌ Erro ao ocultar/sair:", error);
-                    alert("Ocorreu um erro ao processar o pedido. Tente novamente.");
-                    // Se falhar, restaura o visual
-                    if (domItem) {
-                        domItem.style.opacity = "1";
-                        domItem.style.transform = "none";
-                    }
+                    console.error("❌ Erro ao processar no Firebase:", error);
+                    alert("Erro ao ocultar item.");
                 }
+            } else {
+                console.log("🚫 Ocultação cancelada pelo utilizador.");
             }
+            console.groupEnd();
         }
 
     } catch (error) {
-        console.error(`Erro ao executar a ação ${action}:`, error);
-        alert("Ocorreu um erro ao processar o seu pedido.");
+        console.error(`❌ Erro crítico na ação ${action}:`, error);
     }
 });
 
@@ -29847,8 +29818,6 @@ async function switchFolderView(mode) {
     // ---------------------------------------
 
     document.body.classList.remove('show-fab');
-
-    if (mode === currentViewMode && navigationStack.length === 0) return;
 
     // 3. GRAVAÇÃO AUTOMÁTICA DE SEGURANÇA (Antes de mudar a vista)
     const idToSave = activeEditingPostId || window.activeEditingPostId;
@@ -46192,6 +46161,7 @@ function loadFlashItems() {
             li.setAttribute('data-id', item.id);
             li.setAttribute('data-type', item.tipo);
             li.setAttribute('data-name', item.nome);
+             li.setAttribute('data-userid', item.userId);
             li.setAttribute('data-oque', item.oque || ""); 
             
             // Ícone baseado no tipo
@@ -46220,32 +46190,45 @@ function loadFlashItems() {
     });
 }
 
-function loadFlashListLeftPanel() {
+function loadFlashListLeftPanel(isLoadMore = false) {
+    // 1. Se não for um "Carregar Mais", resetamos o limite para 50
+    if (!isLoadMore) {
+        flashLimit = 50;
+        // Limpeza de segurança para não duplicar ouvintes
+        if (unsubscribeLeftPanel) { 
+            unsubscribeLeftPanel(); 
+            unsubscribeLeftPanel = null; 
+        }
+    }
+
     const listElement = document.getElementById('left-panel-list');
-    if (!auth.currentUser) return;
+    if (!auth.currentUser || !listElement) return;
 
-    listElement.innerHTML = `
-        <div class="panel-loader">
-            <div class="spinner"></div>
-            <span>A carregar Flash...</span>
-        </div>`;
+    // 2. Feedback visual apenas no carregamento inicial
+    if (!isLoadMore) {
+        listElement.innerHTML = `
+            <div class="panel-loader">
+                <div class="spinner"></div>
+                <span style="color:#e67e22; font-size:0.8em;">A organizar Flash...</span>
+            </div>`;
+    }
 
+    // 3. Query com LIMITE dinâmico
     const q = query(
         collection(db, 'pastas'),
         where('userId', '==', auth.currentUser.uid),
         where('oque', '==', 'flash'),
         where('estado', '==', 'ativa'),
-        orderBy('ultimaedicao', 'desc')
+        orderBy('ultimaedicao', 'desc'),
+        limit(flashLimit)
     );
 
+    // 4. Ouvinte Real-time
     unsubscribeLeftPanel = onSnapshot(q, (querySnapshot) => {
         const fragment = document.createDocumentFragment();
         
         if (querySnapshot.empty) {
-            listElement.innerHTML = `
-                <li style="padding:20px; text-align:center; color:#666; font-style:italic;">
-                    Sem itens Flash.
-                </li>`;
+            listElement.innerHTML = '<li style="padding:40px; text-align:center; color:#888;">Sem notas flash.</li>';
             return;
         }
 
@@ -46254,7 +46237,7 @@ function loadFlashListLeftPanel() {
         querySnapshot.forEach((doc) => {
             const item = { id: doc.id, ...doc.data() };
             
-            // Lógica de cabeçalho de data
+            // Agrupamento por Data
             const timestamp = item.ultimaedicao?.toMillis() || item.createdAt?.toMillis() || Date.now();
             const dateObj = new Date(timestamp);
             const monthYearString = dateObj.toLocaleDateString('pt-PT', { month: 'long', year: 'numeric' });
@@ -46262,7 +46245,7 @@ function loadFlashListLeftPanel() {
             if (monthYearString !== currentMonthYear) {
                 currentMonthYear = monthYearString;
                 const headerLi = document.createElement('li');
-                headerLi.style.cssText = `font-size: 10px; text-transform: uppercase; color: var(--text-muted-color); font-weight: bold; padding: 15px 10px 5px 10px; letter-spacing: 1px; cursor: default; pointer-events: none; opacity: 0.6;`;
+                headerLi.style.cssText = `font-size: 10px; text-transform: uppercase; color: #e67e22; font-weight: bold; padding: 18px 10px 8px 10px; letter-spacing: 1px; cursor: default; pointer-events: none; opacity: 0.8; border-bottom: 1px solid rgba(230, 126, 34, 0.2); margin-bottom: 8px;`;
                 headerLi.textContent = monthYearString;
                 fragment.appendChild(headerLi);
             }
@@ -46270,29 +46253,62 @@ function loadFlashListLeftPanel() {
             const li = document.createElement('li');
             li.className = 'list-item';
             li.style.borderLeft = "4px solid #e67e22"; 
-            
-            // Seleção visual (Aplicada em Memória)
             if (item.id === selectedNoteId) li.classList.add('selected-orange');
             
             li.setAttribute('data-id', item.id);
             li.setAttribute('data-type', item.tipo); 
             li.setAttribute('data-name', item.nome);
+            li.setAttribute('data-userid', item.userId);
+            li.setAttribute('data-oque', 'flash');    
 
-            // CORREÇÃO AQUI: Removemos a variável 'icon' do HTML
-            // O CSS encarrega-se de mostrar o ícone via 'data-type'
-            li.innerHTML = `<span>${item.nome}</span><button class="item-menu-btn">…</button>`;
+            li.innerHTML = `
+                <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex-grow:1;">${item.nome}</span>
+                <button class="item-menu-btn">…</button>
+            `;
 
             li.onclick = (e) => {
                 if (e.target.closest('.item-menu-btn')) return;
                 document.querySelectorAll('.list-item').forEach(el => el.classList.remove('selected', 'selected-red', 'selected-orange'));
                 li.classList.add('selected-orange');
-                displayNote(item.id, li);
-                if (window.innerWidth <= 768) document.body.classList.add('mobile-view-editor');
+                navigateWithUnsavedCheck(() => {
+                    displayNote(item.id, li);
+                    if (window.innerWidth <= 768) document.body.classList.add('mobile-view-editor');
+                });
             };
+
             fragment.appendChild(li);
         });
 
-        // Renderização Final
+        // --- LÓGICA DO BOTÃO "CARREGAR MAIS" ---
+        // Se o número de documentos recebidos for igual ao limite atual, 
+        // significa que provavelmente existem mais no banco de dados.
+        if (querySnapshot.size >= flashLimit) {
+            const loadMoreLi = document.createElement('li');
+            loadMoreLi.style.cssText = `
+                padding: 15px; 
+                text-align: center; 
+                cursor: pointer; 
+                color: #e67e22; 
+                font-size: 0.85em; 
+                font-weight: bold; 
+                border: 1px dashed rgba(230, 126, 34, 0.4);
+                margin: 10px;
+                border-radius: 6px;
+                transition: background 0.2s;
+            `;
+            loadMoreLi.innerHTML = `+ Carregar mais 50`;
+            
+            loadMoreLi.onmouseover = () => loadMoreLi.style.background = "rgba(230, 126, 34, 0.1)";
+            loadMoreLi.onmouseout = () => loadMoreLi.style.background = "transparent";
+            
+            loadMoreLi.onclick = (e) => {
+                e.stopPropagation();
+                flashLimit += 50; // Aumenta o limite
+                loadFlashListLeftPanel(true); // Recarrega com o novo limite
+            };
+            fragment.appendChild(loadMoreLi);
+        }
+
         listElement.innerHTML = '';
         listElement.appendChild(fragment);
     });
@@ -46433,10 +46449,19 @@ async function cleanUpHiddenNoteReferences(noteId) {
     try {
         const { collection, query, where, getDocs, doc, updateDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const myUid = auth.currentUser.uid;
-        const collectionsToCheck = ['textosbiblicos', 'topicos', 'personagens', 'locais', 'marcadores', 'cosmos', 'subcosmos'];
+
+        // LISTA ATUALIZADA: Inclui 'livros' para limpar library.html
+        const collectionsToCheck = ['textosbiblicos', 'livros', 'topicos', 'personagens', 'locais', 'marcadores', 'cosmos', 'subcosmos'];
+
+        console.log(`🧹 [LIMPEZA] Verificando referências da nota ${noteId} em todas as coleções...`);
 
         for (const colName of collectionsToCheck) {
-            const q = query(collection(db, colName), where(`referencias.${noteId}`, '==', true), where('userId', '==', myUid));
+            const q = query(
+                collection(db, colName), 
+                where(`referencias.${noteId}`, '==', true), 
+                where('userId', '==', myUid)
+            );
+
             const snap = await getDocs(q);
 
             const updatePromises = snap.docs.map(async (docSnap) => {
@@ -46447,35 +46472,39 @@ async function cleanUpHiddenNoteReferences(noteId) {
                 let puzzleBoard = data.puzzleBoard || [];
                 const originalBoardLen = puzzleBoard.length;
                 puzzleBoard = puzzleBoard.filter(item => item.noteId !== noteId);
-                if (puzzleBoard.length !== originalBoardLen) changed = true;
+                if (puzzleBoard.length !== originalBoardLen) {
+                    console.log(`   🗑️ Removido do Quadro em: ${colName} > ${data.nome}`);
+                    changed = true;
+                }
 
                 // 2. LIMPAR DOSSIÉ (Micas)
                 let dossie = data.dossie || [];
                 const dossieStr = JSON.stringify(dossie);
-                
                 dossie.forEach(mica => {
                     if (mica.items) {
                         mica.items = mica.items.filter(item => item.noteId !== noteId);
                     }
                 });
+                if (JSON.stringify(dossie) !== dossieStr) {
+                    console.log(`   🗑️ Removido das Micas em: ${colName} > ${data.nome}`);
+                    changed = true;
+                }
 
-                // Se o JSON mudou, significa que removemos algum item de dentro das Micas
-                if (JSON.stringify(dossie) !== dossieStr) changed = true;
-
+                // 3. GRAVAR ALTERAÇÕES
                 if (changed) {
                     const docRef = doc(db, colName, docSnap.id);
                     await updateDoc(docRef, { 
                         puzzleBoard: puzzleBoard,
                         dossie: dossie,
-                        [`referencias.${noteId}`]: deleteField() // Remove o carimbo da ficha
+                        [`referencias.${noteId}`]: deleteField() 
                     });
                 }
             });
             await Promise.all(updatePromises);
         }
-        console.log("✅ Limpeza completa: Quadro e Dossié atualizados.");
+        console.log("✅ [LIMPEZA] Processo concluído para todas as coleções, incluindo Biblioteca.");
     } catch (e) {
-        console.error("❌ Erro na limpeza global:", e);
+        console.error("❌ [LIMPEZA] Erro fatal:", e);
     }
 }
 
