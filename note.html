@@ -13265,8 +13265,10 @@ let selectedSentenceNodes = []; // Guarda os nós de texto selecionados na lista
 let currentNoteTags = [];
 let editingLinkIndex = -1; 
 let booksStateMemory = {
-    stack: null,    // Guarda o histórico (Ex: [Livros, Isaías, Cap 5])
-    scrollTop: 0    // Guarda a posição da barra de scroll
+   stack: null,    
+    scrollTop: 0,
+    activeRef: null, // Guarda o parágrafo/entidade que estavas a ler
+    activeTab: 'puzzle' 
 };
 let filesTabScrollMemory = 0;
 let flashLimit = 50;
@@ -14885,13 +14887,18 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
 
 
  async function updateNavigationView(keepEditorOpen = false, targetSelectId = null) {
-    // 1. Atualizações Globais
+    // 1. Atualizações Globais de Interface
     updateMobileFABVisibility();
     notebookContainer.classList.remove('left-panel-collapsed');
 
-    // Limpeza de Ouvintes (Apenas do painel do MEIO sempre)
-    if (unsubscribeMiddlePanel) { unsubscribeMiddlePanel(); unsubscribeMiddlePanel = null; }
+    // 2. Limpeza de Ouvintes do painel do MEIO (Coluna 2)
+    if (unsubscribeMiddlePanel) { 
+        unsubscribeMiddlePanel(); 
+        unsubscribeMiddlePanel = null; 
+    }
     
+    // 3. Reset do Editor (Painel Direito) se necessário
+    // Nota: resetEditor() não fecha a 4ª coluna, apenas limpa a nota aberta.
     if (!keepEditorOpen) {
         resetEditor();
     }
@@ -14899,16 +14906,14 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
     const depth = navigationStack.length;
 
     // ============================================================
-    // CASO A: ABA "LISTS" (Tópicos, Bíblia, Personagens...)
+    // CASO A: ABA "LISTS" (Tópicos, Bíblia, Livros...)
     // ============================================================
     if (currentTab === 'lists') {
-        // Marca o cache como 'LISTS' para forçar recarregamento se voltar à aba 'note' depois
         lastRenderedLeftParentId = 'LISTS_MODE';
 
         const activeCategory = navigationStack.length > 0 ? navigationStack[0].id : null;
 
-        // 1. Gerar categorias (Raiz da Aba Lists)
-        // Nota: O HTML é gerado manualmente aqui, não vem do fetchAndDisplayItems
+        // --- RENDERIZAÇÃO DA COLUNA 1 (Categorias Fixas) ---
         const categories = [
             { id: 'topico', icon: '📑', name: 'Tópicos' },
             { id: 'destaque', icon: '🎨', name: 'Destaques' },
@@ -14932,13 +14937,10 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
                 categoriesHTML += `<hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">`;
             } else {
                 const isSelected = activeCategory === cat.id ? 'selected' : '';
-                
-                // Botão extra para abrir Bíblia em nova janela
                 let extraAction = '';
                 if (cat.id === 'biblia-root') {
-                    extraAction = `<button class="external-open-btn" title="Abrir Leitura em Nova Janela" onclick="event.stopPropagation(); window.open('bible.html', '_blank');">↗️</button>`;
+                    extraAction = `<button class="external-open-btn" title="Abrir em Nova Janela" onclick="event.stopPropagation(); window.open('bible.html', '_blank');">↗️</button>`;
                 }
-                
                 categoriesHTML += `
                 <li class="list-item ${isSelected}" data-type="list-category" data-id="${cat.id}">
                     <span style="flex-grow: 1;">${cat.icon} ${cat.name}</span>
@@ -14947,46 +14949,63 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
             }
         });
 
-        // 2. Renderizar Coluna 1
         leftPanelList.innerHTML = categoriesHTML;
 
-        // 3. Configurar Títulos e Coluna 2
+        // --- LÓGICA DA COLUNA 2 (Conteúdo da Categoria) ---
         if (depth === 0) {
-            // Estarmos na Raiz das Listas
             addItemBtn.style.display = 'none';
             setLeftPanelTitle('Categorias'); 
             middlePanelTitle.textContent = 'Selecione uma categoria';
             middlePanelList.innerHTML = '';
             backBtn.style.display = 'none';
         } else {
-            // Entrámos numa categoria (Ex: Clicou em "Personagens")
             const currentContext = navigationStack[depth - 1];
             setLeftPanelTitle('Categorias', true); 
             middlePanelTitle.textContent = currentContext.name;
             backBtn.style.display = 'flex';
             
-            // Lógica do botão "+" (Amarelo)
+            // Lógica do botão "+" Amarelo
             const rootCategoryId = navigationStack[0].id;
             const validYellowCategories = ['topico', 'personagem', 'local', 'data', 'marcadores', 'cosmos']; 
+            updateAddButtonState(validYellowCategories.includes(rootCategoryId), true);
+
+            // CARREGA ITENS DA COLUNA 2
+            await renderListCategoryItems(currentContext.id);
+
+            // --------------------------------------------------------
+            // 🚀 [NOVO] LÓGICA DE PERSISTÊNCIA (MEMÓRIA)
+            // --------------------------------------------------------
             
-            // Só mostra o "+" se for uma categoria editável
-            if (validYellowCategories.includes(rootCategoryId)) {
-                updateAddButtonState(true, true);
-            } else {
-                updateAddButtonState(false);
+            // 1. Restaurar Scroll se for um Capítulo de Livro
+            if (currentContext.type === 'book-chapter' && window.shouldRestoreBookScroll) {
+                const scrollContainer = document.getElementById('middle-views-container');
+                if (scrollContainer) {
+                    // Timeout para garantir que o renderListCategoryItems já desenhou o HTML
+                    setTimeout(() => {
+                        scrollContainer.scrollTop = booksStateMemory.scrollTop;
+                        window.shouldRestoreBookScroll = false;
+                        console.log("📖 [MEMÓRIA] Scroll do livro restaurado para:", booksStateMemory.scrollTop);
+                    }, 100);
+                }
             }
 
-            // Carrega o conteúdo da Coluna 2
-            renderListCategoryItems(currentContext.id);
+            // 2. Garantir que a 4ª Coluna (Parágrafo) permanece aberta se houver memória
+            if (booksStateMemory && booksStateMemory.activeRef) {
+                // Se a entidade ativa for um parágrafo de livro, garante que o painel está visível
+                if (!notebookContainer.classList.contains('references-panel-visible')) {
+                    notebookContainer.classList.add('references-panel-visible');
+                    console.log("🎯 [MEMÓRIA] 4ª Coluna restaurada visualmente.");
+                }
+            }
+            // --------------------------------------------------------
         }
-        return; // SAI DA FUNÇÃO AQUI (Não executa lógica de pastas)
+        return; 
     }
 
     // ============================================================
     // CASO B: ABA "NOTE" (Pastas, Arquivos, Notas)
     // ============================================================
     
-    // --- MODO PINS (Opcional, se usar) ---
     if (currentViewMode === 'pins') {
         addItemBtn.style.display = 'none'; 
         backBtn.style.display = 'none';
@@ -14995,27 +15014,22 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
         return; 
     }
 
-    // --- MODO NORMAL (Local, Partilha, Flash) ---
     addItemBtn.style.display = 'flex';
     addItemBtn.classList.remove('yellow-mode');
-
     const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
-    // 1. Títulos
     if (depth === 0) {
-        setLeftPanelTitle(currentViewMode === 'local' ? 'Pastas' : 'Partilha'); 
+        setLeftPanelTitle(currentViewMode === 'local' ? 'Pastas' : 'Share'); 
     } else {
         const parentFolder = (depth > 1) ? navigationStack[depth - 2] : null;
         const parentName = parentFolder ? parentFolder.name : (currentViewMode === 'shared' ? 'Partilhadas' : 'Pastas');
         setLeftPanelTitle(parentName, true);
     }
 
-    // 2. Determinar IDs para as Colunas
     let newLeftPanelParentId = null;
     let middlePanelParentId = null;
 
     if (depth === 0) {
-        // RAIZ
         if (currentViewMode === 'shared') {
             newLeftPanelParentId = "EMPTY_SIDEBAR_FOR_SHARED";
         } else {
@@ -15024,10 +15038,8 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
         middlePanelTitle.textContent = 'Selecione';
         middlePanelList.innerHTML = '';
         backBtn.style.display = 'none';
-        
         if (currentViewMode === 'shared') loadSharedFilesRoot();
     } else {
-        // DENTRO DE PASTAS
         const currentFolder = navigationStack[depth - 1];
         middlePanelParentId = currentFolder.id;
         middlePanelTitle.textContent = currentFolder.name;
@@ -15040,33 +15052,25 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
         }
     }
     
-    // ============================================================
-    // APLICAÇÃO DA LÓGICA DE CACHE (Só para pastas)
-    // ============================================================
-    
     // COLUNA 1 (ESQUERDA) - Cache Inteligente
- if (newLeftPanelParentId !== lastRenderedLeftParentId) {
-    if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
-    
-    // ADICIONE ESTA CONDIÇÃO:
-    if (currentViewMode === 'flash') {
-        loadFlashListLeftPanel(); // Se o modo é flash, usa a função de meses
-    } 
-    else if (newLeftPanelParentId !== "EMPTY_SIDEBAR_FOR_SHARED") {
-        unsubscribeLeftPanel = fetchAndDisplayItems(newLeftPanelParentId, leftPanelList, null);
+    if (newLeftPanelParentId !== lastRenderedLeftParentId) {
+        if (unsubscribeLeftPanel) { unsubscribeLeftPanel(); unsubscribeLeftPanel = null; }
+        
+        if (currentViewMode === 'flash') {
+            loadFlashListLeftPanel();
+        } 
+        else if (newLeftPanelParentId !== "EMPTY_SIDEBAR_FOR_SHARED") {
+            unsubscribeLeftPanel = fetchAndDisplayItems(newLeftPanelParentId, leftPanelList, null);
+        } else {
+            leftPanelList.innerHTML = '';
+        }
+        lastRenderedLeftParentId = newLeftPanelParentId;
     } else {
-        leftPanelList.innerHTML = '';
-    }
-    
-    lastRenderedLeftParentId = newLeftPanelParentId;
-}
-    else {
-        // Apenas muda o destaque azul
         const activeId = (depth > 0) ? navigationStack[depth - 1].id : null;
         highlightLeftPanelItem(activeId);
     }
 
-    // COLUNA 2 (MEIO) - Carrega Sempre
+    // COLUNA 2 (MEIO)
     if (middlePanelParentId) {
         unsubscribeMiddlePanel = fetchAndDisplayItems(middlePanelParentId, middlePanelList, targetSelectId);
     }
@@ -23636,41 +23640,86 @@ function stringToColor(str) {
 
 
 
-document.querySelector('.tabs-container').addEventListener('click', (e) => {
-    leaveArchivePresence(); 
+document.querySelector('.tabs-container').addEventListener('click', async (e) => {
+    // 1. Identificar o botão clicado
     const clickedTabBtn = e.target.closest('button');
     if (!clickedTabBtn) return;
 
     const newTab = clickedTabBtn.dataset.tab;
+
+    // --- CASO ESPECIAL: ABA BOOK (Abre em nova janela) ---
     if (newTab === 'book') {
         window.open('book.html', '_blank'); 
         return; 
     }
 
-    if (currentSaveStatus === 'unsaved') {
-        saveNote(true); // Grava imediatamente se houver alterações
+    // 2. GRAVAÇÃO DE SEGURANÇA
+    // Se a nota atual tiver alterações pendentes, grava antes de trocar de aba
+    if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
+        await saveNote(true); 
     }
 
-    // --- SISTEMA DE MEMÓRIA ---
-    // 1. Antes de mudar, guarda a navegação da aba ATUAL na memória dela
-    if (currentTab === 'note') noteStackMemory = [...navigationStack];
-    if (currentTab === 'lists') listsStackMemory = [...navigationStack];
+    // 3. SALVAR MEMÓRIA DA ABA QUE ESTÁ A SAIR
+    // Guardamos o "caminho" (navigationStack) atual na memória da aba correspondente
+    if (currentTab === 'note') {
+        noteStackMemory = [...navigationStack];
+    } else if (currentTab === 'lists') {
+        listsStackMemory = [...navigationStack];
+        // Nota: O scroll do Livro já é capturado em tempo real pelo listener de scroll
+    }
 
-    // 2. Atualiza visual das abas
-    e.currentTarget.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
+    // 4. ATUALIZAR INTERFACE E ESTADO GLOBAL
+    document.querySelectorAll('.tabs-container button').forEach(btn => btn.classList.remove('active'));
     clickedTabBtn.classList.add('active');
-
-    // 3. Muda a aba ativa
+    
+    const oldTab = currentTab; // Guarda para referência
     currentTab = newTab;
 
-    // 4. Carrega a navegação da NOVA aba a partir da memória dela
-    if (currentTab === 'note') navigationStack = [...noteStackMemory];
-    if (currentTab === 'lists') navigationStack = [...listsStackMemory];
-    
-     // Adiciona esta linha aqui por segurança extra:
-    updateMobileFABVisibility(); 
-    // 5. Atualiza a vista (mantendo o editor aberto se houver uma nota ativa)
+    // 5. RECUPERAR MEMÓRIA DA ABA QUE ESTÁ A ENTRAR
+    if (currentTab === 'note') {
+        navigationStack = [...noteStackMemory];
+    } else if (currentTab === 'lists') {
+        navigationStack = [...listsStackMemory];
+
+        // --- LÓGICA DE PERSISTÊNCIA DA 4ª COLUNA E LIVROS ---
+        
+        // A. Ativar flag de restauro de scroll se voltarmos para um capítulo
+        const lastNav = navigationStack[navigationStack.length - 1];
+        if (lastNav && lastNav.type === 'book-chapter') {
+            window.shouldRestoreBookScroll = true;
+            console.log("📖 [SISTEMA] Flag de restauro de scroll ativada.");
+        }
+
+        // B. Re-sincronizar a 4ª Coluna se houvesse um parágrafo aberto
+        if (booksStateMemory.activeRef) {
+            const ref = booksStateMemory.activeRef;
+            console.log("🎯 [SISTEMA] Restaurando parágrafo na 4ª coluna:", ref.name);
+            
+            // Reabre o painel com os dados guardados
+            // O parâmetro 'true' no final abre direto no modo Texto (🎯) se estavas lá
+            await openBookParagraphPanel(
+                ref.bookId, 
+                "Fonte", 
+                ref.chapter, 
+                ref.paragraph, 
+                ref.htmlOriginal, 
+                booksStateMemory.activeTab === 'target'
+            );
+        }
+    }
+
+    // 6. ATUALIZAR A VISTA DO PAINEL DO MEIO (COLUNA 2)
+    // Passamos 'true' (keepEditorOpen) para que, se houver uma nota aberta, 
+    // ela não seja fechada ao trocar de aba (permitindo multitarefa).
     updateNavigationView(true);
+
+    // 7. ATUALIZAR ELEMENTOS MOBILE
+    updateMobileFABVisibility();
+    
+    // Se estivermos no modo Share, marca como lido ao entrar/sair
+    if (currentViewMode === 'shared' && currentArchiveId) {
+        markArchiveAsRead(currentArchiveId);
+    }
 });
 
 
@@ -51301,7 +51350,6 @@ function getBibleFilename(bookName) {
 async function openBookParagraphPanel(bookId, bookName, chapterNum, paragraphNum, htmlContent, openDirectToTarget = false) {
     const fullName = `${bookId} ${chapterNum}:${paragraphNum}`;
     
-    // 1. Configura a Entidade Ativa
     activeReferenceEntity = {
         id: fullName,
         type: 'livro_ref',
@@ -51311,6 +51359,10 @@ async function openBookParagraphPanel(bookId, bookName, chapterNum, paragraphNum
         paragraph: paragraphNum,
         htmlOriginal: htmlContent 
     };
+
+    // --- NOVO: GUARDAR NA MEMÓRIA DE PERSISTÊNCIA ---
+    booksStateMemory.activeRef = { ...activeReferenceEntity };
+    booksStateMemory.activeTab = openDirectToTarget ? 'target' : 'puzzle';
 
     const { doc, getDoc, collection, query, where, getDocs, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
     
@@ -51566,6 +51618,7 @@ window.showParagraphContentMode = async function() {
         console.error("❌ Erro: Elemento #ref-content-book-text não encontrado no HTML.");
     }
 };
+
 
     </script>
 </body>
