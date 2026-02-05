@@ -20729,46 +20729,50 @@ function renderReferenceBoxesPage() {
             </div>
         `;
 
-        li.onclick = async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+     li.onclick = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
 
-            const previewPop = document.getElementById('ref-preview-popup');
-            if(previewPop) previewPop.remove();
+    const previewPop = document.getElementById('ref-preview-popup');
+    if(previewPop) previewPop.remove();
 
-            if (item.originalIsPresent) {
-                if (!confirm("O original desta cópia já está no quadro. Deseja adicionar o clone na mesma?")) return;
+    const activeTabBtn = document.querySelector('#ref-tabs button.active');
+    const activeTab = activeTabBtn ? activeTabBtn.dataset.refTab : 'puzzle';
+
+    // --- MODO DOSSIÉ ---
+    if (activeTab === 'dossie' && window.activeMicaId) {
+        try {
+            const collectionName = getCollectionFromType(activeReferenceEntity.type);
+            const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            const docRef = doc(db, collectionName, activeReferenceEntity.id);
+            const docSnap = await getDoc(docRef);
+            
+            if (docSnap.exists()) {
+                let dossie = docSnap.data().dossie || [];
+                const mica = dossie.find(m => m.id === window.activeMicaId);
+                
+                if (mica) {
+                    if (!mica.items) mica.items = [];
+                    mica.items.unshift({
+                        noteId: item.id,
+                        noteName: item.name,
+                        snippet: encodeURIComponent(item.snippet)
+                    });
+
+                    // GRAVAÇÃO COM O CARIMBO (Vínculo oficial para limpeza)
+                    await updateDoc(docRef, { 
+                        dossie: dossie,
+                        [`referencias.${item.id}`]: true // <--- ADICIONADO: O carimbo agora vale para Micas também!
+                    });
+
+                    window.renderDossie(); 
+                    const listContainer = document.getElementById('dossie-list-container');
+                    if(listContainer) listContainer.scrollTop = 0;
+                }
             }
-
-            const activeTabBtn = document.querySelector('#ref-tabs button.active');
-            const activeTab = activeTabBtn ? activeTabBtn.dataset.refTab : 'puzzle';
-
-            if (activeTab === 'dossie' && window.activeMicaId) {
-                try {
-                    const collectionName = getCollectionFromType(activeReferenceEntity.type);
-                    const { doc, getDoc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-                    const docRef = doc(db, collectionName, activeReferenceEntity.id);
-                    const docSnap = await getDoc(docRef);
-                    
-                    if (docSnap.exists()) {
-                        let dossie = docSnap.data().dossie || [];
-                        const mica = dossie.find(m => m.id === window.activeMicaId);
-                        
-                        if (mica) {
-                            if (!mica.items) mica.items = [];
-                            mica.items.unshift({
-                                noteId: item.id,
-                                noteName: item.name,
-                                snippet: encodeURIComponent(item.snippet)
-                            });
-                            await updateDoc(docRef, { dossie: dossie });
-                            window.renderDossie(); 
-                            const listContainer = document.getElementById('dossie-list-container');
-                            if(listContainer) listContainer.scrollTop = 0;
-                        }
-                    }
-                } catch (err) { console.error("Erro Mica:", err); }
-            } 
+        } catch (err) { console.error("Erro Mica:", err); }
+    } 
+    // --- MODO QUADRO ---
             else {
                 if (typeof createBoardItem === 'function') {
                     createBoardItem('ref', {
@@ -20967,6 +20971,7 @@ async function savePuzzleData() {
 
     try {
         const itemsToSave = [];
+        const noteIdsInBoard = new Set(); // Conjunto para guardar IDs de notas únicas
         const cards = document.querySelectorAll('#puzzle-board-container .board-card');
 
         cards.forEach(card => {
@@ -20975,20 +20980,25 @@ async function savePuzzleData() {
                 if (contentDiv) itemsToSave.push({ type: 'text', content: contentDiv.innerHTML });
             } 
             else if (card.classList.contains('type-ref')) {
+                const nId = card.dataset.noteId;
+                if (nId) noteIdsInBoard.add(nId); // Regista que esta nota está no quadro
+
                 itemsToSave.push({ 
                     type: 'ref', 
-                    noteId: card.dataset.noteId,
+                    noteId: nId,
                     noteName: card.dataset.noteName,
                     snippet: decodeURIComponent(card.dataset.snippet)
                 });
             }
         });
 
-        // --- CORREÇÃO DE SEGURANÇA ---
+        // Prepara o mapa de referências (O carimbo oficial)
+        const refsMap = {};
+        noteIdsInBoard.forEach(nId => {
+            refsMap[nId] = true;
+        });
+
         let docRef;
-        
-        // Se o ID atual parece um nome de versículo (tem espaços ou :), ou se é null
-        // vamos procurar se o user já tem um doc real para isto
         if (!id || id.includes(' ') || id.includes(':')) {
             const q = query(
                 collection(db, collectionName), 
@@ -20998,37 +21008,37 @@ async function savePuzzleData() {
             const snap = await getDocs(q);
             
             if (!snap.empty) {
-                // Já existe um documento real, usamos o ID dele
                 docRef = doc(db, collectionName, snap.docs[0].id);
                 activeReferenceEntity.id = snap.docs[0].id; 
             } else {
-                // Não existe? Criamos um NOVO documento com ID aleatório (addDoc)
                 const newDoc = await addDoc(collection(db, collectionName), {
                     nome: name,
                     userId: auth.currentUser.uid,
                     puzzleBoard: itemsToSave,
+                    referencias: refsMap, // <--- ADICIONADO: Cria com vínculos
                     updatedAt: serverTimestamp(),
                     createdAt: serverTimestamp()
                 });
-                activeReferenceEntity.id = newDoc.id; // Atualiza para o ID novo
-                return; // Já gravou, podemos sair
+                activeReferenceEntity.id = newDoc.id;
+                return;
             }
         } else {
-            // Se já temos um ID hexadecimal (aleatório), gravamos direto
             docRef = doc(db, collectionName, id);
         }
 
-        // Gravação final (Update ou Set)
+        // Gravação final com merge para não apagar outros campos
         await setDoc(docRef, {
             nome: name,
             userId: auth.currentUser.uid,
             puzzleBoard: itemsToSave,
+            referencias: refsMap, // <--- ADICIONADO: Atualiza vínculos oficiais
             updatedAt: serverTimestamp()
         }, { merge: true });
 
+        console.log("✅ Quadro e Vínculos Oficiais guardados!");
+
     } catch (e) {
         console.error("❌ Erro ao gravar:", e);
-        alert("Erro de permissão: Este versículo pode estar mal configurado no banco de dados.");
     } finally {
         if(saveBtn) saveBtn.textContent = "Editar";
     }
@@ -26082,26 +26092,34 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
         }
 
         // --- AÇÃO: OCULTAR/MOVER PARA LIXEIRA (🗑️) ---
-        else if (action === 'hide') {
+    else if (action === 'hide') {
             const myUid = auth.currentUser.uid;
-            // Verifica se o ID do utilizador atual é igual ao userId do documento (Dono)
             const isOwner = (itemContext.userId === myUid);
             const isSharedFile = (itemContext.type === 'partilhado' || itemContext.type === 'arquivo');
             
             let confirmTitle = 'Ocultar Item?';
             let confirmMsg = `Deseja mover "${itemContext.name}" para a lixeira?`;
 
-            // Mensagens personalizadas para clareza
+            // --- NOVO: AVISO DA 4ª COLUNA PARA NOTAS/JORNAIS/AQUÁRIOS ---
+            const typesWithRefs = ['nota', 'jornal', 'aquario'];
+            if (!isSharedFile && typesWithRefs.includes(itemContext.type)) {
+                confirmMsg = `Deseja mover "${itemContext.name}" para a lixeira?\n\n` + 
+                             `⚠️ %cAtenção:%c Ao ocultar, todas as referências desta nota no %cQuadro (Puzzle)%c e %cDossié (Micas)%c serão removidas automaticamente para evitar links quebrados.`;
+            }
+
+            // Mensagens específicas para Arquivos Partilhados (mantendo a lógica que já tinhas)
             if (isSharedFile) {
                 if (isOwner) {
                     confirmMsg = `Como é o Dono, ao ocultar este Arquivo:\n\n1. O arquivo irá para os seus "Itens Ocultos".\n2. A lista de colaboradores será apagada (todos perdem acesso).\n\nDeseja continuar?`;
                 } else {
                     confirmTitle = 'Sair da Partilha?';
-                    confirmMsg = `Deseja deixar de colaborar em "${itemContext.name}"?\n\nO seu acesso será removido e o arquivo sairá da sua lista. (O dono continuará a ver o arquivo)`;
+                    confirmMsg = `Deseja deixar de colaborar em "${itemContext.name}"?\n\nO seu acesso será removido e o arquivo sairá da sua lista.`;
                 }
             }
 
-            const confirmed = await showConfirmation(confirmTitle, confirmMsg);
+            // Pequeno ajuste para suportar a formatação de cores no texto do popup (se o teu modal suportar innerHTML)
+            // Caso o teu modal showConfirmation só aceite texto simples, remove os "%c" acima.
+            const confirmed = await showConfirmation(confirmTitle, confirmMsg.replace(/%c/g, ''));
             
             if (confirmed) {
                 const collectionName = (itemContext.type === 'cosmos-parent') ? 'cosmos' : 'pastas';
@@ -46411,53 +46429,51 @@ function updateShareTabDot() {
 // Função para limpar referências de uma nota inteira em todas as entidades conectadas
 async function cleanUpHiddenNoteReferences(noteId) {
     if (!noteId) return;
-    console.log(`🧹 [LIMPEZA GLOBAL] Removendo referências da nota ${noteId} nos Puzzles...`);
 
     try {
-        const { collection, query, where, getDocs, doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { collection, query, where, getDocs, doc, updateDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const myUid = auth.currentUser.uid;
-
-        // Lista de coleções que podem ter Puzzles
-        const collectionsToCheck = ['textosbiblicos', 'topicos', 'personagens', 'locais', 'cosmos', 'subcosmos'];
+        const collectionsToCheck = ['textosbiblicos', 'topicos', 'personagens', 'locais', 'marcadores', 'cosmos', 'subcosmos'];
 
         for (const colName of collectionsToCheck) {
-            // Procura entidades que tenham esta nota referenciada
-            const q = query(
-                collection(db, colName),
-                where(`referencias.${noteId}`, '==', true),
-                where('userId', '==', myUid)
-            );
-
+            const q = query(collection(db, colName), where(`referencias.${noteId}`, '==', true), where('userId', '==', myUid));
             const snap = await getDocs(q);
 
-            // Processa em paralelo
             const updatePromises = snap.docs.map(async (docSnap) => {
                 const data = docSnap.data();
+                let changed = false;
+
+                // 1. LIMPAR QUADRO (Puzzle)
                 let puzzleBoard = data.puzzleBoard || [];
-                const initialLen = puzzleBoard.length;
-
-                // Remove TODOS os cartões que venham desta nota
+                const originalBoardLen = puzzleBoard.length;
                 puzzleBoard = puzzleBoard.filter(item => item.noteId !== noteId);
+                if (puzzleBoard.length !== originalBoardLen) changed = true;
 
-                if (puzzleBoard.length !== initialLen) {
-                    console.log(`   - Atualizando entidade: ${data.nome} (${colName})`);
+                // 2. LIMPAR DOSSIÉ (Micas)
+                let dossie = data.dossie || [];
+                const dossieStr = JSON.stringify(dossie);
+                
+                dossie.forEach(mica => {
+                    if (mica.items) {
+                        mica.items = mica.items.filter(item => item.noteId !== noteId);
+                    }
+                });
+
+                // Se o JSON mudou, significa que removemos algum item de dentro das Micas
+                if (JSON.stringify(dossie) !== dossieStr) changed = true;
+
+                if (changed) {
                     const docRef = doc(db, colName, docSnap.id);
-                     // Atualiza
-    await updateDoc(docRef, { puzzleBoard: puzzleBoard });
-
-    // >>> LINHA NOVA: Verifica se ficou vazio <<<
-    if (colName === 'textosbiblicos') {
-        await checkAndCleanVerseState(docSnap.id);
-    }
-                    
-                    return updateDoc(docRef, { puzzleBoard: puzzleBoard });
+                    await updateDoc(docRef, { 
+                        puzzleBoard: puzzleBoard,
+                        dossie: dossie,
+                        [`referencias.${noteId}`]: deleteField() // Remove o carimbo da ficha
+                    });
                 }
             });
-
             await Promise.all(updatePromises);
         }
-        console.log("✅ Limpeza global concluída.");
-
+        console.log("✅ Limpeza completa: Quadro e Dossié atualizados.");
     } catch (e) {
         console.error("❌ Erro na limpeza global:", e);
     }
