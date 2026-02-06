@@ -2881,21 +2881,12 @@ a.board-link:hover {
     }
 
     /* 2. Configuração Base dos 3 Painéis (Ecrã Cheio) */
-    #left-panel, #middle-panel, #right-panel {
-        position: absolute !important;
-        top: 0;
-        left: 0;
-        width: 100% !important;
-        height: 100% !important;
-        flex: none !important;
-        z-index: 10;
-        border: none !important;
-        border-radius: 0 !important;
-        /* Reset de estilos desktop que causam cortes */
-        margin: 0 !important;
-        max-width: none !important;
-        min-width: 0 !important;
-    }
+#left-panel, #middle-panel, #right-panel {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* Nenhum painel deve ter scroll próprio, apenas os filhos */
+}
 
     /* --- LÓGICA DE VISIBILIDADE (Quem está no topo?) --- */
 
@@ -3884,12 +3875,14 @@ a.board-link:hover {
 
     /* 1. TRAVAR A PÁGINA INTEIRA (O Segredo) */
     /* Isto impede que o site "fuja" quando faz scroll agressivo ou abre o teclado */
-    html, body {
-        height: 100% !important;
-        width: 100% !important;
-        overflow: hidden !important;
-        position: fixed !important; 
-    }
+html, body {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden !important; /* Impede o site de "fugir" para cima */
+    position: fixed; /* Reforço para mobile/tablets */
+}
 
     /* 2. Painel da Direita (Contentor Fixo) */
     #right-panel {
@@ -11420,7 +11413,10 @@ html, body {
 }
 
 .notebook-container {
+    display: flex;
     height: 100vh;
+    height: 100dvh; /* Altura dinâmica para navegadores modernos */
+    width: 100vw;
     overflow: hidden;
 }
 
@@ -11561,6 +11557,40 @@ html, body {
     letter-spacing: 1px;
 }
 
+/* 4. Cabeçalhos e Rodapés: Proibido Encolher ou Mover */
+.panel-header, 
+.panel-footer, 
+.middle-bottom-tabs, 
+#toolbar-container {
+    flex-shrink: 0 !important; /* Garante que o menu não sobe ao fazer scroll */
+}
+
+/* 5. ÁREAS DE SCROLL (O SEGREDO) */
+/* O 'min-height: 0' é crítico para que o flexbox saiba que pode encolher o conteúdo e ativar o scroll */
+#middle-views-container, 
+#left-panel-list, 
+#note-content-editor {
+    flex: 1; 
+    overflow-y: auto;
+    min-height: 0; 
+    -webkit-overflow-scrolling: touch; /* Scroll suave em iOS */
+}
+
+/* Ajuste específico para o painel do meio (Índice) */
+#middle-panel {
+    padding-bottom: 0 !important; /* Remove paddings que empurram o rodapé */
+}
+
+#middle-views-container {
+    padding: 0 10px; /* Respiro interno para as listas */
+}
+
+/* 6. Fixar a Toolbar do Editor no Topo do Painel Direito */
+#editor-area {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
 
 
 </style>
@@ -14538,73 +14568,31 @@ function checkInitialConnection() {
  * @param {function} navigationAction A função a ser executada se a navegação for confirmada.
  */
 async function navigateWithUnsavedCheck(navigationAction) {
-    // Verifica se estamos a editar um Post de Arquivo (Feed)
-    const editingId = activeEditingPostId || window.activeEditingPostId;
-
-    // Se não houver nada para gravar (nem post, nem nota normal), navega logo.
-    if (!editingId && currentSaveStatus !== 'unsaved' && currentSaveStatus !== 'saving') {
+    // Se houver um post de arquivo sendo editado
+    if (activeEditingPostId) {
+        const blockingModal = document.getElementById('forcing-save-modal');
+        if (blockingModal) blockingModal.style.display = 'flex';
+        
+        await window.saveArchivePost(activeEditingPostId);
+        
+        if (blockingModal) blockingModal.style.display = 'none';
         navigationAction();
         return;
     }
 
-    // --- ATIVAR O ESCUDO (MODAL DE BLOQUEIO) ---
-    const blockingModal = document.getElementById('forcing-save-modal');
-    if (blockingModal) {
-        // Garante que está no topo e visível
-        document.body.appendChild(blockingModal);
-        blockingModal.style.setProperty('display', 'flex', 'important');
-        blockingModal.style.setProperty('z-index', '2147483647', 'important'); // Máximo absoluto
-        blockingModal.style.setProperty('opacity', '1', 'important');
-        blockingModal.style.setProperty('visibility', 'visible', 'important');
+    // Se houver uma nota normal com alterações pendentes
+    if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
+        const blockingModal = document.getElementById('forcing-save-modal');
+        if (blockingModal) blockingModal.style.display = 'flex';
+
+        // O 'await' aqui é fundamental: ele pausa a navegação até o Firebase confirmar a gravação
+        await executeSave(); 
+
+        if (blockingModal) blockingModal.style.display = 'none';
     }
 
-    try {
-        // CENÁRIO 1: A editar um Post de Arquivo
-        if (editingId) {
-            
-            // Pára o heartbeat para evitar conflitos
-            if (typeof stopLockHeartbeat === 'function') stopLockHeartbeat();
-
-            // Grava e espera
-            await window.saveArchivePost(editingId);
-            
-            // Limpa variáveis globais
-            activeEditingPostId = null;
-            window.activeEditingPostId = null;
-            window.livePostDraft = null;
-        } 
-        
-        // CENÁRIO 2: A editar uma Nota Normal
-        else if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
-            
-            // AQUI ESTÁ O SEGREDO: o 'await' obriga o código a parar aqui
-            // até o executeSave() terminar e devolver true/false.
-            await saveNote(true); 
-        }
-
-        // --- SUCESSO: PODE PASSAR ---
-        
-        // Esconde o modal
-        if (blockingModal) blockingModal.style.display = 'none';
-        
-        // Executa a navegação (abrir a nova nota)
-        navigationAction();
-
-    } catch (error) {
-        console.error("❌ ERRO CRÍTICO AO GRAVAR NA SAÍDA:", error);
-        
-        if (blockingModal) blockingModal.style.display = 'none';
-        
-        // Pergunta de segurança em caso de falha de rede
-        if (confirm("Houve um erro ao gravar a nota anterior (falha de rede?).\nSe continuar, pode perder as últimas alterações.\n\nDeseja forçar a saída?")) {
-            // Se for post, tenta desbloquear à força para não ficar preso
-            if (editingId && typeof unlockPost === 'function') {
-                unlockPost(editingId).catch(e => {}); 
-                activeEditingPostId = null;
-            }
-            navigationAction();
-        }
-    }
+    // Agora que está salvo, executa a mudança de pasta/aba
+    navigationAction();
 }
 
 
@@ -16833,17 +16821,16 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
     document.getElementById('archive-area').style.setProperty('display', 'none', 'important');
     if (editorArea) editorArea.style.setProperty('display', 'flex', 'important');
 
-    try {
+     try {
         const { doc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const noteRef = doc(db, 'pastas', noteId);
 
-       unsubscribeCurrentNote = onSnapshot(noteRef, (noteSnap) => {
-    // SE ESTIVERMOS A APLICAR UM ESTILO, IGNORAMOS ESTA ATUALIZAÇÃO 
-    // PARA NÃO RESETAR O HTML E O SCROLL
-    if (window.isApplyingStyle) return; 
-
-    if (!noteSnap.exists()) return;
-    const data = noteSnap.data();
+        unsubscribeCurrentNote = onSnapshot(noteRef, (noteSnap) => {
+            if (window.currentNavRequest !== thisRequestId) return;
+            window.isSwitchingNote = false; 
+            
+            if (!noteSnap.exists()) return;
+            const data = noteSnap.data();
 
             window.currentNoteType = data.tipo; 
             if (typeof toggleJournalToolbar === 'function') {
@@ -21305,7 +21292,7 @@ window.openNoteFromBoard = function(noteId, encodedSearchTerm = null) {
 
 // --- LÓGICA DO POPUP DE SELEÇÃO DE REFERÊNCIAS ---
 async function openReferenceSelectionPopup() {
-    console.group("🔍 [DEBUG REF] Iniciando Pesquisa de Referências");
+    console.group("🔍 [BUSCA +REF] Iniciando Pesquisa de Blocos");
     
     const modal = document.getElementById('puzzle-ref-selection-modal');
     const list = document.getElementById('puzzle-ref-selection-list');
@@ -21317,6 +21304,7 @@ async function openReferenceSelectionPopup() {
         return;
     }
 
+    // 1. CONFIGURAÇÃO VISUAL E Z-INDEX
     document.body.appendChild(modal);
     modal.style.cssText = `
         display: flex !important;
@@ -21328,8 +21316,9 @@ async function openReferenceSelectionPopup() {
         visibility: visible !important; opacity: 1 !important;
     `;
 
-    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar dados...</span></div>';
+    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar arquivo de notas...</span></div>';
 
+    // Reset de variáveis de paginação
     allFoundReferenceBoxes = [];
     currentReferencePageIndex = 0;
 
@@ -21339,7 +21328,7 @@ async function openReferenceSelectionPopup() {
     const hexToFind = isHighlightSearch ? id.toUpperCase() : null;
 
     try {
-        // 1. CARREGAR QUADRO ATUAL
+        // 2. DETETAR O QUE JÁ EXISTE NO QUADRO (Para evitar duplicados visuais)
         const activeTabBtn = document.querySelector('#ref-tabs button.active');
         const activeTab = activeTabBtn ? activeTabBtn.dataset.refTab : 'puzzle';
         
@@ -21347,30 +21336,26 @@ async function openReferenceSelectionPopup() {
         const col = getCollectionFromType(type);
         const { doc, getDoc, collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        const docRef = doc(db, col, id);
-        const docSnap = await getDoc(docRef);
-
-        if (activeTab === 'dossie' && window.activeMicaId) {
-            if(docSnap.exists()) {
+        const docSnap = await getDoc(doc(db, col, id));
+        if (docSnap.exists()) {
+            if (activeTab === 'dossie' && window.activeMicaId) {
                 const dossie = docSnap.data().dossie || [];
                 const mica = dossie.find(m => m.id === window.activeMicaId);
-                if(mica && mica.items) currentBoardItems = mica.items;
-            }
-        } else {
-            if(docSnap.exists()) {
+                if (mica && mica.items) currentBoardItems = mica.items;
+            } else {
                 currentBoardItems = docSnap.data().puzzleBoard || [];
             }
         }
 
         const existingIDs = new Set();
         currentBoardItems.forEach(item => {
-            if(item.snippet) {
+            if (item.snippet) {
                 const match = decodeURIComponent(item.snippet).match(/id="([^"]+)"/);
-                if(match) existingIDs.add(match[1]);
+                if (match) existingIDs.add(match[1]);
             }
         });
 
-        // 2. PESQUISA GLOBAL
+        // 3. PESQUISA GLOBAL EM TODAS AS NOTAS E ARQUIVOS
         let q = query(collection(db, 'pastas'), 
             where('estado', '==', 'ativa'), 
             where('userId', '==', auth.currentUser.uid),
@@ -21385,157 +21370,109 @@ async function openReferenceSelectionPopup() {
             const noteTitle = data.nome || "Sem Título";
             const updatedTime = data.ultimaedicao?.toMillis() || data.createdAt?.toMillis() || 0;
 
+            // Filtro de privacidade
             if (data.passe && data.passe.trim() !== "" && !appSettings.searchAnchorsInProtected) return;
 
+            // Prepara conteúdos (Nota única ou múltiplos Posts de Arquivo)
             let contentsToScan = [];
-            if (data.tipo === 'nota' || data.tipo === 'jornal' || data.tipo === 'aquario') {
+            if (['nota', 'jornal', 'aquario'].includes(data.tipo)) {
                 contentsToScan.push({ html: data.conteudo || "", originName: noteTitle });
             } else {
-                const posts = data.posts || [];
-                posts.forEach(post => {
-                    contentsToScan.push({ html: post.content || "", originName: `${noteTitle} (Post: ${post.title || 'S/T'})` });
+                (data.posts || []).forEach(post => {
+                    contentsToScan.push({ html: post.content || "", originName: `${noteTitle} > ${post.title || 'S/T'}` });
                 });
             }
 
             contentsToScan.forEach(item => {
                 const docHTML = parser.parseFromString(item.html, 'text/html');
+                // Varre todos os tipos de blocos suportados
                 const allWrappers = docHTML.querySelectorAll('.mini-note-wrapper, .redator-wrapper, details.toggle-section, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
                 
                 allWrappers.forEach((w) => {
                     let match = false;
-                    let matchSource = "text"; 
 
-                    // A. MATCH POR COR
+                    // A. Match por COR (Destaque)
                     if (isHighlightSearch) {
                         const elColor = w.getAttribute('data-highlight');
-                        if (elColor && elColor.toUpperCase() === hexToFind) {
-                            match = true;
-                            matchSource = "color";
-                        }
+                        if (elColor && elColor.toUpperCase() === hexToFind) match = true;
                     } 
                     
-                    // B. MATCH POR TEXTO
-                    let boxTitle = "";
-                    let boxContentOnly = "";
+                    // B. Match por TEXTO (Título + Conteúdo)
+                    let boxFullText = "";
+                    const titleInput = w.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
+                    const contentDiv = w.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content, .cube-content');
                     
-                    if (w.tagName === 'DETAILS') {
-                        const h2 = w.querySelector('h2');
-                        boxTitle = h2 ? h2.textContent : "";
-                        const contentDiv = w.querySelector('.toggle-content');
-                        boxContentOnly = contentDiv ? contentDiv.textContent : "";
-                    } else {
-                        const titleInput = w.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
-                        boxTitle = titleInput ? (titleInput.value || titleInput.getAttribute('value') || "") : "";
-                        const contentDiv = w.querySelector('.mini-note-content, .redator-content, .sign-content, .cube-content, .card-desc-content');
-                        boxContentOnly = contentDiv ? contentDiv.textContent : "";
-                    }
+                    boxFullText = (titleInput ? (titleInput.value || titleInput.textContent) : "") + " " + (contentDiv ? contentDiv.innerText : "");
                     
-                    const boxFullText = (boxTitle + " " + boxContentOnly).toLowerCase();
+                    if (!match && boxFullText.toLowerCase().includes(searchTerm)) match = true;
 
-                    if (!match && boxFullText.includes(searchTerm)) {
-                        match = true;
-                        matchSource = "text";
-                    }
-
-                    // C. MATCH POR CATEGORIA
+                    // C. Match por CATEGORIA (Vínculo ⚡)
                     const boxLinksRaw = w.getAttribute('data-box-links');
                     if (!match && boxLinksRaw && boxLinksRaw !== '{}') {
                         try {
                             const boxData = JSON.parse(boxLinksRaw);
-                            if (boxData.categories && Array.isArray(boxData.categories)) {
-                                const catMatch = boxData.categories.some(cat => {
-                                    const idMatch = (cat.id && String(cat.id) === String(id));
-                                    const nameMatch = (cat.name && cat.name.toLowerCase().trim() === searchTerm);
-                                    return idMatch || nameMatch;
-                                });
-                                if (catMatch) {
-                                    match = true;
-                                    matchSource = "category";
-                                }
-                            }
+                            if (boxData.categories && boxData.categories.some(cat => cat.id === id || cat.name.toLowerCase() === searchTerm)) match = true;
                         } catch (e) {}
                     }
 
                     if (match) {
-                        const currentId = w.id;
-                        const originId = w.getAttribute('data-origin-id');
-                        const isClone = !!originId; 
-                        const originalIsPresent = isClone && existingIDs.has(originId);
-                        const selfIsPresent = existingIDs.has(currentId);
+                        // --- IDENTIFICAÇÃO SEMÂNTICA DE FOCO ---
+                        let baseType = "subnote";
+                        let boxIcon = "📘";
+                        let boxColor = "var(--accent-color)";
 
-                        // Identifica o Tipo
-                        let boxType = "Bloco"; let boxIcon = "📦";
-                        if (w.tagName === 'DETAILS') { boxType = "Secção"; boxIcon = "☂️"; }
-                        else if (w.classList.contains('question-mode')) { boxType = "Questão"; boxIcon = "📗"; }
-                        else if (w.classList.contains('free-mode')) { boxType = "Contentor"; boxIcon = "📙"; }
-                        else if (w.classList.contains('redator-wrapper')) { boxType = "Redator"; boxIcon = "📓"; }
-                        else if (w.classList.contains('journal-sign-wrapper')) { boxType = "Raciocínio"; boxIcon = "🪧"; }
-                        else if (w.classList.contains('journal-id-card')) { boxType = "Cartão"; boxIcon = "🪪"; }
-                        else { boxType = "SubNota"; boxIcon = "📘"; }
+                        if (w.tagName === 'DETAILS') { baseType = "toggle"; boxIcon = "☂️"; boxColor = "#c0392b"; }
+                        else if (w.classList.contains('question-mode')) { baseType = "question"; boxIcon = "📗"; boxColor = "#2ecc71"; }
+                        else if (w.classList.contains('free-mode')) { baseType = "free"; boxIcon = "📙"; boxColor = "#e67e22"; }
+                        else if (w.classList.contains('redator-wrapper')) { baseType = "redator"; boxIcon = "📓"; boxColor = "#555555"; }
+                        else if (w.classList.contains('consultor-mode')) { baseType = "consultor"; boxIcon = "📕"; boxColor = "#c0392b"; }
 
-                        // ============================================================
-                        // >>> LÓGICA DE TEXTO DO SNIPPET (ATUALIZADA) <<<
-                        // ============================================================
-                        
-                        let displaySnippet = "";
-                        const cleanTitle = boxTitle.trim();
-                        const cleanBody = boxContentOnly.trim().replace(/\s+/g, ' ');
-
-                        // 1. É Contentor Livre ou Redator? (Estes podem não ter título)
-                        const isFreeOrRedator = (w.classList.contains('free-mode') || w.classList.contains('redator-wrapper'));
-
-                        if (isFreeOrRedator) {
-                            if (cleanTitle) {
-                                // Tem título -> Mostra Título
-                                displaySnippet = cleanTitle;
-                            } else {
-                                // Não tem título -> Mostra primeiras 12 palavras do texto como "Título Falso"
-                                if (cleanBody) {
-                                    const words = cleanBody.split(' ').slice(0, 12).join(' ');
-                                    displaySnippet = `<em>${words}...</em>`;
-                                } else {
-                                    displaySnippet = `<em>${boxType} vazio</em>`;
-                                }
+                        // Tentar obter Foco Ativo
+                        const focusId = w.getAttribute('data-focus');
+                        let focusName = "";
+                        if (focusId) {
+                            const modeData = FOCUS_MODES_CONFIG[baseType]?.find(m => m.id === focusId);
+                            if (modeData) {
+                                focusName = modeData.name.replace(' (Original)', '');
+                                if (modeData.color !== 'transparent') boxColor = modeData.color;
                             }
-                        } 
-                        else {
-                            // 2. Outros (Questões, Subnotas, etc) -> Mostra SEMPRE o Título
-                            displaySnippet = cleanTitle || "Sem Título";
                         }
-                        
-                        // Formatação final (Negrito e tamanho)
-                        displaySnippet = `<span style="font-weight:600; color:var(--text-color); font-size:1em;">${displaySnippet}</span>`;
+                        if (!focusName) {
+                            focusName = baseType === 'question' ? 'Questão' : baseType === 'free' ? 'Contentor' : 'SubNota';
+                        }
 
-                        // ============================================================
+                        // --- GERAÇÃO DE TÍTULO (REGRA DAS 15 PALAVRAS) ---
+                        let displayTitle = (titleInput ? (titleInput.value || titleInput.textContent) : "").trim();
+                        
+                        if (!displayTitle) {
+                            const rawContent = contentDiv ? contentDiv.innerText.trim() : "";
+                            displayTitle = getFirstSentencePreview(rawContent, 15) || `(${focusName} vazio)`;
+                        }
 
                         allFoundReferenceBoxes.push({
                             id: docSnap.id, 
                             name: item.originName, 
                             snippet: w.outerHTML, 
-                            displaySnippet: displaySnippet, 
-                            typeName: boxType, 
+                            displaySnippet: displayTitle, 
+                            typeName: focusName, 
                             typeIcon: boxIcon, 
+                            typeColor: boxColor,
                             updatedTime: updatedTime,
-                            isClone: isClone,
-                            originalIsPresent: originalIsPresent,
-                            selfIsPresent: selfIsPresent,
-                            originId: originId 
+                            selfIsPresent: existingIDs.has(w.id)
                         });
                     }
                 });
             });
         });
 
-        console.log(`🏁 Fim da pesquisa. Total: ${allFoundReferenceBoxes.length}`);
-        console.groupEnd();
-        
+        // Ordenar e Renderizar
         allFoundReferenceBoxes.sort((a, b) => b.updatedTime - a.updatedTime);
         list.innerHTML = '';
         renderReferenceBoxesPage(); 
 
     } catch (e) {
         console.error("❌ Erro na pesquisa de referências:", e);
-        list.innerHTML = '<li style="color:red; padding:10px;">Erro ao carregar resultados.</li>';
+        list.innerHTML = '<li style="color:red; padding:10px;">Erro ao carregar resultados da nuvem.</li>';
     }
 }
 
@@ -21579,27 +21516,21 @@ function renderReferenceBoxesPage() {
         // O botão do olho agora usa a classe sem bordas e está alinhado
         li.innerHTML = `
             <div class="puzzle-ref-header">
-                <span class="puzzle-ref-type" style="color: var(--accent-color)">
-                    ${item.typeIcon} ${item.typeName} ${cloneBadge}
-                </span>
-                
-                <div style="text-align:right; display:flex; align-items:center; justify-content:flex-end;">
-                    <span class="puzzle-ref-note" style="max-width: 140px;">em ${item.name}</span>
-                    
-                    <!-- BOTÃO OLHO LIMPO -->
-                    <button class="btn-preview-eye-minimal" title="Pré-visualizar" 
-                            onclick="event.stopPropagation(); window.previewReferenceBox('${safeSnippet}', '${item.typeName}')">
-                        👁
-                    </button>
-                </div>
-            </div>
-            
-            ${warningText}
-            
-            <div class="puzzle-ref-snippet">
-                ${item.displaySnippet}
-            </div>
-        `;
+        <span class="puzzle-ref-type" style="color: ${item.typeColor}">
+            ${item.typeIcon} ${item.typeName}
+        </span>
+        <div style="text-align:right; display:flex; align-items:center; justify-content:flex-end;">
+            <span class="puzzle-ref-note" style="max-width: 140px;">em ${item.name}</span>
+            <button class="btn-preview-eye-minimal" title="Pré-visualizar" 
+                    onclick="event.stopPropagation(); window.previewReferenceBox('${safeSnippet}', '${item.typeName}')">
+                👁
+            </button>
+        </div>
+    </div>
+    <div class="puzzle-ref-snippet" style="border-left: 2px solid ${item.typeColor}; padding-left: 8px;">
+        ${item.displaySnippet}
+    </div>
+`;
 
      li.onclick = async (e) => {
     e.preventDefault();
@@ -23594,110 +23525,74 @@ window.restoreBackup = async function(backupId) {
 
     // --- LISTENER DO PAINEL ESQUERDO COM LOGS DE DEPURAÇÃO ---
 leftPanelList.addEventListener('click', async (e) => {
-    // 1. Identifica o que foi clicado
     const listItem = e.target.closest('.list-item');
     if (!listItem) return;
 
-    // --- A. BOTÃO DE MENU (Três Pontos) ---
     const itemMenuBtn = e.target.closest('.item-menu-btn');
     if (itemMenuBtn) {
         showContextMenu(e); 
         return; 
     }
 
-    // ============================================================
-    // CORREÇÃO DE SELEÇÃO VISUAL (A SOLUÇÃO PARA O SEU PROBLEMA)
-    // ============================================================
-    
-    // 1. Limpa TODOS os destaques da Coluna 2 (Nota Z deixa de estar azul)
-    const middleItems = document.getElementById('file-list').querySelectorAll('.list-item');
-    middleItems.forEach(el => {
-        el.classList.remove('selected', 'selected-red');
-        el.style.backgroundColor = ""; // Remove estilos inline residuais
-    });
-
-    // 2. Limpa TODOS os destaques da Coluna 1 (Pasta C deixa de estar azul)
-    const leftItems = document.getElementById('left-panel-list').querySelectorAll('.list-item');
-    leftItems.forEach(el => {
-        el.classList.remove('selected');
-    });
-
-    // 3. Aplica destaque APENAS no item clicado agora (Nota Y fica azul)
-    listItem.classList.add('selected');
-
-    // 4. Limpa variáveis de transição para evitar re-seleção automática
-    window.nextSelectedId = null; 
-    // ============================================================
-
-
-    // --- B. CAPTURA DE DADOS ---
+    // Captura de dados originais
     const id = listItem.dataset.id;
     const name = listItem.dataset.name;
     const type = listItem.dataset.type;
     const emoji = listItem.dataset.emoji;
 
-    // --- C. VERIFICAÇÃO DE PROTEÇÃO ---
-    if (currentTab === 'note') {
-        const canAccess = await checkItemProtection(id, name);
-        if (!canAccess) {
-            listItem.classList.remove('selected'); // Remove destaque se falhar a senha
-            return; 
-        }
-    }
+    // Criamos uma função interna que contém toda a tua lógica original
+    const performNavigation = async () => {
+        // Limpezas visuais originais
+        const middleItems = document.getElementById('file-list').querySelectorAll('.list-item');
+        middleItems.forEach(el => {
+            el.classList.remove('selected', 'selected-red');
+            el.style.backgroundColor = ""; 
+        });
+        const leftItems = document.getElementById('left-panel-list').querySelectorAll('.list-item');
+        leftItems.forEach(el => el.classList.remove('selected'));
 
- // --- D. LÓGICA DE NAVEGAÇÃO: ABA "LISTS" ---
-    if (currentTab === 'lists') {
-        const listNavigationAction = async () => {
-            
-            // 1. AJUSTE DE VISUALIZAÇÃO MOBILE
+        listItem.classList.add('selected');
+        window.nextSelectedId = null; 
+
+        // Verificação de Proteção (Tua lógica de passwords)
+        if (currentTab === 'note') {
+            const canAccess = await checkItemProtection(id, name);
+            if (!canAccess) {
+                listItem.classList.remove('selected');
+                return; 
+            }
+        }
+
+        // Lógica de Navegação: ABA LISTS
+        if (currentTab === 'lists') {
             if (window.innerWidth <= 768) {
-                document.body.classList.remove('mobile-view-editor'); // Garante que não está no editor
-                document.body.classList.add('mobile-view-middle');    // Mostra a lista do meio
+                document.body.classList.remove('mobile-view-editor');
+                document.body.classList.add('mobile-view-middle');
             }
 
-            // 2. MEMÓRIA DE SCROLL (GUARDAR AO SAIR)
-            // Verifica se estamos atualmente dentro da secção "Livros" antes de mudar
             if (navigationStack.length > 0 && navigationStack[0].id === 'livros') {
-                
-                // O SEGREDO: O scroll pertence ao contentor pai, não à lista
                 const scrollContainer = document.getElementById('middle-views-container');
-                
-                // Só guardamos memória se estivermos dentro de um livro ou capítulo (profundidade > 1)
                 if (navigationStack.length > 1) {
                     booksStateMemory.stack = [...navigationStack];
                     booksStateMemory.scrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
-                    console.log("💾 Estado do Livro guardado. Scroll:", booksStateMemory.scrollTop);
                 } else {
-                    // Se estivermos na raiz dos livros, limpamos para não abrir livros antigos por engano
                     booksStateMemory.stack = null;
                     booksStateMemory.scrollTop = 0;
                 }
             }
 
-            // 3. LÓGICA DE NAVEGAÇÃO
             if (type === 'list-category' || type === 'bible-book') {
-                
-                // CASO A: Estamos a voltar para "Livros"
                 if (id === 'livros') {
                     if (booksStateMemory.stack) {
-                        // Restaura o histórico de navegação
                         navigationStack = [...booksStateMemory.stack];
-                        // Ativa a flag para a função de renderização saber que tem de fazer scroll
                         window.shouldRestoreBookScroll = true; 
                     } else {
-                        // Abertura normal (Raiz)
                         navigationStack = [{ id, name, type }];
                     }
-                } 
-                // CASO B: Navegação normal para outras categorias
-                else {
-                    if (type === 'list-category') {
-                        navigationStack = [{ id, name, type }];
-                    } else {
-                        navigationStack.push({ id, name, type });
-                    }
+                } else {
+                    if (type === 'list-category') navigationStack = [{ id, name, type }];
+                    else navigationStack.push({ id, name, type });
                 }
-                
                 updateNavigationView(true);
             } 
             else if (type === 'cosmos-parent') {
@@ -23705,52 +23600,34 @@ leftPanelList.addEventListener('click', async (e) => {
                 updateNavigationView(true);
             }
             else if (type === 'subcosmos') {
-                // Subcosmos abre a 4ª coluna diretamente, não muda de painel
                 showReferencesPanel(id, name, 'subcosmos');
-            }
-        };
-        
-        navigateWithUnsavedCheck(listNavigationAction);
-        return;
-    }
-
-    // --- E. LÓGICA DE NAVEGAÇÃO: ABA "NOTE" ---
-    if (currentTab === 'note') {
-        
-        // Caso 1: PASTA ou AGREGAÇÃO -> Entra nela
-        if (type === 'pasta' || type === 'agregacao') {
-            if (listItem.dataset.superpasta === "true") {
-                navigateWithUnsavedCheck(() => { 
-                    window.location.href = `note.html?rootId=${id}`; 
-                });
-            } else {
-                const folderAction = () => {
-                    if (window.innerWidth <= 768) {
-                        document.body.classList.add('mobile-view-middle');
-                    }
-                    // Define a navegação para entrar nesta pasta
-                    if (navigationStack.length === 0) navigationStack.push({ id, name });
-                    else navigationStack[navigationStack.length - 1] = { id, name };
-                    
-                    updateNavigationView(true);
-                };
-                navigateWithUnsavedCheck(folderAction);
             }
         }
 
-        // Caso 2: NOTA -> Abre no Editor (Mas mantém-se na Coluna 1 visualmente)
-        else if (type === 'nota') {
-            const noteAction = () => {
+        // Lógica de Navegação: ABA NOTE
+        if (currentTab === 'note') {
+            if (type === 'pasta' || type === 'agregacao') {
+                if (listItem.dataset.superpasta === "true") {
+                    window.location.href = `note.html?rootId=${id}`;
+                } else {
+                    if (window.innerWidth <= 768) document.body.classList.add('mobile-view-middle');
+                    if (navigationStack.length === 0) navigationStack.push({ id, name });
+                    else navigationStack[navigationStack.length - 1] = { id, name };
+                    updateNavigationView(true);
+                }
+            }
+            else if (type === 'nota') {
                 if (window.innerWidth <= 768) {
                     document.body.classList.remove('mobile-view-middle');
                     document.body.classList.add('mobile-view-editor');
                 }
-                // Abre a nota Y
                 displayNote(id, listItem);
-            };
-            navigateWithUnsavedCheck(noteAction);
+            }
         }
-    }
+    };
+
+    // O GATILHO: Chama o porteiro de gravação antes de executar a função performNavigation
+    await navigateWithUnsavedCheck(performNavigation);
 });
 
 
@@ -24336,7 +24213,7 @@ async function showHighlightReferencesPanel(hexCode, colorName) {
             
             coloredElements.forEach(el => {
                 let displayTitle = "Sem Título";
-                let displayIcon = "🟦"; 
+                let displayIcon = "📘"; 
                 let snippet = "";
                 let contextType = "Item";
 
@@ -24507,62 +24384,47 @@ function stringToColor(str) {
 
 
 document.querySelector('.tabs-container').addEventListener('click', async (e) => {
-    // 1. Identificar o botão clicado
     const clickedTabBtn = e.target.closest('button');
     if (!clickedTabBtn) return;
 
     const newTab = clickedTabBtn.dataset.tab;
 
-    // --- CASO ESPECIAL: ABA BOOK (Abre em nova janela) ---
     if (newTab === 'book') {
         window.open('book.html', '_blank'); 
         return; 
     }
 
-    // 2. GRAVAÇÃO DE SEGURANÇA
-    // Se a nota atual tiver alterações pendentes, grava antes de trocar de aba
-    if (currentSaveStatus === 'unsaved' || currentSaveStatus === 'saving') {
-        await saveNote(true); 
+    // >>> LINHAS ADICIONADAS PARA GRAVAR AUTOMATICAMENTE <<<
+    if (selectedNoteId || activeEditingPostId) {
+        console.log("💾 Gravando antes de trocar de aba...");
+        if (selectedNoteId) await executeSave(); // Grava nota ou jornal
+        if (activeEditingPostId) await window.saveArchivePost(activeEditingPostId); // Grava post de arquivo
     }
+    // >>> FIM DAS LINHAS ADICIONADAS <<<
 
-    // 3. SALVAR MEMÓRIA DA ABA QUE ESTÁ A SAIR
-    // Guardamos o "caminho" (navigationStack) atual na memória da aba correspondente
     if (currentTab === 'note') {
         noteStackMemory = [...navigationStack];
     } else if (currentTab === 'lists') {
         listsStackMemory = [...navigationStack];
-        // Nota: O scroll do Livro já é capturado em tempo real pelo listener de scroll
     }
 
-    // 4. ATUALIZAR INTERFACE E ESTADO GLOBAL
     document.querySelectorAll('.tabs-container button').forEach(btn => btn.classList.remove('active'));
     clickedTabBtn.classList.add('active');
     
-    const oldTab = currentTab; // Guarda para referência
     currentTab = newTab;
 
-    // 5. RECUPERAR MEMÓRIA DA ABA QUE ESTÁ A ENTRAR
     if (currentTab === 'note') {
         navigationStack = [...noteStackMemory];
     } else if (currentTab === 'lists') {
         navigationStack = [...listsStackMemory];
 
-        // --- LÓGICA DE PERSISTÊNCIA DA 4ª COLUNA E LIVROS ---
-        
-        // A. Ativar flag de restauro de scroll se voltarmos para um capítulo
         const lastNav = navigationStack[navigationStack.length - 1];
         if (lastNav && lastNav.type === 'book-chapter') {
             window.shouldRestoreBookScroll = true;
-            console.log("📖 [SISTEMA] Flag de restauro de scroll ativada.");
         }
 
-        // B. Re-sincronizar a 4ª Coluna se houvesse um parágrafo aberto
         if (booksStateMemory.activeRef) {
             const ref = booksStateMemory.activeRef;
-            console.log("🎯 [SISTEMA] Restaurando parágrafo na 4ª coluna:", ref.name);
-            
-            // Reabre o painel com os dados guardados
-            // O parâmetro 'true' no final abre direto no modo Texto (🎯) se estavas lá
             await openBookParagraphPanel(
                 ref.bookId, 
                 "Fonte", 
@@ -24574,15 +24436,9 @@ document.querySelector('.tabs-container').addEventListener('click', async (e) =>
         }
     }
 
-    // 6. ATUALIZAR A VISTA DO PAINEL DO MEIO (COLUNA 2)
-    // Passamos 'true' (keepEditorOpen) para que, se houver uma nota aberta, 
-    // ela não seja fechada ao trocar de aba (permitindo multitarefa).
     updateNavigationView(true);
-
-    // 7. ATUALIZAR ELEMENTOS MOBILE
     updateMobileFABVisibility();
     
-    // Se estivermos no modo Share, marca como lido ao entrar/sair
     if (currentViewMode === 'shared' && currentArchiveId) {
         markArchiveAsRead(currentArchiveId);
     }
@@ -28197,39 +28053,25 @@ document.getElementById('formatting-popup').addEventListener('click', async (e) 
 // Quando escrevemos no título, forçamos o atributo HTML 'value' a atualizar.
 // Isto permite que o document.execCommand('undo') saiba que o texto mudou.
 noteContentEditor.addEventListener('input', (e) => {
-    // 1. Lógica Padrão: Marca como não guardado e agenda gravação
+    // 1. Gravação automática (já existente)
     lastContentEditTime = Date.now(); 
     updateSaveStatus('unsaved');
     saveNote();
 
-    // 2. ATUALIZAÇÃO DA 3ª ABA (TEXTOS BÍBLICOS) EM TEMPO REAL
-    const activeTab = document.querySelector('.middle-bottom-tabs button.active');
-    if (activeTab && activeTab.dataset.midTab === 'texts') {
-        clearTimeout(window.textScanTimeout);
-        window.textScanTimeout = setTimeout(() => {
-            if (window.currentNoteHybridMode) {
-                 generateHybridView();
-            } else if (activeTab.dataset.mode === 'navega') {
-                 generateAnchorNavigation();
-            } else {
-                 generateNoteTexts();
-            }
-        }, 1000);
-    }
-
-    // ============================================================
-    // 🚀 NOVA LÓGICA: ATUALIZAÇÃO LIVE DO CONSULTOR (PICKCARDS)
-    // ============================================================
-    // Verifica se o que estás a escrever está dentro de um Consultor
-    const consultorContent = e.target.closest('.consultor-mode .mini-note-content');
-    if (consultorContent) {
-        const wrapper = consultorContent.closest('.mini-note-wrapper');
-        if (wrapper && wrapper.id) {
-            // Chama a busca Live (extrai palavras e mostra resultados)
-            window.debouncedConsultorSearch(wrapper.id);
-        }
+    // 2. ATUALIZAÇÃO LIVE DO ÍNDICE
+    // Verifica se o que está a ser editado é um título ou o conteúdo de um contentor
+    if (e.target.classList.contains('mini-note-title-input') || 
+        e.target.classList.contains('mini-note-content') ||
+        e.target.classList.contains('redator-input')) {
+        
+        // Chamada imediata para o Índice refletir a escrita
+        generateNoteIndex();
+        // Mantém o scrollspy ativo para não perder o destaque azul de onde estamos
+        detectActiveScrollElement(); 
     }
 });
+
+
 
 // ====================================================================
 // GESTOR DE CLIQUES (ÂNCORAS, LINKS E TAGS)
@@ -39650,7 +39492,7 @@ document.querySelector('.middle-bottom-tabs').addEventListener('click', (e) => {
 });
 
 // 2. FUNÇÃO: GERAR ÍNDICE (VISTA 2)
- function generateNoteIndex() {
+function generateNoteIndex() {
     const list = document.getElementById('note-index-list');
     const editor = document.getElementById('note-content-editor');
     
@@ -39659,96 +39501,106 @@ document.querySelector('.middle-bottom-tabs').addEventListener('click', (e) => {
     list.innerHTML = '';
     let hasItems = false;
 
-    // --- MUDANÇA 1: Adicionei '.idea-span' à lista de seletores ---
+    // Seleciona todas as caixas estruturadas e elementos especiais
     const elements = editor.querySelectorAll('.mini-note-wrapper, .redator-wrapper, details.toggle-section, .jwn-table-wrapper, .jwn-timeline-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, .post-it-note, .idea-span');
 
     elements.forEach(el => {
-        // GARANTIA: Se o elemento não tiver ID, cria um agora
+        // Garante que o elemento tem um ID para o scroll funcionar
         if (!el.id) el.id = 'idx_' + Math.random().toString(36).substr(2, 9);
 
-        let title = "Sem Título";
-        let icon = "🟦";
+        let title = "";
+        let icon = "📘";
         let typeLabel = "Item";
         let borderColor = "var(--border-color)";
 
-        // --- LÓGICA DE IDENTIFICAÇÃO ---
-        
-        // >>> NOVA LÓGICA PARA IDEIAS (💡) <<<
-        if (el.classList.contains('idea-span')) {
-            icon = "💡"; 
-            typeLabel = "Ideia";
-            borderColor = "#e74c3c"; // VERMELHO
+        // --- LÓGICA PARA CAIXAS (SubNota, Questão, Contentor, Consultor) ---
+        if (el.classList.contains('mini-note-wrapper')) {
+            const isFree = el.classList.contains('free-mode');
+            const input = el.querySelector('.mini-note-title-input');
+            const contentDiv = el.querySelector('.mini-note-content');
             
-            // Lógica das 15 palavras
-            const fullText = el.textContent.trim();
-            const words = fullText.split(/\s+/); // Divide por espaços
+            // 1. Identificar o Tipo Base
+            let baseType = 'subnote';
+            if (el.classList.contains('question-mode')) { baseType = 'question'; icon = "📗"; }
+            else if (isFree) { baseType = 'free'; icon = "📙"; }
+            else if (el.classList.contains('consultor-mode')) { baseType = 'consultor'; icon = "📕"; }
+
+            // 2. Processar o Foco (data-focus)
+            const focusId = el.getAttribute('data-focus');
+            let focusName = "";
             
-            if (words.length > 15) {
-                title = words.slice(0, 15).join(" ") + "...";
+            if (focusId) {
+                const modeData = FOCUS_MODES_CONFIG[baseType]?.find(m => m.id === focusId);
+                if (modeData) {
+                    // Limpa o "(Original)" do nome
+                    focusName = modeData.name.replace(' (Original)', '');
+                    // Aplica a cor do foco à borda do índice
+                    if (modeData.color !== 'transparent') borderColor = modeData.color;
+                }
+            }
+
+            // Fallback de nomes caso não haja foco definido
+            if (!focusName) {
+                focusName = baseType === 'question' ? 'Questão' : 
+                            baseType === 'free' ? 'Contentor' : 
+                            baseType === 'consultor' ? 'Consultor' : 'SubNota';
+            }
+
+            typeLabel = focusName;
+            
+            // 3. Lógica de Título (Live)
+            if (isFree) {
+                // Para Contentores: Primeiras 15 palavras da 1ª frase
+                const rawText = contentDiv ? contentDiv.innerText.trim() : "";
+                title = getFirstSentencePreview(rawText, 15) || `(${focusName} vazio)`;
             } else {
-                title = fullText;
+                // Para SubNotas/Questões: Usa o valor do input em tempo real
+                const textValue = input ? (input.value || input.textContent || "").trim() : "";
+                title = textValue || `(${focusName} sem título)`;
             }
         }
-        // >>> FIM DO BLOCO IDEIA <<<
         
-        else if (el.classList.contains('mini-note-wrapper')) {
-            const input = el.querySelector('.mini-note-title-input');
-            const content = el.querySelector('.mini-note-content');
-            
-            if (el.classList.contains('question-mode')) {
-                icon = "📗"; typeLabel = "Questão"; borderColor = "#2ecc71";
-                title = input ? (input.value || input.textContent) : "Pergunta";
-            } else if (el.classList.contains('free-mode')) {
-                icon = "📙"; typeLabel = "Contentor"; borderColor = "#e67e22";
-                title = content ? content.innerText.split('\n')[0].substring(0, 30) : "Texto Livre";
-            } else {
-                icon = "📘"; typeLabel = "SubNota"; borderColor = "#3498db";
-                title = input ? (input.value || input.textContent) : "SubNota";
-            }
-        } 
+        // --- LÓGICA PARA REDATOR ---
         else if (el.classList.contains('redator-wrapper')) {
             icon = "📓"; typeLabel = "Redator"; borderColor = "#555555";
             const input = el.querySelector('.redator-input');
-            title = input ? input.value : "Redator";
-            if(!title || !title.trim()) {
+            const textValue = input ? input.value.trim() : "";
+            if (textValue) {
+                title = textValue;
+            } else {
                 const content = el.querySelector('.redator-content');
-                title = content ? content.innerText.split('\n')[0].substring(0, 30) : "Redator";
+                title = content ? getFirstSentencePreview(content.innerText, 15) : "(Redator sem título)";
             }
         }
+
+        // --- LÓGICA PARA IDEIAS (💡) ---
+        else if (el.classList.contains('idea-span')) {
+            icon = "💡"; typeLabel = "Ideia"; borderColor = "#e74c3c";
+            title = getFirstSentencePreview(el.textContent, 15);
+        }
+
+        // --- LÓGICA PARA TOGGLES (☂) ---
         else if (el.tagName === 'DETAILS') {
             icon = "☂"; typeLabel = "Secção"; borderColor = "#c0392b";
             const h2 = el.querySelector('h2');
-            title = h2 ? h2.textContent : "Título";
-        }
-        else if (el.classList.contains('post-it-note')) {
-            icon = "📒"; typeLabel = "Post-it"; borderColor = "#f1c40f"; title = "Post-it";
-        }
-        else if (el.classList.contains('journal-sign-wrapper')) {
-            icon = "🪧"; typeLabel = "Raciocínio"; borderColor = "#f1c40f";
-            title = el.querySelector('.sign-title-input')?.value || "Raciocínio";
-        }
-        else if (el.classList.contains('journal-id-card')) {
-            icon = "🪪"; typeLabel = "Cartão"; borderColor = "#795548";
-            title = el.querySelector('.card-title-input')?.value || "Cartão";
-        }
-        else if (el.classList.contains('jwn-timeline-wrapper')) {
-            icon = "🌳"; typeLabel = "Timeline"; borderColor = "var(--accent-color)"; title = "Linha do Tempo";
-        }
-        else if (el.classList.contains('jwn-table-wrapper')) {
-            icon = "🧮"; typeLabel = "Tabela"; borderColor = "var(--text-muted-color)"; title = "Tabela";
-        }
-        else if (el.classList.contains('journal-cube-wrapper')) {
-            icon = "🧊"; typeLabel = "Cubo"; borderColor = "#4a90e2"; title = "Bloco Flutuante";
+            title = h2 ? h2.textContent.trim() : "Título";
         }
 
+        // --- LÓGICA PARA WIDGETS GERAIS ---
+        else if (el.classList.contains('jwn-table-wrapper')) { icon = "🧮"; typeLabel = "Tabela"; title = "Tabela de Dados"; }
+        else if (el.classList.contains('jwn-timeline-wrapper')) { icon = "🌳"; typeLabel = "Timeline"; title = "Linha Cronológica"; }
+        else if (el.classList.contains('post-it-note')) { icon = "📒"; typeLabel = "Post-it"; title = "Nota Flutuante"; }
+        else if (el.classList.contains('journal-sign-wrapper')) { icon = "🪧"; typeLabel = "Raciocínio"; title = el.querySelector('.sign-title-input')?.value || "Raciocínio"; }
+
+        // Renderização do Item
         hasItems = true;
         const li = document.createElement('li');
-        li.className = `index-item`;
-        
+        li.className = 'index-item';
         li.style.borderLeft = `4px solid ${borderColor}`;
         li.setAttribute('data-target-id', el.id); 
-        
-        if (!title || title.trim() === "") title = `(${typeLabel} sem título)`;
+
+        // Se o título estiver vazio após todas as verificações
+        if (!title) title = `(${typeLabel})`;
 
         li.innerHTML = `
             <span class="index-icon">${icon}</span>
@@ -39758,9 +39610,10 @@ document.querySelector('.middle-bottom-tabs').addEventListener('click', (e) => {
             </div>
         `;
 
+        // Ao clicar, faz scroll suave até à caixa na nota
         li.onclick = () => {
             el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            el.classList.remove('flash-target'); void el.offsetWidth; el.classList.add('flash-target');
+            // Feedback visual no índice
             currentActiveScrollId = el.id;
             updateIndexVisuals(); 
         };
@@ -39769,9 +39622,10 @@ document.querySelector('.middle-bottom-tabs').addEventListener('click', (e) => {
     });
 
     if (!hasItems) {
-        list.innerHTML = '<li class="empty-msg">Esta nota não tem caixas nem estrutura especial.</li>';
+        list.innerHTML = '<li class="empty-msg">Esta nota não tem estrutura detectada.</li>';
     }
 }
+        
 
 
 
@@ -47568,8 +47422,10 @@ const editorToObserve = document.getElementById('note-content-editor');
 
 if (editorToObserve) {
     indexObserver.observe(editorToObserve, { 
-        childList: true, // Vigia adição/remoção de filhos diretos
-        subtree: true    // Vigia também dentro de divs (caso a estrutura seja complexa)
+         childList: true, 
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['data-focus'] // Deixe o 'value' para o listener de input para performance
     });
 }
 
@@ -53912,25 +53768,17 @@ function renderFocusOptions() {
 window.applyFocusMode = async function(focusId) {
     if (!window.activeWrapperForColor) return;
 
-    // 1. CAPTURAR SCROLL ATUAL
-    const scrollContainer = document.getElementById('editor-area') || document.documentElement;
-    const currentScroll = scrollContainer.scrollTop;
-
-    // 2. Aplicar o atributo
     window.activeWrapperForColor.setAttribute('data-focus', focusId);
     
-    // 3. Fechar modal e Gravar
+    // Fechar modal
     document.getElementById('highlight-modal').style.display = 'none';
 
+    // ATUALIZAR ÍNDICE IMEDIATAMENTE
+    generateNoteIndex(); 
+    updateIndexVisuals();
+
     if (typeof saveNote === 'function') {
-        window.isApplyingStyle = true;
         await saveNote(true);
-        
-        // 4. RESTAURAR SCROLL
-        requestAnimationFrame(() => {
-            scrollContainer.scrollTop = currentScroll;
-            window.isApplyingStyle = false;
-        });
     }
 };
 
@@ -53953,6 +53801,19 @@ if (highlightTabs) {
 
         window.renderHighlightOrFocus();
     };
+}
+
+
+function getFirstSentencePreview(text, maxWords = 15) {
+    if (!text) return "";
+    // Pega a primeira frase (até ao primeiro ponto, exclamação ou interrogação)
+    const firstSentence = text.split(/[.!?]/)[0].trim();
+    if (!firstSentence) return "";
+
+    const words = firstSentence.split(/\s+/);
+    if (words.length <= maxWords) return firstSentence + ".";
+    // Corta nas 15 palavras e adiciona reticências
+    return words.slice(0, maxWords).join(" ") + "...";
 }
 
 
