@@ -11346,16 +11346,18 @@ div[id^="subs-"] div[style*="font-style:italic"] {
 
 /* O SEGREDO: Impede que o "rasto" do rato ligue os dois blocos */
 .mini-note-toolbar {
-    contain: content !important;
     -webkit-user-select: none !important;
     user-select: none !important;
+    -webkit-user-modify: read-only !important;
+    /* Isola a barra para o iOS não tentar fundir parágrafos */
+    display: flex !important;
+    contain: layout; 
 }
 
+/* Garante que o clique na div de conteúdo é interpretado corretamente */
 .mini-note-content {
-    display: block !important;
-    min-height: 40px !important;
-    /* Impede que o iOS "puxe" elementos de fora para dentro ao apagar */
-    overflow-anchor: none !important;
+    -webkit-tap-highlight-color: transparent;
+    cursor: text;
 }
 
 /* Garante que o parágrafo de segurança nunca colapse */
@@ -16955,132 +16957,51 @@ async function executeSave() {
 window.insertMiniNoteAtCursor = function(type = 'default', extraData = null) {
     const editor = document.getElementById('note-content-editor');
     editor.focus();
-    
     let selection = window.getSelection();
-    let range;
+    let range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
 
-    // 1. Localização do Cursor
-    if (selection.rangeCount > 0) {
-        range = selection.getRangeAt(0);
-    } else {
-        range = document.createRange();
-        range.selectNodeContents(editor);
-        range.collapse(false);
-        selection.removeAllRanges();
-        selection.addRange(range);
-    }
-
-    // 2. Geração de Identificadores e Classes
     const timestamp = Date.now();
     const uniqueId = (type === 'consultor' ? 'cons' : (type === 'redator' ? 'red' : 'mn')) + '_' + timestamp;
-    
-    // Verifica se a configuração de quebra de linha no título está ativa
     const wrapClass = (typeof appSettings !== 'undefined' && appSettings.showFullTitles) ? ' wrap-enabled' : '';
 
-    // 3. HTML da Toolbar Comum (Blindada com contenteditable="false")
     const toolbarHTML = `
         <div class="mini-note-toolbar" contenteditable="false">
-            <button type="button" data-action="sharing-settings" title="Partilha">🔐</button>
+            <button type="button" data-action="sharing-settings">🔐</button>
             <div class="toolbar-btn-group">
-                <button type="button" data-action="move-up" title="Subir">🔺</button>
-                <button type="button" data-action="move-down" title="Descer">🔻</button>
+                <button type="button" data-action="move-up">🔺</button>
+                <button type="button" data-action="move-down">🔻</button>
             </div>
-            <button type="button" data-action="manage-box-links" title="Links/Codex">⚡</button>
-            <button type="button" data-action="append-mini-note" title="Clonar">🧬</button>
-            <button type="button" data-action="highlight-color" title="Cor">🎨</button>
-            <button type="button" data-action="manage-mini-note-topics" title="Tópicos">📋</button>
-            <button type="button" data-action="delete-mini-note" title="Apagar">🗑️</button>
+            <button type="button" data-action="manage-box-links">⚡</button>
+            <button type="button" data-action="append-mini-note">🧬</button>
+            <button type="button" data-action="highlight-color">🎨</button>
+            <button type="button" data-action="manage-mini-note-topics">📋</button>
+            <button type="button" data-action="delete-mini-note">🗑️</button>
         </div>`;
 
-    // Caractere invisível (Zero Width Space) para dar estabilidade ao iOS
-    const stabilityChar = "&#8203;"; 
+    const isQuestion = type === 'question';
+    const isFree = type === 'free';
+    const wrapperClass = 'mini-note-wrapper' + (isQuestion ? ' question-mode' : (isFree ? ' free-mode' : ''));
+    const titleHTML = isFree ? '' : `<textarea class="mini-note-title-input${wrapClass}" contenteditable="true" placeholder="Título..." rows="1"></textarea>`;
 
-    let finalHTML = '';
-
-    // 4. Construção do HTML por Tipo
-    if (type === 'consultor') {
-        const c = extraData || { biblia: [], livros: [], pubs: [], assoc: false };
-        finalHTML = `
-        <div class="mini-note-wrapper consultor-mode" id="${uniqueId}" contenteditable="false" 
-             data-shared="false" data-topics='{}' data-box-links='{}'
-             data-biblia-tags='${JSON.stringify(c.biblia)}' 
-             data-livros-tags='${JSON.stringify(c.livros)}' 
-             data-pubs-tags='${JSON.stringify(c.pubs)}' 
-             data-assoc-active="${c.assoc}"
-             data-results-state="visible">
-            
-            <div style="display: flex; justify-content: space-between; align-items: center; padding-right: 5px;">
-                <textarea class="mini-note-title-input${wrapClass}" contenteditable="true" placeholder="Consultor: Título do Estudo..." rows="1" 
-                          style="color: var(--consultor-color) !important; font-weight: bold; flex: 1;"></textarea>
-                <span class="subtitle-toggle" onclick="window.toggleConsultorSubtitle('${uniqueId}')" style="cursor:pointer; padding: 5px; font-size:10px; color:#888;">▼</span>
-            </div>
-
-            <input type="text" class="consultor-subtitle-input" contenteditable="true" placeholder="Subtítulo..." 
-                   style="display:none; width: 100%; background: transparent; border: none; border-bottom: 1px dashed var(--border-color); color: var(--text-color); font-size: 0.9em; margin-bottom: 10px; outline: none;">
-
+    // Usamos o <p><br></p> padrão, que é o mais estável para o toque no iOS
+    const finalHTML = `
+        <div class="${wrapperClass}" id="${uniqueId}" contenteditable="false" data-topics='{}' data-shared="false" data-box-links='{}'>
+            ${titleHTML}
             ${toolbarHTML}
-
-            <div class="mini-note-content" contenteditable="true" style="min-height: 40px; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                <p>${stabilityChar}</p>
-            </div>
-
-            <div class="mega-painel" id="mp-panel-${uniqueId}" contenteditable="false" data-last-results="[]" data-active-word="">
-                <div class="mega-painel-tabs">
-                    <span class="mp-tab active" onclick="window.switchMPTab(this, '🪂')">🪂</span>
-                    <span class="mp-tab" onclick="window.switchMPTab(this, '📖')">📖</span>
-                    <span class="mp-tab" onclick="window.switchMPTab(this, '📔')">📔</span>
-                    <span class="mp-tab" onclick="window.switchMPTab(this, '📚')">📚</span>
-                    <span class="mp-tab" onclick="window.switchMPTab(this, '📦')">📦</span>
-                    <span class="btn-mp-hide" onclick="window.toggleConsultorResults('${uniqueId}', false)" title="Ocultar Painel">✖</span>
-                </div>
-                <div class="mp-pickcards-container" id="pickcards-${uniqueId}" style="display:none;"></div>
-                <div class="mega-painel-content">Aguardando escrita...</div>
-                <div class="mp-controls-wrapper">
-                    <span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'biblia')">🀦</span>
-                    <span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'livros')">🀩</span>
-                    <span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'pubs')">🀧</span>
-                    <span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'assoc')">🀨</span>
-                    <span class="btn-mp-popup" onclick="window.handleMahjongClick('${uniqueId}')">🀄️</span>
-                </div>
+            <div class="mini-note-content" contenteditable="true">
+                <p><br></p>
             </div>
         </div><p><br></p>`;
-    } 
-    else {
-        const isQuestion = type === 'question';
-        const isFree = type === 'free';
-        const wrapperClass = 'mini-note-wrapper' + (isQuestion ? ' question-mode' : (isFree ? ' free-mode' : ''));
-        
-        // Título: Oculto no modo livre, visível nos outros
-        const titleHTML = isFree ? '' : `<textarea class="mini-note-title-input${wrapClass}" contenteditable="true" placeholder="Título..." rows="1"></textarea>`;
-        
-     finalHTML = `
-    <div class="${wrapperClass}" id="${uniqueId}" contenteditable="false" data-topics='{}' data-shared="false" data-box-links='{}'>
-        ${titleHTML}
-        ${toolbarHTML}
-        <div class="mini-note-content" contenteditable="true">
-            <p>&#8203;</p> <!-- Este caractere é o escudo -->
-        </div>
-    </div><p><br></p>`;
-    }
 
-    // 5. Inserção Atómica
     document.execCommand('insertHTML', false, finalHTML);
 
-    // 6. Foco e Finalização
     setTimeout(() => {
         const newBox = document.getElementById(uniqueId);
         if (newBox) {
-            // Scroll para centrar a nova caixa
             newBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            
-            // Foca no Título (ou Conteúdo se for modo livre)
             const targetFocus = isFree ? newBox.querySelector('.mini-note-content') : newBox.querySelector('.mini-note-title-input');
             if (targetFocus) targetFocus.focus();
-            
-            // Executa a limpeza e reforço de eventos (fixLegacyMiniNotes)
-            if (typeof window.fixLegacyMiniNotes === 'function') {
-                window.fixLegacyMiniNotes();
-            }
+            if (typeof window.fixLegacyMiniNotes === 'function') window.fixLegacyMiniNotes();
         }
     }, 50);
 };
@@ -53285,39 +53206,26 @@ window.updateConsultorIconsVisual = function(wrapper) {
 document.addEventListener('beforeinput', (e) => {
     if (e.inputType === 'deleteContentBackward') {
         const selection = window.getSelection();
-        if (!selection.rangeCount) return;
+        if (!selection.rangeCount || !selection.isCollapsed) return; // Se houver seleção, deixa apagar normal
 
         const range = selection.getRangeAt(0);
-        const anchorNode = selection.anchorNode;
+        const node = selection.anchorNode;
         
-        // Encontra a área de texto da caixa
-        const contentDiv = anchorNode.nodeType === 3 ? 
-            anchorNode.parentElement.closest('.mini-note-content, .redator-content, .sign-content') : 
-            anchorNode.closest('.mini-note-content, .redator-content, .sign-content');
-
-        if (contentDiv) {
-            // Se o utilizador selecionou tudo dentro da caixa (Select All)
-            if (!selection.isCollapsed) {
-                // Deixa apagar o texto, mas impede o navegador de apagar o nó pai
-                e.preventDefault();
-                document.execCommand('insertHTML', false, '<p>&#8203;</p>');
-                return;
-            }
-
-            // Lógica de Barreira para o cursor a piscar
-            // Se estiver no início absoluto do primeiro parágrafo
-            const firstPara = contentDiv.querySelector('p:first-child');
+        // Verifica se o cursor está dentro de uma área editável
+        const contentDiv = node.nodeType === 3 ? node.parentElement.closest('[contenteditable="true"]') : node.closest('[contenteditable="true"]');
+        
+        if (contentDiv && (contentDiv.classList.contains('mini-note-content') || contentDiv.classList.contains('redator-content'))) {
             
-            // Verificação de "Teto de Vidro"
-            if (range.startOffset === 0 && (anchorNode === firstPara || anchorNode.parentElement === firstPara)) {
-                
-                // Prova final: Se não há texto ou há apenas o caractere invisível
-                const textContent = contentDiv.innerText.replace(/\u200B/g, '');
-                if (textContent.length === 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    console.log("🛡️ Toolbar protegida: Backspace bloqueado no topo.");
-                }
+            // Pergunta: Existe algum texto ou elemento ANTES do cursor nesta div?
+            const preRange = document.createRange();
+            preRange.setStart(contentDiv, 0);
+            preRange.setEnd(range.startContainer, range.startOffset);
+
+            // Se o conteúdo antes do cursor estiver totalmente vazio (length 0)
+            if (preRange.toString().trim().length === 0 && preRange.cloneContents().childNodes.length === 0) {
+                // Bloqueia apenas o backspace que "saltaria" para a Toolbar
+                e.preventDefault();
+                e.stopPropagation();
             }
         }
     }
