@@ -28560,120 +28560,74 @@ if (deleteBtn) {
 // PROTEÇÃO: DETETAR DELETE EM MASSA DE MINI-NOTAS
 // ====================================================================
 noteContentEditor.addEventListener('keydown', async (event) => {
-    // 1. Filtro de Teclas
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
 
-    // Se estiver a editar um input nativo (ex: Título do Raciocínio), deixa o browser tratar
-    if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+    // Se estiver num input simples (dentro da caixa), deixa o browser tratar
+    if (event.target.tagName === 'INPUT' || (event.target.tagName === 'TEXTAREA' && !event.target.classList.contains('mini-note-title-input'))) return;
 
     const selection = window.getSelection();
     if (!selection.rangeCount) return;
 
     const range = selection.getRangeAt(0);
-    const safeSelectors = '.mini-note-wrapper, details.toggle-section, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, .jwn-timeline-wrapper, .jwn-table-wrapper, .store-note-card';
+    const safeSelectors = '.mini-note-wrapper, details.toggle-section, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .jwn-table-wrapper';
 
-    // 2. VERIFICAÇÃO CRÍTICA: A SELEÇÃO É INTERNA?
-    // Verifica o "Ancestral Comum" da seleção (o elemento pai mais próximo que contém todo o texto selecionado)
+    // 1. IDENTIFICAR SE A SELEÇÃO É PERIGOSA
     const commonAncestor = range.commonAncestorContainer;
     const commonEl = (commonAncestor.nodeType === 3) ? commonAncestor.parentElement : commonAncestor;
-
-    // Procura se esse ancestral está DENTRO de uma caixa segura
     const parentWrapper = commonEl.closest(safeSelectors);
 
+    let isDangerousSelection = false;
+
     if (parentWrapper) {
-        // --- CENÁRIO A: EDIÇÃO DE TEXTO ---
-        // Se a seleção está inteiramente contida numa caixa, NÃO É um delete em massa.
-        // É apenas o utilizador a apagar texto ou parágrafos lá dentro.
-        // Permitimos a ação imediatamente e saímos da função.
-        return; 
+        // Se a seleção não estiver colapsada (há algo selecionado com o rato)
+        if (!selection.isCollapsed) {
+            // VERIFICAÇÃO DE INTEGRIDADE:
+            // Se a seleção contiver a Toolbar ou o Título ao mesmo tempo que o conteúdo
+            const hasToolbar = parentWrapper.querySelector('.mini-note-toolbar') && selection.containsNode(parentWrapper.querySelector('.mini-note-toolbar'), true);
+            const hasTitle = parentWrapper.querySelector('.mini-note-title-input') && selection.containsNode(parentWrapper.querySelector('.mini-note-title-input'), true);
+            const hasContent = parentWrapper.querySelector('.mini-note-content') && selection.containsNode(parentWrapper.querySelector('.mini-note-content'), true);
+
+            // Se selecionou o Título + Conteúdo, ou a Toolbar, é perigoso
+            if ((hasTitle && hasContent) || hasToolbar) {
+                isDangerousSelection = true;
+            }
+        }
+    } else {
+        // Seleção externa (entre várias caixas) - Já tratado anteriormente
+        isDangerousSelection = true;
     }
 
-    // 3. DETEÇÃO DE DELETE EM MASSA (Se chegou aqui, a seleção está FORA ou ENTRE caixas)
-    console.group("🗑️ [DEBUG DELETE] Verificação Externa");
-    
-    const allWrappers = noteContentEditor.querySelectorAll(safeSelectors);
-    const wrappersToDelete = [];
-    
-    // Obtém o retângulo visual da seleção
-    const rangeRect = range.getBoundingClientRect();
-    const hasVisualSelection = rangeRect.width > 0 && rangeRect.height > 0;
+    // 2. AÇÃO DE PROTEÇÃO
+    if (isDangerousSelection) {
+        // Verifica se realmente há algo estruturado na seleção antes de bloquear
+        const intersectedWrappers = [];
+        document.querySelectorAll(safeSelectors).forEach(w => {
+            if (range.intersectsNode(w)) intersectedWrappers.push(w);
+        });
 
-    allWrappers.forEach(wrapper => {
-        // Se a seleção está DENTRO deste wrapper (verificação extra), ignora-o
-        if (wrapper.contains(range.commonAncestorContainer)) return;
-
-        let isHit = false;
-
-        // A. Método Nativo (Intersect)
-        if (range.intersectsNode(wrapper)) isHit = true;
-        
-        // B. Método Visual (Sobreposição de Retângulos) - Para apanhar "Select All"
-        else if (hasVisualSelection) {
-            const boxRect = wrapper.getBoundingClientRect();
-            const overlap = !(
-                rangeRect.right < boxRect.left || 
-                rangeRect.left > boxRect.right || 
-                rangeRect.bottom < boxRect.top + 10 || 
-                rangeRect.top > boxRect.bottom - 10
-            );
-            if (overlap) isHit = true;
-        }
-
-        if (isHit) {
-            wrappersToDelete.push(wrapper);
-        }
-    });
-
-    console.log(`Itens afetados externamente: ${wrappersToDelete.length}`);
-    console.groupEnd();
-
-    // 4. AÇÃO DE BLOQUEIO (Só se houver wrappers selecionados POR FORA)
-    if (wrappersToDelete.length > 0) {
-        event.preventDefault();
-        event.stopPropagation();
-
-        const count = wrappersToDelete.length;
-        const totalInEditor = allWrappers.length;
-        const isMassive = (count >= 2) || (count === 1 && totalInEditor === 1);
-
-        if (isMassive) {
-            const confirmModal = document.getElementById('confirm-modal');
-            if(confirmModal) confirmModal.style.zIndex = "2147483647";
+        if (intersectedWrappers.length > 0) {
+            event.preventDefault();
+            event.stopPropagation();
 
             const confirmed = await showConfirmation(
-                "⚠️ Atenção: Apagar Conteúdo", 
-                `A seleção abrange ${count} caixas estruturadas.\n\nSerá criado um Backup Automático antes de limpar. Deseja continuar?`
+                "Mover para a Lixeira?",
+                `A sua seleção inclui a estrutura de ${intersectedWrappers.length} item(s). Deseja ocultar no histórico?`
             );
-            
-            if(confirmModal) confirmModal.style.zIndex = "";
 
             if (confirmed) {
-                // 1. Backup
-                const currentHTML = noteContentEditor.innerHTML;
-                const currentTitle = document.getElementById('note-title-input').value;
-                if (typeof performSafetyBackup === 'function') {
-                    await performSafetyBackup(selectedNoteId, currentHTML, currentTitle);
+                // Se for mais que um, faz backup por segurança
+                if (intersectedWrappers.length > 1 && typeof performSafetyBackup === 'function') {
+                    await performSafetyBackup(selectedNoteId, noteContentEditor.innerHTML, document.getElementById('note-title-input').value);
                 }
 
-                // 2. Limpar
-                if (count === totalInEditor) {
-                     noteContentEditor.innerHTML = '<p><br></p>';
-                } else {
-                     range.deleteContents();
+                // Arquiva um por um
+                for (const w of intersectedWrappers) {
+                    await archiveMiniNote(w, true);
                 }
+                
+                // Limpa restos de texto que possam ter ficado na seleção
+                range.deleteContents();
                 saveNote(true);
-            }
-        } else {
-            // Caso Simples: 1 Item selecionado por fora (ex: clicou na margem para o apagar)
-            const confirmDelete = await showConfirmation(
-                "Mover para a Lixeira?", 
-                `1 item estruturado selecionado. Mover para o Histórico?`
-            );
-
-            if (confirmDelete) {
-                await archiveMiniNote(wrappersToDelete[0], true);
-                try { range.deleteContents(); } catch(e) {}
-                saveNote();
             }
         }
     }
