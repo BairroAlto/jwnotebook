@@ -502,6 +502,7 @@ a[data-anexo-id] { color: inherit; text-decoration: none; border-bottom: 1px dot
 
 /* QUANDO A OPÇÃO ESTÁ LIGADA */
 .mini-note-title-input.wrap-enabled {
+    word-break: break-word;
     white-space: pre-wrap !important; /* Permite quebra de linha */
     height: auto;
 }
@@ -513,7 +514,14 @@ a[data-anexo-id] { color: inherit; text-decoration: none; border-bottom: 1px dot
 
 /* Quando a configuração estiver ativa, o campo expande */
 .mini-note-title-input.wrap-enabled {
-    word-break: break-word;
+    white-space: pre-wrap !important; /* Permite quebra de linha */
+    word-break: break-word !important; /* Quebra palavras longas se necessário */
+    overflow-wrap: break-word !important; /* Standard moderno para mobile */
+    display: block !important;
+    width: 100% !important; /* Ocupar a largura toda da caixa */
+    height: auto;
+    overflow: hidden; /* Esconde a barra de scroll interna do textarea */
+    resize: none;
 }
 
 .mini-note-wrapper.question-mode .mini-note-title-input { color: var(--question-color); }
@@ -14166,7 +14174,7 @@ let activeEditRow = null;
 let activeCardImageElement = null;
 let currentNoteType = null;
 let activeRedatorPopups = [];
-let highestZIndex = 10000;
+let highestZIndex = 2000000;
 let mDragCube = null;        // O cubo original
 let mDragClone = null;       // O fantasma visual que segue o dedo
 let mDragTarget = null;      // Onde vamos largar
@@ -14643,7 +14651,7 @@ async function openTopicsModal(targetId, type) {
     // 2. FORÇAR VISIBILIDADE E PRIORIDADE
     document.body.appendChild(modal);
     modal.style.setProperty('display', 'flex', 'important');
-    modal.style.zIndex = "8000000";
+    modal.style.zIndex = "1000000";
     modal.style.visibility = "visible";
     modal.style.opacity = "1";
 
@@ -32820,38 +32828,31 @@ function applyTitleWrappingEffect() {
     const allTitles = editor.querySelectorAll('.mini-note-title-input');
     
     allTitles.forEach(t => {
-        // Se ainda for um INPUT, converte para TEXTAREA (necessário para quebra de linha)
-        if (t.tagName === 'INPUT') {
+        // Se a opção estiver LIGADA e ainda for um INPUT, transformamos em TEXTAREA
+        if (appSettings.showFullTitles && t.tagName === 'INPUT') {
             const textarea = document.createElement('textarea');
-            textarea.className = t.className;
-            // Pega o valor do atributo value ou do valor atual
-            textarea.value = t.getAttribute('value') || t.value || ""; 
-            textarea.placeholder = t.placeholder || "";
+            textarea.className = t.className + " wrap-enabled";
+            textarea.value = t.value || t.getAttribute('value') || "";
+            textarea.placeholder = t.placeholder;
             textarea.setAttribute('spellcheck', 'false');
-            if (t.readOnly) textarea.readOnly = true;
             t.parentNode.replaceChild(textarea, t);
-            t = textarea; 
-        }
-
-        if (appSettings && appSettings.showFullTitles === true) {
-            t.classList.add('wrap-enabled');
-            t.style.whiteSpace = "pre-wrap";
-            t.style.overflow = "hidden";
-            t.style.height = 'auto';
-            t.style.height = t.scrollHeight + 'px';
             
-            t.oninput = function() {
-                this.style.height = 'auto';
-                this.style.height = this.scrollHeight + 'px';
-                // Sincroniza o textContent para o save não falhar
-                this.textContent = this.value; 
-            };
-        } else {
-            t.classList.remove('wrap-enabled');
-            t.style.whiteSpace = "nowrap";
-            t.style.height = ""; 
-            t.style.overflow = "hidden";
-            t.oninput = null;
+            // Ativa o redimensionamento imediato
+            autoResizeTitle(textarea);
+            
+            // Adiciona o evento de escrita para ele crescer enquanto digita
+            textarea.addEventListener('input', function() {
+                autoResizeTitle(this);
+            });
+        } 
+        // Se a opção estiver DESLIGADA e for um TEXTAREA, volta a ser INPUT
+        else if (!appSettings.showFullTitles && t.tagName === 'TEXTAREA') {
+            const input = document.createElement('input');
+            input.type = "text";
+            input.className = t.className.replace('wrap-enabled', '').trim();
+            input.value = t.value;
+            input.placeholder = t.placeholder;
+            t.parentNode.replaceChild(input, t);
         }
     });
 }
@@ -32860,37 +32861,18 @@ function applyTitleWrappingEffect() {
 function autoResizeTitle(el) {
     if (!el) return;
     
-    if (typeof appSettings !== 'undefined' && !appSettings.showFullTitles) {
-        el.style.height = ""; 
-        return;
-    }
-
-    // TRUQUE ANTI-SALTO:
-    // Em vez de zerar a altura para medir (o que causa o salto),
-    // usamos o scrollHeight atual. Se ele aumentou, expandimos.
-    // Se precisarmos mesmo encolher, fazemos com cuidado.
-
-    const currentHeight = el.offsetHeight;
-    
-    // Reseta temporariamente para medir o tamanho real do texto
-    // Mas guarda o scroll da página para restaurar se saltar
-    const scrollParent = el.closest('#note-content-editor') || document.documentElement;
-    const oldScroll = scrollParent.scrollTop;
-
-    el.style.height = 'auto'; 
-    const newHeight = el.scrollHeight;
-
-    // Se a diferença for mínima, não mexe para evitar tremores
-    if (Math.abs(newHeight - currentHeight) > 2) {
-        el.style.height = newHeight + 'px';
+    if (appSettings && appSettings.showFullTitles === true) {
+        // Truque para Mobile: Resetamos a altura para 1px para forçar o browser 
+        // a calcular o scrollHeight real do texto contido
+        el.style.height = 'auto'; 
         
-        // Se o ajuste de altura fez o scroll saltar, restaura-o
-        if (scrollParent.scrollTop !== oldScroll) {
-            scrollParent.scrollTop = oldScroll;
+        // Aplicamos a nova altura baseada no conteúdo real
+        const newHeight = el.scrollHeight;
+        if (newHeight > 0) {
+            el.style.height = newHeight + 'px';
         }
     } else {
-        // Restaura a altura original se não houve mudança real
-        el.style.height = currentHeight + 'px';
+        el.style.height = ""; // Volta ao padrão se a função estiver desligada
     }
 }
 
@@ -54055,17 +54037,13 @@ window.openNoteBoxesSelector = async function(noteId) {
     titleEl.textContent = "🌪️ Selecionar para Lançar";
     contentEl.innerHTML = '<div class="spinner-container" style="padding:40px;"><div class="spinner"></div></div>';
     
-    // --- CONFIGURAÇÃO DOS BOTÕES NA MESMA LINHA ---
-    // 1. Limpa botões de lançamentos anteriores para não duplicar
+    // --- CONFIGURAÇÃO DOS BOTÕES NO RODAPÉ (MESMA LINHA) ---
     const oldLaunchBtn = actionsDiv.querySelector('.btn-launch-trigger');
     if (oldLaunchBtn) oldLaunchBtn.remove();
 
-    // 2. Criar o botão Lançar
     const launchBtn = document.createElement('button');
     launchBtn.className = "modal-btn primary btn-launch-trigger";
     launchBtn.innerHTML = "🚀 Lançar Selecionados";
-    
-    // Insere o botão Lançar antes do botão Fechar (que já lá está)
     actionsDiv.prepend(launchBtn);
 
     modal.style.display = 'flex';
@@ -54089,10 +54067,42 @@ window.openNoteBoxesSelector = async function(noteId) {
         
         if (boxes.length === 0) {
             contentEl.innerHTML = '<p style="padding:20px; color:#888; text-align:center;">Esta nota não contém caixas extraíveis.</p>';
-            launchBtn.style.display = 'none'; // Esconde o botão se não houver nada para lançar
+            launchBtn.style.display = 'none';
             return;
         }
 
+        // ============================================================
+        // 🔘 OPÇÃO: SELECIONAR TODOS (LINHA DE TOPO)
+        // ============================================================
+        const selectAllRow = document.createElement('li');
+        selectAllRow.style.cssText = `
+            display:flex; align-items:center; gap:12px; padding:12px; 
+            border-bottom:2px solid var(--accent-color); cursor:pointer; 
+            background:rgba(74, 144, 226, 0.05); 
+            position:sticky; top:0; z-index:10;
+        `;
+        
+        selectAllRow.innerHTML = `
+            <input type="checkbox" id="launch-master-check" style="width:20px; height:20px; cursor:pointer;">
+            <strong style="color:var(--accent-color); font-size:0.9em; text-transform:uppercase; letter-spacing:1px;">Selecionar Todas as Caixas</strong>
+        `;
+
+        selectAllRow.onclick = (e) => {
+            const masterCb = selectAllRow.querySelector('input');
+            // Se não clicou no checkbox direto, inverte o estado
+            if(e.target !== masterCb) masterCb.checked = !masterCb.checked;
+            
+            const isChecked = masterCb.checked;
+            // Marca/Desmarca todos os outros
+            contentEl.querySelectorAll('.launch-check').forEach(cb => {
+                cb.checked = isChecked;
+            });
+        };
+        contentEl.appendChild(selectAllRow);
+
+        // ============================================================
+        // 📋 LISTAGEM DAS CAIXAS
+        // ============================================================
         boxes.forEach((box, index) => {
             const titleInput = box.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, h2');
             let boxTitle = titleInput ? (titleInput.value || titleInput.textContent) : `Bloco #${index + 1}`;
@@ -54113,6 +54123,10 @@ window.openNoteBoxesSelector = async function(noteId) {
                     const ck = li.querySelector('input');
                     ck.checked = !ck.checked;
                 }
+                // Se desmarcar um filho, desmarca o "Selecionar Todos"
+                if(!li.querySelector('input').checked) {
+                    document.getElementById('launch-master-check').checked = false;
+                }
             };
             contentEl.appendChild(li);
         });
@@ -54124,7 +54138,6 @@ window.openNoteBoxesSelector = async function(noteId) {
             
             window.launchMultiplePopups(noteId, noteName, selectedIds, content);
             
-            // Fecha o modal e limpa o botão para a próxima vez que o modal genérico for usado (tags/anexos)
             modal.style.display = 'none';
             launchBtn.remove();
         };
@@ -54140,69 +54153,82 @@ window.launchMultiplePopups = function(noteId, noteName, boxIds, fullHTML) {
     const parser = new DOMParser();
     const docDOM = parser.parseFromString(fullHTML, 'text/html');
 
+    // Inicialização segura da contagem de camadas
+    if (typeof window.highestZIndex !== 'number' || window.highestZIndex < 2000000) {
+        window.highestZIndex = 2000000; 
+    }
+
     boxIds.forEach((id, index) => {
         const box = docDOM.getElementById(id);
         if (!box) return;
 
-        // Reaproveitamos a tua lógica de "openCardPopup" mas injetando os dados diretamente
         const titleInput = box.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, h2');
         const title = titleInput ? (titleInput.value || titleInput.textContent) : "Referência";
-        
         const contentDiv = box.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content');
         let bodyHTML = contentDiv ? contentDiv.innerHTML : box.innerHTML;
         
-        // Limpeza de botões
         bodyHTML = bodyHTML.replace(/<div class="mini-note-toolbar".*?>.*?<\/div>/g, "");
         bodyHTML = bodyHTML.replace(/<button.*?<\/button>/g, "");
 
-        // Criar Janela
         const popup = document.createElement('div');
-        popup.className = 'aq-popup-window';
+        popup.className = 'aq-popup-window tornado-window'; // Classe específica
+        popup.id = `popup_launch_${id}`;
         
-        if (typeof highestZIndex === 'undefined') window.highestZIndex = 30000000;
-        const zIdx = ++window.highestZIndex;
+        // Define a camada atual
+        window.highestZIndex++;
+        const zIdx = window.highestZIndex;
         
-        // Efeito de cascata para não nascerem todas no mesmo pixel exato
         const stagger = index * 25; 
-        const startX = 150 + stagger;
-        const startY = 150 + stagger;
-
         popup.style.cssText = `
-            position: fixed; z-index: ${zIdx}; 
-            top: ${startY}px; left: ${startX}px;
-            width: 420px; height: 320px;
-            background-color: rgba(25, 25, 30, 0.98);
-            border: 1px solid #9b59b6; /* Cor roxa do tornado */
-            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.8);
+            position: fixed; 
+            z-index: ${zIdx}; 
+            top: ${100 + stagger}px; 
+            left: ${100 + stagger}px;
+            width: 420px; 
+            height: 320px;
+            background-color: #1a1a1d;
+            border: 2px solid #9b59b6; 
+            box-shadow: 0 15px 50px rgba(0, 0, 0, 0.9);
             border-radius: 8px;
-            display: flex; flex-direction: column; overflow: hidden;
-            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex; 
+            flex-direction: column; 
+            overflow: hidden;
+            pointer-events: auto !important;
         `;
 
+        // ============================================================
+        // ⚡ O FIX DEFINITIVO PARA TRAZER PARA A FRENTE
+        // ============================================================
+        const bringToFront = (e) => {
+            window.highestZIndex++;
+            popup.style.zIndex = window.highestZIndex;
+            // Opcional: Pequeno brilho na borda para confirmar o foco
+            popup.style.borderColor = "#d4adff";
+            setTimeout(() => { popup.style.borderColor = "#9b59b6"; }, 300);
+        };
+
+        // Ouvinte triplo para garantir que funciona em qualquer navegador/telemóvel
+        popup.addEventListener('mousedown', bringToFront, true);
+        popup.addEventListener('touchstart', bringToFront, { passive: true, capture: true });
+        popup.addEventListener('focusin', bringToFront, true);
+
         popup.innerHTML = `
-            <div class="aq-popup-header" style="padding:10px; background:rgba(155, 89, 182, 0.1); border-bottom:1px solid rgba(155, 89, 182, 0.2); display:flex; justify-content:space-between; cursor:move; align-items:center;">
-                <span class="aq-popup-title" style="font-weight:bold; color:#d4adff; font-size:0.9em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:300px;">
-                    🌪️ ${title}
-                </span>
-                <button onclick="this.closest('.aq-popup-window').remove()" style="background:none; border:none; color:#e74c3c; cursor:pointer; font-size:1.2em;">✕</button>
+            <div class="aq-popup-header" style="padding:10px; background:rgba(155, 89, 182, 0.2); border-bottom: 1px solid #9b59b6; display:flex; justify-content:space-between; cursor:move; align-items:center; user-select:none;">
+                <span style="font-weight:bold; color:#d4adff; font-size:0.9em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">🌪️ ${title}</span>
+                <button onclick="this.closest('.aq-popup-window').remove()" style="background:none; border:none; color:#ff4d4d; cursor:pointer; font-size:1.5em; font-weight:bold;">×</button>
             </div>
-            <div style="background:#111; padding:4px 10px; font-size:0.7em; color:#666;">
-                Origem: ${noteName}
-            </div>
-            <div class="aq-popup-content" style="padding:15px; color:#ddd; overflow-y:auto; flex-grow:1; line-height:1.5;">
+            <div style="background:#000; padding:4px 12px; font-size:0.7em; color:#888; border-bottom:1px solid #333;">Origem: ${noteName}</div>
+            <div class="aq-popup-content" style="padding:15px; color:#eee; overflow-y:auto; flex-grow:1; line-height:1.6; font-size:0.95em;">
                 ${bodyHTML}
             </div>
         `;
 
         document.body.appendChild(popup);
         
-        // Torna arrastável
-        if (typeof makeElementDraggable === 'function') makeElementDraggable(popup);
-        popup.onmousedown = () => { popup.style.zIndex = ++window.highestZIndex; };
+        if (typeof makeElementDraggable === 'function') {
+            makeElementDraggable(popup);
+        }
     });
-
-    // Pequeno feedback sonoro ou vibração se quiseres
-    if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
 };
 
 // Aplicar com prioridade máxima (useCapture: true)
