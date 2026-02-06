@@ -11346,21 +11346,21 @@ div[id^="subs-"] div[style*="font-style:italic"] {
 
 /* O SEGREDO: Impede que o "rasto" do rato ligue os dois blocos */
 .mini-note-toolbar {
-    pointer-events: auto !important;
+    contain: content !important;
+    -webkit-user-select: none !important;
     user-select: none !important;
 }
 
-/* Garante que o clique no mobile seja certeiro e o foco não "vaze" */
-.mini-note-title-input, 
 .mini-note-content {
-    isolation: isolate; /* Isola o contexto de renderização */
-    overflow-wrap: break-word;
+    display: block !important;
+    min-height: 40px !important;
+    /* Impede que o iOS "puxe" elementos de fora para dentro ao apagar */
+    overflow-anchor: none !important;
 }
 
-/* Evita que o iOS tente remover o parágrafo vazio ao apagar */
+/* Garante que o parágrafo de segurança nunca colapse */
 .mini-note-content p:first-child {
-    min-height: 1.2em;
-    display: block;
+    min-height: 1.2em !important;
 }
 
 </style>
@@ -17053,14 +17053,14 @@ window.insertMiniNoteAtCursor = function(type = 'default', extraData = null) {
         // Título: Oculto no modo livre, visível nos outros
         const titleHTML = isFree ? '' : `<textarea class="mini-note-title-input${wrapClass}" contenteditable="true" placeholder="Título..." rows="1"></textarea>`;
         
-        finalHTML = `
-            <div class="${wrapperClass}" id="${uniqueId}" contenteditable="false" data-topics='{}' data-shared="false" data-box-links='{}'>
-                ${titleHTML}
-                ${toolbarHTML}
-                <div class="mini-note-content" contenteditable="true">
-                    <p>${stabilityChar}</p>
-                </div>
-            </div><p><br></p>`;
+     finalHTML = `
+    <div class="${wrapperClass}" id="${uniqueId}" contenteditable="false" data-topics='{}' data-shared="false" data-box-links='{}'>
+        ${titleHTML}
+        ${toolbarHTML}
+        <div class="mini-note-content" contenteditable="true">
+            <p>&#8203;</p> <!-- Este caractere é o escudo -->
+        </div>
+    </div><p><br></p>`;
     }
 
     // 5. Inserção Atómica
@@ -53283,70 +53283,45 @@ window.updateConsultorIconsVisual = function(wrapper) {
 
 // PROTEÇÃO ATÓMICA PARA IOS - ADICIONE DENTRO DO SEU SCRIPT TYPE=MODULE
 document.addEventListener('beforeinput', (e) => {
-    // Filtra apenas ações de apagar para trás (Backspace)
-    if (e.inputType === 'deleteContentBackward' || e.inputType === 'deleteSoftLineBackward') {
+    if (e.inputType === 'deleteContentBackward') {
         const selection = window.getSelection();
-        const target = e.target; // Onde o utilizador está a escrever
-
-        // --- CASO A: PROTEÇÃO DO TÍTULO (Input/Textarea) ---
-        if (target.classList.contains('mini-note-title-input') || 
-            target.classList.contains('redator-input') || 
-            target.classList.contains('sign-title-input')) {
-            
-            // Se o cursor estiver na posição 0 e não houver seleção de texto
-            if (target.selectionStart === 0 && target.selectionEnd === 0) {
-                e.preventDefault();
-                e.stopPropagation();
-                console.log("🛡️ Cursor travado no Título.");
-                return false;
-            }
-            return; // Se não for posição 0, deixa apagar o texto do título
-        }
-
-        // --- CASO B: PROTEÇÃO DO CONTEÚDO (Divs Editáveis) ---
         if (!selection.rangeCount) return;
+
         const range = selection.getRangeAt(0);
-
-        // Se houver texto selecionado (Select All), a nossa lógica anterior de apagar manual já resolve
-        if (!selection.isCollapsed) return;
-
-        let node = selection.anchorNode;
-        const element = node.nodeType === 3 ? node.parentElement : node;
-
-        const contentDiv = element.closest('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content');
+        const anchorNode = selection.anchorNode;
+        
+        // Encontra a área de texto da caixa
+        const contentDiv = anchorNode.nodeType === 3 ? 
+            anchorNode.parentElement.closest('.mini-note-content, .redator-content, .sign-content') : 
+            anchorNode.closest('.mini-note-content, .redator-content, .sign-content');
 
         if (contentDiv) {
-            // Verifica se o cursor está no início de um parágrafo
-            if (range.startOffset === 0) {
+            // Se o utilizador selecionou tudo dentro da caixa (Select All)
+            if (!selection.isCollapsed) {
+                // Deixa apagar o texto, mas impede o navegador de apagar o nó pai
+                e.preventDefault();
+                document.execCommand('insertHTML', false, '<p>&#8203;</p>');
+                return;
+            }
+
+            // Lógica de Barreira para o cursor a piscar
+            // Se estiver no início absoluto do primeiro parágrafo
+            const firstPara = contentDiv.querySelector('p:first-child');
+            
+            // Verificação de "Teto de Vidro"
+            if (range.startOffset === 0 && (anchorNode === firstPara || anchorNode.parentElement === firstPara)) {
                 
-                // Encontra o bloco atual (p, div, etc) dentro da caixa
-                let currentBlock = element;
-                while (currentBlock && currentBlock.parentElement !== contentDiv) {
-                    currentBlock = currentBlock.parentElement;
-                }
-
-                // Se houver uma linha/parágrafo acima, permite apagar para fundir (comportamento normal)
-                if (currentBlock && currentBlock.previousElementSibling) {
-                    return; 
-                }
-
-                // Se for a PRIMEIRA linha, verificamos se há texto oculto ou nós antes do cursor
-                const preRange = document.createRange();
-                preRange.setStart(contentDiv, 0);
-                preRange.setEnd(range.startContainer, range.startOffset);
-
-                if (preRange.toString().length === 0) {
-                    // PARAGEM TOTAL: Impede que o cursor salte para a Toolbar ou para a caixa de cima
+                // Prova final: Se não há texto ou há apenas o caractere invisível
+                const textContent = contentDiv.innerText.replace(/\u200B/g, '');
+                if (textContent.length === 0) {
                     e.preventDefault();
                     e.stopPropagation();
-                    e.stopImmediatePropagation();
-                    console.log("🛡️ Cursor travado no topo do Conteúdo.");
-                    return false;
+                    console.log("🛡️ Toolbar protegida: Backspace bloqueado no topo.");
                 }
             }
         }
     }
-}, true); // Prioridade máxima
+}, true);
 
 // Deteta quando a caixa fica vazia após um delete e restaura a estrutura básica
 document.getElementById('note-content-editor').addEventListener('input', (e) => {
