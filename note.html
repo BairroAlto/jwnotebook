@@ -11365,6 +11365,40 @@ div[id^="subs-"] div[style*="font-style:italic"] {
     min-height: 1.2em !important;
 }
 
+#note-content-editor {
+    /* Cria um espaço extra de 30% da altura da tela no fundo */
+    padding-bottom: 30vh !important; 
+    min-height: 100%;
+    cursor: text;
+}
+
+/* Garante que o último elemento seja sempre fácil de selecionar */
+#note-content-editor > *:last-child {
+    margin-bottom: 20px;
+}
+
+/* Garante que o fundo da nota é sempre clicável para escrever no fim */
+#note-content-editor {
+    padding-bottom: 60vh !important; /* 60% do ecrã no fundo é espaço em branco para clicar */
+    cursor: text;
+    display: block;
+}
+
+/* Espaço obrigatório entre caixas para o dedo/rato conseguir clicar entre elas */
+.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper {
+    margin-top: 20px !important;
+    margin-bottom: 20px !important;
+}
+
+/* Garante que parágrafos vazios fora das caixas tenham altura para serem clicados */
+#note-content-editor > p {
+    min-height: 1.5em;
+}
+
+#note-content-editor p:last-of-type {
+    min-height: 24px; /* Dá uma altura mínima ao último parágrafo para o cursor não ficar "esmagado" */
+}
+
 </style>
 
 
@@ -16956,54 +16990,74 @@ async function executeSave() {
 
 window.insertMiniNoteAtCursor = function(type = 'default', extraData = null) {
     const editor = document.getElementById('note-content-editor');
+    const scrollContainer = document.getElementById('editor-area') || editor;
+    if (!editor) return;
+
+    const savedScrollTop = scrollContainer.scrollTop;
     editor.focus();
+    
     let selection = window.getSelection();
-    let range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    if (!selection.rangeCount) return;
+    let range = selection.getRangeAt(0);
+
+    // Expulsão de caixas
+    const container = range.commonAncestorContainer;
+    const element = container.nodeType === 3 ? container.parentElement : container;
+    const parentBox = element.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, details.toggle-section, .jwn-table-wrapper');
+
+    if (parentBox) {
+        range.setStartAfter(parentBox);
+        range.setEndAfter(parentBox);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
 
     const timestamp = Date.now();
-    const uniqueId = (type === 'consultor' ? 'cons' : (type === 'redator' ? 'red' : 'mn')) + '_' + timestamp;
+    const isConsultor = type === 'consultor';
+    const isFree = type === 'free';
+    const uniqueId = (isConsultor ? 'cons' : (type === 'redator' ? 'red' : 'mn')) + '_' + timestamp;
     const wrapClass = (typeof appSettings !== 'undefined' && appSettings.showFullTitles) ? ' wrap-enabled' : '';
 
-    const toolbarHTML = `
-        <div class="mini-note-toolbar" contenteditable="false">
-            <button type="button" data-action="sharing-settings">🔐</button>
-            <div class="toolbar-btn-group">
-                <button type="button" data-action="move-up">🔺</button>
-                <button type="button" data-action="move-down">🔻</button>
-            </div>
-            <button type="button" data-action="manage-box-links">⚡</button>
-            <button type="button" data-action="append-mini-note">🧬</button>
-            <button type="button" data-action="highlight-color">🎨</button>
-            <button type="button" data-action="manage-mini-note-topics">📋</button>
-            <button type="button" data-action="delete-mini-note">🗑️</button>
-        </div>`;
+    let wrapperClass = 'mini-note-wrapper';
+    if (isConsultor) wrapperClass += ' consultor-mode';
+    if (type === 'question') wrapperClass += ' question-mode';
+    if (isFree) wrapperClass += ' free-mode';
 
-    const isQuestion = type === 'question';
-    const isFree = type === 'free';
-    const wrapperClass = 'mini-note-wrapper' + (isQuestion ? ' question-mode' : (isFree ? ' free-mode' : ''));
-    const titleHTML = isFree ? '' : `<textarea class="mini-note-title-input${wrapClass}" contenteditable="true" placeholder="Título..." rows="1"></textarea>`;
+    const toolbarHTML = `<div class="mini-note-toolbar" contenteditable="false"><button type="button" data-action="sharing-settings">🔐</button><div class="toolbar-btn-group"><button type="button" data-action="move-up">🔺</button><button type="button" data-action="move-down">🔻</button></div><button type="button" data-action="manage-box-links">⚡</button><button type="button" data-action="append-mini-note">🧬</button><button type="button" data-action="highlight-color">🎨</button><button type="button" data-action="manage-mini-note-topics">📋</button><button type="button" data-action="delete-mini-note">🗑️</button></div>`;
 
-    // Usamos o <p><br></p> padrão, que é o mais estável para o toque no iOS
-    const finalHTML = `
-        <div class="${wrapperClass}" id="${uniqueId}" contenteditable="false" data-topics='{}' data-shared="false" data-box-links='{}'>
-            ${titleHTML}
-            ${toolbarHTML}
-            <div class="mini-note-content" contenteditable="true">
-                <p><br></p>
-            </div>
-        </div><p><br></p>`;
+    let finalHTML = "";
+    if (isConsultor) {
+        const c = extraData || { biblia: [], livros: [], pubs: [], assoc: false };
+        finalHTML = `<div class="${wrapperClass}" id="${uniqueId}" contenteditable="false" data-topics='{}' data-shared="false" data-box-links='{}' data-biblia-tags='${JSON.stringify(c.biblia)}' data-livros-tags='${JSON.stringify(c.livros)}' data-pubs-tags='${JSON.stringify(c.pubs)}' data-assoc-active="${c.assoc}" data-results-state="visible"><div style="display: flex; justify-content: space-between; align-items: center; padding-right: 5px;"><textarea class="mini-note-title-input${wrapClass}" placeholder="Título do Consultor..." rows="1" style="color: var(--consultor-color) !important; font-weight: bold; flex: 1;"></textarea><span class="subtitle-toggle" onclick="window.toggleConsultorSubtitle('${uniqueId}')">▼</span></div><input type="text" class="consultor-subtitle-input" placeholder="Subtítulo..." value="">${toolbarHTML}<div class="mini-note-content" contenteditable="true"><p><br></p></div><div class="mega-painel" id="mp-panel-${uniqueId}" contenteditable="false"><div class="mega-painel-tabs"><span class="mp-tab active" onclick="window.switchMPTab(this, '🪂')">🪂</span><span class="mp-tab" onclick="window.switchMPTab(this, '📖')">📖</span><span class="mp-tab" onclick="window.switchMPTab(this, '📔')">📔</span><span class="mp-tab" onclick="window.switchMPTab(this, '📚')">📚</span><span class="mp-tab" onclick="window.switchMPTab(this, '📦')">📦</span><span class="btn-mp-hide" onclick="window.toggleConsultorResults('${uniqueId}', false)">✖</span></div><div class="mega-painel-content">A carregar...</div><div class="mp-controls-wrapper"><span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'biblia')">🀦</span><span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'livros')">🀩</span><span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'pubs')">🀧</span><span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'assoc')">🀨</span><span class="btn-mp-popup" onclick="window.handleMahjongClick('${uniqueId}')">🀄️</span></div></div></div>`;
+    } else {
+        const titlePlaceholder = type === 'question' ? "Pergunta?" : "Título...";
+        const titleHTML = isFree ? '' : `<textarea class="mini-note-title-input${wrapClass}" contenteditable="true" placeholder="${titlePlaceholder}" rows="1"></textarea>`;
+        finalHTML = `<div class="${wrapperClass}" id="${uniqueId}" contenteditable="false" data-topics='{}' data-shared="false" data-box-links='{}'>${titleHTML}${toolbarHTML}<div class="mini-note-content" contenteditable="true"><p><br></p></div></div>`;
+    }
 
-    document.execCommand('insertHTML', false, finalHTML);
+    document.execCommand('insertHTML', false, finalHTML + '<p><br></p>');
+    scrollContainer.scrollTop = savedScrollTop;
 
     setTimeout(() => {
         const newBox = document.getElementById(uniqueId);
         if (newBox) {
-            newBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            const targetFocus = isFree ? newBox.querySelector('.mini-note-content') : newBox.querySelector('.mini-note-title-input');
-            if (targetFocus) targetFocus.focus();
+            const titleInput = newBox.querySelector('.mini-note-title-input');
+            const contentDiv = newBox.querySelector('.mini-note-content');
+            if (isFree && contentDiv) {
+                contentDiv.focus({ preventScroll: true });
+            } else if (titleInput) {
+                titleInput.focus({ preventScroll: true });
+            }
+            scrollContainer.scrollTop = savedScrollTop;
+            if (isConsultor) window.updateConsultorIconsVisual(newBox);
             if (typeof window.fixLegacyMiniNotes === 'function') window.fixLegacyMiniNotes();
+            
+            // ATUALIZA APENAS O STATUS VISUAL (Laranja)
+            if (typeof updateSaveStatus === 'function') updateSaveStatus('unsaved');
         }
-    }, 50);
+    }, 10);
+
+    return uniqueId; 
 };
 
 // Função auxiliar para aplicar o foco (Reutilizável)
@@ -28709,8 +28763,11 @@ insertionPopup.addEventListener('click', (e) => {
     }
 
     // 4. CONSULTOR VERMELHO (📕) - NOVA FUNÇÃO
-    else if (action === 'insert-consultor') {
-    window.openConsultorWheel(); // Abre o painel primeiro
+ else if (action === 'insert-consultor') {
+    // 1. Cria a caixa imediatamente e recebe o ID dela
+    const newId = window.insertMiniNoteAtCursor('consultor');
+    // 2. Abre o menu radial passando o ID da caixa que acabou de ser criada
+    window.openConsultorWheel(newId);
     insertionPopup.style.display = 'none';
 }
 
@@ -52070,7 +52127,10 @@ window.toggleConsultorSource = function(type) {
         const newState = wrapper.dataset.assocActive !== "true";
         wrapper.dataset.assocActive = newState;
         newState ? el.classList.add('active-source') : el.classList.remove('active-source');
-        saveNote(true);
+        
+        // Atualiza ícones e status sem disparar gravação imediata
+        window.updateConsultorIconsVisual(wrapper);
+        if (typeof updateSaveStatus === 'function') updateSaveStatus('unsaved');
     } else {
         window.consultorPreSelections.assoc = !window.consultorPreSelections.assoc;
         window.consultorPreSelections.assoc ? el.classList.add('active-source') : el.classList.remove('active-source');
@@ -52235,14 +52295,14 @@ window.attachToConsultor = (book, cap) => {
     if (window.activeConsultorId && wrapper) {
         wrapper.dataset.bibliaTags = JSON.stringify(currentTags);
         window.updateConsultorIconsVisual(wrapper);
-        saveNote(true);
+        // REMOVIDO: saveNote(true) - Apenas marca como alterado
+        if (typeof updateSaveStatus === 'function') updateSaveStatus('unsaved');
     } else {
         window.consultorPreSelections.biblia = currentTags;
     }
 
     window.refreshBibleSelectionVisuals();
     
-    // --- O FIX PARA O ERRO: Adicionada verificação if(optBiblia) ---
     const optBiblia = document.getElementById('opt-biblia');
     if (optBiblia) {
         if (currentTags.length > 0) optBiblia.classList.add('active-source');
@@ -52250,48 +52310,44 @@ window.attachToConsultor = (book, cap) => {
     }
 };
 
-// VERSÃO CORRIGIDA PARA LIVROS E PUBS
-window.attachGenericToConsultor = (id, title, cap, tipoAba) => {
-    let datasetKey = tipoAba === 'livros' ? 'livrosTags' : 'pubsTags';
-    let currentTags = [];
-    let wrapper = null;
-
-    if (window.activeConsultorId) {
-        wrapper = document.getElementById(window.activeConsultorId);
-        currentTags = JSON.parse(wrapper.dataset[datasetKey] || '[]');
-    } else {
-        currentTags = window.consultorPreSelections[tipoAba === 'livros' ? 'livros' : 'pubs'];
-    }
-
-    const index = currentTags.findIndex(t => t.id === id && t.cap === cap);
-    if (index > -1) { currentTags.splice(index, 1); } 
-    else { currentTags.push({ id, title, cap }); }
-
-    if (window.activeConsultorId && wrapper) {
-        wrapper.dataset[datasetKey] = JSON.stringify(currentTags);
-         window.updateConsultorIconsVisual(wrapper);
-        saveNote(true);
-    } else {
-        window.consultorPreSelections[tipoAba === 'livros' ? 'livros' : 'pubs'] = currentTags;
-    }
-    
-    // --- O FIX PARA O ERRO: Adicionada verificação if(optEl) ---
-    const optId = tipoAba === 'livros' ? 'opt-livros' : 'opt-pubs';
-    const optEl = document.getElementById(optId);
-    if (optEl) {
-        currentTags.length > 0 ? optEl.classList.add('active-source') : optEl.classList.remove('active-source');
-    }
-};
 
 // 5. FINALIZAR E CRIAR CAIXA
 window.finalizeConsultorCreation = function() {
     const overlay = document.getElementById('consultor-wheel-overlay');
-    overlay.style.display = 'none';
+    const boxId = window.activeConsultorId;
 
-    // Se não temos activeConsultorId, significa que estamos a criar uma nova
-    if (!window.activeConsultorId) {
-        insertMiniNoteAtCursor('consultor', window.consultorPreSelections);
+    // 1. Fecha o menu radial
+    if (overlay) overlay.style.display = 'none';
+    
+    // 2. Localiza a caixa e foca no título
+    if (boxId) {
+        const wrapper = document.getElementById(boxId);
+        if (wrapper) {
+            const titleInput = wrapper.querySelector('.mini-note-title-input');
+            if (titleInput) {
+                // Pequeno delay para garantir que o overlay saiu da frente
+                setTimeout(() => {
+                    // preventScroll: true garante que a página não salta ao focar
+                    titleInput.focus({ preventScroll: true });
+                    
+                    // Opcional: Coloca o cursor no fim do texto se já houver algo escrito
+                    if (titleInput.tagName === 'TEXTAREA' || titleInput.tagName === 'INPUT') {
+                        const len = titleInput.value.length;
+                        titleInput.setSelectionRange(len, len);
+                    }
+                }, 50);
+            }
+            
+            // Dispara a busca automática para começar a carregar os resultados baseados no texto
+            if (typeof window.debouncedConsultorSearch === 'function') {
+                window.debouncedConsultorSearch(boxId);
+            }
+        }
     }
+    
+    // 3. Limpa a referência global
+    window.activeConsultorId = null;
+    console.log("✅ Consultor finalizado e título focado.");
 };
 
 // 6. MOTOR DE BUSCA SEMÂNTICA (O CÉREBRO)
@@ -52781,12 +52837,13 @@ window.attachGenericToConsultor = (id, title, cap, tipoAba) => {
 
     if (window.activeConsultorId && wrapper) {
         wrapper.dataset[datasetKey] = JSON.stringify(currentTags);
-        saveNote(true);
+        window.updateConsultorIconsVisual(wrapper);
+        // REMOVIDO: saveNote(true) - Apenas marca como alterado
+        if (typeof updateSaveStatus === 'function') updateSaveStatus('unsaved');
     } else {
         window.consultorPreSelections[tipoAba === 'livros' ? 'livros' : 'pubs'] = currentTags;
     }
     
-    // Atualiza ícone no radial (opt-livros ou opt-pubs)
     const optId = tipoAba === 'livros' ? 'opt-livros' : 'opt-pubs';
     const optEl = document.getElementById(optId);
     if (optEl) {
@@ -53248,6 +53305,143 @@ document.getElementById('note-content-editor').addEventListener('input', (e) => 
         }
     }
 });
+
+// FORÇAR CURSOR NO FINAL E IMPEDIR SALTO PARA A 1ª LINHA
+document.getElementById('note-content-editor').addEventListener('mousedown', function(e) {
+    // Só intervém se o clique for no fundo (na própria div) e não num elemento filho
+    if (e.target === this) {
+        e.preventDefault();
+        
+        // 1. Identificar o contentor que faz o scroll real (Mobile/Desktop)
+        const scrollContainer = document.getElementById('editor-area');
+        const savedScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
+
+        let last = this.lastElementChild;
+        const isBox = (el) => el && (
+            el.classList.contains('mini-note-wrapper') || 
+            el.classList.contains('redator-wrapper') || 
+            el.classList.contains('journal-sign-wrapper') ||
+            el.classList.contains('journal-id-card') ||
+            el.tagName === 'DETAILS' ||
+            el.classList.contains('jwn-table-wrapper')
+        );
+
+        // Se o último elemento for uma caixa ou não houver nada, cria um parágrafo de segurança
+        if (!last || isBox(last)) {
+            const p = document.createElement('p');
+            p.innerHTML = '<br>';
+            this.appendChild(p);
+            last = p;
+        }
+
+        // 2. Focar com proteção dupla contra saltos
+        this.focus({ preventScroll: true }); 
+
+        const range = document.createRange();
+        const sel = window.getSelection();
+        
+        // Tenta colocar o cursor no último parágrafo
+        try {
+            range.selectNodeContents(last);
+            range.collapse(false); // Coloca no fim do parágrafo
+            sel.removeAllRanges();
+            sel.addRange(range);
+        } catch (err) {
+            console.warn("Erro ao posicionar cursor no fundo:", err);
+        }
+
+        // 3. RESTAURO DE EMERGÊNCIA: Se a página saltou, forçamos o regresso ao ponto original
+        if (scrollContainer && scrollContainer.scrollTop !== savedScrollTop) {
+            scrollContainer.scrollTop = savedScrollTop;
+        }
+        
+        console.log("📍 Foco no final estabilizado sem salto.");
+    }
+}, true);
+
+// 1. ABRIR MENU RADIAL
+window.openConsultorWheel = function(id) {
+    window.activeConsultorId = id; 
+    
+    let overlay = document.getElementById('consultor-wheel-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'consultor-wheel-overlay';
+        document.body.appendChild(overlay);
+    }
+
+    // O botão "X" agora chama a função cancelConsultorCreation
+    overlay.innerHTML = `
+        <div class="wheel-close-x" onclick="window.cancelConsultorCreation('${id}')">×</div>
+        <div class="wheel-container">
+            <div class="wheel-option wheel-opt-1" id="opt-biblia" onclick="window.pickConsultorSource('biblia')">
+                <span class="wheel-icon">🀦</span><small>Bíblia</small>
+            </div>
+            <div class="wheel-option wheel-opt-2" id="opt-livros" onclick="window.pickConsultorSource('livros')">
+                <span class="wheel-icon">🀩</span><small>Livros</small>
+            </div>
+            <div class="wheel-option wheel-opt-3" id="opt-pubs" onclick="window.pickConsultorSource('pubs')">
+                <span class="wheel-icon">🀧</span><small>Publicações</small>
+            </div>
+            <div class="wheel-option wheel-opt-4" id="opt-assoc" onclick="window.toggleConsultorSource('assoc')">
+                <span class="wheel-icon">🀨</span><small>Caixas</small>
+            </div>
+            <div class="wheel-center-btn" onclick="window.finalizeConsultorCreation()">
+                <span style="font-size:24px; display:block;">📕</span>
+                <strong style="font-size:10px; color:#fff;">CONCLUIR</strong>
+            </div>
+        </div>`;
+    
+    overlay.style.display = 'flex';
+};
+
+// 2. CANCELAR (Elimina a caixa do texto)
+window.cancelConsultorCreation = function(id) {
+    const el = document.getElementById(id);
+    if (el) {
+        const nextPara = el.nextElementSibling;
+        if (nextPara && nextPara.tagName === 'P') nextPara.remove();
+        el.remove();
+    }
+    window.closeConsultorWheel();
+    
+    // Se o editor ficou vazio ou voltou ao estado anterior, o sistema de save normal
+    // detectará na próxima interação. Não forçamos gravação aqui.
+    console.log("❌ Criação cancelada. Sem alterações gravadas.");
+};
+
+// 3. FINALIZAR (Apenas fecha o menu)
+window.finalizeConsultorCreation = function() {
+    const overlay = document.getElementById('consultor-wheel-overlay');
+    const boxId = window.activeConsultorId;
+
+    if (overlay) overlay.style.display = 'none';
+    
+    if (boxId) {
+        const wrapper = document.getElementById(boxId);
+        if (wrapper) {
+            const titleInput = wrapper.querySelector('.mini-note-title-input');
+            if (titleInput) {
+                setTimeout(() => {
+                    titleInput.focus({ preventScroll: true });
+                    if (titleInput.tagName === 'TEXTAREA' || titleInput.tagName === 'INPUT') {
+                        const len = titleInput.value.length;
+                        titleInput.setSelectionRange(len, len);
+                    }
+                }, 50);
+            }
+            
+            // Opcional: Apenas dispara a pesquisa se quiseres resultados imediatos
+            // mas isso não grava a nota.
+            if (typeof window.debouncedConsultorSearch === 'function') {
+                window.debouncedConsultorSearch(boxId);
+            }
+        }
+    }
+    
+    window.activeConsultorId = null;
+    console.log("✅ Consultor finalizado. Nota aguardando gravação automática.");
+};
 
     </script>
 </body>
