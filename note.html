@@ -21760,86 +21760,72 @@ async function forceSaveAndClosePuzzleMode() {
 // ============================================================
 
 async function savePuzzleData() {
-    if (!activeReferenceEntity || !activeReferenceEntity.name) return;
+    // 1. Verificações de segurança
+    if (!activeReferenceEntity || !activeReferenceEntity.id) {
+        console.warn("⚠️ Nenhuma entidade ativa para salvar o Quadro.");
+        return;
+    }
 
     const { id, type, name } = activeReferenceEntity;
     const collectionName = getCollectionFromType(type);
-    
+    if (!collectionName) return;
+
+    // Feedback visual no botão se ele estiver visível
     const saveBtn = document.getElementById('toggle-puzzle-edit-btn');
-    if(saveBtn) saveBtn.textContent = "A gravar...";
+    const originalText = saveBtn ? saveBtn.textContent : "";
+    if (saveBtn && !window.puzzleAutoSaveTimer) saveBtn.textContent = "A gravar...";
 
     try {
         const itemsToSave = [];
-        const noteIdsInBoard = new Set(); // Conjunto para guardar IDs de notas únicas
+        const refsMap = {}; // Mapa para atualizar os vínculos de referências (o carimbo 📄)
         const cards = document.querySelectorAll('#puzzle-board-container .board-card');
 
+        // 2. Percorrer todos os cartões presentes no Quadro
         cards.forEach(card => {
             if (card.classList.contains('type-text')) {
+                // Caso A: Bloco de texto manual
                 const contentDiv = card.querySelector('.board-text-content');
-                if (contentDiv) itemsToSave.push({ type: 'text', content: contentDiv.innerHTML });
+                if (contentDiv) {
+                    itemsToSave.push({ 
+                        type: 'text', 
+                        content: contentDiv.innerHTML 
+                    });
+                }
             } 
             else if (card.classList.contains('type-ref')) {
+                // Caso B: Referência a uma caixa da nota (Clone)
                 const nId = card.dataset.noteId;
-                if (nId) noteIdsInBoard.add(nId); // Regista que esta nota está no quadro
+                if (nId) refsMap[nId] = true; // Mantém o vínculo com a nota de origem
 
                 itemsToSave.push({ 
                     type: 'ref', 
                     noteId: nId,
                     noteName: card.dataset.noteName,
-                    snippet: decodeURIComponent(card.dataset.snippet)
+                    // O snippet já deve ter sido atualizado pela função syncPuzzleRealTime
+                    snippet: card.dataset.snippet 
                 });
             }
         });
 
-        // Prepara o mapa de referências (O carimbo oficial)
-        const refsMap = {};
-        noteIdsInBoard.forEach(nId => {
-            refsMap[nId] = true;
-        });
+        // 3. Gravação no Firestore
+        const { doc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const docRef = doc(db, collectionName, id);
 
-        let docRef;
-        if (!id || id.includes(' ') || id.includes(':')) {
-            const q = query(
-                collection(db, collectionName), 
-                where("nome", "==", name),
-                where("userId", "==", auth.currentUser.uid)
-            );
-            const snap = await getDocs(q);
-            
-            if (!snap.empty) {
-                docRef = doc(db, collectionName, snap.docs[0].id);
-                activeReferenceEntity.id = snap.docs[0].id; 
-            } else {
-                const newDoc = await addDoc(collection(db, collectionName), {
-                    nome: name,
-                    userId: auth.currentUser.uid,
-                    puzzleBoard: itemsToSave,
-                    referencias: refsMap, // <--- ADICIONADO: Cria com vínculos
-                    updatedAt: serverTimestamp(),
-                    createdAt: serverTimestamp()
-                });
-                activeReferenceEntity.id = newDoc.id;
-                return;
-            }
-        } else {
-            docRef = doc(db, collectionName, id);
-        }
-
-        // Gravação final com merge para não apagar outros campos
+        // Usamos setDoc com { merge: true } para não apagar o campo 'dossie' (Micas)
         await setDoc(docRef, {
             nome: name,
-            userId: auth.currentUser.uid,
             puzzleBoard: itemsToSave,
-            referencias: refsMap, // <--- ADICIONADO: Atualiza vínculos oficiais
+            referencias: refsMap,
             updatedAt: serverTimestamp()
         }, { merge: true });
 
-        console.log("✅ Quadro e Vínculos Oficiais guardados!");
+        console.log(`✅ [FIREBASE] Quadro de "${name}" atualizado com sucesso.`);
+
+        if (saveBtn) saveBtn.textContent = originalText;
 
     } catch (e) {
-        console.error("❌ Erro ao gravar:", e);
-    } finally {
-        if(saveBtn) saveBtn.textContent = "Editar";
+        console.error("❌ Erro crítico ao gravar Quadro:", e);
+        if (saveBtn) saveBtn.textContent = "Erro ao gravar";
     }
 }
 
@@ -24385,33 +24371,63 @@ document.querySelector('.tabs-container').addEventListener('click', async (e) =>
 
     const newTab = clickedTabBtn.dataset.tab;
 
+    // 1. CASO ESPECIAL: BIBLIOTECA EXTERNA
     if (newTab === 'book') {
         window.open('book.html', '_blank'); 
         return; 
     }
 
-    // >>> LINHAS ADICIONADAS PARA GRAVAR AUTOMATICAMENTE <<<
-    if (selectedNoteId || activeEditingPostId) {
-        console.log("💾 Gravando antes de trocar de aba...");
-        if (selectedNoteId) await executeSave(); // Grava nota ou jornal
-        if (activeEditingPostId) await window.saveArchivePost(activeEditingPostId); // Grava post de arquivo
-    }
-    // >>> FIM DAS LINHAS ADICIONADAS <<<
+    // 2. LÓGICA DO GUARDIÃO (SÓ ATIVA SE ESTADO FOR 'UNSAVED')
+    if (newTab !== currentTab) {
+        const needsSaving = (currentSaveStatus === 'unsaved' || activeEditingPostId);
+        
+        if (needsSaving) {
+            console.log("🛡️ [GUARDIÃO] Ativado. Bloqueando navegação para gravar...");
+            
+            // A. Mostrar o Painel de Bloqueio
+            const blockingModal = document.getElementById('forcing-save-modal');
+            if (blockingModal) {
+                blockingModal.style.setProperty('display', 'flex', 'important');
+            }
 
+            try {
+                // B. Executar Gravações (Esperar conclusão)
+                if (selectedNoteId) {
+                    await executeSave(); 
+                }
+                
+                if (activeEditingPostId) {
+                    await window.saveArchivePost(activeEditingPostId);
+                }
+            } catch (err) {
+                console.error("❌ Erro ao gravar via Guardião:", err);
+            } finally {
+                // C. Esconder o Painel de Bloqueio
+                if (blockingModal) {
+                    blockingModal.style.display = 'none';
+                }
+            }
+        }
+    }
+
+    // 3. GESTÃO DE MEMÓRIA (PILHAS DE NAVEGAÇÃO)
     if (currentTab === 'note') {
         noteStackMemory = [...navigationStack];
     } else if (currentTab === 'lists') {
         listsStackMemory = [...navigationStack];
     }
 
+    // 4. ATUALIZAÇÃO VISUAL DAS ABAS
     document.querySelectorAll('.tabs-container button').forEach(btn => btn.classList.remove('active'));
     clickedTabBtn.classList.add('active');
     
     currentTab = newTab;
 
+    // 5. RESTAURAR NAVEGAÇÃO
     if (currentTab === 'note') {
         navigationStack = [...noteStackMemory];
-    } else if (currentTab === 'lists') {
+    } 
+    else if (currentTab === 'lists') {
         navigationStack = [...listsStackMemory];
 
         const lastNav = navigationStack[navigationStack.length - 1];
@@ -24432,7 +24448,8 @@ document.querySelector('.tabs-container').addEventListener('click', async (e) =>
         }
     }
 
-    updateNavigationView(true);
+    // 6. ATUALIZAR INTERFACE
+    updateNavigationView(true); 
     updateMobileFABVisibility();
     
     if (currentViewMode === 'shared' && currentArchiveId) {
@@ -28049,21 +28066,44 @@ document.getElementById('formatting-popup').addEventListener('click', async (e) 
 // Quando escrevemos no título, forçamos o atributo HTML 'value' a atualizar.
 // Isto permite que o document.execCommand('undo') saiba que o texto mudou.
 noteContentEditor.addEventListener('input', (e) => {
-    // 1. Gravação automática (já existente)
+    // 1. Status Geral de Gravação da Nota
     lastContentEditTime = Date.now(); 
     updateSaveStatus('unsaved');
+    
+    // Dispara o timer de gravação automática da nota (2 minutos)
     saveNote();
 
-    // 2. ATUALIZAÇÃO LIVE DO ÍNDICE
-    // Verifica se o que está a ser editado é um título ou o conteúdo de um contentor
+    // 2. Atualização do Índice (Vista 2 do painel do meio)
+    // Se o que mudou foi um título ou conteúdo de caixa, atualiza o Índice
     if (e.target.classList.contains('mini-note-title-input') || 
         e.target.classList.contains('mini-note-content') ||
         e.target.classList.contains('redator-input')) {
         
-        // Chamada imediata para o Índice refletir a escrita
         generateNoteIndex();
-        // Mantém o scrollspy ativo para não perder o destaque azul de onde estamos
         detectActiveScrollElement(); 
+    }
+
+    // 3. SINCRONIZAÇÃO DO QUADRO (4ª Coluna)
+    // Esta é a parte que resolve o seu problema.
+    const box = e.target.closest('.mini-note-wrapper, .redator-wrapper, details.toggle-section');
+    
+    if (box) {
+        // Se mudou algo dentro de uma caixa, chamamos a sincronização visual
+        // Usamos um pequeno delay para não sobrecarregar a CPU a cada letra
+        clearTimeout(window.puzzleSyncTimer);
+        window.puzzleSyncTimer = setTimeout(async () => {
+            
+            console.log("🔄 [SYNC] Detectada mudança numa caixa. Atualizando Quadro...");
+            
+            // Passo A: Atualiza visualmente o cartão no painel lateral
+            // Esta função deve atualizar o card.dataset.snippet do cartão
+            await syncPuzzleRealTime(); 
+            
+            // Passo B: Propaga a mudança para outras entidades (Sync Global)
+            // Isso garante que as Micas e outros vínculos também recebam a atualização
+            window.syncBoxChangesEverywhere(box);
+
+        }, 1500); // 1.5 segundos após parar de digitar
     }
 });
 
@@ -47781,118 +47821,76 @@ if (aqZoom) {
 // 1. SYNC VISUAL (PAINEL ABERTO) - MÉTODO DOM PARSER
 // ============================================================
 async function syncPuzzleRealTime() {
-
     const puzzleContainer = document.getElementById('puzzle-board-container');
     const editor = document.getElementById('note-content-editor');
     
+    // Se o painel estiver fechado, tentamos o Sync de Background
     if (!puzzleContainer || puzzleContainer.offsetParent === null) {
-        console.log("ℹ️ Painel fechado. Passando para Background Sync.");
-        console.groupEnd();
         await backgroundSyncCurrentPuzzle();
         return;
     }
 
     const cards = puzzleContainer.querySelectorAll('.board-card.type-ref');
-    console.log(`📊 Cartões encontrados no painel: ${cards.length}`);
-
     let hasUpdates = false;
 
-    cards.forEach((card, index) => {
-        console.groupCollapsed(`🃏 Analisando Cartão #${index + 1}`);
+    // Detectar ID da caixa que está a ser editada (se houver foco)
+    const activeEl = document.activeElement;
+    const activeBox = activeEl ? activeEl.closest('.mini-note-wrapper, .redator-wrapper, details.toggle-section') : null;
+    const activeBoxId = activeBox ? activeBox.id : null;
 
-        // 1. Ler o snippet antigo
+    cards.forEach((card) => {
         let snippet = "";
         try { snippet = decodeURIComponent(card.dataset.snippet || ""); } 
         catch(e) { snippet = card.dataset.snippet || ""; }
 
-        // 2. Extrair ID usando DOM Parser
-        const tempContainer = document.createElement('div');
-        tempContainer.innerHTML = snippet;
-        const savedWrapper = tempContainer.querySelector('[id]');
-        
-        if (!savedWrapper || !savedWrapper.id) {
-            console.warn("❌ Não foi possível encontrar um ID dentro do código do cartão.");
-            console.groupEnd();
-            return;
-        }
+        // Extrair ID do snippet guardado no cartão
+        const match = snippet.match(/id="([^"]+)"/);
+        if (!match) return;
+        const originalId = match[1];
 
-        const originalId = savedWrapper.id;
-        console.log(`🆔 ID Original Identificado: "${originalId}"`);
-
-        // 3. Buscar o elemento VIVO
+        // Procurar o elemento vivo no editor
         const liveEl = document.getElementById(originalId);
+        if (!liveEl) return;
 
-        if (!liveEl) {
-            console.warn(`❌ O elemento com ID "${originalId}" NÃO existe no editor atual.`);
-            console.groupEnd();
-            return;
-        }
+        // Capturar dados do editor
+        const titleInput = liveEl.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
+        const editorTitle = (titleInput?.value || titleInput?.textContent || "").trim();
+        const contentEl = liveEl.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content');
+        const editorText = contentEl ? contentEl.innerText.replace(/\s+/g, ' ').trim() : "";
 
-
-        // 4. Extração de Texto (EDITOR)
-        const contentEl = liveEl.querySelector('.mini-note-content, .toggle-content, .redator-content, .sign-content, .card-desc-content');
-        // Normaliza espaços para evitar falsos negativos (troca quebras de linha por espaço)
-        let editorText = contentEl ? contentEl.innerText.replace(/\s+/g, ' ').trim() : "";
-        
-        // Extração de Texto (CARTÃO)
-        const cardBodyEl = card.querySelector('.post-view-content, .bible-collapsible-content') || card.querySelector('.ref-card-content > div:last-child');
-        let cardText = cardBodyEl ? cardBodyEl.textContent.replace(/\s+/g, ' ').trim() : "";
-
-        // Título
-        const titleEl = liveEl.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
-        let editorTitle = "";
-        if (titleEl) editorTitle = (titleEl.value || titleEl.textContent || "").trim();
-
+        // Comparar com o que o cartão mostra
         const cardTitleEl = card.querySelector('.ref-title-text');
-        let cardTitle = cardTitleEl ? cardTitleEl.textContent.trim() : "";
-
-        // 5. COMPARAÇÃO (LOG CRÍTICO)
+        const cardBodyEl = card.querySelector('.post-view-content, .bible-collapsible-content') || card.querySelector('.ref-card-content > div:last-child');
         
-        const textChanged = editorText !== cardText;
-        const titleChanged = editorTitle && (editorTitle !== cardTitle);
+        const cardTitle = cardTitleEl ? cardTitleEl.textContent.trim() : "";
+        const cardText = cardBodyEl ? cardBodyEl.textContent.replace(/\s+/g, ' ').trim() : "";
 
-
-        // 6. AÇÃO
-        if (textChanged || titleChanged) {
-            
-            // Atualiza Texto
-            if (cardBodyEl) {
-                // Limita tamanho visual
-                const finalText = editorText.length > 300 ? editorText.substring(0, 300) + "..." : editorText;
-                cardBodyEl.textContent = finalText;
-            }
-            
-            // Atualiza Título
+        if (editorText !== cardText || (editorTitle && editorTitle !== cardTitle)) {
+            // ATUALIZAÇÃO VISUAL
             if (cardTitleEl && editorTitle) cardTitleEl.textContent = editorTitle;
-
-            // Atualiza Snippet Oculto
+            if (cardBodyEl) cardBodyEl.textContent = editorText.substring(0, 300) + (editorText.length > 300 ? "..." : "");
+            
+            // Atualiza o HTML bruto guardado no cartão
             card.dataset.snippet = encodeURIComponent(liveEl.outerHTML);
             
-
-            // 1. Guardar a cor original da borda esquerda antes do flash
-const originalBorderLeft = card.style.borderLeft;
-
-            // Flash Visual
-            card.style.border = "2px solid #e74c3c"; // VERMELHO PARA TESTE (Bem visível)
-          setTimeout(() => { 
-    card.style.border = ""; // Limpa a borda completa (vermelha)
-    card.style.borderLeft = originalBorderLeft; // RESTAURA A COR ESPECÍFICA (Laranja/Azul/Etc)
-}, 1000);
+            // Efeito Flash apenas se não estivermos a escrever dentro da própria caixa (para não distrair)
+            if (activeBoxId !== originalId) {
+                const originalBorder = card.style.borderLeft;
+                card.style.border = "2px solid var(--accent-color)";
+                setTimeout(() => { card.style.border = ""; card.style.borderLeft = originalBorder; }, 1000);
+            }
 
             hasUpdates = true;
-        } else {
         }
-
-        console.groupEnd(); // Fim do grupo do cartão
     });
 
-
-    console.groupEnd();
-
-    // 7. Gravação
+    // SE HOUVE MUDANÇAS, GRAVA NO FIREBASE IMEDIATAMENTE (Igual às Micas)
     if (hasUpdates) {
+        console.log("⚡ [QUADRO] Mudança detectada. Gravando no Firebase...");
         if (typeof savePuzzleData === 'function') {
-            setTimeout(() => savePuzzleData(), 500);
+            // Usamos um pequeno debounce para não sobrecarregar o Firebase se o user escrever rápido
+            clearTimeout(window.puzzleAutoSaveTimer);
+            window.puzzleAutoSaveTimer = setTimeout(() => savePuzzleData(), 1000);
         }
     }
 }
