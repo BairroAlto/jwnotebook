@@ -11303,20 +11303,21 @@ div[id^="subs-"] div[style*="font-style:italic"] {
 /* Bloqueio total de interação de edição na Toolbar para iOS */
 /* Torna a Toolbar um objeto "fantasma" para o sistema de edição */
 .mini-note-toolbar {
-    -webkit-user-select: none !important; /* Impede seleção no Safari */
+    /* Impede que o sistema de escrita do iOS interaja com a barra */
+    -webkit-user-select: none !important;
     user-select: none !important;
-    -webkit-user-modify: read-only !important; /* Força o estado de apenas leitura no sistema */
-    outline: none !important;
+    -webkit-user-modify: read-only !important;
+    
+    /* Força a barra a ser um bloco isolado */
     display: flex !important;
-    contain: content; /* Isola o elemento do fluxo de texto */
+    position: relative !important;
+    z-index: 5 !important;
 }
 
-/* Proteção reforçada para os ícones */
-.mini-note-toolbar button, 
-.mini-note-toolbar div {
+/* Garante que os botões não são considerados "texto" */
+.mini-note-toolbar button {
+    display: inline-flex !important;
     -webkit-user-select: none !important;
-    -webkit-user-modify: read-only !important;
-    pointer-events: auto !important; /* Mantém os botões clicáveis */
 }
 
 </style>
@@ -53299,39 +53300,45 @@ window.updateConsultorIconsVisual = function(wrapper) {
 
 // PROTEÇÃO ATÓMICA PARA IOS - ADICIONE DENTRO DO SEU SCRIPT TYPE=MODULE
 document.addEventListener('beforeinput', (e) => {
-    // Deteta tentativa de apagar (Backspace ou Delete)
     if (e.inputType.includes('deleteContentBackward') || e.inputType.includes('deleteContentForward')) {
         const selection = window.getSelection();
         if (!selection.rangeCount) return;
 
-        // SE HOUVER TEXTO SELECIONADO: Deixa o browser trabalhar normalmente
-        if (!selection.isCollapsed) {
-            return; // Sai da função e permite o delete
-        }
-
-        // SE O CURSOR ESTIVER APENAS A PISCAR (Collapsed):
         const range = selection.getRangeAt(0);
         let node = selection.anchorNode;
         const element = node.nodeType === 3 ? node.parentElement : node;
 
-        // Verifica se o cursor está dentro de uma área editável das caixas
+        // Identifica as áreas de texto das caixas
         const contentDiv = element.closest('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content, .cube-content');
 
         if (contentDiv) {
-            // Verifica se o cursor está no início absoluto (Posição 0)
-            if (range.startOffset === 0) {
-                
-                // Prova real: verifica se existe algum conteúdo (nós ou texto) antes do cursor nesta div
-                const preRange = document.createRange();
-                preRange.selectNodeContents(contentDiv);
-                preRange.setEnd(range.startContainer, range.startOffset);
+            // Criamos uma medição para saber se a seleção ENCOSTA no topo da caixa
+            const checkRange = document.createRange();
+            checkRange.selectNodeContents(contentDiv);
+            checkRange.setEnd(range.startContainer, range.startOffset);
 
-                // Se não houver nada antes do cursor, bloqueia para não saltar para a Toolbar
-                if (preRange.toString().length === 0 && preRange.cloneContents().childNodes.length === 0) {
+            // SE A SELEÇÃO COMEÇA NO TOPO (Início absoluto da caixa)
+            if (checkRange.toString().length === 0) {
+                
+                // CASO A: Há texto selecionado (Select All ou arrastar)
+                if (!selection.isCollapsed) {
+                    e.preventDefault(); // Bloqueia a ação nativa do iOS (que apagaria a toolbar)
+                    
+                    // APAGAMOS NÓS O TEXTO VIA CÓDIGO
+                    range.deleteContents(); 
+                    
+                    // Garante que sobra sempre um lugar para o cursor não morrer
+                    if (contentDiv.innerHTML.trim() === "") {
+                        contentDiv.innerHTML = "<p><br></p>";
+                    }
+                    
+                    console.log("🛡️ Texto apagado manualmente. Toolbar salva.");
+                } 
+                // CASO B: Cursor apenas a piscar no início
+                else {
+                    // BLOQUEIO TOTAL: Não deixa o Backspace fazer nada
                     e.preventDefault();
                     e.stopPropagation();
-                    e.stopImmediatePropagation();
-                    return false;
                 }
             }
         }
@@ -53342,11 +53349,10 @@ document.addEventListener('beforeinput', (e) => {
 document.getElementById('note-content-editor').addEventListener('input', (e) => {
     const target = e.target;
     if (target.classList.contains('mini-note-content') || target.classList.contains('redator-content')) {
-        // Se a div ficou totalmente sem HTML (vazia após Select All + Delete)
+        // Se a caixa ficou sem nada ou só com um BR solto
         if (target.innerHTML.trim() === "" || target.innerHTML === "<br>") {
-            target.innerHTML = "<p><br></p>"; // Restaura o parágrafo padrão
-            
-            // Reposiciona o cursor dentro do novo parágrafo
+            target.innerHTML = "<p><br></p>";
+            // Reposiciona o cursor
             const range = document.createRange();
             const sel = window.getSelection();
             range.selectNodeContents(target.firstChild);
