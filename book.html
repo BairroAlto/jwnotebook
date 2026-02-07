@@ -3765,6 +3765,8 @@ li.bible-grid-container:hover {
 <div id="mobile-index-modal" class="search-modal-overlay" style="z-index: 6000;">
     <div class="search-modal-content" style="max-height: 85vh; width: 95%; display: flex; flex-direction: column;">
         
+        <h3 id="mobile-index-title" style="padding: 15px 15px 5px 15px; color: var(--accent-color); font-size: 1.1em;">Índice</h3>
+
         <!-- ABAS DO MODAL -->
         <div class="sidebar-tabs" id="mobile-index-tabs" style="border-radius: 12px 12px 0 0;">
             <button class="tab-btn active" data-m-tab="indice" style="padding: 12px;">Índice</button>
@@ -4028,6 +4030,22 @@ li.bible-grid-container:hover {
     </div>
 </div>
 
+<!-- MODAL DE SELEÇÃO DA SENTINELA -->
+<div id="sentinela-selector-modal" class="search-modal-overlay" style="z-index: 8000;">
+    <div class="search-modal-content" style="max-width: 400px; height: 500px;">
+        <div class="search-header" style="justify-content: space-between;">
+            <h3 id="sel-modal-title" style="color: var(--accent-color); margin: 0;">Escolher Sentinela</h3>
+            <button type="button" onclick="document.getElementById('sentinela-selector-modal').style.display='none'" style="background:none; border:none; color:var(--text-muted); font-size:24px; cursor:pointer;">×</button>
+        </div>
+        <div id="sel-modal-back-btn" style="display:none; padding: 10px; background: rgba(0,0,0,0.1); cursor:pointer; font-size: 0.9em; color: var(--accent-color);">
+            ← Voltar
+        </div>
+        <ul id="sel-modal-list" style="flex-grow: 1; overflow-y: auto; padding: 0; list-style: none;">
+            <!-- Itens carregados dinamicamente -->
+        </ul>
+    </div>
+</div>
+
 
 <script type="module">
    import { db, auth } from './js/firebase-config.js';
@@ -4169,6 +4187,8 @@ let listsTabMemory = {
     scrollTop: 0
 };
 let activeReferenceEntity = { id: null, type: null, name: null };
+let selStack = [];
+
 
 
 const REFS_PER_PAGE = 15;  // Limite por página
@@ -4570,16 +4590,20 @@ function processContentForReading(htmlContent) {
    
 
 
-   document.getElementById('btn-copy').addEventListener('click', async function() {
-       const title = document.getElementById('read-title').innerText;
-       const body = document.getElementById('read-body').innerText;
-       try {
-           await navigator.clipboard.writeText(`${title}\n\n${body}`);
-           const originalText = this.textContent;
-           this.textContent = "✅ Copiado!";
-           setTimeout(() => this.textContent = originalText, 2000);
-       } catch (err) { alert('Erro ao copiar.'); }
-   });
+document.getElementById('btn-copy').addEventListener('click', async function() {
+    const btn = this; // Referência ao botão
+    const title = document.getElementById('read-title')?.innerText || "";
+    const body = document.getElementById('read-body')?.innerText || "";
+    
+    try {
+        await navigator.clipboard.writeText(`${title}\n\n${body}`);
+        
+        // CORREÇÃO: Usar innerHTML para não destruir ícones se existirem
+        const originalHTML = btn.innerHTML;
+        btn.innerHTML = "✅"; 
+        setTimeout(() => btn.innerHTML = originalHTML, 2000);
+    } catch (err) { console.error('Erro ao copiar:', err); }
+});
 
  document.getElementById('btn-pdf').addEventListener('click', function() {
        const btn = this;
@@ -4720,121 +4744,148 @@ function processContentForReading(htmlContent) {
    // ============================================================
    // 3. FUNÇÃO PRINCIPAL DE EXIBIÇÃO DA NOTA
    // ============================================================
- window.displayNote = async function(noteData, searchTerm = null, skipUrlUpdate = false) {
+ // ============================================================
+// FUNÇÃO PRINCIPAL: EXIBIÇÃO DA NOTA (READ MODE)
+// ============================================================
+window.displayNote = async function(noteData, searchTerm = null, skipUrlUpdate = false) {
     
-    // ATUALIZAÇÃO DE URL (Deep Linking)
+    // 1. ATUALIZAÇÃO DE URL (Deep Linking)
     if (!skipUrlUpdate) {
         window.updateAddressBar(noteData.id, 'note');
     }
     
-    // Reset TTS e UI
+    // 2. RESET TTS E UI
     if (typeof window.resetTTS === 'function') window.resetTTS();
-    document.getElementById('reader-orador').value = "0"; 
+    const oradorSelect = document.getElementById('reader-orador');
+    if (oradorSelect) oradorSelect.value = "0"; 
     
+    // Guardar estado global da nota atual
     window.currentNoteId = noteData.id; 
     window.currentNoteData = noteData; 
     
+    // Ajustar visibilidade para Mobile
     document.body.classList.add('mobile-reading-active');
-    document.getElementById('empty-placeholder').style.display = 'none';
-    document.getElementById('reader-area').style.display = 'block';
+    
+    const placeholder = document.getElementById('empty-placeholder');
+    const readerArea = document.getElementById('reader-area');
+    if (placeholder) placeholder.style.display = 'none';
+    if (readerArea) readerArea.style.display = 'block';
 
     const readBody = document.getElementById('read-body');
     const archiveArea = document.getElementById('archive-viewer-area');
     const readTitle = document.getElementById('read-title');
     const indexTabBtn = document.getElementById('tab-index-btn');
+    const toolbar = document.getElementById('note-toolbar');
+    const mainTopicsContainer = document.getElementById('note-main-topics');
 
-    // RESET GERAL DE CLASSES
-    readBody.classList.remove('is-aquarium');
-    readTitle.classList.remove('is-aquarium-title');
-
-    readTitle.textContent = noteData.nome;
+    // 3. LIMPEZA GERAL DE ESTILOS DE MODOS ANTERIORES
+    if (readBody) readBody.classList.remove('is-aquarium');
+    if (readTitle) {
+        readTitle.classList.remove('is-aquarium-title');
+        readTitle.textContent = noteData.nome;
+    }
 
     // =======================================================
-    // A. MODO ARQUIVO (Feed)
+    // A. MODO ARQUIVO (Feed de Posts)
     // =======================================================
     if (noteData.tipo === 'arquivo' || noteData.tipo === 'partilhado') {
-        readBody.style.display = 'none';
-        archiveArea.style.display = 'block';
-        document.getElementById('note-toolbar').style.display = 'none';
-        
-        // Esconde o botão de índice/fontes pois arquivos não usam
-        indexTabBtn.style.display = 'none';
+        if (readBody) readBody.style.display = 'none';
+        if (archiveArea) archiveArea.style.display = 'block';
+        if (toolbar) toolbar.style.display = 'none';
+        if (indexTabBtn) indexTabBtn.style.display = 'none';
 
         const feedContent = document.getElementById('archive-feed-content');
-        feedContent.innerHTML = '<div class="sidebar-loading"><div class="spinner"></div><span>A carregar posts...</span></div>';
+        if (feedContent) {
+            feedContent.innerHTML = '<div class="sidebar-loading"><div class="spinner"></div><span>A carregar posts...</span></div>';
+        }
 
         await loadArchivePosts(noteData.id);
         renderArchiveViewer('prateleira');
     } 
 
     // =======================================================
-    // B. MODO AQUÁRIO (🪸)
+    // B. MODO AQUÁRIO (🪸 - Estudo com Fontes)
     // =======================================================
     else if (noteData.tipo === 'aquario') {
-        archiveArea.style.display = 'none';
-        readBody.style.display = 'block';
-        document.getElementById('note-toolbar').style.display = 'flex';
-        
-        // Ativa visual marinho
-        readBody.classList.add('is-aquarium');
-        readTitle.classList.add('is-aquarium-title');
-
-        if (!noteData.conteudo || noteData.conteudo.trim() === "") {
-            readBody.innerHTML = '<div style="text-align:center; padding:50px; opacity:0.6;">🪸 Aquário vazio.</div>';
-        } else {
-            readBody.innerHTML = processContentForReading(noteData.conteudo);
+        if (archiveArea) archiveArea.style.display = 'none';
+        if (readBody) {
+            readBody.style.display = 'block';
+            readBody.classList.add('is-aquarium');
+            readBody.innerHTML = processContentForReading(noteData.conteudo || "");
         }
-
+        if (readTitle) readTitle.classList.add('is-aquarium-title');
+        if (toolbar) toolbar.style.display = 'flex';
+        
         // Limpa elementos de nota padrão
-        document.getElementById('note-main-topics').innerHTML = '';
+        if (mainTopicsContainer) mainTopicsContainer.innerHTML = '';
         renderBookMargins([]);
 
-        // --- ATIVAR ABA FONTES ---
-        indexTabBtn.textContent = "Fontes"; 
-        // Pequeno delay para garantir renderização do DOM antes de varrer links
-        setTimeout(() => window.generateAquariumSources(), 100);
-    }
+        // Configurar Aba "Fontes" na lateral
+        if (indexTabBtn) {
+            indexTabBtn.textContent = "Fontes";
+            indexTabBtn.style.display = 'block';
+        }
+        
+        // Gerar as fontes a partir dos links Wikipedia [1]
+        setTimeout(() => { if (window.generateAquariumSources) window.generateAquariumSources(); }, 100);
+    } 
 
     // =======================================================
     // C. MODO NOTA NORMAL (Padrão)
     // =======================================================
     else {
-        document.getElementById('note-toolbar').style.display = 'flex';
-        readBody.style.display = 'block';
-        archiveArea.style.display = 'none';
+        if (toolbar) toolbar.style.display = 'flex';
+        if (readBody) {
+            readBody.style.display = 'block';
+            readBody.innerHTML = processContentForReading(noteData.conteudo || "");
+        }
+        if (archiveArea) archiveArea.style.display = 'none';
         
-        readBody.innerHTML = processContentForReading(noteData.conteudo);
-        renderReadOnlyCalendars(readBody);
-        renderBookMargins(noteData.marginElements);
+        // Renderizar Widgets (Calendários e Margens)
+        if (readBody) renderReadOnlyCalendars(readBody);
+        renderBookMargins(noteData.marginElements || []);
 
-        // Tópicos
-        const mainTopicsContainer = document.getElementById('note-main-topics');
-        const topics = noteData.topicosSelecionados || {};
-        renderTopicsIntoContainer(mainTopicsContainer, topics);
+        // Renderizar Tópicos Principais
+        if (mainTopicsContainer) {
+            const topics = noteData.topicosSelecionados || {};
+            renderTopicsIntoContainer(mainTopicsContainer, topics);
+        }
 
-        // --- ATIVAR ABA ÍNDICE ---
-        indexTabBtn.textContent = "Índice"; 
-        generateLocalIndex();
+        // Configurar Aba "Índice" na lateral
+        if (indexTabBtn) {
+            indexTabBtn.textContent = "Índice";
+            generateLocalIndex(); 
+        }
     }
 
-    // Configurações do botão partilhar
+    // =======================================================
+    // D. ESTADO DO BOTÃO DE PARTILHA (FIX DE SEGURANÇA)
+    // =======================================================
     const shareBtn = document.getElementById('btn-share');
-    if (noteData.shareSettings && noteData.shareSettings.shared) {
-        shareBtn.textContent = "🔓 Link Ativo";
-        shareBtn.style.color = "#2ecc71";
-        shareBtn.dataset.isShared = "true"; 
-    } else {
-        shareBtn.textContent = "🔗 Partilhar";
-        shareBtn.style.color = "";
-        shareBtn.dataset.isShared = "false";
+    if (shareBtn) {
+        const isShared = noteData.shareSettings && noteData.shareSettings.shared;
+        if (isShared) {
+            shareBtn.textContent = "🔓 Link Ativo";
+            shareBtn.style.color = "#2ecc71";
+            shareBtn.dataset.isShared = "true"; 
+        } else {
+            shareBtn.textContent = "🔗 Partilhar";
+            shareBtn.style.color = "";
+            shareBtn.dataset.isShared = "false";
+        }
     }
 
-    // Scroll inteligente (Search Highlight)
+    // =======================================================
+    // E. CONTROLO DE SCROLL E DESTAQUE (Search term)
+    // =======================================================
     if (searchTerm) {
         highlightAndScroll(searchTerm);
     } else {
-        document.getElementById('book-content-scroll').scrollTop = 0;
+        const scrollContainer = document.getElementById('book-content-scroll');
+        if (scrollContainer) scrollContainer.scrollTop = 0;
     }
+    
+    console.log(`✅ Nota "${noteData.nome}" renderizada com sucesso.`);
 };
 
 
@@ -5773,7 +5824,7 @@ window.renderTocLevel = async (parentId, skipUrlUpdate = false) => {
 window.showTopicRef = async (id, name, type) => {
     console.log(`%c🔍 [Referências] Pesquisando: ${name} (${type})`, "color: #9b59b6; font-weight: bold;");
     
-    // 1. Elementos da UI
+    // 1. Elementos da UI com Verificação de Segurança
     const container = document.getElementById('main-container');
     const panel = document.getElementById('references-panel');
     const titleEl = document.getElementById('ref-title');
@@ -5781,39 +5832,44 @@ window.showTopicRef = async (id, name, type) => {
     const listElement = document.getElementById('ref-list');
     const refTabBtn = document.querySelector('[data-ref-tab="references"]');
 
-    if (!container || !panel || !listElement) {
-        console.error("Erro: Contentores do painel de referências não encontrados.");
+    if (!container || !panel) {
+        console.error("Erro: Estrutura do painel de referências não encontrada.");
         return;
     }
 
-    // 2. Abrir o Painel (Desktop e Mobile)
+    // 2. Abrir o Painel e Resetar Posição Mobile
     container.classList.add('references-visible');
     
     if (window.innerWidth <= 768) {
+        panel.style.transition = "transform 0.3s ease-out, height 0.3s ease-out";
         panel.style.height = "60vh"; 
         panel.style.transform = "translateY(0)";
     }
 
-    // 3. Configurar Cabeçalho
-    titleEl.textContent = name;
-    descEl.textContent = type === 'topico' ? "Notas associadas a este tópico principal." : "Notas que mencionam este subtópico específico.";
+    // 3. Atualizar Cabeçalho (Evitando erro de null)
+    if (titleEl) titleEl.textContent = name;
+    if (descEl) {
+        descEl.textContent = type === 'topico' 
+            ? "Notas e blocos associados a este tópico principal." 
+            : "Notas e blocos que mencionam este subtópico.";
+    }
 
-    // 4. Reset de Abas (Ativa a aba de citações/referências ❝)
+    // 4. Ativar Aba de Citações (❝)
     document.querySelectorAll('.ref-tab-content').forEach(d => d.style.display = 'none');
     const refContentDiv = document.getElementById('ref-content-references');
     if (refContentDiv) refContentDiv.style.display = 'block';
 
     document.querySelectorAll('#ref-panel-tabs .tab-btn').forEach(b => b.classList.remove('active'));
-    const tabRefBtn = document.querySelector('[data-ref-tab="references"]');
-    if (tabRefBtn) tabRefBtn.classList.add('active');
+    if (refTabBtn) refTabBtn.classList.add('active');
 
-    // 5. Iniciar Loading
+    // 5. Iniciar Loading Local
     if (window.showPanelLoading) window.showPanelLoading();
-    listElement.innerHTML = '<div class="sidebar-loading"><div class="spinner"></div></div>';
+    if (listElement) listElement.innerHTML = '<div class="sidebar-loading"><div class="spinner"></div></div>';
 
     try {
         // 6. PESQUISA NO FIRESTORE
-        // Pesquisamos todas as pastas/notas ativas do utilizador
+        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
         const q = query(
             collection(db, 'pastas'), 
             where('userId', '==', auth.currentUser.uid), 
@@ -5821,42 +5877,37 @@ window.showTopicRef = async (id, name, type) => {
         );
         const snap = await getDocs(q);
         
-        currentRefResults = [];
+        const results = [];
         const parser = new DOMParser();
 
         snap.forEach(docSnap => {
             const data = docSnap.data();
             const noteId = docSnap.id;
             
-            // Tempo para ordenação (Edição ou Criação)
+            // Timestamp para ordenação
             const sortTime = data.ultimaedicao ? data.ultimaedicao.toMillis() : (data.createdAt ? data.createdAt.toMillis() : 0);
 
-            // --- A. VERIFICAR TÓPICOS DA NOTA (Raiz) ---
+            // --- A. PESQUISA NA NOTA (METADADOS) ---
             if (data.topicosSelecionados) {
-                let isMatch = false;
+                let matchNote = false;
                 if (type === 'topico') {
-                    // Se o ID do tópico for uma chave no objeto
-                    if (data.topicosSelecionados.hasOwnProperty(id)) isMatch = true;
+                    if (data.topicosSelecionados.hasOwnProperty(id)) matchNote = true;
                 } else {
-                    // Se for subtópico, procuramos em todos os arrays de todas as chaves
                     const allSubs = Object.values(data.topicosSelecionados).flat();
-                    if (allSubs.map(String).includes(String(id))) isMatch = true;
+                    if (allSubs.map(String).includes(String(id))) matchNote = true;
                 }
 
-                if (isMatch) {
-                    currentRefResults.push({
-                        id: noteId, 
-                        ...data, 
-                        displayTitle: data.nome,
-                        icon: data.tipo === 'pasta' ? '📁' : (data.tipo === 'aquario' ? '🪸' : '📄'),
-                        sortTime: sortTime,
-                        matchCategory: 'note'
+                if (matchNote) {
+                    results.push({
+                        id: noteId, ...data, displayTitle: data.nome,
+                        icon: data.tipo === 'pasta' ? '📁' : '📄',
+                        sortTime: sortTime, matchCategory: 'note'
                     });
                 }
             }
 
-            // --- B. VERIFICAR TÓPICOS DENTRO DAS CAIXAS (Subnotas/Questões) ---
-            if (data.tipo === 'nota' && data.conteudo) {
+            // --- B. PESQUISA DENTRO DO CONTEÚDO (CAIXAS) ---
+            if (data.conteudo && data.conteudo.includes('data-topics')) {
                 const docHTML = parser.parseFromString(data.conteudo, 'text/html');
                 const boxes = docHTML.querySelectorAll('.mini-note-wrapper');
                 
@@ -5866,55 +5917,49 @@ window.showTopicRef = async (id, name, type) => {
 
                     try {
                         const boxTopics = JSON.parse(topicsAttr);
-                        let boxMatch = false;
+                        let matchBox = false;
 
                         if (type === 'topico') {
-                            if (boxTopics.hasOwnProperty(id)) boxMatch = true;
+                            if (boxTopics.hasOwnProperty(id)) matchBox = true;
                         } else {
                             const allBoxSubs = Object.values(boxTopics).flat();
-                            if (allBoxSubs.map(String).includes(String(id))) boxMatch = true;
+                            if (allBoxSubs.map(String).includes(String(id))) matchBox = true;
                         }
 
-                        if (boxMatch) {
-                            const titleInput = box.querySelector('.mini-note-title-input');
-                            const boxTitle = titleInput ? (titleInput.getAttribute('value') || titleInput.value) : "Bloco Interno";
+                        if (matchBox) {
+                            const titleInp = box.querySelector('.mini-note-title-input');
+                            const boxTitle = titleInp ? (titleInp.getAttribute('value') || titleInp.value) : "Bloco";
                             
-                            // Determina cor da borda baseado no tipo de caixa
                             let cat = 'subnote';
                             if (box.classList.contains('question-mode')) cat = 'question';
                             else if (box.classList.contains('free-mode')) cat = 'free';
 
-                            currentRefResults.push({
-                                id: noteId,
-                                ...data,
-                                displayTitle: boxTitle,
+                            results.push({
+                                id: noteId, ...data, displayTitle: boxTitle,
                                 icon: box.classList.contains('question-mode') ? '❓' : '📘',
-                                contextSnippet: `<small>Encontrado na nota: ${data.nome}</small>`,
-                                sortTime: sortTime,
-                                matchCategory: cat,
-                                targetBoxId: box.id // Para scroll direto se necessário
+                                contextSnippet: `<small>Dentro de: ${data.nome}</small>`,
+                                sortTime: sortTime, matchCategory: cat, targetBoxId: box.id
                             });
                         }
-                    } catch (err) { /* Erro no JSON do tópico */ }
+                    } catch (e) { /* Erro JSON ignorado */ }
                 });
             }
         });
 
-        // 7. Limpeza e Ordenação
-        // Remove duplicados (mesma nota com várias caixas aparece como itens diferentes com títulos diferentes)
-        currentRefResults.sort((a, b) => b.sortTime - a.sortTime);
+        // 7. Ordenar e Guardar Globalmente
+        currentRefResults = results.sort((a, b) => b.sortTime - a.sortTime);
 
-        // 8. Atualizar Contador na Aba
+        // 8. Atualizar Contador da Aba (Seguro)
         if (refTabBtn) {
-            refTabBtn.innerHTML = `📚 <span style="background:var(--accent-color); color:white; padding:1px 6px; border-radius:10px; font-size:0.8em; margin-left:5px;">${currentRefResults.length}</span>`;
+            refTabBtn.innerHTML = `❝ <span style="background:var(--accent-color); color:white; padding:1px 6px; border-radius:10px; font-size:0.8em; margin-left:5px;">${currentRefResults.length}</span>`;
         }
 
-        // 9. Renderizar no Painel
+        // 9. Renderizar lista na 4ª coluna
         window.renderReferencesPage(true);
 
-    } catch (e) {
-        console.error("Erro ao carregar referências de tópico:", e);
-        listElement.innerHTML = '<li style="color:red; padding:20px; text-align:center;">Erro ao pesquisar referências.</li>';
+    } catch (error) {
+        console.error("Erro na pesquisa de tópicos:", error);
+        if (listElement) listElement.innerHTML = '<li style="color:red; padding:20px; text-align:center;">Erro ao carregar referências.</li>';
     } finally {
         if (window.hidePanelLoading) window.hidePanelLoading();
     }
@@ -6406,108 +6451,120 @@ function updateListsHeader() {
    const closeMobileIndexBtn = document.getElementById('close-mobile-index');
 
   mobileIndexBtn.addEventListener('click', () => {
-       const isAquarium = document.getElementById('read-body').classList.contains('is-aquarium');
-       
-       // --- MODO AQUÁRIO (FONTES) ---
-       if (isAquarium) {
-           document.querySelector('#mobile-index-modal h3').textContent = "Fontes & Referências";
-           mobileIndexList.innerHTML = '';
-           
-           // A lista da sidebar já foi gerada com os títulos corretos pela função acima
-           const sidebarList = document.getElementById('book-index-list');
-           
-           if (!sidebarList || sidebarList.children.length === 0) {
-               alert("Sem fontes detetadas.");
-               return;
-           }
+    const isAquarium = document.getElementById('read-body').classList.contains('is-aquarium');
+    const modalTitle = mobileIndexModal.querySelector('h3'); // Seleção segura
+    
+    // 1. Limpeza inicial da lista mobile
+    mobileIndexList.innerHTML = '';
 
-           // Mapear blocos para índices para referência cruzada
-           const blocks = Array.from(document.querySelectorAll('.aquarium-read-block'));
+    // --- MODO AQUÁRIO (MOSTRAR FONTES) ---
+    if (isAquarium) {
+        if (modalTitle) modalTitle.textContent = "Fontes & Referências";
+        
+        // Obtém a lista já gerada na sidebar
+        const sidebarList = document.getElementById('book-index-list');
+        if (!sidebarList || sidebarList.children.length === 0) {
+            mobileIndexList.innerHTML = '<li style="padding:20px; text-align:center; opacity:0.5;">Sem fontes detetadas.</li>';
+        } else {
+            // Clona os itens da sidebar para o modal mobile
+            Array.from(sidebarList.children).forEach(item => {
+                const clone = item.cloneNode(true);
+                
+                // Re-ligar eventos nos botões de link e snippet (já que clones perdem eventos JS)
+                const snippet = clone.querySelector('.source-snippet');
+                const links = clone.querySelectorAll('.source-link-display');
 
-           // Clone dos itens
-           const items = sidebarList.querySelectorAll('li');
-           
-           items.forEach((sidebarItem, index) => {
-               const clone = sidebarItem.cloneNode(true);
-               
-               // Se for um item de fonte (tem link e título)
-               if (clone.classList.contains('source-item-row')) {
-                   const snippetDiv = clone.querySelector('.source-snippet');
-                   const linkDiv = clone.querySelector('.source-link-display');
-                   const rawUrl = linkDiv.textContent.replace('🔗', '').trim();
+                if (snippet) {
+                    snippet.onclick = () => {
+                        mobileIndexModal.style.display = 'none';
+                        // Procura o bloco original no texto para fazer scroll
+                        const blocks = document.querySelectorAll('.aquarium-read-block');
+                        const targetTitle = snippet.querySelector('strong')?.textContent;
+                        
+                        for (let b of blocks) {
+                            if (b.textContent.includes(targetTitle)) {
+                                b.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                b.style.backgroundColor = "rgba(241, 196, 15, 0.2)";
+                                setTimeout(() => b.style.backgroundColor = "transparent", 1500);
+                                break;
+                            }
+                        }
+                    };
+                }
 
-                   // RE-LIGAR O EVENTO DE SCROLL
-                   // Como no mobile clonámos o nó, perdemos a referência direta ao 'block'.
-                   // Estratégia: Procurar o bloco que contém o mesmo link.
-                   
-                   snippetDiv.onclick = () => {
-                       mobileIndexModal.style.display = 'none';
-                       
-                       // Procura qual bloco tem este URL específico
-                       let targetBlock = null;
-                       for (let b of blocks) {
-                           // Verifica se o HTML do bloco contém o URL codificado ou decoded
-                           if (b.innerHTML.includes(encodeURIComponent(rawUrl)) || b.innerHTML.includes(rawUrl)) {
-                               targetBlock = b;
-                               break;
-                           }
-                       }
+                links.forEach(linkBtn => {
+                    linkBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        window.open(linkBtn.dataset.url, '_blank');
+                    };
+                });
 
-                       if (targetBlock) {
-                           targetBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                           targetBlock.style.transition = "background 0.5s";
-                           targetBlock.style.backgroundColor = "rgba(241, 196, 15, 0.2)";
-                           setTimeout(() => targetBlock.style.backgroundColor = "transparent", 1000);
-                       } else {
-                           // Fallback se não encontrar exato (raro)
-                           alert("Localização no texto não encontrada.");
-                       }
-                   };
+                mobileIndexList.appendChild(clone);
+            });
+        }
+    } 
+    // --- MODO NOTA NORMAL (MOSTRAR ÍNDICE DE TÓPICOS) ---
+    else {
+        if (modalTitle) modalTitle.textContent = "Índice da Nota";
+        
+        const items = document.getElementById('read-body').querySelectorAll('.processed-mini-note, h2, h3, details.toggle-section');
+        
+        if (items.length === 0) {
+            mobileIndexList.innerHTML = '<li style="padding:20px; text-align:center; opacity:0.5;">Nenhum tópico encontrado.</li>';
+        } else {
+            items.forEach(el => {
+                // Ignora elementos escondidos ou títulos dentro de caixas/toggles para não duplicar
+                if (el.offsetParent === null) return;
+                if (['H2','H3'].includes(el.tagName) && (el.closest('summary') || el.closest('.processed-mini-note'))) return;
 
-                   // RE-LIGAR O EVENTO DE ABRIR LINK
-                   linkDiv.onclick = (e) => {
-                       e.stopPropagation();
-                       window.open(rawUrl, '_blank');
-                   };
-               }
-               
-               mobileIndexList.appendChild(clone);
-           });
-           
-           mobileIndexModal.style.display = 'flex';
-           return;
-       }
+                const li = document.createElement('li');
+                li.className = 'index-item';
+                
+                let title = el.textContent.trim();
+                let typeLabel = el.tagName;
 
-       // --- MODO NOTA NORMAL (CÓDIGO ANTERIOR MANTÉM-SE IGUAL AQUI PARA BAIXO) ---
-       document.querySelector('#mobile-index-modal h3').textContent = "Índice da Nota";
-       mobileIndexList.innerHTML = '';
-       // ... (Resto do código do índice normal) ...
-       const itemsNormal = document.getElementById('read-body').querySelectorAll('.processed-mini-note, h2, h3, details.toggle-section');
-       if (itemsNormal.length === 0) { alert("Esta nota não tem tópicos visíveis."); return; }
-       
-       itemsNormal.forEach(el => {
-           if (el.offsetParent === null) return;
-           if (['H2','H3'].includes(el.tagName) && (el.closest('summary') || el.closest('.processed-mini-note'))) return;
+                // Estilização baseada no tipo de bloco
+                if (el.tagName === 'DETAILS') {
+                    title = el.querySelector('summary')?.textContent || "Secção";
+                    typeLabel = "Toggle";
+                    li.style.borderLeft = "4px solid #9b59b6";
+                } else if (el.classList.contains('question-mode')) {
+                    title = el.querySelector('h3')?.textContent || "Questão";
+                    typeLabel = "Questão";
+                    li.style.borderLeft = "4px solid #2ecc71";
+                } else if (el.classList.contains('free-mode')) {
+                    title = el.querySelector('.mini-note-body')?.textContent.substring(0, 30) + "..." || "Contentor";
+                    typeLabel = "Contentor";
+                    li.style.borderLeft = "4px solid #e67e22";
+                } else if (el.classList.contains('processed-mini-note')) {
+                    title = el.querySelector('h3')?.textContent || "SubNota";
+                    typeLabel = "SubNota";
+                    li.style.borderLeft = "4px solid #4a90e2";
+                }
 
-           const li = document.createElement('li');
-           li.style.cssText = "padding:12px 10px; border-bottom:1px solid var(--border-color); cursor:pointer; display:flex; flex-direction:column; background:var(--bg-color); border-left:4px solid #7f8c8d;";
-           
-           let title = el.textContent;
-           if(el.tagName === 'DETAILS') { title = el.querySelector('summary').textContent; li.style.borderLeftColor = "#9b59b6"; }
-           else if(el.classList.contains('question-mode')) { title = el.querySelector('h3')?.textContent || "Questão"; li.style.borderLeftColor = "#2ecc71"; }
-           
-           li.innerHTML = `<strong style="font-size:1em; color:var(--text-color);">${title}</strong>`;
-           li.onclick = () => {
-               mobileIndexModal.style.display = 'none';
-               if(el.tagName==='DETAILS' && !el.open) el.open=true;
-               el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-               el.style.backgroundColor = "rgba(241, 196, 15, 0.3)";
-               setTimeout(() => el.style.backgroundColor = "", 1000);
-           };
-           mobileIndexList.appendChild(li);
-       });
-       mobileIndexModal.style.display = 'flex';
-   });
+                li.innerHTML = `<strong>${title}</strong><span>${typeLabel}</span>`;
+                
+                li.onclick = () => {
+                    mobileIndexModal.style.display = 'none';
+                    if (el.tagName === 'DETAILS' && !el.open) el.open = true;
+                    
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    
+                    // Feedback visual de destaque
+                    const originalBg = el.style.backgroundColor;
+                    el.style.backgroundColor = "rgba(241, 196, 15, 0.3)";
+                    setTimeout(() => el.style.backgroundColor = originalBg, 1500);
+                };
+                
+                mobileIndexList.appendChild(li);
+            });
+        }
+    }
+
+    // Mostrar o modal
+    mobileIndexModal.style.display = 'flex';
+});
+
 
 
 
@@ -9587,28 +9644,167 @@ document.querySelectorAll('[data-m-tab]').forEach(btn => {
 });
 
 // --- 3. FLUXO DE ESCOLHA DA SENTINELA ---
-window.startSentinelaFlow = async function() {
-    const noticeModal = document.getElementById('sentinela-notice-modal');
-    const arcadePopup = document.getElementById('games-menu-popup');
+window.startSentinelaFlow = function() {
+    // Esconde o menu de jogos
+    document.getElementById('games-menu-popup').style.display = 'none';
+    // Abre o seletor
+    document.getElementById('sentinela-selector-modal').style.display = 'flex';
+    selStack = [];
+    renderSelYears();
+};
 
-    if (window.innerWidth > 768) {
-        // Desktop: Comportamento normal
-        if (arcadePopup) arcadePopup.style.display = 'none';
-        document.querySelector('[data-tab="lists"]').click();
-        window.openListCategory('sentinela-years', 'Anos da Sentinela', 'w');
-    } else {
-        // Mobile: Mostrar o popup customizado
-        if (arcadePopup) arcadePopup.style.display = 'none';
+// --- NAVEGAÇÃO DO POPUP ---
+function renderSelYears() {
+    selStack = [];
+    document.getElementById('sel-modal-back-btn').style.display = 'none';
+    document.getElementById('sel-modal-title').textContent = "Escolher Ano";
+    const list = document.getElementById('sel-modal-list');
+    list.innerHTML = '';
+    
+    for (let i = new Date().getFullYear(); i >= 1950; i--) {
+        const li = document.createElement('li');
+        li.className = 'toc-item-row';
+        li.innerHTML = `📅 Ano ${i}`;
+        li.onclick = () => renderSelMonths(i);
+        list.appendChild(li);
+    }
+}
+
+function renderSelMonths(year) {
+    selStack = [() => renderSelYears()];
+    document.getElementById('sel-modal-back-btn').style.display = 'block';
+    document.getElementById('sel-modal-title').textContent = `Meses de ${year}`;
+    const list = document.getElementById('sel-modal-list');
+    list.innerHTML = '';
+    
+    const meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+    meses.forEach((mes, idx) => {
+        const mesNum = (idx + 1).toString().padStart(2, '0');
+        const li = document.createElement('li');
+        li.className = 'toc-item-row';
+        li.innerHTML = `🗓️ ${mes}`;
+        li.onclick = () => renderSelArticles(year, mesNum, mes);
+        list.appendChild(li);
+    });
+}
+
+async function renderSelArticles(year, mesNum, mesName) {
+    selStack.push(() => renderSelMonths(year));
+    document.getElementById('sel-modal-title').textContent = `${mesName} ${year}`;
+    const list = document.getElementById('sel-modal-list');
+    list.innerHTML = '<div class="sidebar-loading"><div class="spinner"></div></div>';
+
+    try {
+        const response = await fetch(`./js/publicacoes/sentinelas/${year}/${mesNum}.json`);
+        const data = await response.json();
+        const artigos = data.artigos ? data.artigos : [data];
         
-        // 1. Mostrar o modal de aviso
-        noticeModal.style.display = 'flex';
-        
-        // 2. Voltar para a sidebar e abrir a aba Listas
-        document.body.classList.remove('mobile-reading-active');
-        const listTabBtn = document.querySelector('[data-tab="lists"]');
-        if (listTabBtn) listTabBtn.click();
+        list.innerHTML = '';
+        artigos.forEach((art, idx) => {
+            const li = document.createElement('li');
+            li.className = 'toc-item-row';
+            li.style.flexDirection = "column"; li.style.alignItems = "flex-start";
+            li.innerHTML = `<strong style="color:var(--accent-color); font-size:0.8em;">${art.referencia}</strong><span>${art.titulo}</span>`;
+            li.onclick = () => finishSentinelaSelection(art, year, mesNum);
+            list.appendChild(li);
+        });
+    } catch (e) {
+        list.innerHTML = '<li style="padding:20px; color:red;">Ficheiro não encontrado.</li>';
+    }
+}
+
+// Botão Voltar do Modal
+document.getElementById('sel-modal-back-btn').onclick = () => {
+    if (selStack.length > 0) {
+        const goBack = selStack.pop();
+        goBack();
     }
 };
+
+// --- FINALIZAÇÃO E RENDERIZAÇÃO ---
+function finishSentinelaSelection(artigo, ano, mesNum) {
+    // Fecha o modal seletor
+    document.getElementById('sentinela-selector-modal').style.display = 'none';
+
+    // 1. VERSÃO PC: Mandar para a aba "Listas"
+    if (window.innerWidth > 768) {
+        const listBtn = document.querySelector('[data-tab="lists"]');
+        if (listBtn) listBtn.click();
+        
+        window.openListCategory('sentinela-content', artigo.referencia, { 
+            ano, 
+            mesNum, 
+            artIdx: artigo.idx || 0 
+        });
+    } 
+    // 2. VERSÃO MOBILE: Renderização rica na aba "Sentinela"
+    else {
+        const mTabBtn = document.getElementById('m-sentinela-tab-btn');
+        const mRender = document.getElementById('m-sentinela-render');
+        
+        if (mTabBtn && mRender) {
+            mTabBtn.style.display = 'block'; 
+            
+            // Cabeçalho do Artigo
+            let htmlFinal = `
+                <div style="padding-bottom:15px; border-bottom:1px solid rgba(128,128,128,0.2); margin-bottom:15px;">
+                    <h2 style="color:var(--accent-color); font-size:1.3em; line-height:1.2;">${artigo.titulo}</h2>
+                    <small style="color:var(--text-muted); font-weight:bold;">${artigo.referencia}</small>
+                </div>
+            `;
+
+            let isInsideReview = false;
+
+            // Processar cada bloco do conteúdo
+            artigo.conteudo.forEach((bloco) => {
+                const textWithLinks = window.linkifyBibleReferences ? window.linkifyBibleReferences(bloco.texto) : bloco.texto;
+                
+                // --- CÂNTICO ---
+                if (bloco.tipo === 'cantico' || (bloco.texto && bloco.texto.toUpperCase().includes("CÂNTICO"))) {
+                    htmlFinal += `<div style="padding:15px 0; text-align:center; font-style:italic; color:#e67e22; font-size:0.95em;">🎵 ${textWithLinks}</div>`;
+                }
+                
+                // --- SUBTEMAS ---
+                else if (bloco.tipo === 'subtema') {
+                    if (bloco.texto.toUpperCase().includes("COMO RESPONDERIA")) {
+                        isInsideReview = true;
+                        htmlFinal += `<div style="padding:25px 0 10px 0; color:#9b59b6; font-weight:800; font-size:0.85em; text-transform:uppercase; border-bottom: 2px solid rgba(155, 89, 182, 0.2); margin-bottom:10px;">${textWithLinks}</div>`;
+                    } else {
+                        htmlFinal += `<div style="padding:25px 0 10px 0; font-weight:bold; color:var(--accent-color); font-size:1.1em;">${textWithLinks}</div>`;
+                    }
+                }
+
+                // --- RODAPÉ / INTRO / INFO ---
+                else if (bloco.tipo === 'rodape' || bloco.tipo === 'intro' || (!bloco.numero_ref && bloco.tipo === 'paragrafo')) {
+                    htmlFinal += `<div style="padding:10px 0; font-size:0.85em; color:var(--text-muted); font-style:italic; line-height:1.4; opacity:0.8;">${textWithLinks}</div>`;
+                }
+
+                // --- PARÁGRAFOS E PERGUNTAS (O CORPO DO ESTUDO) ---
+                else {
+                    htmlFinal += `<div style="padding:12px 0; border-bottom:1px solid rgba(128,128,128,0.05); font-size:1.05em; line-height:1.6;">`;
+                    
+                    if (isInsideReview) {
+                        htmlFinal += `<span style="color:#9b59b6; font-weight:800; font-size:0.75em; display:block; margin-bottom:4px;">RECAPITULAÇÃO</span>${textWithLinks}`;
+                    } else if (bloco.tipo === 'pergunta') {
+                        // COR DA PERGUNTA (Rosa/Roxo Suave igual ao Listas)
+                        htmlFinal += `<span style="color:#d3869b; font-weight:bold; margin-right:5px;">${bloco.numero_ref}.</span> ${textWithLinks}`;
+                    } else {
+                        // BADGE DO PARÁGRAFO (Igual ao Listas)
+                        htmlFinal += `<span class="paragraph-badge" style="margin-right:8px; float:none; display:inline-block;">pr ${bloco.numero_ref || '?'}</span>${textWithLinks}`;
+                    }
+                    
+                    htmlFinal += `</div>`;
+                }
+            });
+
+            mRender.innerHTML = htmlFinal;
+            
+            // Abrir o modal mobile
+            document.getElementById('mobile-index-modal').style.display = 'flex';
+            mTabBtn.click(); 
+        }
+    }
+}
 
 // --- 4. MODO RESPONDI? (MARCAR COMENTÁRIOS) ---
 window.toggleRespondiMode = async function() {
@@ -9670,13 +9866,17 @@ window.syncSentinelaToMobileIndex = function(htmlContent, title) {
     const tabBtn = document.getElementById('m-sentinela-tab-btn');
     const renderArea = document.getElementById('m-sentinela-render');
     
+    // Verificação de segurança: Só executa se os elementos existirem
     if (tabBtn && renderArea) {
         tabBtn.style.display = 'block';
-        renderArea.innerHTML = `<h3>${title}</h3><hr>${htmlContent}`;
-        // Opcional: Avisar o user que o artigo está pronto no Índice
-        console.log("Sentinela sincronizada com o índice mobile.");
+        renderArea.innerHTML = `<h3 style="color:var(--accent-color); margin-bottom:15px;">${title}</h3><hr style="opacity:0.2">${htmlContent}`;
+        console.log("✅ Sentinela sincronizada.");
+    } else {
+        console.warn("⚠️ Elementos da aba Sentinela (m-sentinela-render) não encontrados no HTML.");
     }
 };
+
+
 
 </script>
 </body>
