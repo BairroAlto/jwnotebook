@@ -25,7 +25,7 @@ export const BIBLE_ABBREVIATIONS = {
     "Isa": "Isaías",
     "Jer": "Jeremias",
     "La": "Lamentações",
-    "Ez": "Ezequiel",
+    "Ez": "Ezequiel", "Eze": "Ezequiel",
     "Da": "Daniel",
     "Os": "Oséias",
     "Jl": "Joel",
