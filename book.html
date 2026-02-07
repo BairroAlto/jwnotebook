@@ -6589,73 +6589,85 @@ window.findAndShowEntity = async (name, type) => {
 // FUNÇÃO: EXIBIR PAINEL DE REFERÊNCIAS (4ª COLUNA)
 // ============================================================
 window.showReferencesPanel = async (entityId, name, type) => {
-     window.showPanelLoading();
+    window.showPanelLoading();
 
     const container = document.getElementById('main-container');
     const title = document.getElementById('ref-title');
     const panel = document.getElementById('references-panel');
     const tabsContainer = document.getElementById('ref-panel-tabs');
 
-    if (!container || !panel) {
-        console.error("Erro: Contentores de UI não encontrados.");
-        return;
-    }
+    if (!container || !panel) return;
 
-    // 1. Abrir a 4ª coluna visualmente
+    // 1. Abrir a 4ª coluna
     container.classList.add('references-visible');
     
-    // 2. Configurar os dados no cabeçalho
+    // 2. RESOLVER ID PARA TEXTO BÍBLICO
+    // Se clicou num link fantasma, não temos ID. Precisamos de um para carregar o Puzzle/Links do versículo.
+    let resolvedId = entityId;
+    if (type === 'textobiblico' && !resolvedId) {
+        resolvedId = await window.getOrCreateBibleEntityId(name);
+    }
+
+    // 3. Configurar os dados no cabeçalho e dataset do painel
     if (title) title.textContent = name;
-    panel.dataset.currentEntityId = entityId || '';
+    panel.dataset.currentEntityId = resolvedId || '';
     panel.dataset.currentEntityName = name;
     panel.dataset.currentEntityType = type;
 
-    // --- CORREÇÃO DO ERRO: GARANTIR QUE O CONTENTOR DA BÍBLIA EXISTE ---
+    // Gerir Abas Bíblicas
     let bibleContentDiv = document.getElementById('ref-content-bibletext');
     let bibleTabBtn = document.querySelector('[data-ref-tab="bibletext"]');
 
     if (type === 'textobiblico') {
-        // Se a aba não existir no HTML, criamos agora
+        // Criar aba se não existir (mesma lógica que já tinhas)
         if (!bibleTabBtn) {
-            console.log("   + Criando aba 📜 dinamicamente...");
             bibleTabBtn = document.createElement('button');
             bibleTabBtn.className = 'tab-btn';
             bibleTabBtn.dataset.refTab = 'bibletext';
             bibleTabBtn.innerHTML = '📜';
             tabsContainer.appendChild(bibleTabBtn);
         }
-
-        // Se o painel de conteúdo não existir, criamos agora
         if (!bibleContentDiv) {
-            console.log("   + Criando contentor ref-content-bibletext dinamicamente...");
             bibleContentDiv = document.createElement('div');
             bibleContentDiv.id = 'ref-content-bibletext';
             bibleContentDiv.className = 'ref-tab-content';
             bibleContentDiv.style.cssText = "flex-grow: 1; overflow-y: auto; display: none; padding: 15px;";
-            // Coloca o novo painel junto aos outros
             document.getElementById('ref-content-references').parentNode.appendChild(bibleContentDiv);
         }
 
-        console.log("   ⤷ %cTipo Bíblico detetado.%c Ativando aba 📜 e buscando texto...", "color: #2ecc71; font-weight: bold;", "");
-        
         bibleTabBtn.style.display = 'inline-block';
-        bibleTabBtn.click(); // Mostra a aba e o conteúdo
+        bibleTabBtn.click(); // Abre a aba do texto 📜
 
-        if (window.renderBibleTextInPanel) {
-            window.renderBibleTextInPanel(name);
-        }
+        // Carrega o texto bíblico
+        window.renderBibleTextInPanel(name);
     } else {
-        console.log("   ⤷ Tipo Geral detetado. Abrindo aba de Estudo (Puzzle)...");
+        // Se não for bíblico, esconde a aba 📜 e abre o Puzzle 🧩
         if (bibleTabBtn) bibleTabBtn.style.display = 'none';
         document.querySelector('[data-ref-tab="puzzle"]')?.click();
     }
 
-    // 4. Carregar os dados de Estudo (Quadro, Links, Dossiê e Citações)
-    if (window.loadPuzzleForReading) window.loadPuzzleForReading(entityId, type, name); 
-    if (window.renderPanelLinksForReading) window.renderPanelLinksForReading(entityId, type);
-    if (window.renderDossieViewer) window.renderDossieViewer(entityId, type);
+    // 4. CARREGAR METADADOS DA ENTIDADE ATUAL (Versículo ou Parágrafo)
+    // Agora o resolvedId garante que o Puzzle/Links/Dossiê pertencem ao que foi clicado por último
+    if (resolvedId) {
+        await Promise.all([
+            loadPuzzleForReading(resolvedId, type, name),
+            renderPanelLinksForReading(resolvedId, type),
+            renderDossieViewer(resolvedId, type)
+        ]);
+    } else {
+        // Se mesmo assim não houver ID (ex: tag nova), limpa as abas
+        document.getElementById('puzzle-board-container').innerHTML = '';
+        document.getElementById('panel-links-list').innerHTML = '';
+        document.getElementById('dossie-list-container').innerHTML = '';
+    }
+
+    // Citações sempre funcionam por Nome
     if (window.fetchCitationsForEntity) window.fetchCitationsForEntity(name, type);
+    
+    window.hidePanelLoading();
 };
+
+
 
 // --- NOVA FUNÇÃO: CARREGAR O TEXTO BÍBLICO NA ABA ---
 window.renderBibleTextInPanel = async function(fullReference) {
@@ -9072,6 +9084,38 @@ window.hidePanelLoading = () => {
 };
 
 
+window.getOrCreateBibleEntityId = async function(verseName) {
+    try {
+        const { collection, query, where, getDocs, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // Procura se o versículo já existe na coleção de textos bíblicos do utilizador
+        const q = query(
+            collection(db, 'textosbiblicos'), 
+            where('nome', '==', verseName), 
+            where('userId', '==', auth.currentUser.uid)
+        );
+        const snap = await getDocs(q);
+
+        if (!snap.empty) {
+            return snap.docs[0].id; // Retorna o ID existente
+        } else {
+            // Se não existe, cria um documento básico para que o utilizador possa adicionar Puzzles a este versículo
+            const newDoc = await addDoc(collection(db, 'textosbiblicos'), {
+                nome: verseName,
+                userId: auth.currentUser.uid,
+                createdAt: serverTimestamp(),
+                puzzleBoard: [],
+                panelLinks: [],
+                dossie: [],
+                marcadoresAssociados: {}
+            });
+            return newDoc.id;
+        }
+    } catch (e) {
+        console.error("Erro ao resolver ID bíblico:", e);
+        return null;
+    }
+};
 
 </script>
 </body>
