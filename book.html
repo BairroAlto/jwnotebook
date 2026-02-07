@@ -3027,6 +3027,59 @@ li.bible-grid-container:hover {
     user-select: none;
 }
 
+/* Badge de numeração na barra lateral de livros */
+.toc-item-row span[style*="float:right"] {
+    background-color: var(--panel-color);
+    font-family: monospace;
+    font-weight: bold;
+    user-select: none;
+}
+
+/* Estilo para perguntas de recapitulação na Sentinela */
+.review-answer-block {
+    background-color: rgba(155, 89, 182, 0.1) !important; /* Roxo muito suave */
+    border-left: 4px solid #9b59b6 !important;
+    margin: 5px 0 !important;
+    border-radius: 0 8px 8px 0;
+}
+
+.review-header-label {
+    color: #9b59b6;
+    font-weight: 800;
+    font-size: 0.75em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 4px;
+}
+
+.paragraph-badge {
+    display: inline-block; /* Em vez de float:right */
+    font-size: 0.72em;
+    color: var(--accent-color);
+    border: 1px solid var(--border-color);
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-right: 8px; /* Espaço entre o número e o texto */
+    margin-bottom: 2px;
+    opacity: 0.8;
+    background-color: var(--panel-color);
+    font-family: monospace;
+    vertical-align: middle;
+    font-weight: bold;
+}
+
+/* Fundo de parágrafo com vínculo de estudo (Muito Leve) */
+.toc-item-row.has-study-highlight {
+    border-right: 3px solid transparent; /* Reserva espaço para o brilho */
+    transition: background-color 0.3s ease;
+}
+
+/* Aplicado via JS dinamicamente */
+.study-highlight-active {
+    /* A cor será injetada via style.backgroundColor com opacidade 0.04 */
+    box-shadow: inset 4px 0 0 0; /* Uma linha fina na esquerda interna para reforçar */
+}
+
     </style>
 
 
@@ -3408,6 +3461,7 @@ li.bible-grid-container:hover {
 import { collection, query, where, getDocs, orderBy, doc, getDoc, setDoc, addDoc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
    import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
 import { BIBLE_DATA } from './js/bible-data.js';
+import { SIGLAS_PUBLICACOES } from './js/siglas-data.js';
 
     // --- COLE O CÓDIGO NOVO AQUI ---
 const tabButtons = document.querySelectorAll('#book-sidebar .tab-btn');
@@ -3421,76 +3475,79 @@ const tabViewMap = {
     'lists': 'lists',
     'index': 'index'
 };
+const IDs_REVISTAS = ["w", "g", "wp", "km", "mwb"];
+const IDs_VIDEOS = ["jwbvod", "mwbv", "jwb"];
+
+
 
 tabButtons.forEach(btn => {
     btn.addEventListener('click', async () => {
-        const targetTab = btn.dataset.tab; // local, share, flash, lists, index
+        const targetTab = btn.dataset.tab;
         if (!targetTab) return;
 
-        // --- 1. GUARDAR MEMÓRIA (Se estivermos a sair do modo LOCAL) ---
+        // --- 1. GUARDAR MEMÓRIA AO SAIR ---
+        const listsContainer = document.getElementById('book-lists');
+        
         if (window.currentBookMode === 'local') {
-            localTabMemory.navStack = [...navStack]; // Guarda a árvore de pastas atual
-            localTabMemory.scrollTop = tocScrollContainer.scrollTop; // Guarda o ponto do scroll
-            console.log("💾 Memória Local guardada:", localTabMemory.navStack.length, "pastas de profundidade.");
+            localTabMemory.navStack = [...navStack];
+            localTabMemory.scrollTop = tocScrollContainer.scrollTop;
+        } 
+        else if (window.currentBookMode === 'lists') {
+            listsTabMemory.stack = [...listsStack];
+            listsTabMemory.scrollTop = listsContainer.scrollTop;
+            console.log("💾 Memória de Estudo (Listas) guardada.");
         }
 
-        // --- 2. ATUALIZAÇÃO VISUAL DOS BOTÕES ---
+        // --- 2. ATUALIZAÇÃO VISUAL ---
         tabButtons.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        
-        // --- 3. GESTÃO DE VISIBILIDADE DOS PAINÉIS ---
         document.getElementById('book-toc').style.display = 'none';
         document.getElementById('book-lists').style.display = 'none';
         document.getElementById('book-index').style.display = 'none';
 
-        // --- 4. LÓGICA DE NAVEGAÇÃO E RESTAURO ---
+        // --- 3. LÓGICA DE RESTAURO ---
         
-        // A. MODO LOCAL (NOTAS) - Restaurar onde o usuário parou
+        // A. ABA NOTAS (LOCAL)
         if (targetTab === 'local') {
             document.getElementById('book-toc').style.display = 'block';
             window.currentBookMode = 'local';
-            
-            // Recupera a posição na árvore de pastas
             navStack = [...localTabMemory.navStack];
             const lastFolderId = navStack.length > 0 ? navStack[navStack.length - 1] : null;
-            
-            // Renderiza o nível da pasta e aguarda conclusão
             await window.renderTocLevel(lastFolderId, true);
-            
-            // Restaura o scroll após um pequeno delay para o DOM processar a lista
-            setTimeout(() => {
-                tocScrollContainer.scrollTop = localTabMemory.scrollTop;
-                console.log("📖 Notas restauradas no scroll:", localTabMemory.scrollTop);
-            }, 50);
+            setTimeout(() => { tocScrollContainer.scrollTop = localTabMemory.scrollTop; }, 50);
         } 
         
-        // B. MODO FLASH - Reset para página 1 e raiz
-        else if (targetTab === 'flash') {
-            document.getElementById('book-toc').style.display = 'block';
-            window.currentBookMode = 'flash';
-            window.currentFlashPage = 1; // Sempre volta à primeira página ao clicar na aba
-            navStack = []; 
-            window.renderTocLevel(null);
-        }
-
-        // C. MODO SHARE (PARTILHA) - Reset para a raiz
-        else if (targetTab === 'share') {
-            document.getElementById('book-toc').style.display = 'block';
-            window.currentBookMode = 'share';
-            navStack = []; 
-            window.renderTocLevel(null);
-        }
-
-        // D. MODO LISTAS (CATEGORIAS)
+        // B. ABA LISTAS (Estudo / Bíblia / Livros) - COM MEMÓRIA
         else if (targetTab === 'lists') {
             document.getElementById('book-lists').style.display = 'flex';
-            window.renderListsRoot(); // Chama o gerador do menu de categorias
+            window.currentBookMode = 'lists';
+            
+            if (listsTabMemory.stack.length > 0) {
+                // Recupera a pilha e re-renderiza o último local
+                listsStack = [...listsTabMemory.stack];
+                const last = listsStack.pop(); // Remove para a openListCategory não duplicar
+                console.log("Restaurando Listas em:", last.title);
+                
+                await window.openListCategory(last.type, last.title, last.contextId);
+                
+                // Restaura o Scroll
+                setTimeout(() => {
+                    listsContainer.scrollTop = listsTabMemory.scrollTop;
+                }, 100);
+            } else {
+                window.renderListsRoot();
+            }
         }
 
-        // E. MODO ÍNDICE (TOC DA NOTA)
+        // C. RESTO (Flash, Share, Index)
+        else if (targetTab === 'flash' || targetTab === 'share') {
+            document.getElementById('book-toc').style.display = 'block';
+            window.currentBookMode = targetTab;
+            navStack = []; 
+            window.renderTocLevel(null);
+        }
         else if (targetTab === 'index') {
             document.getElementById('book-index').style.display = 'block';
-            // Nota: O índice já é gerado automaticamente quando a nota é aberta.
         }
     });
 });
@@ -3528,7 +3585,11 @@ let localTabMemory = {
     scrollTop: 0
 };
 let currentFlashPage = 1;
-
+let listsTabMemory = {
+    stack: [],
+    scrollTop: 0
+};
+let activeReferenceEntity = { id: null, type: null, name: null };
 
 
 const REFS_PER_PAGE = 15;  // Limite por página
@@ -3651,6 +3712,7 @@ function getCollectionFromType(type) {
     if (type === 'cosmos') return 'cosmos';
     if (type === 'subcosmos') return 'subcosmos';
     if (type === 'marcadores') return 'marcadores';
+     if (type === 'livro_ref') return 'livros';
     return null;
 }
 
@@ -5032,74 +5094,49 @@ async function loadBookStructure(userId) {
     tocContainer.innerHTML = '<div style="padding:20px; text-align:center;"><div class="spinner"></div> A carregar biblioteca...</div>';
     
     try {
-        const { collection, query, where, getDocs, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        // 1. Meus Ficheiros (Local + Flash + Meus Shares)
-        // FILTRO DE SEGURANÇA: where('estado', '==', 'ativa')
+        // 1. Minhas Notas (Local + Flash + Meus Arquivos)
         const qOwner = query(
             collection(db, 'pastas'), 
             where('userId', '==', userId), 
-            where('estado', '==', 'ativa'), // <--- GARANTE QUE OCULTOS NÃO ENTRAM
-            orderBy('ordem')
+            where('estado', '==', 'ativa')
         );
         
-        // 2. Ficheiros Partilhados Comigo
+        // 2. Notas Partilhadas Comigo
         const qCollab = query(
             collection(db, 'pastas'), 
             where(`colaboradores.${userId}`, '==', true), 
-            where('estado', '==', 'ativa') // <--- GARANTE QUE OCULTOS NÃO ENTRAM
+            where('estado', '==', 'ativa')
         );
         
-        const [snapOwner, snapCollab] = await Promise.all([getDocs(qOwner), getDocs(qCollab)]);
+        // --- CORREÇÃO DO ERRO AQUI (qCollab em vez de snapCollab) ---
+        const [snapOwner, snapCollab] = await Promise.all([
+            getDocs(qOwner), 
+            getDocs(qCollab)
+        ]);
         
-        // Juntar tudo num mapa para evitar duplicados
         const itemsMap = new Map();
-        
         snapOwner.forEach(d => itemsMap.set(d.id, {id: d.id, ...d.data()}));
         snapCollab.forEach(d => itemsMap.set(d.id, {id: d.id, ...d.data()}));
         
-        // Converter para array
         cachedBookItems = Array.from(itemsMap.values());
 
-        // --- FILTRAGEM FINAL DE SEGURANÇA (CLIENT-SIDE) ---
-        // Caso algum documento antigo não tenha o campo 'estado', ou tenha valor diferente
-        cachedBookItems = cachedBookItems.filter(item => item.estado !== 'desativa');
-        
-        // Renderizar a aba padrão (Local)
-        navStack = []; 
-        window.currentBookMode = 'local'; 
-        
+        console.log(`📦 Biblioteca carregada: ${cachedBookItems.length} itens no total.`);
+
+        // Lógica de abertura automática por URL
         const params = new URLSearchParams(window.location.search);
         const urlNoteId = params.get('note');
-        const urlFolderId = params.get('folder');
-
         if (urlNoteId) {
-            // Tenta encontrar a nota na lista carregada
             const item = cachedBookItems.find(i => i.id === urlNoteId);
             if (item) {
-                // Se encontrar, renderiza a pasta pai primeiro (para o botão voltar funcionar)
                 if (item.parentId && item.parentId !== "null") {
-                    navStack.push(item.parentId); // Simula histórico
+                    navStack.push(item.parentId);
                     renderTocLevel(item.parentId, true);
-                } else {
-                    renderTocLevel(null, true);
-                }
-                // Abre a nota
-                window.displayNote(item, null, true); // true = não duplicar histórico
-            } else {
-                // Se ID inválido, vai para a raiz
-                renderTocLevel(null);
-            }
-        } 
-        else if (urlFolderId) {
-            // Se for link de pasta
-            navStack.push(urlFolderId);
-            renderTocLevel(urlFolderId, true);
-        } 
-        else {
-            // Padrão: Raiz
-            renderTocLevel(null);
-        }
+                } else renderTocLevel(null, true);
+                window.displayNote(item, null, true);
+            } else renderTocLevel(null);
+        } else renderTocLevel(null);
 
     } catch (e) {
         console.error("Erro ao carregar estrutura:", e);
@@ -5110,7 +5147,7 @@ async function loadBookStructure(userId) {
 
    // Função que desenha a lista baseada no ID da pasta pai atual
 window.renderTocLevel = async (parentId, skipUrlUpdate = false) => {
-    // ATUALIZAÇÃO DE URL
+    // 1. Atualização de URL para Deep Linking
     if (!skipUrlUpdate) {
         window.updateAddressBar(parentId, 'folder');
     }
@@ -5118,11 +5155,13 @@ window.renderTocLevel = async (parentId, skipUrlUpdate = false) => {
     const tocContainer = document.getElementById('book-toc');
     if (!tocContainer) return;
 
+    // Limpeza visual e reset do scroll
     tocContainer.innerHTML = '';
     tocContainer.scrollTop = 0;
 
-    // 1. Botão de Voltar (Apenas se estivermos a navegar dentro de pastas)
-    // No modo Flash não há pastas, por isso nunca aparece.
+    // ============================================================
+    // 1. BOTÃO DE VOLTAR (Apenas para modo Local e Share)
+    // ============================================================
     if (parentId !== null && window.currentBookMode !== 'flash') {
         const backBtn = document.createElement('div');
         backBtn.className = 'toc-back-btn';
@@ -5148,145 +5187,78 @@ window.renderTocLevel = async (parentId, skipUrlUpdate = false) => {
         tocContainer.appendChild(backBtn);
     }
 
-    // 2. FILTRAGEM INTELIGENTE
+    // Variável que conterá os itens filtrados para exibição
     let items = [];
 
-    // --- MODO FLASH (Lista Plana, ordenada por data) ---
-   // --- MODO FLASH (Paginado: 30 por página) ---
-if (window.currentBookMode === 'flash') {
-    // 1. Filtra e Ordena todos os itens Flash
-    let allFlashItems = cachedBookItems.filter(i => i.oque === 'flash');
-    
-    allFlashItems.sort((a, b) => {
-        const tA = a.ultimaedicao?.seconds || a.createdAt?.seconds || 0;
-        const tB = b.ultimaedicao?.seconds || b.createdAt?.seconds || 0;
-        return tB - tA;
-    });
+    // ============================================================
+    // 2. LÓGICA POR MODO DE VISUALIZAÇÃO
+    // ============================================================
 
-    // 2. Cálculo de Paginação
-    const totalItems = allFlashItems.length;
-    const totalPages = Math.ceil(totalItems / FLASH_PER_PAGE);
-    
-    // Garante que a página atual não ultrapassa o limite (caso itens sejam apagados)
-    if (currentFlashPage > totalPages && totalPages > 0) currentFlashPage = totalPages;
+    // --- MODO FLASH (Paginado: 30 por página) ---
+    if (window.currentBookMode === 'flash') {
+        // Filtro: oque é flash E o estado é ativa
+        let allFlashItems = cachedBookItems.filter(i => i.oque === 'flash' && i.estado === 'ativa');
+        
+        // Logs de Diagnóstico para a Consola (F12)
+        const totalItems = allFlashItems.length;
+        const totalPages = Math.ceil(totalItems / FLASH_PER_PAGE);
+        
+        console.group("%c⚡ Monitor Flash", "color: #e67e22; font-weight: bold;");
+        console.log("Total de notas Flash (ativas):", totalItems);
+        console.log("Página atual:", currentFlashPage);
+        console.log("Total de páginas:", totalPages);
+        console.groupEnd();
 
-    const startIdx = (currentFlashPage - 1) * FLASH_PER_PAGE;
-    const endIdx = startIdx + FLASH_PER_PAGE;
-    
-    // 3. Obtém apenas os 30 itens da página atual
-    items = allFlashItems.slice(startIdx, endIdx);
+        // Ordenação: Mais recente primeiro
+        allFlashItems.sort((a, b) => {
+            const tA = a.ultimaedicao?.seconds || a.createdAt?.seconds || 0;
+            const tB = b.ultimaedicao?.seconds || b.createdAt?.seconds || 0;
+            return tB - tA;
+        });
 
-    // 4. Se a lista estiver vazia
-    if (totalItems === 0) {
-        tocContainer.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text-muted); font-style:italic;">Sem itens Flash.</div>';
-        return;
-    }
+        // Cálculo de fatiamento da página
+        if (currentFlashPage > totalPages && totalPages > 0) currentFlashPage = totalPages;
+        const startIdx = (currentFlashPage - 1) * FLASH_PER_PAGE;
+        const endIdx = startIdx + FLASH_PER_PAGE;
+        
+        items = allFlashItems.slice(startIdx, endIdx);
 
-    // 5. Renderiza os Itens (Lógica normal de LI)
-    items.forEach(item => {
-        const div = document.createElement('div');
-        div.className = 'toc-item-row';
-        if(window.currentNoteId === item.id) div.classList.add('active-note');
-        div.style.borderLeft = "3px solid #e67e22"; // Cor Laranja Flash
-
-        let icon = item.tipo === 'jornal' ? '📰' : '📄';
-        if (item.tipo === 'aquario') icon = '🪸';
-
-        div.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; overflow:hidden; flex-grow:1;">
-                <span style="font-size:1.2em;">${icon}</span>
-                <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.nome}</span>
-            </div>
-        `;
-        div.onclick = () => window.displayNote(item);
-        tocContainer.appendChild(div);
-    });
-
-    // 6. ADICIONA O MENU DE NAVEGAÇÃO (PAGINAÇÃO) NO FIM
-    if (totalPages > 1) {
-        const pagContainer = document.createElement('div');
-        pagContainer.className = 'pagination-container';
-
-        for (let p = 1; p <= totalPages; p++) {
-            // Lógica para não mostrar 50 números se houver muitas páginas (opcional)
-            // Aqui mostramos todos, mas limitamos visualmente
-            const pageBtn = document.createElement('div');
-            pageBtn.className = `page-num ${p === currentFlashPage ? 'active' : ''}`;
-            pageBtn.textContent = p;
-            pageBtn.onclick = () => {
-                currentFlashPage = p;
-                window.renderTocLevel(null); // Recarrega a aba Flash
-                tocContainer.scrollTop = 0;   // Volta ao topo
-            };
-            pagContainer.appendChild(pageBtn);
+        if (totalItems === 0) {
+            tocContainer.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text-muted); font-style:italic;">Nenhuma nota flash encontrada.</div>';
+            return;
         }
-        tocContainer.appendChild(pagContainer);
     }
-    return; // Sai da função
-}
     
-    // --- MODO SHARE (Ficheiros Partilhados e Arquivos) ---
-   else if (window.currentBookMode === 'share') {
+    // --- MODO SHARE (Partilhas e Arquivos) ---
+    else if (window.currentBookMode === 'share') {
         const myUid = auth.currentUser.uid;
-
-        // Na raiz do Share, aplicamos o filtro rigoroso da base de dados
         if (parentId === null) {
             items = cachedBookItems.filter(i => {
-                
-                // 1. FILTRO DE TIPO (Rigoroso)
-                // Aceita explicitamente 'partilhado' (como na sua imagem da BD)
-                // Aceita também 'arquivo' (para os seus arquivos pessoais não partilhados)
-                const isCorrectType = (i.tipo === 'partilhado');
-                
-                // Se não for um destes tipos, ignora imediatamente
-                if (!isCorrectType) return false;
-
-                // 2. FILTRO DE PROPRIEDADE (Sou o Dono?)
-                // Verifica se o ID do utilizador atual bate certo com o campo 'userId' da imagem
+                const isCorrectType = (i.tipo === 'partilhado' || i.tipo === 'arquivo');
                 const isOwner = (i.userId === myUid);
-
-                // 3. FILTRO DE COLABORAÇÃO (Sou Convidado?)
-                // Verifica se estou na lista de 'colaboradores' E se a partilha está 'ativo' (campo da imagem)
                 const isCollab = (i.colaboradores && i.colaboradores[myUid] === true && i.partilhado === 'ativo');
-
-                // MOSTRAR SE: Sou Dono OU Sou Colaborador Válido
-                return isOwner || isCollab;
+                return isCorrectType && (isOwner || isCollab);
             });
         } else {
-            // Se estiver a navegar DENTRO de uma pasta que está no Share
             items = cachedBookItems.filter(i => i.parentId === parentId);
         }
     }
     
-    // --- MODO LOCAL (Padrão: Notas e Pastas pessoais) ---
-    else {
+    // --- MODO LOCAL (Pastas e Notas Pessoais) ---
+  else {
         items = cachedBookItems.filter(i => {
-            // Exclui Flash e Partilhas
             if (i.oque === 'flash') return false;
             if (i.tipo === 'partilhado' || i.tipo === 'arquivo') return false;
-            // Filtro de hierarquia
             if (parentId === null) return !i.parentId || i.parentId === "null";
             return i.parentId === parentId;
         });
+        // Ordenação por campo 'ordem' (definido no editor)
+        items.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
     }
 
-    // 3. Feedback Vazio
-    if (items.length === 0) {
-        const emptyMsg = document.createElement('div');
-        emptyMsg.style.padding = "30px 20px";
-        emptyMsg.style.textAlign = "center";
-        emptyMsg.style.color = "var(--text-muted)";
-        emptyMsg.style.fontStyle = "italic";
-        
-        if (window.currentBookMode === 'flash') emptyMsg.textContent = "Sem itens Flash.";
-        else if (window.currentBookMode === 'share') emptyMsg.textContent = "Sem partilhas.";
-        else emptyMsg.textContent = "Pasta vazia.";
-        
-        tocContainer.appendChild(emptyMsg);
-        return;
-    }
-
-    // 4. Renderização
+    // ============================================================
+    // 3. RENDERIZAÇÃO DOS ITENS NO DOM
+    // ============================================================
     items.forEach(item => {
         const div = document.createElement('div');
         const isFolder = (item.tipo === 'pasta' || item.tipo === 'agregacao');
@@ -5294,10 +5266,11 @@ if (window.currentBookMode === 'flash') {
         div.className = `toc-item-row ${isFolder ? 'is-folder' : ''}`;
         if(window.currentNoteId === item.id) div.classList.add('active-note');
 
-        // Estilos específicos de modo
-        if (window.currentBookMode === 'flash') div.style.borderLeft = "3px solid #e67e22"; // Laranja
-        else if (window.currentBookMode === 'share') div.style.borderLeft = "3px solid #e74c3c"; // Vermelho
+        // Borda colorida baseada no modo
+        if (window.currentBookMode === 'flash') div.style.borderLeft = "3px solid #e67e22";
+        else if (window.currentBookMode === 'share') div.style.borderLeft = "3px solid #e74c3c";
 
+        // Definição de Ícone
         let icon = isFolder ? '📁' : '📄';
         if (item.tipo === 'jornal') icon = '📰';
         if (item.tipo === 'arquivo' || item.tipo === 'partilhado') icon = '🗄️';
@@ -5315,28 +5288,51 @@ if (window.currentBookMode === 'flash') {
         `;
 
         div.onclick = async () => {
-            // Lógica de Senha
+            // Verificação de senha
             if (item.passe && !sessionUnlockedFolders.has(item.id)) {
                 const ok = await requestPassword(item.id);
                 if (!ok) return;
             }
 
             if (isFolder) {
-                // Entrar na pasta
                 navStack.push(item.id);
                 window.renderTocLevel(item.id);
             } else {
-                // Abrir nota
+                // Remove destaques de outros itens e aplica a este
                 document.querySelectorAll('.toc-item-row').forEach(el => el.classList.remove('active-note'));
                 div.classList.add('active-note');
-                if (typeof window.displayNote === 'function') {
-                    window.displayNote(item);
-                }
+                window.displayNote(item);
             }
         };
 
         tocContainer.appendChild(div);
     });
+
+    // ============================================================
+    // 4. GERAÇÃO DO MENU DE PAGINAÇÃO (Apenas para o modo Flash)
+    // ============================================================
+    if (window.currentBookMode === 'flash') {
+        const totalItems = cachedBookItems.filter(i => i.oque === 'flash' && i.estado === 'ativa').length;
+        const totalPages = Math.ceil(totalItems / FLASH_PER_PAGE);
+
+        if (totalPages > 1) {
+            const pagContainer = document.createElement('div');
+            pagContainer.className = 'pagination-container';
+
+            for (let p = 1; p <= totalPages; p++) {
+                const pageBtn = document.createElement('div');
+                pageBtn.className = `page-num ${p === currentFlashPage ? 'active' : ''}`;
+                pageBtn.textContent = p;
+                pageBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    currentFlashPage = p;
+                    window.renderTocLevel(null); // Recarrega a aba Flash na nova página
+                };
+                pagContainer.appendChild(pageBtn);
+            }
+            tocContainer.appendChild(pagContainer);
+        }
+    }
 };
 
    const themeBtn = document.getElementById('theme-toggle-btn');
@@ -5490,15 +5486,14 @@ window.renderListsRoot = () => {
     const ul = document.getElementById('lists-content');
     if (!ul) return;
 
-    // 1. Resetar a pilha de navegação local da aba Listas
-    listsStack = []; 
-
-    // 2. Atualizar o cabeçalho para esconder o botão "Voltar" e resetar o título
-    if (typeof updateListsHeader === 'function') {
-        updateListsHeader();
+    // Removemos a limpeza automática da stack aqui para permitir o restauro
+    if (window.currentBookMode === 'lists' && listsStack.length === 0) {
+        // Só limpa se estivermos a começar do zero
+        listsStack = []; 
     }
+    
+    updateListsHeader();
 
-    // 3. Renderizar o Menu Principal de Categorias
     ul.innerHTML = `
         <li onclick="openListCategory('topico', '📑 Tópicos')">
             <span class="list-icon">📑</span> Tópicos
@@ -5530,27 +5525,51 @@ window.renderListsRoot = () => {
         <li onclick="openListCategory('data', '📅 Datas')">
             <span class="list-icon">📅</span> Datas
         </li>
-         <li onclick="openListCategory('cosmos', '🪐 Cosmos')">
+        <li onclick="openListCategory('cosmos', '🪐 Cosmos')">
             <span class="list-icon">🪐</span> Cosmos
         </li>
         <li onclick="openListCategory('tag', '🏷️ Tags')">
             <span class="list-icon">🏷️</span> Tags
         </li>
+
+        <!-- ESTA É A OPÇÃO QUE FALTA ABAIXO DE TAGS -->
+        <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 10px 5px; opacity: 0.3;">
+        
+        <li onclick="openListCategory('livros', '📔 Livros')">
+            <span class="list-icon">📔</span> Livros
+        </li>
     `;
 };
+
    
 window.openListCategory = async (type, title, contextId = null) => {
-    // 1. Gerir a Pilha de Navegação (Stack) para o botão voltar das listas
+    // 1. LOG DE ENTRADA (Monitorização)
+    console.log(`%c🚀 [Lists] Abrindo: ${type} | ${title}`, "background: #222; color: #bada55; padding: 2px 5px; font-weight: bold;");
+    
+    // 2. Gerir a Pilha de Navegação (Stack)
     listsStack.push({ type, title, contextId });
-    updateListsHeader();
+    if (typeof updateListsHeader === 'function') updateListsHeader();
     
     const ul = document.getElementById('lists-content');
-    ul.innerHTML = `<div class="sidebar-loading"><div class="spinner"></div><span>A carregar ${title}...</span></div>`;
+    if (!ul) return;
+
+    // Feedback de carregamento
+    ul.innerHTML = `
+        <div class="sidebar-loading">
+            <div class="spinner"></div>
+            <span>A organizar ${title}...</span>
+        </div>`;
+
+    const myUid = auth.currentUser.uid;
+    const IDs_REVISTAS = ["w", "g", "wp", "km", "mwb"];
+    const IDs_VIDEOS = ["jwbvod", "mwbv", "jwb"];
 
     try {
-        const myUid = auth.currentUser.uid;
+        const { collection, query, where, getDocs, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
-        // --- NÍVEL 1: GRELHA DE LIVROS ---
+        // ============================================================
+        // A. BÍBLIA (LIVROS, CAPÍTULOS E VERSÍCULOS)
+        // ============================================================
         if (type === 'biblia') {
             ul.innerHTML = '';
             const gridContainer = document.createElement('div');
@@ -5574,9 +5593,8 @@ window.openListCategory = async (type, title, contextId = null) => {
                 const btn = document.createElement('div');
                 btn.className = 'bible-book-btn';
                 btn.textContent = book.abrev;
-                btn.title = book.nome;
                 
-                // Cores originais
+                // Cores por categoria bíblica
                 let bgColor = "#7e6b99"; 
                 const id = book.id;
                 if ((id >= 1 && id <= 5) || id === 44) bgColor = "#3b2e44";
@@ -5596,7 +5614,6 @@ window.openListCategory = async (type, title, contextId = null) => {
             ul.appendChild(liWrapper);
         }
 
-        // --- NÍVEL 2: GRELHA DE CAPÍTULOS ---
         else if (type === 'bible-book') {
             const bookObj = BIBLE_DATA.find(b => b.nome === contextId);
             ul.innerHTML = `<li class="list-group-header">Capítulos de ${contextId}</li>`;
@@ -5616,7 +5633,6 @@ window.openListCategory = async (type, title, contextId = null) => {
             ul.appendChild(gridLi);
         }
 
-        // --- NÍVEL 3: GRELHA DE VERSÍCULOS (Aqui acontece o clique final) ---
         else if (type === 'bible-chapter') {
             const { book, cap } = contextId;
             const bookObj = BIBLE_DATA.find(b => b.nome === book);
@@ -5630,46 +5646,13 @@ window.openListCategory = async (type, title, contextId = null) => {
 
             for (let v = 1; v <= totalVerses; v++) {
                 const verseName = `${book} ${cap}:${v}`;
-                
                 const btn = document.createElement('div');
-                btn.className = `verse-btn`; // Pode adicionar lógica de 'exists' se quiser
+                btn.className = 'verse-btn';
                 btn.textContent = v;
-                
-                // AQUI ESTÁ A CHAVE: Chamamos a mesma função que a nota usa
-                btn.onclick = () => {
-                    // Primeiro, garantimos que a 4ª coluna abre
-                  window.findAndShowEntity(verseName, 'textobiblico');
+                btn.onclick = (e) => {
+                    console.log(`%c🖱️ Clique em Versículo: ${verseName}`, "color: orange; font-weight: bold;");
+                    window.showReferencesPanel(null, verseName, 'textobiblico');
                 };
-                
-                grid.appendChild(btn);
-            }
-            gridLi.appendChild(grid);
-            ul.appendChild(gridLi);
-        }
-
-        // NIVEL VERSÍCULOS: Respeita BIBLE_DATA e marca existentes
-        else if (type === 'bible-chapter') {
-            const { book, cap } = contextId;
-            const bookObj = BIBLE_DATA.find(b => b.nome === book);
-            const totalVerses = bookObj.versiculos[cap - 1];
-
-            ul.innerHTML = `<li class="list-group-header">${book} ${cap}</li>`;
-            const gridLi = document.createElement('li');
-            gridLi.className = 'bible-grid-container';
-            const grid = document.createElement('div');
-            grid.className = 'bible-verses-grid';
-
-            // Proteção contra o erro 'allEntities is not defined'
-            const safeEntities = (typeof allEntities !== 'undefined' && allEntities['textobiblico']) ? allEntities['textobiblico'] : [];
-
-            for (let v = 1; v <= totalVerses; v++) {
-                const verseName = `${book} ${cap}:${v}`;
-                const exists = safeEntities.some(e => e.nome === verseName);
-                
-                const btn = document.createElement('div');
-                btn.className = `verse-btn ${exists ? 'exists' : ''}`;
-                btn.textContent = v;
-                btn.onclick = () => window.showReferencesPanel(null, verseName, 'textobiblico');
                 grid.appendChild(btn);
             }
             gridLi.appendChild(grid);
@@ -5677,66 +5660,227 @@ window.openListCategory = async (type, title, contextId = null) => {
         }
 
         // ============================================================
-        // RESTANTES CATEGORIAS (Tópicos, Personagens, etc.)
+        // B. PUBLICAÇÕES (LIVROS E REVISTAS)
+        // ============================================================
+        else if (type === 'livros') {
+            ul.innerHTML = '';
+            
+            // Link para a Sentinela (w)
+            const liW = document.createElement('li');
+            liW.innerHTML = `<span class="list-icon">📅</span> ${SIGLAS_PUBLICACOES['w']} (Anos)`;
+            liW.onclick = () => window.openListCategory('sentinela-years', 'Anos da Sentinela', 'w');
+            ul.appendChild(liW);
+
+            // Carrega outros livros do sistema de siglas
+            Object.keys(SIGLAS_PUBLICACOES).forEach(id => {
+                if (!IDs_REVISTAS.includes(id) && !IDs_VIDEOS.includes(id)) {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<span class="list-icon">📔</span> ${SIGLAS_PUBLICACOES[id]}`;
+                    li.onclick = () => window.openListCategory('book-toc', SIGLAS_PUBLICACOES[id], id);
+                    ul.appendChild(li);
+                }
+            });
+        }
+
+        else if (type === 'sentinela-years') {
+            ul.innerHTML = '';
+            const anoAtual = new Date().getFullYear();
+            for (let i = anoAtual; i >= 1950; i--) {
+                const li = document.createElement('li');
+                li.innerHTML = `<span class="list-icon">📂</span> Ano ${i}`;
+                li.onclick = () => window.openListCategory('sentinela-months', `Ano ${i}`, { sigla: contextId, ano: i });
+                ul.appendChild(li);
+            }
+        }
+
+        else if (type === 'sentinela-months') {
+            ul.innerHTML = '';
+            const { sigla, ano } = contextId;
+            const meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+            meses.forEach((mes, idx) => {
+                const mesNum = (idx + 1).toString().padStart(2, '0');
+                const li = document.createElement('li');
+                li.innerHTML = `<span class="list-icon">🗓️</span> ${mes}`;
+                li.onclick = () => window.openListCategory('sentinela-articles', `${mes} ${ano}`, { sigla, ano, mesNum });
+                ul.appendChild(li);
+            });
+        }
+
+        else if (type === 'sentinela-articles') {
+            ul.innerHTML = '';
+            const { ano, mesNum } = contextId;
+            const response = await fetch(`./js/publicacoes/sentinelas/${ano}/${mesNum}.json`);
+            const data = await response.json();
+            const lista = data.artigos ? data.artigos : [data];
+            lista.forEach((art, idx) => {
+                const li = document.createElement('li');
+                li.style.flexDirection = "column"; li.style.alignItems = "flex-start";
+                li.innerHTML = `<strong style="color:var(--accent-color); font-size:0.85em;">${art.referencia}</strong><span style="font-size:0.95em;">${art.titulo}</span>`;
+                li.onclick = () => window.openListCategory('sentinela-content', art.referencia, { ...contextId, artIdx: idx });
+                ul.appendChild(li);
+            });
+        }
+
+        else if (type === 'sentinela-content') {
+            const { ano, mesNum, artIdx } = contextId;
+            const response = await fetch(`./js/publicacoes/sentinelas/${ano}/${mesNum}.json`);
+            const data = await response.json();
+            const lista = data.artigos ? data.artigos : [data];
+            const artigo = lista[artIdx];
+
+            ul.innerHTML = ""; // Limpa para evitar duplicados
+            
+            // Header
+            const hLi = document.createElement('li');
+            hLi.className = 'list-group-header';
+            hLi.textContent = artigo.titulo;
+            ul.appendChild(hLi);
+            
+            let isInsideReview = false; 
+
+            artigo.conteudo.forEach((bloco) => {
+                // Detecção de Subtema de Recapitulação
+                if (bloco.tipo === 'subtema' && bloco.texto.toUpperCase().includes("COMO RESPONDERIA")) {
+                    isInsideReview = true;
+                    const subLi = document.createElement('li');
+                    subLi.style.cssText = "padding:15px 10px 5px 10px; color:#9b59b6; font-weight:bold; font-size:0.8em; letter-spacing:1px; text-transform:uppercase;";
+                    subLi.textContent = bloco.texto;
+                    ul.appendChild(subLi);
+                    return;
+                }
+
+                const li = document.createElement('li');
+                li.className = 'toc-item-row';
+                li.style.cssText = "font-size:0.95em; line-height:1.5; padding:12px 10px; border-bottom:1px solid rgba(128,128,128,0.1); cursor:pointer; display:block;";
+
+                if (isInsideReview && bloco.tipo === 'resumo') {
+                    li.innerHTML = `<span style="color:#9b59b6; font-weight:800; font-size:0.75em; display:block;">RECAPITULAÇÃO</span>${bloco.texto}`;
+                } else if (bloco.tipo === 'pergunta') {
+                    li.innerHTML = `<span style="color:#d3869b; font-weight:bold;">${bloco.numero_ref}.</span> ${bloco.texto}`;
+                } else {
+                    li.innerHTML = `<span class="paragraph-badge">pr ${bloco.numero_ref || '?'}</span>${bloco.texto}`;
+                }
+                
+                // --- ANEXAR EVENTO DE CLIQUE (SEGURO) ---
+                li.onclick = (e) => {
+                    console.log(`%c🖱️ Clique em Parágrafo Sentinela: ${bloco.numero_ref}`, "background: #8e44ad; color: white; padding: 2px 5px;");
+                    e.stopPropagation();
+                    const primaryRef = bloco.numero_ref ? bloco.numero_ref.split(',')[0].trim() : '0';
+                    
+                    window.openBookParagraphPanel(
+                        'sentinela', 
+                        artigo.titulo, 
+                        mesNum, 
+                        primaryRef, 
+                        bloco.texto, 
+                        true, 
+                        bloco.numero_ref
+                    );
+                };
+                ul.appendChild(li);
+            });
+        }
+
+        else if (type === 'book-toc') {
+            const response = await fetch(`./js/books/${contextId}.json`);
+            const bookData = await response.json();
+            ul.innerHTML = `<li class="list-group-header">${bookData.titulo}</li>`;
+            bookData.capitulos.forEach((cap, idx) => {
+                const li = document.createElement('li');
+                li.innerHTML = `<strong>Cap. ${cap.capitulo}</strong>: ${cap.titulo}`;
+                li.onclick = () => window.openListCategory('book-chapter', `Cap. ${cap.capitulo}`, { bookId: contextId, capIdx: idx });
+                ul.appendChild(li);
+            });
+        }
+
+        else if (type === 'book-chapter') {
+            const { bookId, capIdx } = contextId;
+            const response = await fetch(`./js/books/${bookId}.json`);
+            const bookData = await response.json();
+            const chapter = bookData.capitulos[capIdx];
+
+            ul.innerHTML = "";
+            const hLi = document.createElement('li');
+            hLi.className = 'list-group-header';
+            hLi.textContent = chapter.titulo;
+            ul.appendChild(hLi);
+
+            chapter.conteudo.forEach(bloco => {
+                const li = document.createElement('li');
+                li.className = 'toc-item-row';
+                li.style.cssText = "font-size:0.9em; padding:12px 10px; border-bottom:1px solid rgba(128,128,128,0.1); cursor:pointer; display:block;";
+                
+                if (bloco.tipo === 'pergunta') {
+                    li.innerHTML = `<span style="color:#d3869b; font-weight:bold;">${bloco.numero_ref}.</span> ${bloco.texto}`;
+                } else {
+                    li.innerHTML = `<span class="paragraph-badge">pr ${bloco.numero_ref || '?'}</span>${bloco.texto}`;
+                }
+
+                // --- ANEXAR EVENTO DE CLIQUE ---
+                li.onclick = (e) => {
+                    console.log(`%c🖱️ Clique em Parágrafo de Livro: ${bloco.numero_ref}`, "background: #27ae60; color: white; padding: 2px 5px;");
+                    e.stopPropagation();
+                    const primaryRef = bloco.numero_ref ? bloco.numero_ref.split(',')[0].trim() : '0';
+                    window.openBookParagraphPanel(bookId, bookData.titulo, chapter.capitulo, primaryRef, bloco.texto, true, bloco.numero_ref);
+                };
+                ul.appendChild(li);
+            });
+        }
+
+        // ============================================================
+        // C. ENTIDADES E TÓPICOS DA BD
         // ============================================================
         else if (type === 'cosmos') {
             ul.innerHTML = '';
-            const { collection, getDocs, query, where, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
             const q = query(collection(db, 'cosmos'), where('userId', '==', myUid), orderBy('nome'));
             const snap = await getDocs(q);
-            if (snap.empty) ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Sem temas.</li>';
-            else snap.forEach(docSnap => {
-                const item = docSnap.data();
-                const li = document.createElement('li');
-                li.innerHTML = `<span>${item.emoji || '🪐'} ${item.nome}</span> <span style="opacity:0.3">❯</span>`;
-                li.onclick = () => window.openListCategory('subcosmos-list', item.nome, docSnap.id);
-                ul.appendChild(li);
-            });
-        }
-        else if (type === 'subcosmos-list') {
-            ul.innerHTML = '';
-            const { collection, getDocs, query, where, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-            const q = query(collection(db, 'subcosmos'), where('cosmosId', '==', contextId), where('userId', '==', myUid), orderBy('nome'));
-            const snap = await getDocs(q);
-            if (snap.empty) ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Sem subtemas.</li>';
-            else snap.forEach(docSnap => {
-                const item = docSnap.data();
-                const li = document.createElement('li');
-                li.innerHTML = `<span>${item.emoji || '🔹'} ${item.nome}</span> <span style="opacity:0.3">❯</span>`;
-                li.onclick = () => window.showReferencesPanel(docSnap.id, item.nome, 'subcosmos');
-                ul.appendChild(li);
-            });
-        }
-        else if (type === 'destaque') {
-            ul.innerHTML = '';
-            DEFAULT_HIGHLIGHTS.forEach(color => {
-                const displayName = globalHighlightsCache[color.code] || color.name;
-                const li = document.createElement('li');
-                li.innerHTML = `<span style="display:inline-block; width:18px; height:18px; background:${color.code}; border-radius:50%; margin-right:12px; border:1px solid rgba(128,128,128,0.3);"></span><span>${displayName}</span>`;
-                li.onclick = () => window.showHighlightRef(color.code, displayName);
-                ul.appendChild(li);
-            });
-        }
-        else if (['personagem', 'local', 'data', 'textobiblico', 'marcadores'].includes(type)) {
-            ul.innerHTML = '';
-           const collName = (type === 'marcadores') ? 'marcadores' : ENTITY_CONFIG[type]?.collection;
-            if (collName) {
-                const q = query(collection(db, collName), where('userId', '==', myUid), orderBy('nome'));
-                const snap = await getDocs(q);
-                ul.innerHTML = '';
+            if (snap.empty) {
+                ul.innerHTML = '<li style="opacity:0.5; padding:20px; text-align:center;">Sem temas.</li>';
+            } else {
                 snap.forEach(docSnap => {
                     const item = docSnap.data();
                     const li = document.createElement('li');
-                    li.innerHTML = `<span>🔹 ${item.nome}</span>`;
-                    li.onclick = () => window.showReferencesPanel(docSnap.id, item.nome, type);
+                    li.innerHTML = `<span>${item.emoji || '🪐'} ${item.nome}</span> <span style="opacity:0.3">❯</span>`;
+                    li.onclick = () => window.openListCategory('subcosmos-list', item.nome, docSnap.id);
                     ul.appendChild(li);
                 });
             }
         }
 
+        else if (type === 'topico') {
+            ul.innerHTML = '';
+            const q = query(collection(db, 'topicos'), where('userId', '==', myUid), orderBy('nome'));
+            const snap = await getDocs(q);
+            snap.forEach(docSnap => {
+                const li = document.createElement('li');
+                li.innerHTML = `<span>📑 ${docSnap.data().nome}</span>`;
+                li.onclick = () => window.showTopicRef(docSnap.id, docSnap.data().nome, 'topico');
+                ul.appendChild(li);
+            });
+        }
+
+        else if (['personagem', 'local', 'data', 'textobiblico', 'marcadores', 'tag'].includes(type)) {
+            ul.innerHTML = '';
+            const collName = (type === 'marcadores') ? 'marcadores' : ENTITY_CONFIG[type]?.collection;
+            
+            if (!collName && type !== 'tag') return;
+
+            const q = query(collection(db, collName), where('userId', '==', myUid), orderBy('nome'));
+            const snap = await getDocs(q);
+            snap.forEach(docSnap => {
+                const li = document.createElement('li');
+                li.innerHTML = `<span>🔹 ${docSnap.data().nome}</span>`;
+                li.onclick = () => {
+                    if (type === 'marcadores') window.showMarkerReferencesPanel(docSnap.id, docSnap.data().nome);
+                    else window.showReferencesPanel(docSnap.id, docSnap.data().nome, type);
+                };
+                ul.appendChild(li);
+            });
+        }
+
     } catch (error) {
-        console.error("Erro ao carregar lista:", error);
-        ul.innerHTML = '<li style="color:red; padding:20px;">Erro ao carregar dados.</li>';
+        console.error("❌ Erro fatal em openListCategory:", error);
+        ul.innerHTML = '<li style="color:red; padding:20px;">Erro de carregamento. Verifique a consola.</li>';
     }
 };
       
@@ -6501,6 +6645,10 @@ window.renderBibleTextInPanel = async function(fullReference) {
 // RENDERIZAR LINKS/CODEX DA ENTIDADE NO PAINEL (4ª COLUNA)
 // ============================================================
 async function renderPanelLinksForReading(entityId, type) {
+    if (!entityId || entityId === "") {
+        console.warn("Aba Links: ID da entidade está vazio.");
+        return;
+    }
     const container = document.getElementById('panel-links-list');
     const emptyMsg = document.getElementById('links-empty-msg');
     
@@ -8229,6 +8377,9 @@ function cleanSnippetForSidebar(rawHtml) {
 
 // --- FUNÇÃO CORRIGIDA: CARREGAR PUZZLE (Leitura) ---
 async function loadPuzzleForReading(entityId, type, entityName) {
+    if (!entityId || entityId === "") {
+        return;
+    }
     const container = document.getElementById('puzzle-board-container');
     const emptyMsg = document.getElementById('puzzle-empty-msg');
     
@@ -8638,7 +8789,133 @@ window.fetchCitationsForEntity = async (name, type) => {
     }
 };
 
+window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, paragraphNum, htmlContent, openDirectToTarget = false, displayRef = null) {
+    const finalDisplayRef = displayRef || paragraphNum;
+    const fullName = `${bookId} ${chapterNum}:${paragraphNum}`;
+    const fullDisplayName = `${bookId} ${chapterNum}:${finalDisplayRef}`;
+    
+    console.log(`%c🚀 [4ª Coluna] A tentar abrir: ${fullName}`, "color: #3498db; font-weight: bold;");
 
+    activeReferenceEntity = {
+        id: null,
+        type: 'livro_ref',
+        name: fullName,
+        bookId: bookId,
+        bookName: bookName,
+        chapter: chapterNum,
+        paragraph: paragraphNum,
+        htmlOriginal: htmlContent 
+    };
+
+    try {
+        const { collection, query, where, getDocs, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        console.log("📡 [Firestore] A verificar se o parágrafo já existe na base de dados...");
+        const q = query(
+            collection(db, 'livros'), 
+            where('nome', '==', fullName), 
+            where('userId', '==', auth.currentUser.uid)
+        );
+        const snap = await getDocs(q);
+        
+        let finalFirebaseId = "";
+
+        if (snap.empty) {
+            console.log("🆕 [Firestore] Parágrafo novo. A criar registo...");
+            const newDoc = await addDoc(collection(db, 'livros'), {
+                nome: fullName,
+                livro: bookName,
+                bookId: bookId,
+                capitulo: chapterNum,
+                paragrafo: paragraphNum,
+                userId: auth.currentUser.uid,
+                createdAt: serverTimestamp(),
+                puzzleBoard: [],
+                panelLinks: [],
+                dossie: []
+            });
+            finalFirebaseId = newDoc.id;
+        } else {
+            finalFirebaseId = snap.docs[0].id;
+            console.log("✅ [Firestore] Parágrafo encontrado ID:", finalFirebaseId);
+        }
+
+        activeReferenceEntity.id = finalFirebaseId;
+
+        // --- ABERTURA VISUAL ---
+        const container = document.getElementById('main-container');
+        if (container) {
+            console.log("🎨 [UI] A aplicar classe 'references-visible' ao main-container");
+            container.classList.add('references-visible');
+        } else {
+            console.error("❌ [UI] ERRO: Não encontrei o 'main-container'!");
+        }
+
+        const refTitle = document.getElementById('ref-title');
+        if (refTitle) refTitle.innerHTML = `🎯 ${fullDisplayName}`;
+        
+        const bookTextContainer = document.getElementById('ref-content-bibletext');
+        if (bookTextContainer) {
+            bookTextContainer.style.display = 'block';
+            bookTextContainer.innerHTML = `
+                <div style="background: rgba(74, 144, 226, 0.08); border-left: 3px solid var(--accent-color); padding: 15px; border-radius: 4px;">
+                    <p style="font-size:0.75em; color:var(--accent-color); font-weight:bold; text-transform:uppercase;">${bookName}</p>
+                    <div style="font-size:1.1em; line-height:1.6; color:var(--text-color);">${htmlContent}</div>
+                </div>
+            `;
+        }
+
+        // Carregar Dados
+        if (finalFirebaseId) {
+            loadPuzzleForReading(finalFirebaseId, 'livro_ref', fullName);
+            renderPanelLinksForReading(finalFirebaseId, 'livro_ref');
+            renderDossieViewer(finalFirebaseId, 'livro_ref');
+        }
+
+        // Trocar aba
+        const tabToOpen = openDirectToTarget ? 'bibletext' : 'puzzle';
+        console.log(`🗂️ [UI] A mudar para a aba: ${tabToOpen}`);
+        document.querySelector(`[data-ref-tab="${tabToOpen}"]`)?.click();
+
+    } catch (e) {
+        console.error("❌ [Erro Crítico] Falha ao processar parágrafo:", e);
+    }
+};
+
+function getChapterHighlightMap(bookId, chapterNum) {
+    const map = {}; // { "5": "#hexcolor" }
+    const parser = new DOMParser();
+
+    cachedBookItems.forEach(note => {
+        if (!note.conteudo || !note.conteudo.includes(bookId)) return;
+
+        const doc = parser.parseFromString(note.conteudo, 'text/html');
+        const boxes = doc.querySelectorAll('[data-box-links]');
+
+        boxes.forEach(box => {
+            const highlight = box.getAttribute('data-highlight');
+            if (!highlight) return;
+
+            try {
+                const links = JSON.parse(box.getAttribute('data-box-links'));
+                if (links.codex) {
+                    links.codex.forEach(c => {
+                        // Verifica se a série (id do livro) e o capítulo coincidem
+                        if (c.serie.toLowerCase() === bookId.toLowerCase() && String(c.capitulo) === String(chapterNum)) {
+                            // Para cada parágrafo vinculado a esta caixa, guarda a cor
+                            if (c.paragrafos) {
+                                c.paragrafos.forEach(p => {
+                                    map[p] = highlight;
+                                });
+                            }
+                        }
+                    });
+                }
+            } catch (e) {}
+        });
+    });
+    return map;
+}
 
 </script>
 </body>
