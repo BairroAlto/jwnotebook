@@ -1989,7 +1989,7 @@ const HIGHLIGHT_COLORS = [
     { name: 'Verde', hex: '#2ecc71' },
     { name: 'Lilás', hex: '#9b59b6' },
     { name: 'Rosa', hex: '#ff7979' },
-    { name: 'Salmão', hex: '#ffb8b8' },
+    { name: 'Vermelho', hex: '#e74c3c' },
     { name: 'Castanho', hex: '#a0522d' },
     { name: 'Cinzento', hex: '#95a5a6' }
 ];
@@ -2756,21 +2756,20 @@ window.openModalForVerse = async (num) => {
 
  window.saveFlashNoteGlobal = async (clickedBtn = null) => {
     // 1. Identificação do Botão e Bloqueio de Duplo Clique
-    const btn = clickedBtn || document.getElementById('btn-submit-flash') || document.querySelector('#flash-note-modal button') || document.getElementById('btn-save-flash');
+    const btn = clickedBtn || document.getElementById('btn-submit-flash') || document.getElementById('btn-save-flash');
 
     if (btn && btn.disabled) return; 
-    if(btn) { 
+    if (btn) { 
         btn.textContent = "A gravar..."; 
         btn.disabled = true; 
         btn.style.opacity = "0.7"; 
         btn.style.cursor = "not-allowed";
     }
 
-    // [LOG] Início do processo
-    console.group("🚀 GRAVAÇÃO NOTA FLASH (Multi-Versículo)");
+    console.group("🚀 GRAVAÇÃO NOTA FLASH (Sincronizada com NoteBook)");
 
     try {
-        // --- Detetar Contentor (Sidebar ou Modal) ---
+        // --- Detetar Contentor (Sidebar no PC ou Modal no Mobile) ---
         let container;
         const sidePanel = document.getElementById('side-panel');
         if (sidePanel && sidePanel.classList.contains('open') && window.innerWidth >= 768) {
@@ -2789,144 +2788,145 @@ window.openModalForVerse = async (num) => {
         const noteType = typeSelect ? typeSelect.value : 'default';
 
         if (!title) {
-            if(btn) { btn.textContent = "GRAVAR NOTA"; btn.disabled = false; btn.style.opacity = "1"; btn.style.cursor = "pointer"; }
-            console.warn("⚠️ Título em falta. Gravação cancelada.");
+            if (btn) { btn.textContent = "GRAVAR NOTA"; btn.disabled = false; btn.style.opacity = "1"; btn.style.cursor = "pointer"; }
             console.groupEnd();
             return window.showCustomAlert("O título é obrigatório!"); 
         }
 
         const { collection, addDoc, doc, updateDoc, arrayUnion, serverTimestamp, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
-        // --- Preparar Dados da Seleção ---
-        let fullHighlightText = currentSelectionText || (activeHighlightContext ? activeHighlightContext.text : null);
-        let colorToSave = selectedColorHex || (activeHighlightContext ? activeHighlightContext.color : '#3498db');
+        // --- Preparar Dados da Seleção e Cor ---
+        const fullHighlightText = currentSelectionText || (activeHighlightContext ? activeHighlightContext.text : null);
+        const colorToSave = selectedColorHex || (activeHighlightContext ? activeHighlightContext.color : '#3498db');
+        const boxUniqueId = "box_" + Date.now();
         
         const versesToAttach = (currentSelectionVerses && currentSelectionVerses.length > 0) 
                                ? currentSelectionVerses 
                                : [activeVerseFullName];
 
-        console.log("📝 Texto Global Selecionado:", fullHighlightText);
-        console.log("📚 Versículos a Anexar:", versesToAttach);
-
         // --- Preparar Metadados (Tópicos e Links) ---
         const safeTopics = JSON.stringify(currentFlashTopics || {}).replace(/"/g, '&quot;');
-        if (!currentFlashLinks || (!currentFlashLinks.categories && !currentFlashLinks.urls && !currentFlashLinks.codex)) {
-             currentFlashLinks = { categories: [{ id: "temp", name: versesToAttach[0], type: "textobiblico" }] };
+        
+        // Garante que pelo menos o versículo atual está nas fontes da caixa
+        if (!currentFlashLinks.categories || currentFlashLinks.categories.length === 0) {
+             currentFlashLinks.categories = [{ id: "temp", name: versesToAttach[0], type: "textobiblico" }];
         }
         const safeBoxLinks = JSON.stringify(currentFlashLinks).replace(/"/g, '&quot;');
+
+        // --- Construir HTML da Toolbar (Padrão NoteBook) ---
+        const commonToolbarHTML = `
+            <div class="mini-note-toolbar" contenteditable="false">
+                <button type="button" data-action="sharing-settings">🔐</button>
+                <div class="toolbar-btn-group">
+                    <button type="button" data-action="move-up">🔺</button>
+                    <button type="button" data-action="move-down">🔻</button>
+                </div>
+                <button type="button" data-action="manage-box-links">⚡</button>
+                <button type="button" data-action="append-mini-note">🧬</button>
+                <button type="button" data-action="highlight-color">🎨</button>
+                <button type="button" data-action="manage-mini-note-topics">📋</button>
+                <button type="button" data-action="delete-mini-note">🗑️</button>
+            </div>`;
 
         let wrapperClass = "mini-note-wrapper";
         if (noteType === 'question') wrapperClass += " question-mode";
 
+        // --- Montar HTML Final da Caixa ---
         const subNoteHtml = `
-            <div class="${wrapperClass}" id="box_${Date.now()}" 
-                 data-topics='${safeTopics}' data-shared="false" data-box-links='${safeBoxLinks}' contenteditable="false">
+            <div class="${wrapperClass}" id="${boxUniqueId}" 
+                 data-topics='${safeTopics}' data-shared="false" data-box-links='${safeBoxLinks}' 
+                 data-highlight="${colorToSave}" contenteditable="false">
                 <textarea class="mini-note-title-input" rows="1">${title}</textarea>
-                <div class="mini-note-toolbar" contenteditable="false">
-                    <button>🔐</button><div class="toolbar-btn-group"><button>🔺</button><button>🔻</button></div>
-                    <button class="has-links">⚡</button><button>🧬</button><button>🎨</button><button>📋</button><button>🗑️</button>
+                ${commonToolbarHTML}
+                <div class="mini-note-content" contenteditable="true" 
+                     style="${colorToSave !== 'transparent' ? `background-color: ${colorToSave}; color: #1a1a1d;` : ''}">
+                    ${content}
                 </div>
-                <div class="mini-note-content" contenteditable="true">${content}</div>
             </div><p><br></p>
         `;
 
-        // 1. GRAVAR NA COLEÇÃO 'PASTAS'
-        const noteRef = await addDoc(collection(db, 'pastas'), {
-            nome: title, conteudo: subNoteHtml, tipo: 'nota', oque: 'flash',
-            userId: currentUser.uid, estado: 'ativa', createdAt: serverTimestamp(), ultimaedicao: serverTimestamp()
-        });
-        console.log("✅ Nota Mestra criada (ID):", noteRef.id);
+        // 1. GRAVAR NA COLEÇÃO 'PASTAS' (A NOTA MESTRA)
+        const noteData = {
+            nome: title,
+            conteudo: subNoteHtml,
+            tipo: 'nota',
+            oque: 'back', // 
+            userId: currentUser.uid,
+            estado: 'ativa',
+            boxIds: [boxUniqueId], // GPS para busca e saltos
+            coresUsadas: [colorToSave.toUpperCase()], // Filtro de cores
+            createdAt: serverTimestamp(),
+            ultimaedicao: serverTimestamp()
+        };
 
-        // 2. ATUALIZAR/CRIAR TRECHO GLOBAL
+        const noteRef = await addDoc(collection(db, 'pastas'), noteData);
+        console.log("✅ Nota Mestra criada:", noteRef.id);
+
+        // 2. ATUALIZAR/CRIAR TRECHO GLOBAL (Highlights)
         if (fullHighlightText) {
             const qCheck = query(collection(db, 'trechosbiblicos'), where('userId', '==', currentUser.uid), where('nome', '==', fullHighlightText));
             const snapCheck = await getDocs(qCheck);
             
             if (!snapCheck.empty) {
-                await updateDoc(doc(db, 'trechosbiblicos', snapCheck.docs[0].id), { noteIds: arrayUnion(noteRef.id), cor: colorToSave });
-                console.log("🔗 Trecho Global atualizado com novo ID de nota.");
+                await updateDoc(doc(db, 'trechosbiblicos', snapCheck.docs[0].id), { 
+                    noteIds: arrayUnion(noteRef.id), 
+                    cor: colorToSave 
+                });
             } else {
                 await addDoc(collection(db, 'trechosbiblicos'), {
-                    userId: currentUser.uid, textosbiblicos: versesToAttach, nome: fullHighlightText, cor: colorToSave, noteIds: [noteRef.id], createdAt: serverTimestamp()
+                    userId: currentUser.uid, 
+                    textosbiblicos: versesToAttach, 
+                    nome: fullHighlightText, 
+                    cor: colorToSave, 
+                    noteIds: [noteRef.id], 
+                    createdAt: serverTimestamp()
                 });
-                console.log("🔗 Novo Trecho Global criado.");
             }
         }
 
-        // 3. ATUALIZAR CADA VERSÍCULO INDIVIDUALMENTE
-        const puzzleItemBase = { type: 'ref', noteId: noteRef.id, noteName: title, snippet: encodeURIComponent(subNoteHtml), addedAt: Date.now(), noteColor: colorToSave };
-
-        console.log("🔄 Iniciando Loop de Versículos...");
+        // 3. ATUALIZAR PUZZLEBOARD DE CADA VERSÍCULO
+        const puzzleItem = { 
+            type: 'ref', 
+            noteId: noteRef.id, 
+            noteName: title, 
+            snippet: encodeURIComponent(subNoteHtml), 
+            addedAt: Date.now(), 
+            noteColor: colorToSave,
+            highlightRef: fullHighlightText || "Nota Geral" 
+        };
 
         for (const verseName of versesToAttach) {
-            if (!verseName) continue;
-            console.group(`👉 Processando: ${verseName}`);
-            
-            const cleanName = verseName.trim();
-            const vNum = cleanName.split(':')[1].trim().split('-')[0];
-            
-            // --- CÁLCULO DE CORTE DE TEXTO ---
-            let sliceText = null;
-            const verseSpan = document.getElementById(`vtext-${vNum}`);
-            
-            if (fullHighlightText && verseSpan) {
-                // Log do texto do versículo para debug
-                const vTextLog = verseSpan.innerText.substring(0, 30) + "...";
-                console.log("   📜 Texto DOM:", vTextLog);
-
-                if (typeof calculateVerseIntersection === 'function') {
-                    sliceText = calculateVerseIntersection(verseSpan.innerText, fullHighlightText);
-                    console.log("   ✂️ Resultado do Corte:", sliceText ? `"${sliceText}"` : "NULL");
-                } else {
-                    console.warn("   ⚠️ Função calculateVerseIntersection não encontrada!");
-                }
-            } else {
-                console.warn("   ⚠️ VerseSpan ou FullHighlightText ausente.");
-            }
-            
-            // FALLBACK
-            const refToSave = sliceText ? sliceText : (fullHighlightText || "Nota Geral");
-            console.log("   💾 Gravando highlightRef:", refToSave);
-            
-            const specificItem = { ...puzzleItemBase, highlightRef: refToSave };
-
-            // Gravação no Firebase
-            const qVerse = query(collection(db, 'textosbiblicos'), where('nome', '==', cleanName), where('userId', '==', currentUser.uid));
+            const qVerse = query(collection(db, 'textosbiblicos'), where('nome', '==', verseName.trim()), where('userId', '==', currentUser.uid));
             const snapshot = await getDocs(qVerse);
             
-            let targetId;
             if (!snapshot.empty) {
-                targetId = snapshot.docs[0].id;
-                await updateDoc(doc(db, 'textosbiblicos', targetId), { puzzleBoard: arrayUnion(specificItem) });
-                console.log("   ✅ Documento Firebase atualizado.");
+                await updateDoc(doc(db, 'textosbiblicos', snapshot.docs[0].id), { puzzleBoard: arrayUnion(puzzleItem) });
             } else {
-                const newDoc = await addDoc(collection(db, 'textosbiblicos'), {
-                    nome: cleanName, userId: currentUser.uid, createdAt: serverTimestamp(), puzzleBoard: [specificItem], dossie: [], panelLinks: []
+                await addDoc(collection(db, 'textosbiblicos'), {
+                    nome: verseName.trim(), 
+                    userId: currentUser.uid, 
+                    createdAt: serverTimestamp(), 
+                    puzzleBoard: [puzzleItem], 
+                    dossie: [], 
+                    panelLinks: []
                 });
-                targetId = newDoc.id;
-                console.log("   ✅ Documento Firebase criado.");
             }
             
-            // Cache
+            // Atualizar cache local da UI
+            const vNum = verseName.split(':')[1].trim().split('-')[0];
             document.getElementById(`vnum-${vNum}`)?.classList.add('has-data');
-            const currentData = existingUserData[vNum] || {};
-            existingUserData[vNum] = { ...currentData, docId: targetId, puzzleBoard: [...(currentData.puzzleBoard || []), specificItem] };
-            
-            console.groupEnd(); // Fim do grupo do versículo
         }
-        
-        console.log("🏁 Loop concluído.");
 
-        // --- LIMPEZA E REDIRECIONAMENTO ---
+        // 4. FINALIZAÇÃO E FEEDBACK
         document.getElementById('flash-note-modal').style.display = 'none';
         
+        // Recarrega destaques visuais na Bíblia
         if (fullHighlightText && typeof window.refreshVisualHighlights === 'function') {
-            console.log("🎨 Redesenhando destaques...");
             window.refreshVisualHighlights();
         }
-        
+
+        // Volta para a vista de detalhes do versículo ou do trecho
         if (fullHighlightText) {
-            activeHighlightContext = { text: fullHighlightText, color: colorToSave };
             const vNumFirst = versesToAttach[0].split(':')[1].trim().split('-')[0];
             const verseEl = document.getElementById(`vnum-${vNumFirst}`)?.closest('.verse-item');
             window.openHighlightDetails({stopPropagation:()=>{}, target: verseEl}, encodeURIComponent(fullHighlightText), encodeURIComponent(colorToSave));
@@ -2934,15 +2934,17 @@ window.openModalForVerse = async (num) => {
             window.returnToVerseDetails();
         }
 
-        // Resets
+        // Resets de estado
         currentSelectionText = ""; currentSelectionVerses = []; selectedColorHex = null;
         if (window.getSelection) window.getSelection().removeAllRanges();
+        
+        console.log("🏁 Gravação concluída com sucesso.");
         console.groupEnd();
 
     } catch (e) {
-        console.error("❌ ERRO GRAVAÇÃO:", e);
-        alert("Erro: " + e.message);
-        if(btn) { btn.textContent = "GRAVAR NOTA"; btn.disabled = false; btn.style.opacity = "1"; btn.style.cursor = "pointer"; }
+        console.error("❌ ERRO CRÍTICO NA GRAVAÇÃO:", e);
+        alert("Erro ao gravar: " + e.message);
+        if (btn) { btn.textContent = "GRAVAR NOTA"; btn.disabled = false; btn.style.opacity = "1"; btn.style.cursor = "pointer"; }
         console.groupEnd();
     }
 };
@@ -4112,7 +4114,7 @@ const highlightColors = {
     'green':  { label: 'Verde',   hex: '#2ecc71' },
     'lilac':  { label: 'Lilás',   hex: '#9b59b6' },
     'pink':   { label: 'Rosa',    hex: '#ff7979' },
-    'salmon': { label: 'Salmão',  hex: '#ffbe76' },
+    'salmon': { label: 'Vermelho', hex: '#e74c3c' },
     'brown':  { label: 'Castanho',hex: '#8d6e63' },
     'grey':   { label: 'Cinzento',hex: '#95a5a6' }
 };
@@ -4518,7 +4520,7 @@ window.injectColorPickerIntoForm = () => {
         { name: 'Verde', hex: '#2ecc71' },
         { name: 'Lilás', hex: '#9b59b6' },
         { name: 'Rosa', hex: '#ff7979' },
-        { name: 'Salmão', hex: '#ffb8b8' },
+        { name: 'Vermelho', hex: '#e74c3c' },
         { name: 'Castanho', hex: '#a0522d' },
         { name: 'Cinzento', hex: '#95a5a6' }
     ];
@@ -4994,7 +4996,7 @@ window.injectColorPickerIntoEditModal = () => {
         { name: 'Verde', hex: '#2ecc71' },
         { name: 'Lilás', hex: '#9b59b6' },
         { name: 'Rosa', hex: '#ff7979' },
-        { name: 'Salmão', hex: '#ffb8b8' },
+        { name: 'Vermelho', hex: '#e74c3c' },
         { name: 'Castanho', hex: '#a0522d' },
         { name: 'Cinzento', hex: '#95a5a6' }
     ];
