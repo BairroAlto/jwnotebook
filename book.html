@@ -6149,11 +6149,10 @@ window.renderListsRoot = () => {
 
    
 window.openListCategory = async (type, title, contextId = null) => {
-    // 1. MONITORIZAÇÃO E LOGS
+    // 1. Monitorização de Navegação
     console.log(`%c🚀 [Lists] Abrindo: ${type} | ${title}`, "background: #222; color: #bada55; padding: 2px 5px; font-weight: bold;");
     
-    // 2. Gestão da Pilha de Navegação (Stack)
-    // Se não for um restauro de memória, adiciona à pilha
+    // 2. Gestão da Pilha (Stack) para o botão Voltar
     const lastInStack = listsStack[listsStack.length - 1];
     if (!lastInStack || lastInStack.title !== title) {
         listsStack.push({ type, title, contextId });
@@ -6164,7 +6163,7 @@ window.openListCategory = async (type, title, contextId = null) => {
     const ul = document.getElementById('lists-content');
     if (!ul) return;
 
-    // Ativar Spinner de carregamento
+    // Ativar Spinner Visual
     ul.innerHTML = `
         <div class="sidebar-loading">
             <div class="spinner"></div>
@@ -6173,101 +6172,14 @@ window.openListCategory = async (type, title, contextId = null) => {
 
     const myUid = auth.currentUser.uid;
     const IDs_REVISTAS = ["w", "g", "wp", "km", "mwb"];
-    const IDs_VIDEOS = ["jwbvod", "mwbv", "jwb"];
 
     try {
-        const { collection, query, where, getDocs, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { collection, query, where, getDocs, orderBy, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
         // ============================================================
-        // 1. NAVEGAÇÃO BÍBLICA
+        // CASO 1: CONTEÚDO DE ARTIGO (A SENTINELA OU LIVROS)
         // ============================================================
-        if (type === 'biblia') {
-            ul.innerHTML = '';
-            const gridContainer = document.createElement('div');
-            gridContainer.className = 'bible-books-grid';
-            
-            const addSectionTitle = (text) => {
-                const div = document.createElement('div');
-                div.className = 'bible-section-title';
-                div.textContent = text;
-                gridContainer.appendChild(div);
-            };
-
-            addSectionTitle('Escrituras Hebraico-Aramaicas');
-            let greekTitleAdded = false;
-
-            BIBLE_DATA.forEach(book => {
-                if (book.id === 40 && !greekTitleAdded) {
-                    addSectionTitle('Escrituras Gregas Cristãs');
-                    greekTitleAdded = true;
-                }
-                const btn = document.createElement('div');
-                btn.className = 'bible-book-btn';
-                btn.textContent = book.abrev;
-                
-                // Cores originais da Bíblia
-                let bgColor = "#7e6b99"; 
-                const id = book.id;
-                if ((id >= 1 && id <= 5) || id === 44) bgColor = "#3b2e44";
-                else if ((id >= 6 && id <= 17) || (id >= 45 && id <= 58)) bgColor = "#7e6b99";
-                else if ((id >= 18 && id <= 22) || (id >= 59 && id <= 65)) bgColor = "#4f5b66";
-                else if ((id >= 23 && id <= 27) || (id >= 40 && id <= 43) || id === 66) bgColor = "#a3552d";
-                else if (id >= 28 && id <= 39) bgColor = "#6d4c33";
-                
-                btn.style.backgroundColor = bgColor;
-                btn.onclick = () => window.openListCategory('bible-book', book.nome, book.nome);
-                gridContainer.appendChild(btn);
-            });
-
-            const liWrapper = document.createElement('li');
-            liWrapper.className = 'bible-grid-container';
-            liWrapper.appendChild(gridContainer);
-            ul.appendChild(liWrapper);
-        }
-
-        else if (type === 'bible-book') {
-            const bookObj = BIBLE_DATA.find(b => b.nome === contextId);
-            ul.innerHTML = `<li class="list-group-header">Capítulos de ${contextId}</li>`;
-            const gridLi = document.createElement('li');
-            gridLi.className = 'bible-grid-container';
-            const grid = document.createElement('div');
-            grid.className = 'bible-verses-grid';
-            for (let i = 1; i <= bookObj.caps; i++) { 
-                const btn = document.createElement('div');
-                btn.className = 'verse-btn';
-                btn.textContent = i;
-                btn.onclick = () => window.openListCategory('bible-chapter', `${contextId} ${i}`, { book: contextId, cap: i });
-                grid.appendChild(btn);
-            }
-            gridLi.appendChild(grid);
-            ul.appendChild(gridLi);
-        }
-
-        else if (type === 'bible-chapter') {
-            const { book, cap } = contextId;
-            const bookObj = BIBLE_DATA.find(b => b.nome === book);
-            const totalVerses = bookObj.versiculos[cap - 1];
-            ul.innerHTML = `<li class="list-group-header">${book} ${cap}</li>`;
-            const gridLi = document.createElement('li');
-            gridLi.className = 'bible-grid-container';
-            const grid = document.createElement('div');
-            grid.className = 'bible-verses-grid';
-            for (let v = 1; v <= totalVerses; v++) {
-                const verseName = `${book} ${cap}:${v}`;
-                const btn = document.createElement('div');
-                btn.className = 'verse-btn';
-                btn.textContent = v;
-                btn.onclick = () => window.showReferencesPanel(null, verseName, 'textobiblico');
-                grid.appendChild(btn);
-            }
-            gridLi.appendChild(grid);
-            ul.appendChild(gridLi);
-        }
-
-        // ============================================================
-        // 2. CONTEÚDO DAS PUBLICAÇÕES (A SENTINELA / LIVROS) - PC
-        // ============================================================
-        else if (type === 'sentinela-content' || type === 'book-chapter') {
+        if (type === 'sentinela-content' || type === 'book-chapter') {
             let artigo;
             let bookTitle = "";
             let mesNum = "";
@@ -6301,25 +6213,29 @@ window.openListCategory = async (type, title, contextId = null) => {
 
             artigo.conteudo.forEach((bloco) => {
                 const li = document.createElement('li');
-                let textoOriginal = bloco.texto;
+                
+                // --- DEFINIÇÃO DAS VARIÁVEIS DE TEXTO ---
+                let textoOriginal = bloco.texto; // Texto limpo para a BD
+                let textoFinal = textoOriginal;  // Texto que será transformado para o ecrã
 
-                // --- A. APLICAR LINKS BÍBLICOS (GHOST) ---
-                let textoProcessado = linkifyBibleReferences(textoOriginal);
-
-                // --- B. APLICAR DESTAQUES PERSISTENTES (LIBRARY SYNC) ---
+                // 1. APLICAR HIGHLIGHTS DA LIBRARY PRIMEIRO (Para não falhar em frases com versículos)
                 if (window.currentArticleHighlights && window.currentArticleHighlights.length > 0) {
                     window.currentArticleHighlights.forEach(h => {
-                        if (textoProcessado.includes(h.nome)) {
+                        if (textoFinal.includes(h.nome)) {
                             const escapedH = h.nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                            // Regex que não quebra as tags de link bíblico já inseridas
-                            const regH = new RegExp(`(${escapedH})(?![^<]*>|[^<>]*<\/span>)`, 'gi');
+                            const regH = new RegExp(`(${escapedH})`, 'gi');
                             const style = `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
-                            textoProcessado = textoProcessado.replace(regH, `<span style="${style}">$1</span>`);
+                            textoFinal = textoFinal.replace(regH, `<span style="${style}">$1</span>`);
                         }
                     });
                 }
 
-                // --- C. RENDERIZAR POR TIPO DE BLOCO ---
+                // 2. APLICAR LINKS BÍBLICOS DEPOIS (O linkify entra dentro do span de cor)
+                let textoProcessado = typeof linkifyBibleReferences === 'function' 
+                    ? linkifyBibleReferences(textoFinal) 
+                    : textoFinal;
+
+                // RENDERIZAÇÃO DOS BLOCOS
                 if (bloco.tipo === 'subtema') {
                     if (textoOriginal.toUpperCase().includes("COMO RESPONDERIA")) isInsideReview = true;
                     li.style.cssText = `padding:20px 10px 5px 10px; font-weight:bold; color:var(--accent-color); font-size:1em; ${isInsideReview ? 'color:#9b59b6; border-bottom:1px solid #9b59b633;' : ''}`;
@@ -6329,12 +6245,12 @@ window.openListCategory = async (type, title, contextId = null) => {
                 }
 
                 if (bloco.tipo === 'cantico') {
-                    li.style.cssText = "padding:15px 10px; text-align:center; font-style:italic; color:#e67e22; border-bottom:1px solid #333;";
+                    li.style.cssText = "padding:15px 10px; text-align:center; font-style:italic; color:#e67e22; border-bottom:1px solid #333; cursor:pointer;";
                     li.innerHTML = `🎵 ${textoProcessado}`;
                 } else {
                     li.className = 'toc-item-row';
                     li.style.cssText = "font-size:0.95em; line-height:1.5; padding:12px 10px; border-bottom:1px solid rgba(128,128,128,0.1); cursor:pointer; display:block;";
-
+                    
                     if (isInsideReview) {
                         li.innerHTML = `<span style="color:#9b59b6; font-weight:800; font-size:0.75em; display:block;">RECAPITULAÇÃO</span>${textoProcessado}`;
                     } else if (bloco.tipo === 'pergunta') {
@@ -6344,6 +6260,7 @@ window.openListCategory = async (type, title, contextId = null) => {
                     }
                 }
 
+                // Ação de clique: Envia o textoOriginal (limpo) para o painel de estudo
                 li.onclick = () => {
                     const primaryRef = bloco.numero_ref ? bloco.numero_ref.split(',')[0].trim() : '0';
                     window.openBookParagraphPanel(bookId, bookTitle, artigo.capitulo || mesNum, primaryRef, textoOriginal, true, bloco.numero_ref);
@@ -6351,47 +6268,143 @@ window.openListCategory = async (type, title, contextId = null) => {
 
                 ul.appendChild(li);
             });
+            return;
         }
 
         // ============================================================
-        // 4. LIVROS (LISTA DE TÍTULOS)
+        // CASO 2: NAVEGAÇÃO BÍBLICA
         // ============================================================
-        else if (type === 'livros') {
+        if (type === 'biblia') {
             ul.innerHTML = '';
-            const liW = document.createElement('li');
-            liW.innerHTML = `<span class="list-icon">📅</span> ${SIGLAS_PUBLICACOES['w']} (Anos)`;
-            liW.onclick = () => window.openListCategory('sentinela-years', 'Anos da Sentinela', 'w');
-            ul.appendChild(liW);
+            const gridContainer = document.createElement('div');
+            gridContainer.className = 'bible-books-grid';
+            
+            const addSectionTitle = (txt) => {
+                const div = document.createElement('div');
+                div.className = 'bible-section-title'; div.textContent = txt;
+                gridContainer.appendChild(div);
+            };
 
-            Object.keys(SIGLAS_PUBLICACOES).forEach(id => {
-                if (!IDs_REVISTAS.includes(id) && !IDs_VIDEOS.includes(id)) {
-                    const li = document.createElement('li');
-                    li.innerHTML = `<span class="list-icon">📔</span> ${SIGLAS_PUBLICACOES[id]}`;
-                    li.onclick = () => window.openListCategory('book-toc', SIGLAS_PUBLICACOES[id], id);
-                    ul.appendChild(li);
-                }
+            addSectionTitle('Escrituras Hebraico-Aramaicas');
+            let greekAdded = false;
+
+            BIBLE_DATA.forEach(book => {
+                if (book.id === 40 && !greekAdded) { addSectionTitle('Escrituras Gregas Cristãs'); greekAdded = true; }
+                const btn = document.createElement('div');
+                btn.className = 'bible-book-btn'; btn.textContent = book.abrev;
+                
+                let bgColor = "#7e6b99"; 
+                const id = book.id;
+                if ((id >= 1 && id <= 5) || id === 44) bgColor = "#3b2e44";
+                else if ((id >= 6 && id <= 17) || (id >= 45 && id <= 58)) bgColor = "#7e6b99";
+                else if ((id >= 18 && id <= 22) || (id >= 59 && id <= 65)) bgColor = "#4f5b66";
+                else if ((id >= 23 && id <= 27) || (id >= 40 && id <= 43) || id === 66) bgColor = "#a3552d";
+                else if (id >= 28 && id <= 39) bgColor = "#6d4c33";
+                
+                btn.style.backgroundColor = bgColor;
+                btn.onclick = () => window.openListCategory('bible-book', book.nome, book.nome);
+                gridContainer.appendChild(btn);
             });
+
+            const liWrap = document.createElement('li');
+            liWrap.className = 'bible-grid-container'; liWrap.appendChild(gridContainer);
+            ul.appendChild(liWrap);
         }
 
-        else if (type === 'book-toc') {
-            const response = await fetch(`./js/books/${contextId}.json`);
-            const bookData = await response.json();
-            ul.innerHTML = `<li class="list-group-header">${bookData.titulo}</li>`;
-            bookData.capitulos.forEach((cap, idx) => {
+        else if (type === 'bible-book') {
+            const bookObj = BIBLE_DATA.find(b => b.nome === contextId);
+            ul.innerHTML = `<li class="list-group-header">Capítulos de ${contextId}</li>`;
+            const gridLi = document.createElement('li'); gridLi.className = 'bible-grid-container';
+            const grid = document.createElement('div'); grid.className = 'bible-verses-grid';
+            for (let i = 1; i <= bookObj.caps; i++) { 
+                const btn = document.createElement('div'); btn.className = 'verse-btn'; btn.textContent = i;
+                btn.onclick = () => window.openListCategory('bible-chapter', `${contextId} ${i}`, { book: contextId, cap: i });
+                grid.appendChild(btn);
+            }
+            gridLi.appendChild(grid); ul.appendChild(gridLi);
+        }
+
+        else if (type === 'bible-chapter') {
+            const { book, cap } = contextId;
+            const bookObj = BIBLE_DATA.find(b => b.nome === book);
+            const totalV = bookObj.versiculos[cap - 1];
+            ul.innerHTML = `<li class="list-group-header">${book} ${cap}</li>`;
+            const gridLi = document.createElement('li'); gridLi.className = 'bible-grid-container';
+            const grid = document.createElement('div'); grid.className = 'bible-verses-grid';
+            for (let v = 1; v <= totalV; v++) {
+                const btn = document.createElement('div'); btn.className = 'verse-btn'; btn.textContent = v;
+                btn.onclick = () => window.showReferencesPanel(null, `${book} ${cap}:${v}`, 'textobiblico');
+                grid.appendChild(btn);
+            }
+            gridLi.appendChild(grid); ul.appendChild(gridLi);
+        }
+
+        // ============================================================
+        // CASO 3: DESTAQUES (CORES)
+        // ============================================================
+        else if (type === 'destaque') {
+            ul.innerHTML = '<li class="list-group-header">Filtrar por Cor</li>';
+            const colors = (globalHighlightsCache && Object.keys(globalHighlightsCache).length > 0) 
+                ? Object.entries(globalHighlightsCache).map(([name, code]) => ({ name, code }))
+                : DEFAULT_HIGHLIGHTS;
+            
+            colors.forEach(color => {
                 const li = document.createElement('li');
-                li.innerHTML = `<strong>Cap. ${cap.capitulo}</strong>: ${cap.titulo}`;
-                li.onclick = () => window.openListCategory('book-chapter', `Cap. ${cap.capitulo}`, { bookId: contextId, capIdx: idx });
+                li.innerHTML = `<span style="width:16px; height:16px; background:${color.code}; border-radius:50%; margin-right:12px; border:1px solid rgba(255,255,255,0.2);"></span> ${color.name}`;
+                li.onclick = () => window.showHighlightRef(color.code, color.name);
                 ul.appendChild(li);
             });
         }
 
         // ============================================================
-        // 5. TÓPICOS E ENTIDADES (FIRESTORE)
+        // CASO 4: ANOS E MESES DA SENTINELA
+        // ============================================================
+        else if (type === 'sentinela-years') {
+            ul.innerHTML = '';
+            for (let i = new Date().getFullYear(); i >= 1950; i--) {
+                const li = document.createElement('li');
+                li.innerHTML = `<span class="list-icon">📂</span> Ano ${i}`;
+                li.onclick = () => window.openListCategory('sentinela-months', `Ano ${i}`, { sigla: 'w', ano: i });
+                ul.appendChild(li);
+            }
+        }
+
+        else if (type === 'sentinela-months') {
+            const { sigla, ano } = contextId;
+            const meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+            ul.innerHTML = '';
+            meses.forEach((mes, idx) => {
+                const mesNum = (idx + 1).toString().padStart(2, '0');
+                const li = document.createElement('li');
+                li.innerHTML = `<span class="list-icon">🗓️</span> ${mes}`;
+                li.onclick = () => window.openListCategory('sentinela-articles', `${mes} ${ano}`, { ano, mesNum, mesName: mes });
+                ul.appendChild(li);
+            });
+        }
+
+        else if (type === 'sentinela-articles') {
+            const { ano, mesNum, mesName } = contextId;
+            const response = await fetch(`./js/publicacoes/sentinelas/${ano}/${mesNum}.json`);
+            const data = await response.json();
+            const artigos = data.artigos ? data.artigos : [data];
+            ul.innerHTML = `<li class="list-group-header">${mesName} ${ano}</li>`;
+            artigos.forEach((art, idx) => {
+                const li = document.createElement('li');
+                li.className = 'toc-item-row';
+                li.style.flexDirection = "column"; li.style.alignItems = "flex-start";
+                li.innerHTML = `<strong style="color:var(--accent-color); font-size:0.8em;">${art.referencia}</strong><span>${art.titulo}</span>`;
+                li.onclick = () => window.openListCategory('sentinela-content', art.referencia, { ano, mesNum, artIdx: idx });
+                ul.appendChild(li);
+            });
+        }
+
+        // ============================================================
+        // CASO 5: TÓPICOS E ENTIDADES (FIRESTORE)
         // ============================================================
         else if (type === 'topico') {
-            ul.innerHTML = '';
             const q = query(collection(db, 'topicos'), where('userId', '==', myUid), orderBy('nome'));
             const snap = await getDocs(q);
+            ul.innerHTML = "";
             snap.forEach(docSnap => {
                 const li = document.createElement('li');
                 li.innerHTML = `<span>📑 ${docSnap.data().nome}</span>`;
@@ -6401,10 +6414,9 @@ window.openListCategory = async (type, title, contextId = null) => {
         }
 
         else if (['personagem', 'local', 'data', 'textobiblico', 'marcadores', 'cosmos', 'tag'].includes(type)) {
-            ul.innerHTML = '';
-            const collName = (type === 'marcadores') ? 'marcadores' : (type === 'cosmos' ? 'cosmos' : ENTITY_CONFIG[type]?.collection);
-            if (!collName && type !== 'tag') return;
-            const q = query(collection(db, collName), where('userId', '==', myUid), orderBy('nome'));
+            const coll = (type === 'marcadores') ? 'marcadores' : (type === 'cosmos' ? 'cosmos' : ENTITY_CONFIG[type]?.collection);
+            ul.innerHTML = "";
+            const q = query(collection(db, coll), where('userId', '==', myUid), orderBy('nome'));
             const snap = await getDocs(q);
             snap.forEach(docSnap => {
                 const li = document.createElement('li');
@@ -6417,20 +6429,41 @@ window.openListCategory = async (type, title, contextId = null) => {
             });
         }
 
-        // Caso especial: Anos da Sentinela
-        else if (type === 'sentinela-years') {
+        // ============================================================
+        // CASO 6: LISTA DE LIVROS (TOC)
+        // ============================================================
+        else if (type === 'livros') {
             ul.innerHTML = '';
-            for (let i = new Date().getFullYear(); i >= 1950; i--) {
+            const liW = document.createElement('li');
+            liW.innerHTML = `<span class="list-icon">📅</span> A Sentinela (Anos)`;
+            liW.onclick = () => window.openListCategory('sentinela-years', 'Anos da Sentinela', 'w');
+            ul.appendChild(liW);
+
+            Object.keys(SIGLAS_PUBLICACOES).forEach(id => {
+                if (!IDs_REVISTAS.includes(id)) {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<span class="list-icon">📔</span> ${SIGLAS_PUBLICACOES[id]}`;
+                    li.onclick = () => window.openListCategory('book-toc', SIGLAS_PUBLICACOES[id], id);
+                    ul.appendChild(li);
+                }
+            });
+        }
+
+        else if (type === 'book-toc') {
+            const response = await fetch(`./js/books/${contextId}.json`);
+            const data = await response.json();
+            ul.innerHTML = `<li class="list-group-header">${data.titulo}</li>`;
+            data.capitulos.forEach((cap, idx) => {
                 const li = document.createElement('li');
-                li.innerHTML = `<span class="list-icon">📂</span> Ano ${i}`;
-                li.onclick = () => window.openListCategory('sentinela-months', `Ano ${i}`, { sigla: contextId, ano: i });
+                li.innerHTML = `<strong>Cap. ${cap.capitulo}</strong>: ${cap.titulo}`;
+                li.onclick = () => window.openListCategory('book-chapter', `Cap. ${cap.capitulo}`, { bookId: contextId, capIdx: idx });
                 ul.appendChild(li);
-            }
+            });
         }
 
     } catch (error) {
         console.error("❌ Erro em openListCategory:", error);
-        ul.innerHTML = '<li style="color:red; padding:20px;">Erro ao carregar lista. Verifique a ligação.</li>';
+        ul.innerHTML = '<li style="color:red; padding:20px; text-align:center;">Erro ao carregar dados.</li>';
     }
 };
       
@@ -9783,12 +9816,12 @@ window.finishSentinelaSelection = async function(artigo, ano, mesNum) {
     const selectorModal = document.getElementById('sentinela-selector-modal');
     if (selectorModal) selectorModal.style.display = 'none';
 
-    // 1. Gerar ID do Capítulo (Compatível com Library)
+    // 1. Gerar ID do Capítulo
     const pubId = `W${ano.toString().slice(-2)}_${mesNum}`;
     const chapterRef = artigo.referencia.split(' ').pop();
     const capituloId = `${pubId}_${chapterRef}`;
 
-    // 2. Buscar Destaques no Firebase e guardar na memória global
+    // 2. Buscar Destaques no Firebase
     const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
     const qH = query(collection(db, 'trechosbiblicos'), 
         where('userId', '==', auth.currentUser.uid),
@@ -9796,34 +9829,26 @@ window.finishSentinelaSelection = async function(artigo, ano, mesNum) {
     );
     
     const hSnap = await getDocs(qH);
-    window.currentArticleHighlights = []; // Variável global para a Sidebar
-    hSnap.forEach(doc => window.currentArticleHighlights.push(doc.data()));
+    const highlights = []; 
+    hSnap.forEach(doc => highlights.push(doc.data()));
 
     // 3. Lógica para PC (Sidebar)
     if (window.innerWidth > 768) {
+        // ... (Mantém a tua lógica de abrir a aba lists e preencher a stack aqui)
         const listsTabBtn = document.querySelector('.tab-btn[data-tab="lists"]');
         if (listsTabBtn) listsTabBtn.click();
-
         window.listsStack = [
             { type: 'livros', title: '📔 Livros' },
             { type: 'sentinela-years', title: 'Anos da Sentinela', contextId: 'w' },
-            { type: 'sentinela-months', title: `Ano ${ano}`, contextId: { sigla: 'w', ano: ano } },
-            { type: 'sentinela-articles', title: `Artigos...`, contextId: { ano, mesNum } }
+            { type: 'sentinela-months', title: `Ano ${ano}`, contextId: { sigla: 'w', ano: ano } }
         ];
-
-        if (window.openListCategory) {
-            window.openListCategory('sentinela-content', artigo.referencia, { 
-                ano: ano, 
-                mesNum: mesNum, 
-                artIdx: artigo.idx || 0 
-            });
-        }
+        
+        // Passamos os highlights capturados para uma variável global que o openListCategory vai usar
+        window.currentArticleHighlights = highlights; 
+        window.openListCategory('sentinela-content', artigo.referencia, { ano, mesNum, artIdx: artigo.idx || 0 });
     } 
-    // ============================================================
-    // 📱 LÓGICA PARA MOBILE -> ABRIR NO MODAL ÍNDICE
-    // ============================================================
+    // 4. Lógica para MOBILE
     else {
-        console.log("Plataforma: Mobile. Abrindo no Índice...");
         const mTabBtn = document.getElementById('m-sentinela-tab-btn');
         const mRender = document.getElementById('m-sentinela-render');
         
@@ -9838,26 +9863,34 @@ window.finishSentinelaSelection = async function(artigo, ano, mesNum) {
             `;
 
             artigo.conteudo.forEach((bloco) => {
-                let textoProcessado = window.linkifyBibleReferences ? window.linkifyBibleReferences(bloco.texto) : bloco.texto;
+                // --- O SEGREDO ESTÁ AQUI ---
+                let textoFinal = bloco.texto;
 
-                // Aplicar Destaques (Highlights da Library)
-                activeHighlights.forEach(h => {
-                    if (textoProcessado.includes(h.nome)) {
+                // PASSO 1: Aplicar Highlights da Library no texto limpo
+                highlights.forEach(h => {
+                    if (textoFinal.includes(h.nome)) {
                         const escapedH = h.nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                        const regH = new RegExp(`(${escapedH})(?![^<]*>|[^<>]*<\/span>)`, 'gi');
+                        const regH = new RegExp(`(${escapedH})`, 'gi');
                         const style = `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
-                        textoProcessado = textoProcessado.replace(regH, `<span style="${style}">$1</span>`);
+                        textoFinal = textoFinal.replace(regH, `<span style="${style}">$1</span>`);
                     }
                 });
 
-                if (bloco.tipo === 'subtema') {
-                    htmlFinal += `<div style="padding:20px 0 5px 0; font-weight:bold; color:var(--accent-color); font-size:1.1em;">${textoProcessado}</div>`;
-                } else if (bloco.tipo === 'pergunta') {
-                    htmlFinal += `<div style="padding:12px 0; border-bottom:1px solid rgba(128,128,128,0.05); font-size:1.05em; line-height:1.6;"><span style="color:#d3869b; font-weight:bold;">${bloco.numero_ref}.</span> ${textoProcessado}</div>`;
-                } else {
-                    htmlFinal += `<div style="padding:12px 0; border-bottom:1px solid rgba(128,128,128,0.05); font-size:1.05em; line-height:1.6;"><span class="paragraph-badge">pr ${bloco.numero_ref || '?'}</span>${textoProcessado}</div>`;
+                // PASSO 2: Agora que já está sublinhado, injetamos os links bíblicos
+                // O linkify vai entrar dentro do span do highlight e converter o texto bíblico lá dentro
+                 if (window.linkifyBibleReferences) {
+        textoFinal = window.linkifyBibleReferences(textoFinal);
                 }
-            });
+
+                // Renderização dos blocos
+                if (bloco.tipo === 'subtema') {
+        htmlFinal += `<div style="padding:20px 0 5px 0; font-weight:bold; color:var(--accent-color); font-size:1.1em;">${textoFinal}</div>`;
+    } else if (bloco.tipo === 'pergunta') {
+        htmlFinal += `<div style="padding:12px 0; border-bottom:1px solid rgba(128,128,128,0.05); font-size:1.05em; line-height:1.6;"><span style="color:#d3869b; font-weight:bold;">${bloco.numero_ref}.</span> ${textoFinal}</div>`;
+    } else {
+        htmlFinal += `<div style="padding:12px 0; border-bottom:1px solid rgba(128,128,128,0.05); font-size:1.05em; line-height:1.6;"><span class="paragraph-badge">pr ${bloco.numero_ref || '?'}</span>${textoFinal}</div>`;
+    }
+});
 
             mRender.innerHTML = htmlFinal;
             document.getElementById('mobile-index-modal').style.display = 'flex';
