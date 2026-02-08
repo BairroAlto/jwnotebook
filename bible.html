@@ -2418,42 +2418,50 @@ async function fetchVerseText(bookName, chapter, verse, elementId) {
     }
 }
 
-   function cleanMicaContent(snippet) {
-            if (!snippet) return "";
-            
-            let decoded = decodeURIComponent(snippet);
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = decoded;
-            
-            let title = "";
-            const titleInput = tempDiv.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
-            const h2 = tempDiv.querySelector('h2');
-            
-            if (titleInput) title = titleInput.value || titleInput.getAttribute('value') || "";
-            else if (h2) title = h2.textContent;
-
-            let content = "";
-            const contentDiv = tempDiv.querySelector('.mini-note-content, .toggle-content, .redator-content, .sign-content, .card-desc-content, .cube-content');
-            
-            // --- CORREÇÃO AQUI: Mudámos de innerText para innerHTML ---
-            // Isto garante que os <br> e <div> dos parágrafos são mantidos
-            if (contentDiv) content = contentDiv.innerHTML; 
-            else content = tempDiv.innerHTML;
-            // -----------------------------------------------------------
-
-            // Remove emojis de controlo, mas mantém o HTML
-            content = content.replace(/🔐|🔺|🔻|⚡|🧬|🎨|📋|🗑️/g, '').trim();
-
-            let finalHtml = "";
-            if (title && title !== "Texto da Nota") {
-                finalHtml += `<div style="font-weight:bold; color:white; margin-bottom:5px;">${title}</div>`;
-            }
-            
-            // Mantemos o pre-wrap para garantir que quebras de linha manuais também funcionam
-         finalHtml += `<div style="color:#ddd; font-size:0.9em;">${content}</div>`;
-
-            return finalHtml || "Conteúdo vazio.";
+function cleanMicaContent(snippet) {
+    if (!snippet) return "";
+    
+    let decoded = "";
+    try {
+        // Tenta decodificar apenas se parecer estar codificado (contém % ou similar)
+        if (typeof snippet === 'string' && (snippet.includes('%') || snippet.includes('+'))) {
+            decoded = decodeURIComponent(snippet);
+        } else {
+            decoded = snippet;
         }
+    } catch (e) {
+        console.warn("⚠️ Falha ao decodificar snippet, usando formato original:", e);
+        decoded = snippet; // Se falhar (URI malformed), usa o original sem travar
+    }
+
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = decoded;
+    
+    let title = "";
+    const titleInput = tempDiv.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
+    const h2 = tempDiv.querySelector('h2');
+    
+    if (titleInput) title = titleInput.value || titleInput.getAttribute('value') || "";
+    else if (h2) title = h2.textContent;
+
+    let content = "";
+    const contentDiv = tempDiv.querySelector('.mini-note-content, .toggle-content, .redator-content, .sign-content, .card-desc-content, .cube-content');
+    
+    if (contentDiv) content = contentDiv.innerHTML; 
+    else content = tempDiv.innerHTML;
+
+    // Remove emojis de controlo
+    content = content.replace(/🔐|🔺|🔻|⚡|🧬|🎨|📋|🗑️/g, '').trim();
+
+    let finalHtml = "";
+    if (title && title !== "Texto da Nota") {
+        finalHtml += `<div style="font-weight:bold; color:white; margin-bottom:5px;">${title}</div>`;
+    }
+    
+    finalHtml += `<div style="color:#ddd; font-size:0.9em;">${content}</div>`;
+
+    return finalHtml || "Conteúdo vazio.";
+}
 
         // --- MODAL DE DETALHES ---
  // --- MODAL DE DETALHES ---
@@ -2597,16 +2605,29 @@ window.openModalForVerse = async (num) => {
     let linksHtml  = "";
 
     // --- A. PUZZLE (CARTÕES DE NOTAS) ---
-    if (puzzleCount > 0) {
-        data.puzzleBoard.forEach((item, index) => {
-            const displayHtml = cleanMicaContent(item.snippet || item.content);
-            
-            let borderColor = item.noteColor || item.cor || "#3498db"; 
-            let raw = decodeURIComponent(item.snippet || "");
-            if (!item.noteColor) {
-                if (raw.includes("question-mode")) borderColor = "#2ecc71";
-                else if (raw.includes("free-mode")) borderColor = "#e67e22";
+if (puzzleCount > 0) {
+    data.puzzleBoard.forEach((item, index) => {
+        const displayHtml = cleanMicaContent(item.snippet || item.content);
+        
+        let borderColor = item.noteColor || item.cor || "#3498db"; 
+        
+        // CORREÇÃO: Try-catch aqui para evitar o crash no cálculo da cor
+        let raw = "";
+        try {
+            const snippetToDecode = item.snippet || "";
+            if (snippetToDecode.includes('%')) {
+                raw = decodeURIComponent(snippetToDecode);
+            } else {
+                raw = snippetToDecode;
             }
+        } catch (e) {
+            raw = item.snippet || ""; // Fallback para o texto original se falhar
+        }
+
+        if (!item.noteColor) {
+            if (raw.includes("question-mode")) borderColor = "#2ecc71";
+            else if (raw.includes("free-mode")) borderColor = "#e67e22";
+        }
 
             // 1. Verificar Fontes
             const boxLinks = window.extractBoxLinksFromSnippet(item.snippet);
@@ -3162,13 +3183,19 @@ window.deletePuzzleItem = async (vNum, index) => {
         return;
     }
 
-    const item = data.puzzleBoard[index];
+  const item = data.puzzleBoard[index];
 
     let rawSnippet = "";
     try {
-        rawSnippet = decodeURIComponent(item.snippet || "");
+        const snippetToDecode = item.snippet || "";
+        // Só tenta decodificar se houver indícios de codificação
+        if (typeof snippetToDecode === 'string' && snippetToDecode.includes('%')) {
+            rawSnippet = decodeURIComponent(snippetToDecode);
+        } else {
+            rawSnippet = snippetToDecode;
+        }
     } catch(e) {
-        console.warn("⚠️ Erro ao descodificar URI, usando raw:", e);
+        console.warn("⚠️ Erro ao descodificar snippet na edição, usando raw:", e);
         rawSnippet = item.snippet || "";
     }
 
@@ -6289,6 +6316,15 @@ window.extractBoxLinksFromSnippet = function(snippetHtml) {
     if (!snippetHtml) return null;
     
     let content = snippetHtml;
+    try {
+        // Verifica se é uma string codificada antes de tentar
+        if (typeof snippetHtml === 'string' && snippetHtml.includes('%')) {
+            content = decodeURIComponent(snippetHtml);
+        }
+    } catch (e) { 
+        console.warn("⚠️ extractBoxLinks: Erro de decodificação, tentando processar original.");
+        content = snippetHtml; 
+    }
     try {
         if (content.includes('%3C') || content.includes('%7B')) {
             content = decodeURIComponent(content);
