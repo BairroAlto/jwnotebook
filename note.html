@@ -21934,7 +21934,7 @@ async function loadPuzzleData(entityId, entityType) {
     container.innerHTML = `
         <div class="spinner-container" style="margin-top: 50px; display: flex; flex-direction: column; align-items: center;">
             <div class="spinner"></div>
-            <span style="font-style: italic; font-size: 0.9em; margin-top:10px; color: var(--text-muted-color);">A carregar Quadro...</span>
+            <span style="font-style: italic; font-size: 0.8em; margin-top:10px; color: var(--text-muted-color);">A reunir todas as notas vinculadas...</span>
         </div>`;
 
     const collectionName = getCollectionFromType(entityType);
@@ -21944,62 +21944,99 @@ async function loadPuzzleData(entityId, entityType) {
     }
 
     try {
+        const { collection, query, where, getDocs, doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const myUid = auth.currentUser.uid;
         let foundData = null;
+        let finalEntityName = activeReferenceEntity.name; // Ex: "ip-1 5:1"
 
-        // 2. TENTATIVA A: Busca direta pelo ID (se for ID válido)
+        // 2. TENTATIVA A: Busca o documento principal da entidade (Quadro Manual)
         if (entityId && entityId.length > 5 && !entityId.includes(' ')) {
-            const docRef = doc(db, collectionName, entityId);
-            const snap = await getDoc(docRef);
-            if (snap.exists()) {
-                foundData = snap.data();
-            }
+            const docSnap = await getDoc(doc(db, collectionName, entityId));
+            if (docSnap.exists()) foundData = docSnap.data();
         }
 
-        // 3. TENTATIVA B: Busca pelo Nome (CRÍTICO PARA VERSÍCULOS)
-        // Se a busca por ID falhou, procura pelo nome exato (ex: "Génesis 1:1")
         if (!foundData) {
-            const nameToFind = (typeof entityId === 'string' && entityId.includes(' ')) ? entityId : activeReferenceEntity.name;
-            
-            const q = query(
-                collection(db, collectionName), 
-                where("nome", "==", nameToFind), 
-                where("userId", "==", auth.currentUser.uid)
-            );
-            
-            const querySnapshot = await getDocs(q);
-            if (!querySnapshot.empty) {
-                foundData = querySnapshot.docs[0].data();
-                // Atualiza o ID da entidade ativa para o correto
-                activeReferenceEntity.id = querySnapshot.docs[0].id;
+            const q = query(collection(db, collectionName), where("nome", "==", finalEntityName), where("userId", "==", myUid));
+            const qSnap = await getDocs(q);
+            if (!qSnap.empty) {
+                foundData = qSnap.docs[0].data();
+                activeReferenceEntity.id = qSnap.docs[0].id;
             }
         }
 
-        // 4. LIMPAR O LOADING
-        container.innerHTML = '';
+        let boardItems = foundData ? (foundData.puzzleBoard || []) : [];
+        const seenNoteIds = new Set(boardItems.map(item => item.noteId));
 
-        // 5. VERIFICAÇÃO DE DADOS
-        const boardItems = foundData ? (foundData.puzzleBoard || []) : [];
+        // 3. TENTATIVA B: BUSCAR NOTAS VINCULADAS POR TRECHOS (Highlights da Library)
+        // Só fazemos isto se for uma referência de Livro/Sentinela
+        if (entityType === 'livro_ref') {
+            const qTrechos = query(
+                collection(db, 'trechosbiblicos'),
+                where('userId', '==', myUid),
+                where('textosbiblicos', 'array-contains', finalEntityName)
+            );
+            const snapTrechos = await getDocs(qTrechos);
+            
+            for (const d of snapTrechos.docs) {
+                const trechoData = d.data();
+                if (trechoData.noteIds) {
+                    for (const noteId of trechoData.noteIds) {
+                        // Evita duplicar se a nota já estiver no board principal
+                        if (seenNoteIds.has(noteId)) continue;
+
+                        const nSnap = await getDoc(doc(db, 'pastas', noteId));
+                        if (nSnap.exists()) {
+                            const nData = nSnap.data();
+                            boardItems.push({
+                                type: 'ref',
+                                noteId: nSnap.id,
+                                noteName: nData.nome,
+                                snippet: encodeURIComponent(nData.conteudo),
+                                noteColor: '#e67e22', // Laranja para distinguir trechos
+                                isTrecho: true
+                            });
+                            seenNoteIds.add(noteId);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. LIMPAR O LOADING E RENDERIZAR
+        container.innerHTML = '';
 
         if (boardItems.length === 0) {
             container.innerHTML = `
                 <p id="puzzle-empty-msg" style="text-align:center; color:var(--text-muted-color); font-size:0.9em; margin-top:40px; font-style: italic;">
-                    O quadro está vazio.<br>Clique em "Editar" para adicionar notas ou referências.
+                    O quadro está vazio.
                 </p>`;
             return;
         }
 
-        // 6. RENDERIZAR CARTÕES
+        // 5. RENDERIZAR CARTÕES NO QUADRO
         boardItems.forEach(item => {
-            createBoardItem(item.type, {
-                content: item.content,
-                noteId: item.noteId,
-                noteName: item.noteName,
-                snippet: item.snippet
-            });
+            // Adicionamos uma marca visual se for nota de trecho
+            if (item.isTrecho) {
+                // Podemos injetar um pequeno aviso ou cor diferente via CreateBoardItem
+                // Se a tua função CreateBoardItem aceitar dados extra:
+                createBoardItem(item.type, {
+                    content: item.content,
+                    noteId: item.noteId,
+                    noteName: `📌 ${item.noteName} (Trecho)`,
+                    snippet: item.snippet
+                });
+            } else {
+                createBoardItem(item.type, {
+                    content: item.content,
+                    noteId: item.noteId,
+                    noteName: item.noteName,
+                    snippet: item.snippet
+                });
+            }
         });
 
     } catch (e) { 
-        console.error("Erro no Puzzle:", e); 
+        console.error("Erro ao carregar Puzzle consolidado:", e); 
         container.innerHTML = '<p style="text-align:center; color:red; padding:20px;">Erro ao carregar o Quadro.</p>';
     }
 }
@@ -22096,42 +22133,37 @@ async function showTagReferencesPanel(tagName) {
 // ============================================================
 
 function resetReferencesPanelUI() {
-    // 1. Esconder todos os conteúdos de abas
-    document.querySelectorAll('.ref-tab-content').forEach(el => {
-        el.style.display = 'none';
-    });
+    // 1. Esconder conteúdos das abas
+    document.querySelectorAll('.ref-tab-content').forEach(el => el.style.display = 'none');
 
-    // 2. Mostrar apenas o conteúdo do Puzzle (padrão de abertura)
+    // 2. Reset visual das abas (Volta ao Puzzle)
+    document.querySelectorAll('#ref-tabs button').forEach(btn => btn.classList.remove('active'));
+    const puzzleTabBtn = document.querySelector('[data-ref-tab="puzzle"]');
+    if (puzzleTabBtn) puzzleTabBtn.classList.add('active');
     const puzzleContent = document.getElementById('ref-content-puzzle');
     if (puzzleContent) puzzleContent.style.display = 'flex';
 
-    // 3. Resetar visual dos botões das abas
-    document.querySelectorAll('#ref-tabs button').forEach(btn => {
-        btn.classList.remove('active');
+    // 3. ESCONDER TODOS OS BOTÕES (Limpeza Total)
+    const buttons = [
+        'references-anchor-btn',    // ⚓
+        'references-bookmark-btn',  // 🔖
+        'references-wol-btn',       // 📖
+        'references-target-btn',    // 🎯
+        'references-edit-btn'       // ✏️ / 🦉
+    ];
+    buttons.forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.style.display = 'none';
     });
-    const puzzleTabBtn = document.querySelector('[data-ref-tab="puzzle"]');
-    if (puzzleTabBtn) puzzleTabBtn.classList.add('active');
 
-    // 4. Limpar a lista de Links (Doc.)
-    const linksList = document.getElementById('panel-links-list');
-    if (linksList) linksList.innerHTML = '';
-
-    // 5. RESET DO MODO EDIÇÃO (Links/Doc)
-    isPanelEditMode = false;
- isPanelEditMode = false;
-    const editLinksBtn = document.getElementById('toggle-links-edit-btn');
-    const linksActions = document.getElementById('links-edit-actions');
-    if (editLinksBtn) {
-        editLinksBtn.textContent = "Editar";
-        editLinksBtn.style.color = "";
-        editLinksBtn.style.borderColor = "";
-        editLinksBtn.style.backgroundColor = "";
+    // Repor texto padrão do botão de edição
+    const editBtn = document.getElementById('references-edit-btn');
+    if (editBtn) {
+        editBtn.textContent = '✏️';
+        editBtn.title = 'Editar';
     }
-    if (linksActions) linksActions.style.display = 'none';
 
-    // ============================================================
-    // 🚀 LIMPEZA AGRESSIVA DO DOSSIÉ (IMPEDE O BOTÃO DE PISCAR)
-    // ============================================================
+    // Reset de estados internos
     window.isDossieEditMode = false; 
     window.activeMicaId = null;
 
@@ -22170,11 +22202,12 @@ function resetReferencesPanelUI() {
 
 
 window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, paragraphNum, htmlContent, openDirectToTarget = false) {
+    const thisRequestId = ++window.currentNavRequest;
     const fullName = `${bookId} ${chapterNum}:${paragraphNum}`;
     
-    // 1. Configuração do Estado Local
+    // 1. Configuração do Contexto da Entidade
     activeReferenceEntity = {
-        id: fullName, // ID temporário (será substituído pelo ID do Firebase abaixo)
+        id: fullName, // ID provisório (será substituído pelo ID do Firebase)
         type: 'livro_ref',
         name: fullName,
         bookId: bookId,
@@ -22184,14 +22217,19 @@ window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, par
         htmlOriginal: htmlContent 
     };
 
-    // Memória para persistência entre abas
+    // 2. Persistência de Memória (Para manter o local ao trocar de abas do NoteBook)
     booksStateMemory.activeRef = { ...activeReferenceEntity };
     booksStateMemory.activeTab = openDirectToTarget ? 'target' : 'puzzle';
+
+    // 3. Limpeza Geral da Interface
+    if (typeof resetReferencesPanelUI === 'function') {
+        resetReferencesPanelUI();
+    }
 
     try {
         const { doc, getDoc, collection, query, where, getDocs, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        // 2. Verificar se este parágrafo já existe no Firebase
+        // 4. Sincronização Firebase: Verificar se este parágrafo já tem registro privado
         const q = query(
             collection(db, 'livros'), 
             where('nome', '==', fullName), 
@@ -22199,8 +22237,10 @@ window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, par
         );
         const snap = await getDocs(q);
         
+        if (window.currentNavRequest !== thisRequestId) return;
+
         if (snap.empty) {
-            // Criar novo registo se não existir
+            // Cria entrada para permitir Puzzle, Dossiê e Links neste parágrafo
             const newDoc = await addDoc(collection(db, 'livros'), {
                 nome: fullName,
                 livro: bookName,
@@ -22213,49 +22253,78 @@ window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, par
                 panelLinks: [],
                 dossie: []
             });
-            activeReferenceEntity.id = newDoc.id; // Define o ID real acabado de criar
+            activeReferenceEntity.id = newDoc.id;
         } else {
-            activeReferenceEntity.id = snap.docs[0].id; // Define o ID real que já existia
+            activeReferenceEntity.id = snap.docs[0].id;
         }
 
-        // 3. Atualização da Interface
+        // 5. Configuração Visual da 4ª Coluna
         notebookContainer.classList.add('references-panel-visible');
         
         const titleEl = document.getElementById('references-panel-title');
         if (titleEl) titleEl.innerHTML = `🎯 ${fullName}`;
 
-        // Esconder descrição antiga e mostrar barra de ferramentas
+        // --- GESTÃO EXCLUSIVA DA TOOLBAR (LIVROS) ---
+        const editBtn = document.getElementById('references-edit-btn');
+        const targetBtn = document.getElementById('references-target-btn');
+        const anchorBtn = document.getElementById('references-anchor-btn');
+        const bookmarkBtn = document.getElementById('references-bookmark-btn');
+        const wolBtn = document.getElementById('references-wol-btn');
+
+        // MOSTRAR: Coruja e Mira
+        if (editBtn) {
+            editBtn.textContent = '🦉'; 
+            editBtn.title = 'Ir para a Biblioteca';
+            editBtn.style.display = 'block'; 
+        }
+        if (targetBtn) {
+            targetBtn.style.display = 'block';
+            targetBtn.title = 'Ver parágrafo original';
+        }
+
+        // ESCONDER: Âncora, Marcador e WOL Externo
+        if (anchorBtn) anchorBtn.style.display = 'none'; // <--- Âncora Removida aqui
+        if (bookmarkBtn) bookmarkBtn.style.display = 'none';
+        if (wolBtn) wolBtn.style.display = 'none';
+
         document.getElementById('references-panel-description').style.display = 'none';
         document.getElementById('references-toolbar').style.display = 'flex';
 
-        // 4. Injetar Conteúdo no contentor de texto (Aba 🎯)
+        // 6. Injetar Conteúdo na aba de Texto Original (🎯)
         const bookTextContainer = document.getElementById('ref-content-book-text');
         if (bookTextContainer) {
             bookTextContainer.innerHTML = `
                 <div class="book-text-box">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">
                         <small style="color: var(--accent-color); font-weight: bold; text-transform: uppercase;">Conteúdo da Fonte:</small>
-                        <small style="color: var(--text-muted-color); font-size: 0.8em;">${bookName}</small>
+                        <small style="color: var(--text-muted-color); font-size: 0.85em;">${bookName}</small>
                     </div>
-                    <div style="font-style: normal; color: white; line-height: 1.6;">${htmlContent}</div>
+                    <div style="font-style: normal; color: #f0f0f0; line-height: 1.6; font-size: 1.05em;">${htmlContent}</div>
                 </div>
             `;
         }
 
-        // 5. Carregar Dados das outras abas
-        loadPuzzleData(activeReferenceEntity.id, 'livro_ref');
-        renderBookCodexCitations(bookId, chapterNum, paragraphNum);
-        
-        // 6. Decidir aba inicial
+        // 7. Carregar dados das sub-abas
+        if (typeof loadPuzzleData === 'function') loadPuzzleData(activeReferenceEntity.id, 'livro_ref');
+        if (typeof renderBookCodexCitations === 'function') renderBookCodexCitations(bookId, chapterNum, paragraphNum);
+        if (typeof renderPanelLinks === 'function') renderPanelLinks();
+
+        // 8. Seleção da Aba Inicial
         if (openDirectToTarget) {
-            window.showParagraphContentMode(); 
+            if (typeof window.showParagraphContentMode === 'function') window.showParagraphContentMode();
         } else {
             if (bookTextContainer) bookTextContainer.style.display = 'none';
-            switchRefTab('puzzle');
+            if (typeof switchRefTab === 'function') switchRefTab('puzzle');
+        }
+
+        // Mobile
+        if (window.innerWidth <= 768) {
+            const refPanel = document.getElementById('references-panel');
+            if(refPanel) refPanel.style.height = "60vh";
         }
 
     } catch (e) {
-        console.error("Erro ao abrir parágrafo do livro:", e);
+        console.error("Erro ao abrir parágrafo:", e);
     }
 };
 
@@ -40033,9 +40102,9 @@ function getFlexibleRegexStr(str) {
         .replace(/[cçCÇ]/g, '[cçCÇ]');
 }
 
-// Função Auxiliar: Remove acentos para comparação (Normalização)
+// Função auxiliar para normalizar strings (remover acentos e espaços extras)
 function normalizeStr(str) {
-    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
 
 async function generateNoteTexts() {
@@ -52113,7 +52182,7 @@ async function openBookParagraphPanel(bookId, bookName, chapterNum, paragraphNum
         bookTextContainer.innerHTML = `
             <div class="book-text-box">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">
-                    <small style="color: var(--accent-color); font-weight: bold; text-transform: uppercase;">Conteúdo da Fonte:</small>
+                    <small style="color: var(--accent-color); font-weight: bold; text-transform: uppercase;">Fonte:</small>
                     <small style="color: var(--text-muted-color); font-size: 0.8em;">${bookName}</small>
                 </div>
                 <div style="font-style: normal;">${htmlContent}</div>
@@ -52138,53 +52207,123 @@ async function openBookParagraphPanel(bookId, bookName, chapterNum, paragraphNum
 
 async function renderBookCodexCitations(bookId, chapter, paragraph) {
     const listElement = document.getElementById('references-list');
-    listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A localizar citações...</span></div>';
+    if (!listElement) return;
+
+    // 1. Configuração de IDs e UI
+    const fullName = `${bookId} ${chapter}:${paragraph}`;
+    console.log(`🔍 [CITAÇÕES] Pesquisando referências globais para: ${fullName}`);
+    
+    listElement.innerHTML = `
+        <div class="spinner-container">
+            <div class="spinner"></div>
+            <span>A localizar citações e trechos...</span>
+        </div>`;
 
     try {
-        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        const q = query(collection(db, 'pastas'), where('userId', '==', auth.currentUser.uid), where('estado', '==', 'ativa'));
-        const snapshot = await getDocs(q);
+        const { collection, query, where, getDocs, doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const myUid = auth.currentUser.uid;
+
+        // --- FASE A: BUSCAR NOTAS VINCULADAS POR TRECHOS (Highlights da Library) ---
+        const qTrechos = query(
+            collection(db, 'trechosbiblicos'),
+            where('userId', '==', myUid),
+            where('textosbiblicos', 'array-contains', fullName)
+        );
+        const snapTrechos = await getDocs(qTrechos);
         
-        allCitationsResults = [];
+        const trechoNoteIds = new Set();
+        snapTrechos.forEach(d => {
+            const data = d.data();
+            if (data.noteIds) data.noteIds.forEach(id => trechoNoteIds.add(id));
+        });
+
+        // --- FASE B: BUSCAR TODAS AS NOTAS ATIVAS PARA CONTEXTO CODEX ---
+        const qPastas = query(
+            collection(db, 'pastas'), 
+            where('userId', '==', myUid), 
+            where('estado', '==', 'ativa')
+        );
+        const snapshot = await getDocs(qPastas);
+        
+        window.allCitationsResults = []; // Limpa array global
+        const seenIds = new Set();
         const parser = new DOMParser();
 
+        // 2. PROCESSAR NOTAS PARA ENCONTRAR O CODEX (⚡)
         snapshot.forEach(docSnap => {
             const data = docSnap.data();
             const content = data.conteudo || "";
             
-            // Verificação rápida de string para performance (se o bookId aparece no HTML)
+            // Verificação rápida de string para performance (se a sigla do livro aparece no HTML)
             if (content.toLowerCase().includes(bookId.toLowerCase())) {
                 const docHTML = parser.parseFromString(content, 'text/html');
                 const boxes = docHTML.querySelectorAll('[data-box-links]');
                 
                 boxes.forEach(box => {
-                    const linksData = JSON.parse(box.getAttribute('data-box-links') || '{}');
-                    if (linksData.codex) {
-                        const hasMatch = linksData.codex.some(c => 
-                            c.serie.toLowerCase() === bookId.toLowerCase() && 
-                            parseInt(c.capitulo) === parseInt(chapter) && 
-                            (c.paragrafos && c.paragrafos.includes(String(paragraph)))
-                        );
+                    try {
+                        const linksData = JSON.parse(box.getAttribute('data-box-links') || '{}');
+                        if (linksData.codex) {
+                            const hasMatch = linksData.codex.some(c => 
+                                c.serie.toLowerCase() === bookId.toLowerCase() && 
+                                String(c.capitulo) === String(chapter) && 
+                                (c.paragrafos && c.paragrafos.includes(String(paragraph)))
+                            );
 
-                        if (hasMatch) {
-                            allCitationsResults.push({
-                                id: docSnap.id,
-                                boxId: box.id,
-                                name: data.nome,
-                                snippet: `<p style="color:var(--accent-color); font-weight:bold;">📦 Citado nesta caixa (Codex ⚡)</p>`,
-                                ultimaedicao: data.ultimaedicao?.toMillis() || 0
-                            });
+                            if (hasMatch) {
+                                window.allCitationsResults.push({
+                                    id: docSnap.id,
+                                    boxId: box.id,
+                                    name: data.nome,
+                                    snippet: `<p style="color:var(--accent-color); font-weight:bold;">📦 Citado nesta caixa (Codex ⚡)</p>`,
+                                    ultimaedicao: data.ultimaedicao?.toMillis() || data.createdAt?.toMillis() || 0,
+                                    isProtected: (data.passe && data.passe.trim() !== "")
+                                });
+                                seenIds.add(docSnap.id);
+                            }
                         }
-                    }
+                    } catch (e) { /* Erro de parse JSON ignorado */ }
                 });
             }
         });
 
-        window.renderCitationsPage(false);
+        // 3. ADICIONAR NOTAS DE TRECHOS (Highlights) QUE AINDA NÃO FORAM INCLUÍDAS
+        for (const noteId of trechoNoteIds) {
+            if (seenIds.has(noteId)) continue; // Evita duplicados
+
+            const nSnap = await getDoc(doc(db, 'pastas', noteId));
+            if (nSnap.exists()) {
+                const nData = nSnap.data();
+                if (nData.estado === 'ativa') {
+                    window.allCitationsResults.push({
+                        id: noteId,
+                        name: nData.nome,
+                        snippet: `<p style="color:#e67e22; font-weight:bold;">📌 Nota vinculada a um sublinhado (Trecho)</p>`,
+                        ultimaedicao: nData.ultimaedicao?.toMillis() || nData.createdAt?.toMillis() || 0,
+                        isProtected: (nData.passe && nData.passe.trim() !== "")
+                    });
+                    seenIds.add(noteId);
+                }
+            }
+        }
+
+        // 4. ORDENAR E RENDERIZAR
+        // Ordena por mais recente primeiro
+        window.allCitationsResults.sort((a, b) => b.ultimaedicao - a.ultimaedicao);
+
+        // Chama a função de paginação para desenhar a lista
+        if (typeof window.renderCitationsPage === 'function') {
+            window.renderCitationsPage(false); // false = resetar lista visual
+        }
+
+        // Atualiza contador na aba se necessário
+        const refTabBtn = document.querySelector('[data-ref-tab="references"]');
+        if (refTabBtn) {
+            refTabBtn.innerHTML = `❝ <span style="background:var(--accent-color); color:white; padding:1px 6px; border-radius:10px; font-size:0.8em; margin-left:5px;">${window.allCitationsResults.length}</span>`;
+        }
 
     } catch (e) {
-        console.error("Erro ao buscar Codex:", e);
-        listElement.innerHTML = '<li>Erro ao carregar citações.</li>';
+        console.error("❌ Erro ao buscar citações combinadas:", e);
+        listElement.innerHTML = '<li style="padding:20px; color:red; text-align:center;">Erro ao carregar referências.</li>';
     }
 }
 
@@ -52242,61 +52381,112 @@ document.getElementById('references-target-btn').addEventListener('click', () =>
     }
 
     updateSaveStatus('saving');
-    saveStatusIndicator.textContent = "A reunir parágrafos e perguntas...";
+    saveStatusIndicator.textContent = "Localizar...";
 
     try {
-        const bookData = await fetchLocalBook(bookId);
-        if (!bookData) throw new Error("Livro não encontrado");
+        let bookData = null;
+        let finalBookName = "";
+
+        // 1. Identificar se é Sentinela ou Livro
+        const isSentinela = /^w\d{2}/i.test(bookId);
+
+        if (isSentinela) {
+            const yearMatch = bookId.match(/w(\d{2})/i);
+            const year = yearMatch ? "20" + yearMatch[1] : new Date().getFullYear().toString();
+            const mesesPT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+            const monthMatch = bookId.toLowerCase().match(/(janeiro|fevereiro|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)/);
+            
+            let monthNum = chapter; 
+            if (monthMatch) {
+                const idx = mesesPT.indexOf(monthMatch[0]);
+                if (idx !== -1) monthNum = (idx + 1).toString().padStart(2, '0');
+            }
+
+            const response = await fetch(`./js/publicacoes/sentinelas/${year}/${monthNum}.json`);
+            if (!response.ok) throw new Error("Ficheiro não encontrado.");
+            
+            const sentinelaData = await response.json();
+            const listaArtigos = sentinelaData.artigos || [sentinelaData];
+
+            // Procurar o artigo correto (comparação flexível)
+            let artigoEncontrado = listaArtigos.find(art => 
+                normalizeStr(art.referencia).includes(normalizeStr(bookId)) || 
+                normalizeStr(bookId).includes(normalizeStr(art.referencia))
+            );
+
+            if (!artigoEncontrado) artigoEncontrado = listaArtigos[0];
+
+            bookData = {
+                titulo: artigoEncontrado.titulo,
+                capitulos: [{ capitulo: monthNum, conteudo: artigoEncontrado.conteudo }]
+            };
+            finalBookName = artigoEncontrado.titulo;
+            chapter = monthNum;
+        } else {
+            bookData = await fetchLocalBook(bookId);
+            if (!bookData) throw new Error("Livro não encontrado.");
+            finalBookName = JW_BOOKS_CATALOG.find(b => b.id === bookId)?.name || bookData.titulo;
+        }
 
         const chapterData = bookData.capitulos.find(c => String(c.capitulo) === String(chapter));
-        if (!chapterData) throw new Error("Capítulo não encontrado");
+        if (!chapterData) throw new Error("Capítulo não encontrado no JSON.");
 
-        // 1. Criar array com os números pedidos (ex: "5,6" -> ["5", "6"])
-        const requestedRefs = String(paragraph).split(',').map(r => r.trim());
+        // --- LÓGICA DE EXPANSÃO DE INTERVALOS (FIX) ---
+        
+        // 1. Expandir o que o utilizador pediu (ex: "7-8" vira ["7", "8"])
+        let requestedParts = String(paragraph).split(',').map(p => p.trim());
+        let requestedNumbers = [];
+        
+        requestedParts.forEach(part => {
+            if (part.includes('-')) {
+                const [start, end] = part.split('-').map(Number);
+                for (let i = start; i <= end; i++) requestedNumbers.push(String(i));
+            } else {
+                requestedNumbers.push(part);
+            }
+        });
 
-        // 2. Filtrar o conteúdo: Captura TUDO o que mencione QUALQUER um desses números
-        const matchingBlocks = chapterData.conteudo.filter(item => {
-            if (!item.numero_ref) return false;
-            if (item.tipo !== 'paragrafo' && item.tipo !== 'pergunta' && item.tipo !== 'subtema') return false;
+        // 2. Filtrar blocos comparando os números expandidos
+        const matchingBlocks = chapterData.conteudo.filter(block => {
+            if (!block.numero_ref) return false;
             
-            // Separa os números de referência do bloco (ex: "5, 6" -> ["5", "6"])
-            const itemRefs = String(item.numero_ref).split(',').map(r => r.trim());
-            
-            // Verifica se há interseção entre o que o utilizador quer e o que o bloco oferece
-            return requestedRefs.some(req => itemRefs.includes(req));
+            // Expandir os números do bloco no JSON (ex: "7-8" vira ["7", "8"])
+            let blockRefs = [];
+            String(block.numero_ref).split(/[,\-–]/).forEach(r => {
+                blockRefs.push(r.trim());
+            });
+
+            // Verifica se há alguma intersecção entre o pedido e o que existe
+            return requestedNumbers.some(num => blockRefs.includes(num));
         });
 
         if (matchingBlocks.length > 0) {
-            // 3. Gerar HTML formatado
             const finalHTML = matchingBlocks.map(block => {
                 if (block.tipo === 'pergunta') {
-                    return `<div style="color: #e67e22; font-weight: bold; margin-bottom: 10px; font-size: 0.95em;">❓ ${block.texto}</div>`;
+                    return `<div style="color: #e67e22; font-weight: bold; margin-bottom: 12px; font-size: 0.95em; border-left: 3px solid #e67e22; padding-left: 10px;">❓ ${block.texto}</div>`;
                 } else if (block.tipo === 'subtema') {
-                    return `<div style="color: #4a90e2; font-weight: bold; margin: 15px 0 5px 0;">${block.texto}</div>`;
+                    return `<div style="color: #4a90e2; font-weight: bold; margin: 15px 0 5px 0; text-transform: uppercase; font-size: 0.85em;">${block.texto}</div>`;
                 } else {
-                    return `<div style="margin-bottom: 15px; line-height: 1.6; position: relative;">
-                                <span style="float:right; font-size:0.7em; opacity:0.5; border:1px solid #333; padding:0 3px; margin-left:5px;">pr ${block.numero_ref}</span>
+                    return `<div style="margin-bottom: 15px; line-height: 1.6; position: relative; color: #f0f0f0;">
+                                <span style="float:right; font-size:0.75em; opacity:0.5; border:1px solid #444; padding:1px 4px; border-radius:3px; margin-left:8px; font-family: monospace;">pr ${block.numero_ref}</span>
                                 ${block.texto}
                             </div>`;
                 }
-            }).join('');
-            
-            const bookName = JW_BOOKS_CATALOG.find(b => b.id === bookId)?.name || bookData.titulo;
+            }).join('<hr style="border:0; border-top:1px solid rgba(255,255,255,0.05); margin: 15px 0;">');
 
-            // 4. Abrir o painel (Passando a string de parágrafos completa para o título)
-            await openBookParagraphPanel(bookId, bookName, chapter, paragraph, finalHTML, true);
+            await openBookParagraphPanel(bookId, finalBookName, chapter, paragraph, finalHTML, true);
+            updateSaveStatus('saved');
         } else {
-            throw new Error("Referências não encontradas");
+            throw new Error("Parágrafos " + paragraph + " não encontrados.");
         }
-        
-        updateSaveStatus('saved');
 
     } catch (err) {
-        console.error("Erro no salto Codex:", err);
+        console.error("❌ Erro no salto Codex:", err);
         alert("Erro: " + err.message);
         updateSaveStatus('error');
     }
 };
+
 
 // Esta função gere a visualização do parágrafo original
 window.showParagraphContentMode = async function() {
@@ -54673,26 +54863,63 @@ document.getElementById('confirm-auto-insert').onclick = async () => {
     const month = document.getElementById('auto-month-select').value;
     const articleIdx = document.getElementById('auto-article-select').value;
 
-    // Verifica se a opção de títulos completos está ativa
+    // Configuração de Títulos Completos (conforme as tuas definições)
     const isFullTitleEnabled = typeof appSettings !== 'undefined' && appSettings.showFullTitles;
     const wrapClass = isFullTitleEnabled ? ' wrap-enabled' : '';
 
+    // Determinar o prefixo da publicação para a busca (Ex: W25_02)
+    // Nota: Ajusta o prefixo 'W' se usares para Despertai 'G' etc.
+    const pubPrefix = `W${year.toString().slice(-2)}_${month}`;
+
     try {
+        // 1. Carregar o JSON da revista
         const response = await fetch(`./js/publicacoes/sentinelas/${year}/${month}.json`);
         const data = await response.json();
         const lista = data.artigos ? data.artigos : [data];
         const artigo = lista[articleIdx];
-
         const serieCodex = artigo.referencia; 
+
+        // 2. BUSCA INTELIGENTE: Localizar respostas prévias (oque: "back")
+        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const qBack = query(
+            collection(db, 'pastas'), 
+            where('userId', '==', auth.currentUser.uid),
+            where('oque', '==', 'back'),
+            where('qId', '>=', pubPrefix),
+            where('qId', '<=', pubPrefix + '\uf8ff')
+        );
+
+    const backSnap = await getDocs(qBack);
+const solvedQuestions = {};
+
+backSnap.forEach(docSnap => {
+    const d = docSnap.data();
+    if (d.qId && d.conteudo) {
+        const parser = new DOMParser();
+        const docHTML = parser.parseFromString(d.conteudo, 'text/html');
+        const wrapper = docHTML.querySelector('.mini-note-wrapper');
+        const inner = docHTML.querySelector('.mini-note-content');
+        
+        // GUARDAMOS O TEXTO E A COR
+        solvedQuestions[d.qId] = {
+            html: inner ? inner.innerHTML : "<p><br></p>",
+            highlight: wrapper ? wrapper.getAttribute('data-highlight') : ""
+        };
+    }
+});
+
+        // 3. Gerar Estrutura HTML
         let fullHTML = "";
         let inRecapMode = false;
-        let insertedIds = []; // Lista para guardar os IDs das novas caixas
+        let insertedIds = []; 
 
         artigo.conteudo.forEach((bloco, idx) => {
             let isQuestion = false;
             let questionText = "";
-            let paragrafos = [];
+            let currentQNum = bloco.numero_ref;
 
+            // Identificar se é pergunta de parágrafo ou resumo (Recap)
             if (bloco.tipo === "pergunta") {
                 isQuestion = true;
                 questionText = `${bloco.numero_ref}. ${bloco.texto}`;
@@ -54705,62 +54932,58 @@ document.getElementById('confirm-auto-insert').onclick = async () => {
                 isQuestion = true;
                 const prefixo = bloco.numero_ref ? `${bloco.numero_ref}. ` : "";
                 questionText = `${prefixo}${bloco.texto}`;
+                currentQNum = bloco.numero_ref || `recap_${idx}`;
             }
 
-            if (isQuestion) {
-                const uniqueId = `auto_sent_${Date.now()}_${idx}`;
-                insertedIds.push(uniqueId); // Regista o ID
-                
-                if (bloco.numero_ref) {
-                    paragrafos = bloco.numero_ref.split(',').map(p => p.trim());
-                }
+           if (isQuestion) {
+    const uniqueId = `auto_sent_${Date.now()}_${idx}`;
+    const currentQId = `${pubPrefix}_Q${currentQNum}`;
+    
+    // BUSCA OS DADOS GUARDADOS
+    const savedData = solvedQuestions[currentQId];
+    const answerHTML = savedData ? savedData.html : "<p><br></p>";
+    const highlightColor = savedData ? savedData.highlight : "#2ecc71"; // Verde se for nova
 
-                const codexData = {
-                    codex: [{ serie: serieCodex, paragrafos: paragrafos }]
-                };
-
-                const toolbarHTML = `<div class="mini-note-toolbar" contenteditable="false"><button type="button" data-action="sharing-settings">🔐</button><div class="toolbar-btn-group"><button type="button" data-action="move-up">🔺</button><button type="button" data-action="move-down">🔻</button></div><button type="button" data-action="manage-box-links">⚡</button><button type="button" data-action="append-mini-note">🧬</button><button type="button" data-action="highlight-color">🎨</button><button type="button" data-action="manage-mini-note-topics">📋</button><button type="button" data-action="delete-mini-note">🗑️</button></div>`;
-
-                // Injeta a classe wrapClass se a opção estiver ativa
-                fullHTML += `
-                <div class="mini-note-wrapper question-mode" id="${uniqueId}" data-box-links='${JSON.stringify(codexData)}'>
-                    <textarea class="mini-note-title-input${wrapClass}">${questionText}</textarea>
-                    ${toolbarHTML}
-                    <div class="mini-note-content" contenteditable="true"><p><br></p></div>
-                </div><p><br></p>`;
-            }
+    fullHTML += `
+    <div class="mini-note-wrapper question-mode" id="${uniqueId}" 
+         data-highlight="${highlightColor}" 
+         data-box-links='${JSON.stringify(codexData)}' 
+         contenteditable="false">
+        <textarea class="mini-note-title-input${wrapClass}">${questionText}</textarea>
+        ${toolbarHTML}
+        <div class="mini-note-content" contenteditable="true" 
+             style="${savedData?.highlight ? `background-color: ${savedData.highlight}; color: #1a1a1d;` : ''}">
+            ${answerHTML}
+        </div>
+    </div><p><br></p>`;
+}
+            
         });
 
+        // 4. Inserir no Editor
         const editor = document.getElementById('note-content-editor');
         editor.focus();
         document.execCommand('insertHTML', false, fullHTML);
 
-        // --- MOTOR DE AJUSTE IMEDIATO ---
-      if (isFullTitleEnabled) {
-    setTimeout(() => {
-        insertedIds.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) {
-                const textarea = el.querySelector('.mini-note-title-input');
-                if (textarea) {
-                    // Força o ajuste 2 vezes para garantir precisão no mobile/desktop
-                    autoResizeTitle(textarea);
-                    requestAnimationFrame(() => autoResizeTitle(textarea));
+        // 5. Ajustes Finais (Resize de títulos e persistência)
+        setTimeout(() => {
+            insertedIds.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    const textarea = el.querySelector('.mini-note-title-input');
+                    if (textarea && typeof autoResizeTitle === 'function') autoResizeTitle(textarea);
                 }
-            }
-        });
-    }, 100); // Aumentado ligeiramente para 100ms para estabilidade visual
-}
+            });
+            if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes();
+            saveNote(true); // Grava a nota agora com as respostas importadas
+        }, 200);
 
         document.getElementById('auto-insert-selection-modal').style.display = 'none';
         document.getElementById('robot-modal').style.display = 'none';
-        
-        if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes();
-        saveNote(true);
 
     } catch (err) {
-        console.error(err);
-        alert("Erro ao processar o artigo.");
+        console.error("Erro na automação:", err);
+        alert("Ocorreu um erro ao gerar a estrutura do artigo.");
     }
 };
 
@@ -54902,54 +55125,39 @@ window.renderSentinelaArticleStep = async function(container, ano, mes, tipoAba)
 // FUNÇÃO MESTRA: ABRIR 4ª COLUNA (REFERÊNCIAS GERAIS)
 // ============================================================
 window.showReferencesPanel = async function(id, name, type) {
-    console.log(`🔍 [4ª COLUNA] Abrindo entidade: ${name} (${type})`);
+    await forceSaveAndClosePuzzleMode();
+    resetReferencesPanelUI(); 
 
-    // 1. Gravar o que estava a ser feito no Puzzle anterior (Segurança)
-    if (typeof forceSaveAndClosePuzzleMode === 'function') {
-        await forceSaveAndClosePuzzleMode();
-    }
-
-    // 2. Reset visual da interface da 4ª coluna
-    resetReferencesPanelUI();
-
-    // 3. Configurar a Entidade Ativa globalmente
-    // Se o ID for null (como em versículos novos), usamos o nome como referência
-    activeReferenceEntity = { 
-        id: id || name, 
-        type: type, 
-        name: name 
-    };
-
-    // 4. Exibir o Painel Lateral
+    activeReferenceEntity = { id: id || name, type: type, name: name };
     notebookContainer.classList.add('references-panel-visible');
     
-    // --- LÓGICA DE INTERFACE ---
     const titleEl = document.getElementById('references-panel-title');
-    const editBtn = document.getElementById('references-edit-btn');
-    const wolBtn = document.getElementById('references-wol-btn');
-    const anchorBtn = document.getElementById('references-anchor-btn');
-
     if (titleEl) titleEl.textContent = `Referências: ${name}`;
-    
-    // Mostrar botões relevantes para entidades
-    if (editBtn) editBtn.style.display = 'block';
-    if (wolBtn) wolBtn.style.display = (type === 'textobiblico') ? 'none' : 'block';
-    if (anchorBtn) anchorBtn.style.display = 'block';
 
-    // 5. Carregar Dados das Abas
-    // Aba 🧩: Carrega o Quadro
-    loadPuzzleData(activeReferenceEntity.id, type);
-    
-    // Aba ⚡: Carrega os Links/Codex
-    renderPanelLinks();
+    // --- FILTRO DE BOTÕES POR TIPO ---
+    const editBtn = document.getElementById('references-edit-btn');
+    const anchorBtn = document.getElementById('references-anchor-btn');
+    const bookmarkBtn = document.getElementById('references-bookmark-btn');
+    const wolBtn = document.getElementById('references-wol-btn');
 
-    // Aba ❝: Carrega as Citações (Busca automática no texto das notas)
-    // Usamos a função renderUniversalTextSearch que você já tem no código
-    if (typeof renderUniversalTextSearch === 'function') {
-        renderUniversalTextSearch(name);
+    // A. Personagens, Locais, Datas, Cosmos e Tópicos
+    if (['personagem', 'local', 'data', 'cosmos', 'subcosmos', 'topico'].includes(type)) {
+        if (editBtn) editBtn.style.display = 'block'; // ✏️ Ativo
+        if (anchorBtn) anchorBtn.style.display = 'block'; // ⚓ Ativo
+    }
+    
+    // B. Textos Bíblicos (SEM Lápis)
+    else if (type === 'textobiblico') {
+        if (bookmarkBtn) bookmarkBtn.style.display = 'block'; // 🔖 Ativo
+        if (wolBtn) wolBtn.style.display = 'block';           // 📖 Ativo
+        // O editBtn (✏️) permanece com display: none (herdado do reset)
     }
 
-    // 6. Ajuste Mobile (Scroll suave para o painel que sobe)
+    // Carregar dados
+    loadPuzzleData(activeReferenceEntity.id, type);
+    renderPanelLinks();
+    renderUniversalTextSearch(name);
+
     if (window.innerWidth <= 768) {
         const refPanel = document.getElementById('references-panel');
         if(refPanel) refPanel.style.height = "60vh";
