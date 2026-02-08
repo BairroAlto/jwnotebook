@@ -11619,6 +11619,22 @@ html, body {
     height: 100%;
 }
 
+/* 1. GARANTIR QUE NO EDITOR AS TOOLBARS ESTEJAM SEMPRE VISÍVEIS */
+#note-content-editor .mini-note-toolbar {
+    display: flex !important; /* Força a exibição no editor normal e flash */
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+
+/* 2. ESCONDER APENAS NO ARQUIVO (MODO VISUALIZAÇÃO) */
+.post-view-content .mini-note-toolbar {
+    display: none !important;
+}
+
+/* 3. REAPARECER NO ARQUIVO APENAS QUANDO CLICAR EM EDITAR */
+.post-editor-content .mini-note-toolbar {
+    display: flex !important;
+}
 
 </style>
 
@@ -15749,7 +15765,13 @@ function fetchAndDisplayItems(parentId, listElement, selectedId = null) {
         querySnapshot.forEach((doc) => {
             const item = { id: doc.id, ...doc.data() };
             
-            if (currentViewMode === 'local' && item.oque === 'flash') return;
+           if (currentViewMode === 'local') {
+        // 1. Oculta notas marcadas para a aba Flash
+        if (item.oque === 'flash') return;
+        
+        // 2. Oculta notas marcadas para a Bag (backup/antigas)
+        if (item.oque === 'back') return;
+    }
 
             const li = document.createElement('li');
             li.className = 'list-item';
@@ -16908,6 +16930,7 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
                 if (document.activeElement !== noteTitleInput) noteTitleInput.value = serverTitle;
                 if (document.activeElement !== noteContentEditor || noteContentEditor.innerHTML === "") {
                      noteContentEditor.innerHTML = serverContent;
+                      window.migrateLegacyBoxes(noteContentEditor);
                 }
                 
                 const savedZoom = data.zoomLevel || '100%'; 
@@ -16957,8 +16980,9 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
                     }
                 });
 
-                const tabsBar = document.querySelector('.middle-bottom-tabs');
-                if (tabsBar) tabsBar.style.display = 'flex';
+                
+const tabsBar = document.querySelector('.middle-bottom-tabs');
+    if (tabsBar) tabsBar.style.display = 'flex';
                 if (typeof updateMiddlePanelViews === 'function') updateMiddlePanelViews(); 
                 
                 if (searchTerm && typeof scrollToAndHighlightText === 'function') {
@@ -24199,7 +24223,7 @@ function setLeftPanelTitle(text, isBackAction = false) {
     // Verifica se estamos dentro de uma Superpasta
     const isSuperContext = (typeof SUPERFOLDER_ID !== 'undefined' && SUPERFOLDER_ID);
 
-    // REGRA 1: MODO SUPERPASTA
+    // REGRA 1: MODO SUPERPASTA (Botão de saída para a raiz)
     if (isSuperContext) {
         titleEl.className = ''; 
         titleEl.style.display = 'block';
@@ -24224,8 +24248,20 @@ function setLeftPanelTitle(text, isBackAction = false) {
         return;
     }
 
-    // REGRA 2: ABA NOTE (SELETOR SEMPRE VISÍVEL)
+    // REGRA 2: ABA NOTE (SELETOR PRINCIPAL)
     if (currentTab === 'note') {
+        
+        // --- CASO ESPECIAL: VISUALIZAÇÃO DA BAG ---
+        if (text === '🧳 Bag' && isBackAction) {
+             titleEl.className = ''; 
+             titleEl.style.display = 'block';
+             titleEl.innerHTML = `<h2 style="font-size:18px; cursor:pointer;"><span style="font-size: 0.8em; opacity: 0.7; margin-right: 8px;">🔙</span> ${text}</h2>`;
+             // Ao clicar no título da Bag, volta para a lista geral de Pins
+             titleEl.onclick = () => window.switchFolderView('pins');
+             return;
+        }
+
+        // --- MODO SELETOR NORMAL (Local | Share | Pins | Flash) ---
         titleEl.className = 'folder-mode-container';
         titleEl.style.display = 'flex';
         titleEl.onclick = null;
@@ -24235,7 +24271,6 @@ function setLeftPanelTitle(text, isBackAction = false) {
         const pinsActive = currentViewMode === 'pins' ? 'active mode-pins' : '';
         const flashActive = currentViewMode === 'flash' ? 'active mode-flash' : '';
 
-        // >>> ALTERAÇÃO AQUI: "Partilha" mudou para "Share" <<<
         titleEl.innerHTML = `
             <span class="folder-mode-item ${localActive}" onclick="window.switchFolderView('local')">Local</span>
             <span class="folder-mode-separator">|</span>
@@ -24246,12 +24281,13 @@ function setLeftPanelTitle(text, isBackAction = false) {
             <span class="folder-mode-item ${flashActive}" onclick="window.switchFolderView('flash')">Flash</span>
         `;
 
-        // Atualização da notificação
+        // Atualização da notificação da aba Share
         setTimeout(() => {
             if (typeof updateShareTabDot === 'function') updateShareTabDot();
         }, 50);
     }
-    // REGRA 3: OUTRAS ABAS
+    
+    // REGRA 3: OUTRAS ABAS (Lists, Book...) COM AÇÃO DE VOLTAR
     else if (isBackAction) {
         titleEl.className = ''; 
         titleEl.style.display = 'block';
@@ -24266,6 +24302,8 @@ function setLeftPanelTitle(text, isBackAction = false) {
             });
         };
     } 
+    
+    // REGRA 4: TÍTULO ESTÁTICO (RAIZ DE ABAS SECUNDÁRIAS)
     else {
         titleEl.className = '';
         titleEl.style.display = 'block';
@@ -35723,10 +35761,15 @@ function loadPinsView() {
     unsubscribeShared1 = onSnapshot(q, (snapshot) => {
         const fragment = document.createDocumentFragment();
         
-        if (snapshot.empty) {
-            listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center; font-size:0.9em;">Ainda não tens Pins.</li>';
-            return;
-        }
+        // --- NOVO: INSERIR PASTA BAG FIXA NO TOPO ---
+      const bagLi = document.createElement('li');
+bagLi.className = 'list-item';
+bagLi.style.borderLeft = "4px solid #a569bd"; // LILÁS
+bagLi.style.fontWeight = "bold";
+bagLi.innerHTML = `<span>🧳 Bag</span>`; 
+bagLi.onclick = () => window.loadBagView(1); // Inicia na página 1
+fragment.appendChild(bagLi);
+        // --------------------------------------------
 
         snapshot.forEach(doc => {
             const item = { id: doc.id, ...doc.data() };
@@ -35734,9 +35777,9 @@ function loadPinsView() {
             li.className = 'list-item';
             
             li.setAttribute('data-id', item.id);
-             li.setAttribute('data-userid', item.userId); // <--- CRÍTICO PARA SABER QUEM É O DONO
-        li.setAttribute('data-type', item.tipo);     // <--- IMPORTANTE PARA SABER QUE É 'partilhado'
-        li.setAttribute('data-name', item.nome);
+            li.setAttribute('data-userid', item.userId);
+            li.setAttribute('data-type', item.tipo);
+            li.setAttribute('data-name', item.nome);
             li.setAttribute('data-pinned', 'true'); 
             li.style.borderLeft = "4px solid #ff69b4";
 
@@ -35744,11 +35787,6 @@ function loadPinsView() {
 
             li.onclick = (e) => {
                 if (e.target.closest('.item-menu-btn')) return;
-                
-                middlePanelList.innerHTML = `
-                    <div class="panel-loader">
-                        <div class="spinner"></div>
-                    </div>`;
                 
                 navigateWithUnsavedCheck(async () => {
                     currentViewMode = 'local';
@@ -35768,7 +35806,6 @@ function loadPinsView() {
             fragment.appendChild(li);
         });
 
-        // Renderização Final
         listElement.innerHTML = '';
         listElement.appendChild(fragment);
     });
@@ -47064,15 +47101,14 @@ function loadFlashItems() {
 
 function loadFlashListLeftPanel(isLoadMore = false) {
     // 1. Se não for um "Carregar Mais", resetamos o limite para 50
-    if (!isLoadMore) {
-        flashLimit = 50;
-        // Limpeza de segurança para não duplicar ouvintes
+   if (!isLoadMore) {
         if (unsubscribeLeftPanel) { 
+            console.log("Desligando listener anterior para evitar duplicados");
             unsubscribeLeftPanel(); 
             unsubscribeLeftPanel = null; 
         }
     }
-
+    
     const listElement = document.getElementById('left-panel-list');
     if (!auth.currentUser || !listElement) return;
 
@@ -47097,6 +47133,7 @@ function loadFlashListLeftPanel(isLoadMore = false) {
 
     // 4. Ouvinte Real-time
     unsubscribeLeftPanel = onSnapshot(q, (querySnapshot) => {
+         if (querySnapshot.metadata.hasPendingWrites) return; 
         const fragment = document.createDocumentFragment();
         
         if (querySnapshot.empty) {
@@ -55163,6 +55200,250 @@ window.showReferencesPanel = async function(id, name, type) {
         if(refPanel) refPanel.style.height = "60vh";
     }
 };
+
+window.migrateLegacyBoxes = function(editor) {
+    if (!editor) return;
+
+    // Seleciona todas as caixas (Mini-notas e Questões)
+    const wrappers = editor.querySelectorAll('.mini-note-wrapper');
+    
+    // Template da toolbar moderna que você usa no note.html
+    const modernToolbarHTML = `
+        <div class="mini-note-toolbar" contenteditable="false">
+            <button type="button" data-action="sharing-settings">🔐</button>
+            <div class="toolbar-btn-group">
+                <button type="button" data-action="move-up">🔺</button>
+                <button type="button" data-action="move-down">🔻</button>
+            </div>
+            <button type="button" data-action="manage-box-links">⚡</button>
+            <button type="button" data-action="append-mini-note">🧬</button>
+            <button type="button" data-action="highlight-color">🎨</button>
+            <button type="button" data-action="manage-mini-note-topics">📋</button>
+            <button type="button" data-action="delete-mini-note">🗑️</button>
+        </div>`;
+
+    wrappers.forEach(wrapper => {
+        // 1. Verifica se a toolbar nesta caixa é antiga ou incompleta
+        // Se não encontrar o botão de delete com data-action, consideramos que precisa de migração
+        const deleteBtn = wrapper.querySelector('button[data-action="delete-mini-note"]');
+        
+        if (!deleteBtn) {
+            console.log("🛠️ Migrando caixa antiga para o padrão moderno:", wrapper.id);
+            
+            // Localiza a toolbar antiga (se existir) e remove
+            const oldToolbar = wrapper.querySelector('.mini-note-toolbar');
+            if (oldToolbar) oldToolbar.remove();
+
+            // Localiza o título (textarea) e o conteúdo
+            const titleInput = wrapper.querySelector('.mini-note-title-input');
+            const contentDiv = wrapper.querySelector('.mini-note-content');
+
+            // Reconstrói a ordem correta dos elementos internos
+            // (Título -> Toolbar -> Conteúdo)
+            if (titleInput && contentDiv) {
+                // Injeta a toolbar moderna entre o título e o conteúdo
+                titleInput.insertAdjacentHTML('afterend', modernToolbarHTML);
+            } else if (contentDiv) {
+                // Caso seja uma caixa "Free Mode" (sem título), a toolbar fica no topo
+                contentDiv.insertAdjacentHTML('beforebegin', modernToolbarHTML);
+            }
+
+            // Garante que o wrapper não seja editável, mas o conteúdo sim
+            wrapper.setAttribute('contenteditable', 'false');
+            if (contentDiv) contentDiv.setAttribute('contenteditable', 'true');
+        }
+    });
+};
+
+window.loadBagView = async function() {
+    const listElement = document.getElementById('left-panel-list');
+    const myUid = auth.currentUser.uid;
+    
+    // 1. Atualizar o Título para mostrar o botão de voltar (🔙)
+    setLeftPanelTitle('🧳 Bag', true);
+    
+    // Sobrescrever o comportamento do clique no título (que o setLeftPanelTitle cria)
+    const titleEl = document.getElementById('left-panel-title');
+    titleEl.onclick = () => window.switchFolderView('pins');
+
+    listElement.innerHTML = `
+        <div class="panel-loader">
+            <div class="spinner"></div>
+            <span>A abrir Bag...</span>
+        </div>`;
+
+    try {
+        const { collection, query, where, getDocs, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // Query para buscar notas do user com oque == 'back'
+        const q = query(
+            collection(db, 'pastas'),
+            where('userId', '==', myUid),
+            where('oque', '==', 'back'),
+            where('estado', '==', 'ativa'),
+            orderBy('ultimaedicao', 'desc')
+        );
+
+        const snapshot = await getDocs(q);
+        listElement.innerHTML = '';
+
+        if (snapshot.empty) {
+            listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center; font-style:italic;">A Bag está vazia.</li>';
+            return;
+        }
+
+        snapshot.forEach(docSnap => {
+            const item = { id: docSnap.id, ...docSnap.data() };
+            const li = document.createElement('li');
+            li.className = 'list-item';
+            li.style.borderLeft = "4px solid #f39c12"; // Mantém a cor da Bag nos itens
+            
+            // Ícone baseado no tipo
+            let icon = item.tipo === 'jornal' ? '📰' : '📄';
+            
+            li.innerHTML = `<span>${icon} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+
+            li.onclick = (e) => {
+                if (e.target.closest('.item-menu-btn')) return;
+                
+                navigateWithUnsavedCheck(() => {
+                    displayNote(item.id, li);
+                    if (window.innerWidth <= 768) {
+                        document.body.classList.remove('mobile-view-middle');
+                        document.body.classList.add('mobile-view-editor');
+                    }
+                });
+            };
+
+            listElement.appendChild(li);
+        });
+
+    } catch (e) {
+        console.error("Erro ao carregar Bag:", e);
+        listElement.innerHTML = '<li style="color:red; padding:10px;">Erro ao carregar.</li>';
+    }
+};
+
+window.loadBagView = async function(page = 1) {
+    const listElement = document.getElementById('left-panel-list');
+    const myUid = auth.currentUser.uid;
+    const itemsPerPage = 20;
+    
+    setLeftPanelTitle('🧳 Bag', true);
+    const titleEl = document.getElementById('left-panel-title');
+    titleEl.onclick = () => window.switchFolderView('pins');
+
+    listElement.innerHTML = `
+        <div class="panel-loader">
+            <div class="spinner"></div>
+            <span>A carregar página ${page}...</span>
+        </div>`;
+
+    try {
+        const { collection, query, where, getDocs, orderBy, limit, startAfter } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // 1. Obter total de itens para calcular as páginas
+        const countQuery = query(
+            collection(db, 'pastas'),
+            where('userId', '==', myUid),
+            where('oque', '==', 'back'),
+            where('estado', '==', 'ativa')
+        );
+        const totalSnap = await getDocs(countQuery);
+        const totalItems = totalSnap.size;
+        const totalPages = Math.ceil(totalItems / itemsPerPage);
+
+        // 2. Buscar itens da página atual
+        // Nota: Para paginação numérica real (1..2..3) no Firestore sem "offsets" caros,
+        // o mais simples é buscar todos os IDs e fatiar, ou usar o cursor do doc anterior.
+        // Como o limite é baixo (20), vamos buscar os docs necessários:
+        let q = query(
+            collection(db, 'pastas'),
+            where('userId', '==', myUid),
+            where('oque', '==', 'back'),
+            where('estado', '==', 'ativa'),
+            orderBy('ultimaedicao', 'desc')
+        );
+
+        const snapshot = await getDocs(q);
+        const allDocs = snapshot.docs;
+        
+        // Fatiar o array para a página atual
+        const startIdx = (page - 1) * itemsPerPage;
+        const pageDocs = allDocs.slice(startIdx, startIdx + itemsPerPage);
+
+        listElement.innerHTML = '';
+
+        if (pageDocs.length === 0) {
+            listElement.innerHTML = '<li style="padding:20px; color:#888; text-align:center; font-style:italic;">A Bag está vazia.</li>';
+            return;
+        }
+
+        // Renderizar itens
+        pageDocs.forEach(docSnap => {
+            const item = { id: docSnap.id, ...docSnap.data() };
+            const li = document.createElement('li');
+            li.className = 'list-item';
+            li.style.borderLeft = "4px solid #a569bd"; // LILÁS
+            
+            let icon = item.tipo === 'jornal' ? '📰' : '📄';
+            li.innerHTML = `<span>${icon} ${item.nome}</span><button class="item-menu-btn">…</button>`;
+            
+            li.onclick = (e) => {
+                if (e.target.closest('.item-menu-btn')) return;
+                navigateWithUnsavedCheck(() => displayNote(item.id, li));
+            };
+            listElement.appendChild(li);
+        });
+
+        // 3. Renderizar Painel de Paginação
+        if (totalPages > 1) {
+            renderBagPagination(listElement, page, totalPages);
+        }
+
+    } catch (e) {
+        console.error("Erro ao carregar Bag:", e);
+        listElement.innerHTML = '<li style="color:red; padding:10px;">Erro ao carregar.</li>';
+    }
+};
+
+function renderBagPagination(container, currentPage, totalPages) {
+    const nav = document.createElement('div');
+    nav.style.cssText = `
+        display: flex; 
+        flex-wrap: wrap; 
+        gap: 5px; 
+        padding: 15px 10px; 
+        justify-content: center; 
+        border-top: 1px solid var(--border-color);
+        margin-top: 10px;
+    `;
+
+    for (let i = 1; i <= totalPages; i++) {
+        const btn = document.createElement('button');
+        btn.textContent = i;
+        
+        // Estilo Lilás para o botão ativo
+        const isActive = i === currentPage;
+        btn.style.cssText = `
+            border: 1px solid ${isActive ? '#a569bd' : 'var(--border-color)'};
+            background: ${isActive ? '#a569bd' : 'transparent'};
+            color: ${isActive ? 'white' : 'var(--text-muted-color)'};
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            min-width: 28px;
+        `;
+
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            window.loadBagView(i);
+        };
+        nav.appendChild(btn);
+    }
+    container.appendChild(nav);
+}
 
 
 // Aplicar com prioridade máxima (useCapture: true)
