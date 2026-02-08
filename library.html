@@ -1123,6 +1123,8 @@ let currentChapterHighlights = {};
 let currentSelectionText = "";
 let currentSelectedParagraphs = []; 
 let selectedColorHex = '#3498db';
+let userCustomHighlights = {};
+
 
 const container = document.getElementById('content-container');
 
@@ -1146,6 +1148,18 @@ const MAGAZINE_FOLDERS = {
     'g': 'despertai',
     'wp': 'sentinelas_publico' // Exemplo caso cries esta pasta
 };
+// --- CORES PADRÃO PARA O SELETOR ---
+const DEFAULT_HIGHLIGHTS = [
+    { code: "#B12823", name: "Vermelho Tijolo" },
+    { code: "#AC4A0B", name: "Laranja Outono" },
+    { code: "#D8B200", name: "Amarelo Dourado" },
+    { code: "#436C21", name: "Verde Lima" },
+    { code: "#006042", name: "Verde Esmeralda" },
+    { code: "#1F7AC4", name: "Azul Oceano" },
+    { code: "#B53E69", name: "Rosa Suave" },
+    { code: "#8438D7", name: "Roxo Ametista" },
+    { code: "#A08F8E", name: "Cinza Quente" }
+];
 
 
 // --- 1. INICIALIZAÇÃO E AUTENTICAÇÃO ---
@@ -1195,14 +1209,20 @@ async function loadPublication(sectionId, pubId) {
 
 // --- 3. RENDERIZAÇÃO DA LEITURA ---
 function renderReading(chapterIdx, sectionId, pubId) {
-    hideSelectionToolbar(); // <--- Limpa a barra
+    // 1. Limpar estados de seleção e fechar painéis de navegação
+    hideSelectionToolbar();
+    const navPanel = document.getElementById('chapter-nav-panel');
+    if (navPanel) { navPanel.style.display = 'none'; navPanel.classList.add('hidden'); }
+
     const cap = currentBookData.capitulos[chapterIdx];
     if (!cap) return;
     
+    // 2. Definir Estado Global Atual
     currentSectionId = sectionId;
+    currentPubId = pubId; 
     currentChapter = cap.capitulo;
 
-    // Cabeçalho da página (Upper Case)
+    // 3. Gerar HTML do Cabeçalho de Navegação
     const getNavHTML = () => `
         <button class="nav-arrow" onclick="window.changeChapter(-1)">❮</button>
         <span onclick="window.toggleChapterNav(event)" style="cursor:pointer; border-bottom: 1px dotted #666;">
@@ -1211,39 +1231,36 @@ function renderReading(chapterIdx, sectionId, pubId) {
         <button class="nav-arrow" onclick="window.changeChapter(1)">❯</button>
     `;
 
+    // 4. Construir o corpo do texto
     let html = `
         <div class="reader-content" id="reader-area">
             <div class="pub-body-title">${currentBookData.titulo}</div>
             <div class="reader-chapter-title">${cap.titulo}</div>
     `;
 
-    // Processar Conteúdo conforme os "tipo" do teu JSON
     cap.conteudo.forEach(block => {
         const pNum = block.numero_ref;
         const blockId = pNum ? `id="p-${pNum}"` : '';
         const dataAttr = pNum ? `data-pnum="${pNum}"` : '';
-
-        // Detetar Cânticos (pelo texto ou tipo)
         const isCantico = block.texto && block.texto.startsWith("CÂNTICO");
 
         if (block.tipo === 'subtema') {
             html += `<div class="block-subtema">${block.texto}</div>`;
         } 
-       else if (block.tipo === 'pergunta') {
-    const safeText = encodeURIComponent(block.texto);
-    html += `
-        <div class="block-pergunta" style="cursor:pointer;" 
-             onclick="window.openQuestionEditor('${block.numero_ref}', decodeURIComponent('${safeText}'))">
-            ${block.texto}
-        </div>`;
-}
+        else if (block.tipo === 'pergunta') {
+            const safeText = encodeURIComponent(block.texto);
+            html += `
+                <div class="block-pergunta" style="cursor:pointer;" 
+                     onclick="window.openQuestionEditor('${block.numero_ref}', decodeURIComponent('${safeText}'))">
+                    ${block.texto}
+                </div>`;
+        }
         else if (block.tipo === 'rodape' || isCantico) {
-            // Estilo especial para notas de rodapé e cânticos
             const style = isCantico ? 'color:#e67e22; font-weight:bold; border:none; text-align:center;' : '';
             html += `<div class="block-rodape" style="${style}">${block.texto}</div>`;
         }
         else {
-            // Parágrafo Normal
+            // Parágrafo Normal com o número clicável para abrir o painel lateral
             html += `
                 <div ${blockId} ${dataAttr} class="block-paragrafo">
                     ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
@@ -1253,13 +1270,19 @@ function renderReading(chapterIdx, sectionId, pubId) {
     });
 
     html += `</div>`;
+    
+    // 5. Injetar no DOM
     container.innerHTML = html;
     container.scrollTop = 0;
     
+    // 6. Atualizar título no Header
     document.getElementById('page-title').innerHTML = getNavHTML();
     
-    // Pinta números com notas e aplica destaques
-    loadLibraryDataForChapter(pubId, currentChapter);
+    // 7. CARREGAMENTO DOS DADOS (Com atraso para garantir renderização)
+    // Isso garante que o navegador já criou os elementos ID="p-1" etc antes de pintá-los
+    setTimeout(() => {
+        loadLibraryDataForChapter(pubId, currentChapter);
+    }, 60);
 }
 
 // --- 4. NAVEGAÇÃO DE CAPÍTULOS ---
@@ -1414,48 +1437,32 @@ window.openFlashModal = () => {
     if (currentSelectedParagraphs.length > 0) codexStr += `:${currentSelectedParagraphs.join('-')}`;
     document.getElementById('flash-codex-info').textContent = codexStr;
 
-    renderColorPicker();
+    // DIFERENÇA 2: Aqui as cores devem aparecer (para o picotado)
+    const picker = document.getElementById('color-picker');
+    if (picker) {
+        picker.style.display = 'flex';
+        renderColorPicker('color-picker'); 
+    }
 };
 
 window.closeFlashModal = () => {
     document.getElementById('flash-note-modal').style.display = 'none';
 };
 
-window.renderColorPicker = () => {
-    const container = document.getElementById('inline-color-picker');
+window.renderColorPicker = (containerId) => {
+    const container = document.getElementById(containerId);
     if (!container) return;
-
     container.innerHTML = '';
     
-    // Usamos as cores padrão do Note.html
     DEFAULT_HIGHLIGHTS.forEach(c => {
         const btn = document.createElement('div');
         btn.className = 'color-btn';
         btn.style.backgroundColor = c.code;
-        btn.title = c.name;
-        
         if (window.selectedColorHex === c.code) btn.classList.add('selected');
-        
         btn.onclick = () => {
             container.querySelectorAll('.color-btn').forEach(b => b.classList.remove('selected'));
             btn.classList.add('selected');
             window.selectedColorHex = c.code;
-
-            // --- APLICAÇÃO VISUAL IMEDIATA NO EDITOR ---
-            const editor = document.getElementById('flash-editor');
-            if (editor) {
-                editor.style.borderLeft = `4px solid ${c.code}`;
-                // Opcional: dar um fundo muito leve da cor selecionada
-                editor.style.backgroundColor = `${c.code}11`; 
-            }
-            
-            // Atualiza a cor do ícone 🎨 para dar feedback
-            const paintBtn = document.getElementById('btn-q-color');
-            if (paintBtn) paintBtn.style.color = c.code;
-            
-            // Fecha o seletor após escolher
-            const pickerArea = document.getElementById('q-color-picker-area');
-            if (pickerArea) pickerArea.style.display = 'none';
         };
         container.appendChild(btn);
     });
@@ -1474,8 +1481,9 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
         const { collection, addDoc, doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
         const qId = window.activeQuestionId;
-        const content = editor.innerHTML;
-        const color = window.selectedColorHex || '#2ecc71'; // Cor escolhida ou verde padrão
+        // LIMPEZA: Remove espaços em branco no início e fim do HTML
+        const content = editor.innerHTML.trim(); 
+        const color = window.selectedColorHex || '#2ecc71';
         
         // --- MONTAGEM DO HTML COM O ATRIBUTO DE DESTAQUE ---
         const boxHtml = `
@@ -1526,27 +1534,23 @@ async function loadLibraryDataForChapter(pubId, chapter) {
     const capituloId = `${pubId}_${chapter}`;
     const prefix = `${pubId} ${chapter}:`;
     
-    // Reset do cache local para este capítulo
+    // Reset local
     currentChapterHighlights = {}; 
 
     try {
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        // 1. BUSCAR DESTAQUES (Cores sólidas)
-        const qCores = query(collection(db, 'trechosbiblicos'), 
-            where('userId', '==', auth.currentUser.uid),
-            where('capituloId', '==', capituloId)
-        );
-        const snapCores = await getDocs(qCores);
-        
-        // 2. BUSCAR NOTAS FLASH (Picotado)
-        const qNotas = query(collection(db, 'livros'), 
-            where('userId', '==', auth.currentUser.uid),
-            where('nome', '>=', prefix), where('nome', '<=', prefix + '\uf8ff')
-        );
-        const snapNotas = await getDocs(qNotas);
+        // 1. Buscar Destaques (Cores sólidas) e Notas (Picotados) em paralelo para ser mais rápido
+        const [snapCores, snapNotas] = await Promise.all([
+            getDocs(query(collection(db, 'trechosbiblicos'), 
+                where('userId', '==', auth.currentUser.uid),
+                where('capituloId', '==', capituloId))),
+            getDocs(query(collection(db, 'livros'), 
+                where('userId', '==', auth.currentUser.uid),
+                where('nome', '>=', prefix), where('nome', '<=', prefix + '\uf8ff')))
+        ]);
 
-        // Processar os destaques de cores vindos do Firebase
+        // Processar cores sólidas
         snapCores.forEach(docSnap => {
             const data = docSnap.data();
             data.textosbiblicos.forEach(ref => {
@@ -1561,18 +1565,19 @@ async function loadLibraryDataForChapter(pubId, chapter) {
             });
         });
 
-        // Processar as notas (pintar os números de parágrafo de azul e adicionar ao mapa de pintura)
+        // Processar Notas (Flash Notes)
         snapNotas.forEach(docSnap => {
             const data = docSnap.data();
             const pNum = data.paragrafo;
-            const numEl = document.querySelector(`.block-paragrafo[data-pnum="${pNum}"] .ref-num`);
+            const pId = `p-${pNum}`;
             
-            if (numEl && data.puzzleBoard && data.puzzleBoard.length > 0) {
-                numEl.classList.add('has-data');
-                
-                const pId = `p-${pNum}`;
-                if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
-                
+            if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
+            
+            // Se tem puzzleBoard, este parágrafo tem dados (Número fica Azul)
+            if (data.puzzleBoard && data.puzzleBoard.length > 0) {
+                // Marcamos que este parágrafo específico tem dados para o número ficar azul
+                currentChapterHighlights[pId].hasNoteData = true;
+
                 data.puzzleBoard.forEach(item => {
                     if (item.highlightRef) {
                         currentChapterHighlights[pId].push({
@@ -1585,11 +1590,11 @@ async function loadLibraryDataForChapter(pubId, chapter) {
             }
         });
 
-        // >>> O SEGREDO ESTÁ AQUI: Chamar a pintura no final do carregamento <<<
+        // CHAVE DO SUCESSO: Chama a pintura visual
         window.refreshVisualHighlights();
 
     } catch (e) { 
-        console.error("Erro ao carregar dados do capítulo:", e); 
+        console.error("Erro ao carregar dados:", e); 
     }
 }
 
@@ -1726,30 +1731,31 @@ async function showArticles(sigla, year, mesNum, mesNome) {
     container.innerHTML = '<div class="global-spinner" style="margin:50px auto;"></div>';
 
     try {
-        // Busca a pasta correta (sentinelas ou despertai)
+        // 1. Determina a pasta correta no servidor
         const subFolder = MAGAZINE_FOLDERS[sigla] || 'sentinelas';
         const path = `./js/publicacoes/${subFolder}/${year}/${mesNum}.json`;
         
-        console.log("A carregar revista de:", path);
         const response = await fetch(path);
+        if (!response.ok) throw new Error("Ficheiro não encontrado");
         const data = await response.json();
         
-        // No teu JSON, o array principal chama-se "artigos"
         const artigos = data.artigos;
 
         container.innerHTML = `<h2 class="section-title">Artigos de ${mesNome}</h2><div class="chapter-list"></div>`;
         const list = container.querySelector('.chapter-list');
 
-        // Guardamos os dados para o leitor e menu de capítulos
+        // 2. Prepara os dados globais da publicação
         currentBookData = {
             titulo: `${SIGLAS_PUBLICACOES[sigla]} - ${mesNome}/${year}`,
             capitulos: artigos.map(a => ({
-                // Pega a referência final (ex: "pp. 2-7")
-                capitulo: a.referencia.split(' ').pop(),
+                capitulo: a.referencia.split(' ').pop(), // Ex: "pp. 2-7"
                 titulo: a.titulo,
                 conteudo: a.conteudo
             }))
         };
+
+        // 3. Gera o ID Complexo para o Firestore (Ex: W24_05)
+        const complexId = sigla.toUpperCase() + year.toString().slice(-2) + "_" + mesNum;
 
         artigos.forEach((art, idx) => {
             const item = document.createElement('div');
@@ -1762,9 +1768,9 @@ async function showArticles(sigla, year, mesNum, mesNome) {
                 <span>➔</span>
             `;
             item.onclick = () => {
-                // ID do Codex amigável (Ex: W25_12)
-                currentPubId = sigla.toUpperCase() + year.toString().slice(-2) + "_" + mesNum;
-                renderReading(idx, 'publicacoes', sigla);
+                // Atualizamos o ID global e abrimos o leitor
+                currentPubId = complexId;
+                renderReading(idx, 'publicacoes', complexId);
             };
             list.appendChild(item);
         });
@@ -1847,20 +1853,20 @@ window.prepareNoteFromPanel = (pNum) => {
     const content = document.getElementById('side-content');
     const sideTitle = document.getElementById('side-title');
 
-    // Esconde as abas para focar na escrita
     tabs.style.display = 'none';
     sideTitle.textContent = "Nova Nota";
 
-    // Define o contexto global para a gravação saber que parágrafo é
     currentSelectedParagraphs = [pNum];
     currentSelectionText = ""; 
 
-    // Injeta o formulário de criação (Aquele que grava oque='back')
     content.innerHTML = window.getFlashNoteFormHTML(pNum);
 
-    // Inicializa o seletor de cores
-    renderColorPicker(); 
+    // DIFERENÇA 1: Se pNum existe (clique no número), NÃO renderiza picker de cores
+    const picker = document.getElementById('inline-color-picker');
+    if (picker) picker.style.display = 'none';
 };
+
+
 
 window.getFlashNoteFormHTML = (pNum) => {
     const codexStr = `${currentPubId} ${currentChapter}:${pNum}`;
@@ -2260,45 +2266,44 @@ async function removeDirectHighlight() {
 // Vamos modificar o refreshVisualHighlights para suportar este estilo sólido
 const originalRefresh = window.refreshVisualHighlights;
 window.refreshVisualHighlights = () => {
-    // 1. Limpeza preventiva: remove destaques antigos para evitar sobreposição
-    document.querySelectorAll('.highlight-picotado, .direct-highlight').forEach(span => {
-        const parent = span.parentNode;
-        if (parent) {
-            parent.replaceChild(document.createTextNode(span.textContent), span);
-            parent.normalize();
-        }
-    });
+    const reader = document.getElementById('reader-area');
+    if (!reader) return;
 
-    // 2. Percorrer o mapa de destaques carregado do Firebase
+    // 1. Limpar estados anteriores dos números
+    document.querySelectorAll('.ref-num').forEach(num => num.classList.remove('has-data'));
+
+    // 2. Percorrer o mapa de destaques
     for (const [pId, highlights] of Object.entries(currentChapterHighlights)) {
         const paragraphEl = document.getElementById(pId);
         if (!paragraphEl) continue;
 
-        // Remover duplicados de texto para o mesmo parágrafo
+        // A. Iluminar o Número do Parágrafo (Azul) se houver notas
+        if (highlights.hasNoteData) {
+            const numEl = paragraphEl.querySelector('.ref-num');
+            if (numEl) numEl.classList.add('has-data');
+        }
+
+        // B. Aplicar Destaques no Texto (Sólido ou Picotado)
+        // Usamos um Set para não repetir o mesmo texto no mesmo parágrafo
         const uniqueHighlights = highlights.filter((v, i, a) => a.findIndex(t => t.texto === v.texto) === i);
 
         uniqueHighlights.forEach(h => {
-            const textToFind = h.texto;
-            if (!textToFind) return;
+            if (!h.texto) return;
 
             const innerHTML = paragraphEl.innerHTML;
+            const escapedText = h.texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             
-            // Regex para encontrar o texto exato apenas fora de tags HTML
-            const escapedText = textToFind.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            // Regex melhorada: evita substituir texto dentro de tags HTML já criadas
             const regex = new RegExp(`(${escapedText})(?![^<]*>|[^<>]*<\/span>)`, 'gi');
 
             if (regex.test(innerHTML)) {
                 let className = h.temNota ? 'highlight-picotado' : 'direct-highlight';
-                let style = '';
-                
-                if (h.temNota) {
-                    style = `background-image: linear-gradient(to right, ${h.cor} 50%, transparent 50%)`;
-                } else {
-                    style = `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
-                }
+                let style = h.temNota 
+                    ? `background-image: linear-gradient(to right, ${h.cor} 50%, transparent 50%)`
+                    : `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
 
                 paragraphEl.innerHTML = paragraphEl.innerHTML.replace(regex, 
-                    `<span class="${className}" style="${style}" onclick="window.openSidePanel('${paragraphEl.getAttribute('data-pnum')}', '${encodeURIComponent(textToFind)}')">$1</span>`
+                    `<span class="${className}" style="${style}" onclick="window.openSidePanel('${paragraphEl.getAttribute('data-pnum')}')">$1</span>`
                 );
             }
         });
@@ -2450,98 +2455,92 @@ window.renderLibraryRefTab = async function(tab) {
 window.openQuestionEditor = async (qNum, qText) => {
     const panel = document.getElementById('side-panel');
     const content = document.getElementById('side-content');
-    const tabs = document.getElementById('library-ref-tabs');
     const titleContainer = document.getElementById('side-title-container');
 
-    // 1. Gerar o ID único (qId)
     const qId = `${currentPubId}_Q${qNum}`;
     window.activeQuestionId = qId; 
     
     panel.classList.add('open');
-    if (tabs) tabs.style.display = 'none'; // Esconde as abas 🧩⚡📼
+    document.getElementById('library-ref-tabs').style.display = 'none';
     
-    content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
+    // Carregar nomes das cores antes de abrir
+    await loadUserColorNames();
 
-    try {
-        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        
-        // 2. Procurar resposta existente
-        const q = query(collection(db, 'pastas'), 
-            where('userId', '==', auth.currentUser.uid),
-            where('oque', '==', 'back'),
-            where('qId', '==', qId)
-        );
-        const snap = await getDocs(q);
-        
-        let existingContent = "";
-        let noteDocId = null;
-        let currentHighlight = "#2ecc71"; // Verde por defeito
+    titleContainer.innerHTML = `<span style="color:#2ecc71; font-weight:bold;">Pergunta ${qNum}</span>`;
 
-        if (!snap.empty) {
-            const d = snap.docs[0].data();
-            noteDocId = snap.docs[0].id;
-            const parser = new DOMParser();
-            const docHTML = parser.parseFromString(d.conteudo, 'text/html');
-            const inner = docHTML.querySelector('.mini-note-content');
-            existingContent = inner ? inner.innerHTML : "";
-            currentHighlight = docHTML.querySelector('.mini-note-wrapper')?.getAttribute('data-highlight') || "#2ecc71";
-        }
+    content.innerHTML = `
+        <div class="note-creation-form" style="padding: 10px;">
+            <h2 style="font-size:1.1em; color:white; margin-bottom:15px; line-height:1.4;">${qText}</h2>
+            
+            <div class="flash-toolbar">
+                <button onclick="document.execCommand('bold')"><b>B</b></button>
+                <button onclick="document.execCommand('italic')"><i>I</i></button>
+                <button onclick="window.toggleQuestionColorGrid()" title="Cores Destaque">🎨</button>
+                <button onclick="window.openFlashLinkManager()" title="Links">⚡</button>
+            </div>
 
-        window.selectedColorHex = currentHighlight; 
+            <!-- Grid de Cores igual ao note.html -->
+            <div id="q-color-grid" style="display:none; grid-template-columns: repeat(3, 1fr); gap: 10px; background: #252528; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #444;">
+                ${window.generateQuestionColorGridHTML()}
+            </div>
 
-        // 3. Título Fixo no Topo
-        titleContainer.innerHTML = `<span style="color:#2ecc71; font-weight:bold;">Resposta à Pergunta ${qNum}</span>`;
+      <div id="flash-editor" class="flash-editor" contenteditable="true" 
+     placeholder="Escreva a sua resposta aqui..."
+     style="border-left: 4px solid ${window.selectedColorHex || '#2ecc71'}; min-height:250px; padding:15px; outline:none;"></div>
 
-        // 4. Injetar Editor
-        content.innerHTML = `
-            <div class="note-creation-form" style="padding: 10px;">
-                <h2 style="font-size:1.1em; color:white; margin-bottom:15px; line-height:1.4; border:none;">${qText}</h2>
-                
-                <div class="flash-toolbar">
-                    <button onclick="document.execCommand('bold')"><b>B</b></button>
-                    <button onclick="document.execCommand('italic')"><i>I</i></button>
-                    <button onclick="document.execCommand('underline')"><u>U</u></button>
-                    <div style="width:1px; height:20px; background:#444; margin:0 5px;"></div>
-                    
-                    <!-- ÍCONE 🎨 QUE ABRE O SELETOR DE CORES -->
-                    <button onclick="window.toggleQColorPicker()" title="Destaque da Caixa">🎨</button>
-                    
-                    <button onclick="window.openFlashLinkManager()" title="Anexar Links">⚡</button>
-                    <span style="margin-left:auto; color:#2ecc71; font-size:0.7em; font-weight:bold; border:1px solid #2ecc71; padding:2px 5px; border-radius:4px;">QUESTÃO ÚNICA</span>
-                </div>
+            <button id="btn-save-question" onclick="window.saveQuestionAnswer('null', '${encodeURIComponent(qText)}')" 
+                    style="width:100%; margin-top:20px; padding:15px; background:#2ecc71; color:white; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
+                GRAVAR RESPOSTA
+            </button>
+        </div>
+    `;
+};
 
-                <!-- Seletor de Cores Oculto (aparece ao clicar no 🎨) -->
-                <div id="q-color-picker-area" style="display:none; margin: 10px 0; background:rgba(0,0,0,0.2); padding:10px; border-radius:8px;">
-                    <div class="color-picker-container" id="inline-color-picker"></div>
-                </div>
-
-                <div id="flash-editor" class="flash-editor" contenteditable="true" 
-                     style="border-left: 4px solid ${window.selectedColorHex}; background: rgba(255,255,255,0.03); min-height:300px; padding:15px; outline:none;"
-                     placeholder="Escreva a sua resposta aqui...">
-                     ${existingContent || '<p><br></p>'}
-                </div>
-
-                <button id="btn-save-question" onclick="window.saveQuestionAnswer('${noteDocId}', '${encodeURIComponent(qText)}')" 
-                        style="width:100%; margin-top:20px; padding:15px; background:#2ecc71; color:white; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
-                    ${noteDocId ? 'ATUALIZAR ESTUDO' : 'GRAVAR RESPOSTA'}
-                </button>
+// Gera o HTML do 3x3 com nomes sincronizados
+window.generateQuestionColorGridHTML = () => {
+    return DEFAULT_HIGHLIGHTS.map(c => {
+        const displayName = userCustomHighlights[c.code] || c.name;
+        return `
+            <div onclick="window.selectQuestionColor('${c.code}')" style="display:flex; flex-direction:column; align-items:center; cursor:pointer; gap:5px;">
+                <div style="width:30px; height:30px; border-radius:50%; background:${c.code}; border:2px solid ${window.selectedColorHex === c.code ? 'white' : 'transparent'}"></div>
+                <span style="font-size:10px; text-align:center; color:#888;">${displayName}</span>
             </div>
         `;
+    }).join('');
+};
 
-        currentSelectedParagraphs = [qNum];
-        renderColorPicker(); // Desenha as bolas de cor
+window.toggleQuestionColorGrid = () => {
+    const grid = document.getElementById('q-color-grid');
+    grid.style.display = grid.style.display === 'none' ? 'grid' : 'none';
+};
 
-    } catch (e) {
-        console.error(e);
-        content.innerHTML = '<p style="color:red; text-align:center;">Erro ao abrir editor.</p>';
+window.selectQuestionColor = (hex) => {
+    // Definimos qual é a cor "básica" para as perguntas
+    const COR_BASICA = '#2ecc71'; 
+
+    // Se a cor clicada já for a que está selecionada, voltamos ao básico
+    if (window.selectedColorHex === hex) {
+        window.selectedColorHex = COR_BASICA;
+    } else {
+        // Caso contrário, aplicamos a nova cor
+        window.selectedColorHex = hex;
     }
-};
 
-window.toggleQColorPicker = () => {
-    const el = document.getElementById('q-color-picker-area');
-    el.style.display = el.style.display === 'none' ? 'block' : 'none';
-};
+    // Atualiza a borda do editor
+    const editor = document.getElementById('flash-editor');
+    if (editor) {
+        editor.style.borderLeft = `4px solid ${window.selectedColorHex}`;
+    }
 
+    // Atualiza o HTML do grid para que a borda branca (indicador de seleção) mude de sítio
+    const grid = document.getElementById('q-color-grid');
+    if (grid) {
+        grid.innerHTML = window.generateQuestionColorGridHTML();
+    }
+
+    // Fecha o grid após a seleção (opcional, se preferires que fique aberto retira a linha abaixo)
+    window.toggleQuestionColorGrid(); 
+};
 
 
 window.openHighlightModal = () => {
@@ -2766,6 +2765,23 @@ window.openListCategory = async (type, title, contextId = null) => {
         ul.innerHTML = '<li style="color:red; padding:20px; text-align:center;">Erro ao carregar dados.</li>';
     }
 };
+
+
+// Função para carregar os nomes das cores do Firestore
+async function loadUserColorNames() {
+    if (!auth.currentUser) return;
+    try {
+        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const docRef = doc(db, 'destaques', auth.currentUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+            userCustomHighlights = docSnap.data().colors || {};
+        }
+    } catch (e) { console.error("Erro ao carregar nomes das cores:", e); }
+}
+
+
+
 
 
 // Funções de Tópicos e Links (Simplificadas para o exemplo, mantendo as chamadas nos modais)
