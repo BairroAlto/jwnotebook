@@ -7804,52 +7804,37 @@ window.setSearchTestament = function(type, btnElement) {
 
 // 4. INICIALIZAÇÃO E INJEÇÃO DO HTML
 window.initializeBibleSearch = function() {
-    // Evita duplicar o modal
+    // 1. Evita duplicar o modal se ele já existir
     if (document.getElementById('bible-search-modal')) return;
 
+    // 2. Injeta o HTML do Modal de Pesquisa no final do body
     const modalHTML = `
     <div id="bible-search-modal" class="modal-overlay" style="display:none; z-index:10000; align-items: flex-start; padding-top: 50px;">
-        <div class="modal-content" style="max-width: 600px; height: 85vh; display: flex; flex-direction: column; background:#1f1f22;">
+        <div class="modal-content" style="max-width: 600px; height: 85vh; display: flex; flex-direction: column; background:#1f1f22; border: 1px solid #444;">
             
-            <!-- HEADER -->
             <div class="modal-header">
                 <h3 style="color:var(--accent-color);">🔍 Pesquisar na Bíblia</h3>
-                <button class="modal-close" onclick="document.getElementById('bible-search-modal').style.display='none'">×</button>
+                <button class="modal-close" onclick="window.closeBibleSearch()">×</button>
             </div>
             
-            <!-- ÁREA DE FILTROS (FIXA) -->
             <div style="padding: 15px; background: #252528; border-bottom: 1px solid #333; flex-shrink: 0;">
+                <!-- Campo de Entrada -->
+                <input type="text" id="bible-search-input" placeholder='Pesquisar (ex: "Jesus Cristo" ou "Fé")' 
+                       style="width:100%; padding:12px; background:#111; border:1px solid #444; color:white; border-radius:8px; font-size:1rem; outline:none; border-color: var(--accent-color);">
                 
-                <!-- Input -->
-                <input type="text" id="bible-search-input" placeholder='Ex: "fé" "obras" (use aspas para termos exatos)' 
-                       style="width:100%; padding:12px; background:#111; border:1px solid #444; color:white; border-radius:8px; font-size:1rem; outline:none;">
-                
-                <!-- Botões AT / NT -->
-                <div style="display: flex; gap: 10px; margin-top: 15px; align-items:center;">
-                    <span style="font-size:0.75rem; color:#888; text-transform:uppercase;">Filtros:</span>
-                    <button class="filter-chip active" onclick="window.setSearchTestament('all', this)">Todos</button>
+                <!-- Filtros de Testamento -->
+                <div style="display: flex; gap: 8px; margin-top: 15px; align-items:center;">
+                    <span style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:bold;">Filtros:</span>
+                    <button class="filter-chip active" id="btn-search-all" onclick="window.setSearchTestament('all', this)">Todos</button>
                     <button class="filter-chip" onclick="window.setSearchTestament('at', this)">AT</button>
                     <button class="filter-chip" onclick="window.setSearchTestament('nt', this)">NT</button>
                 </div>
 
-                <!-- CARROSSEL DE LIVROS (Onde devem aparecer os livros) -->
-                <div id="search-books-filter"></div>
-
-                <!-- Toggle Oculto (Âmbito) -->
-                <div id="scope-toggle-container" style="display: none; align-items: center; justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #444;">
-                    <span style="font-size: 0.85rem; color: #aaa;">Modo:</span>
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        <span id="label-verse" style="font-size: 0.8rem; color: var(--accent-color); font-weight: bold;">VERSÍCULO</span>
-                        <label class="setting-switch">
-                            <input type="checkbox" id="search-scope-toggle">
-                            <span class="slider round"></span>
-                        </label>
-                        <span id="label-chapter" style="font-size: 0.8rem; color: #666;">CAPÍTULO</span>
-                    </div>
-                </div>
+                <!-- Contentor de Livros (Pílulas) -->
+                <div id="search-books-filter" style="display: flex; gap: 6px; overflow-x: auto; padding: 10px 0; margin-top: 5px; scrollbar-width: none;"></div>
             </div>
 
-            <!-- RESULTADOS -->
+            <!-- Área de Resultados -->
             <div id="bible-search-results" style="flex: 1; overflow-y: auto; padding: 10px; background: #1a1a1d;">
                 <div style="text-align:center; padding:50px; color:#555;">
                     <div style="font-size:3rem; opacity:0.3;">📖</div>
@@ -7857,40 +7842,132 @@ window.initializeBibleSearch = function() {
                 </div>
             </div>
 
-            <!-- RODAPÉ -->
+            <!-- Rodapé e Carregar Mais -->
             <div id="search-load-more-container" style="display: none; padding: 10px; text-align: center; background: #252528;">
-                <button id="btn-search-load-more" style="width:100%; padding:10px; background:#333; color:#fff; border:none;">Carregar Mais</button>
+                <button onclick="window.renderNextSearchPage()" style="width:100%; padding:10px; background:#333; color:#fff; border:1px solid #444; border-radius:4px; cursor:pointer;">Carregar Mais Resultados</button>
             </div>
-            <div id="search-status-bar" style="padding: 8px 15px; background: #111; color: #666; font-size: 0.75rem;">
+            <div id="search-status-bar" style="padding: 8px 15px; background: #111; color: #888; font-size: 0.75rem; border-top: 1px solid #333;">
                 <span id="search-count">Pronto.</span>
             </div>
         </div>
     </div>`;
 
-    // Injeta no final do body
     document.body.insertAdjacentHTML('beforeend', modalHTML);
 
-    // Configura Listeners do Input
+    // 3. Lógica do Campo de Pesquisa (Digitação Dinâmica)
     const input = document.getElementById('bible-search-input');
-    if (input) {
-        input.oninput = () => {
-            const val = input.value;
-            // Mostra o toggle se houver aspas
-            const scopeDiv = document.getElementById('scope-toggle-container');
-            const matches = val.match(/"([^"]+)"/g);
-            if(scopeDiv) scopeDiv.style.display = (matches && matches.length >= 2) ? 'flex' : 'none';
+    input.oninput = function(e) {
+        const val = e.target.value.trim();
 
-            // Debounce da pesquisa
-            clearTimeout(bibleSearchTimeout);
-            bibleSearchTimeout = setTimeout(() => {
-                if(typeof executeBibleSearch === 'function') executeBibleSearch(true);
-            }, 600);
+        // Se apagar tudo, limpa os resultados imediatamente
+        if (val === "") {
+            clearTimeout(window.bibleSearchTimeout);
+            window.resetSearchUI();
+            return;
+        }
+
+        // Se tiver menos de 3 letras, avisa o utilizador
+        if (val.length < 3) {
+            document.getElementById('bible-search-results').innerHTML = '<div style="text-align:center; padding:30px; color:#666;">Digite pelo menos 3 letras...</div>';
+            return;
+        }
+
+        // Debounce: Aguarda o utilizador parar de digitar para pesquisar
+        clearTimeout(window.bibleSearchTimeout);
+        window.bibleSearchTimeout = setTimeout(() => {
+            if (typeof window.executeBibleSearch === 'function') {
+                window.executeBibleSearch(true);
+            }
+        }, 600);
+    };
+
+    // 4. Função para Fechar Pesquisa
+    window.closeBibleSearch = function() {
+        document.getElementById('bible-search-modal').style.display = 'none';
+        window.resetSearchUI();
+        document.getElementById('bible-search-input').value = '';
+    };
+
+    // 5. Função para Resetar Interface
+    window.resetSearchUI = function() {
+        allSearchResults = [];
+        currentSearchPage = 0;
+        if (typeof booksWithHits !== 'undefined') booksWithHits.clear();
+        searchSelectedBook = null;
+
+        document.getElementById('bible-search-results').innerHTML = `
+            <div style="text-align:center; padding:50px; color:#555;">
+                <div style="font-size:3rem; opacity:0.3;">📖</div>
+                <p>Digite para começar a pesquisar...</p>
+            </div>`;
+        document.getElementById('search-count').innerText = "Pronto.";
+        document.getElementById('search-load-more-container').style.display = 'none';
+        
+        if (typeof window.renderSearchBookFilters === 'function') {
+            window.renderSearchBookFilters();
+        }
+    };
+
+    // 6. Configura o botão de abertura no Header
+    const openBtn = document.getElementById('open-search-btn');
+    if (openBtn) {
+        openBtn.onclick = () => {
+            document.getElementById('bible-search-modal').style.display = 'flex';
+            window.renderSearchBookFilters();
+            setTimeout(() => input.focus(), 100);
         };
     }
-    
-    // Configura botão Carregar Mais
-    const btnLoad = document.getElementById('btn-search-load-more');
-    if(btnLoad) btnLoad.onclick = () => { if(typeof renderNextSearchPage === 'function') renderNextSearchPage(); };
+};
+
+// --- FUNÇÃO DE EXIBIÇÃO CORRIGIDA (Destaque Amarelo/Preto) ---
+window.renderNextSearchPage = function(isFirstPage = false) {
+    const resultsDiv = document.getElementById('bible-search-results');
+    const loadMoreContainer = document.getElementById('search-load-more-container');
+    const countSpan = document.getElementById('search-count');
+
+    if (isFirstPage) {
+        resultsDiv.innerHTML = '';
+        currentSearchPage = 0;
+    }
+
+    const start = currentSearchPage * resultsPerPage;
+    const end = start + resultsPerPage;
+    const pageItems = allSearchResults.slice(start, end);
+
+    // Estilo de Destaque Vibrante
+    const hStyle = "background:#f1c40f !important; color:#000 !important; font-weight:bold; border-radius:3px; padding:0 3px; text-decoration:underline;";
+
+    let html = pageItems.map(item => {
+        const ref = `${item.book} ${item.cap}:${item.verse}`;
+        let text = item.text;
+
+        if (item.termsToHighlight) {
+            item.termsToHighlight.forEach(t => {
+                const regex = new RegExp(`(${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, "gi");
+                text = text.replace(regex, `<mark style="${hStyle}">$1</mark>`);
+            });
+        }
+
+        return `
+            <div class="bk-verse-item" onclick="window.goToSearchRef('${item.book}', ${item.cap}, ${item.verse})" 
+                 style="border-bottom: 1px solid #333; padding: 15px; cursor: pointer; background: transparent;">
+                <div style="color: var(--accent-color); font-weight: bold; font-size: 0.95rem; margin-bottom: 5px;">📜 ${ref}</div>
+                <div style="color: #bbb; font-size: 0.9rem; line-height: 1.5; pointer-events: none;">${text}</div>
+            </div>`;
+    }).join('');
+
+    if (isFirstPage) {
+        resultsDiv.innerHTML = html;
+        resultsDiv.scrollTop = 0;
+    } else {
+        const temp = document.createElement('div');
+        temp.innerHTML = html;
+        while(temp.firstChild) resultsDiv.insertBefore(temp.firstChild, loadMoreContainer);
+    }
+
+    currentSearchPage++;
+    loadMoreContainer.style.display = (allSearchResults.length > (currentSearchPage * resultsPerPage)) ? 'block' : 'none';
+    countSpan.innerText = `${allSearchResults.length} resultados encontrados.`;
 };
 
 // 5. BOTÃO PARA ABRIR O MODAL (Injeção Segura)
@@ -8322,52 +8399,67 @@ window.executeBibleSearch = async (shouldUpdateBookChips = true) => {
 
 setTimeout(() => {
     console.log("🔧 A reparar ligação da pesquisa...");
-
     const input = document.getElementById('bible-search-input');
     
     if (input) {
-        // 1. Limpa eventos antigos que possam estar a bloquear
-        input.oninput = null; 
-        
-        // 2. Define o evento OFICIAL de pesquisa
         input.oninput = function(e) {
-            const val = e.target.value;
+            const val = e.target.value.trim();
             
-            // Log visual para sabermos que está a funcionar
-            console.log(`⌨️ Escreveu: "${val}" -> Aguardando pausa...`);
+            // --- CORREÇÃO AQUI: SE ESTIVER VAZIO, LIMPA TUDO NA HORA ---
+            if (val === "") {
+                clearTimeout(window.searchTimer);
+                console.log("🧹 Caixa vazia: A limpar resultados...");
+                if (typeof window.resetSearchUI === 'function') {
+                    window.resetSearchUI();
+                }
+                return; // Para aqui e não executa a pesquisa
+            }
 
-            // Lógica visual: Mostrar toggle se usar aspas
-            const matches = val.match(/"([^"]+)"/g);
-            const scopeDiv = document.getElementById('scope-toggle-container');
-            if(scopeDiv) scopeDiv.style.display = (matches && matches.length >= 2) ? 'flex' : 'none';
+            // Se tiver menos de 3 letras, apenas avisa (opcional)
+            if (val.length < 3) {
+                const results = document.getElementById('bible-search-results');
+                if(results) results.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">Digite pelo menos 3 letras...</div>';
+                return;
+            }
 
-            // 3. O TEMPORIZADOR (Debounce)
-            // Se já houver um temporizador à espera, cancela-o (para não pesquisar em cada letra)
+            // Debounce da pesquisa
             if (window.searchTimer) clearTimeout(window.searchTimer);
             
-            // Cria um novo temporizador
             window.searchTimer = setTimeout(() => {
                 console.log("🚀 TEMPO ESGOTADO: A EXECUTAR PESQUISA AGORA!");
-                
                 if (typeof window.executeBibleSearch === 'function') {
-                    // Chama a função principal de pesquisa
                     window.executeBibleSearch(true);
-                } else {
-                    console.error("❌ ERRO CRÍTICO: A função 'executeBibleSearch' não foi encontrada!");
-                    // Tenta mostrar erro no ecrã
-                    const results = document.getElementById('bible-search-results');
-                    if(results) results.innerHTML = '<p style="color:red; padding:20px;">Erro interno: Função de pesquisa perdida.</p>';
                 }
-            }, 600); // Espera 600ms (0.6 segundos) após parar de escrever
+            }, 600);
         };
-
-        console.log("✅ Pesquisa reconectada com sucesso. Pode testar.");
-        
-    } else {
-        console.warn("⚠️ Input de pesquisa não encontrado (o modal pode estar fechado, o que é normal).");
+        console.log("✅ Pesquisa reconectada com sucesso.");
     }
+}, 3000);
 
-}, 3000); // Espera 3 segundos para garantir que tudo carregou
+window.resetSearchUI = function() {
+    allSearchResults = [];
+    currentSearchPage = 0;
+    if (typeof booksWithHits !== 'undefined') booksWithHits.clear();
+
+    const resultsDiv = document.getElementById('bible-search-results');
+    const countSpan = document.getElementById('search-count');
+    const loadMoreBtn = document.getElementById('search-load-more-container');
+
+    if (resultsDiv) {
+        // Volta ao estado inicial (ícone de livro e mensagem)
+        resultsDiv.innerHTML = `
+            <div style="text-align:center; padding:50px; color:#555;">
+                <div style="font-size:3rem; opacity:0.3;">📖</div>
+                <p>Digite para começar a pesquisar...</p>
+            </div>`;
+    }
+    if (countSpan) countSpan.innerText = "Pronto.";
+    if (loadMoreBtn) loadMoreBtn.style.display = 'none';
+    
+    // Atualiza os filtros de livros para voltarem ao normal (sem destaques)
+    if (typeof renderSearchBookFilters === 'function') renderSearchBookFilters();
+};
+
 
 
 
