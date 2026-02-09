@@ -7605,67 +7605,6 @@ function renderNextSearchPage(isFirstPage = false) {
     if (countSpan) countSpan.innerText = `${allSearchResults.length} resultados encontrados.`;
 }
 
-// 2. FUNÇÃO DE PESQUISA (O "Motor")
-window.executeBibleSearch = async function(shouldUpdateBookChips = true) {
-    const input = document.getElementById('bible-search-input');
-    const resultsDiv = document.getElementById('bible-search-results');
-    if (!input || !resultsDiv) return;
-
-    const rawQuery = input.value.trim().toLowerCase();
-    if (rawQuery.length < 3) return;
-
-    // Reinicia dados
-    allSearchResults = [];
-    currentSearchPage = 0; 
-    if (shouldUpdateBookChips) booksWithHits.clear();
-    
-    resultsDiv.innerHTML = '<div style="text-align:center; padding:40px;"><p style="color:#888;">A pesquisar...</p></div>';
-
-    // Captura os termos para o destaque (suporta palavras separadas)
-    const searchTerms = rawQuery.split(/\s+/).filter(t => t.length >= 2);
-
-    try {
-        for (const book of BIBLE_DATA) {
-            if (searchFilterTestament === 'at' && book.id >= 40) continue;
-            if (searchFilterTestament === 'nt' && book.id <= 39) continue;
-            if (searchSelectedBook && book.nome !== searchSelectedBook) continue;
-
-            const filename = getBibleFilename(book.nome);
-            if (!localBibleCache[filename]) {
-                const resp = await fetch(`./js/bible/${filename}.json`);
-                if (resp.ok) localBibleCache[filename] = await resp.json();
-                else continue;
-            }
-
-            const bookContent = localBibleCache[filename][book.nome];
-            let bookHasMatch = false;
-
-            for (const capNum in bookContent) {
-                for (const vNum in bookContent[capNum]) {
-                    const verseText = bookContent[capNum][vNum].toLowerCase();
-                    
-                    // Verifica se o versículo contém todas as palavras
-                    const match = searchTerms.every(term => verseText.includes(term));
-                    
-                    if (match) {
-                        bookHasMatch = true;
-                        allSearchResults.push({
-                            book: book.nome,
-                            cap: capNum,
-                            verse: vNum,
-                            text: bookContent[capNum][vNum],
-                            termsToHighlight: searchTerms // <--- CRUCIAL
-                        });
-                    }
-                }
-            }
-            if (bookHasMatch && shouldUpdateBookChips) booksWithHits.add(book.nome);
-        }
-        renderNextSearchPage(true); 
-        if (shouldUpdateBookChips) renderSearchBookFilters();
-    } catch (e) { console.error("Erro:", e); }
-};
-
 
 function resetSearchUI() {
     allSearchResults = [];
@@ -8474,76 +8413,117 @@ setTimeout(() => {
         };
 
         // 2. MOTOR DE BUSCA (Guarda as palavras para destacar)
-        window.executeBibleSearch = async function(shouldUpdateBookChips = true) {
-            const resultsDiv = document.getElementById('bible-search-results');
-            const rawQuery = input.value.trim().toLowerCase();
-            
-            allSearchResults = [];
-            currentSearchPage = 0;
-            if (shouldUpdateBookChips) booksWithHits.clear();
-            
-            resultsDiv.innerHTML = '<div style="text-align:center; padding:40px;"><p style="color:#888;">A pesquisar...</p></div>';
+window.executeBibleSearch = async function(shouldUpdateBookChips = true) {
+    const input = document.getElementById('bible-search-input');
+    const resultsDiv = document.getElementById('bible-search-results');
+    const scopeToggle = document.getElementById('search-scope-toggle'); // Referência ao toggle
 
-            // SEPARA AS PALAVRAS PARA DESTAQUE
-            const searchTerms = rawQuery.split(/\s+/).filter(t => t.length >= 2);
+    if (!input || !resultsDiv) return;
 
-            for (const book of BIBLE_DATA) {
-                if (searchFilterTestament === 'at' && book.id >= 40) continue;
-                if (searchFilterTestament === 'nt' && book.id <= 39) continue;
-                if (searchSelectedBook && book.nome !== searchSelectedBook) continue;
+    let rawQuery = input.value.trim().toLowerCase();
+    if (rawQuery.length < 3) return;
 
-                const filename = getBibleFilename(book.nome);
-                if (!localBibleCache[filename]) {
-                    const resp = await fetch(`./js/bible/${filename}.json`);
-                    if (resp.ok) localBibleCache[filename] = await resp.json(); else continue;
-                }
+    // --- CORREÇÃO NUCLEAR: LIMPEZA DE ASPAS ---
+    // Extrai o que está dentro das aspas ou divide por espaços
+    let searchTerms = [];
+    const quotedMatches = rawQuery.match(/"([^"]+)"/g);
+    
+    if (quotedMatches) {
+        searchTerms = quotedMatches.map(t => t.replace(/"/g, '').trim());
+    } else {
+        searchTerms = rawQuery.split(/\s+/).filter(t => t.length >= 2);
+    }
 
-                const bookContent = localBibleCache[filename][book.nome];
-                let bookHasMatch = false;
+    allSearchResults = [];
+    currentSearchPage = 0;
+    if (shouldUpdateBookChips) booksWithHits.clear();
+    
+    resultsDiv.innerHTML = '<div style="text-align:center; padding:40px;"><p style="color:#888;">A pesquisar...</p></div>';
 
-                for (const capNum in bookContent) {
-                    for (const vNum in bookContent[capNum]) {
-                        const verseText = bookContent[capNum][vNum].toLowerCase();
+    const isChapterMode = scopeToggle ? scopeToggle.checked : false;
+
+    try {
+        for (const book of BIBLE_DATA) {
+            // Filtros de Testamento e Livro
+            if (searchFilterTestament === 'at' && book.id >= 40) continue;
+            if (searchFilterTestament === 'nt' && book.id <= 39) continue;
+            if (searchSelectedBook && book.nome !== searchSelectedBook) continue;
+
+            const filename = getBibleFilename(book.nome);
+            if (!localBibleCache[filename]) {
+                const resp = await fetch(`./js/bible/${filename}.json`);
+                if (resp.ok) localBibleCache[filename] = await resp.json(); else continue;
+            }
+
+            const bookContent = localBibleCache[filename][book.nome];
+            let bookHasMatch = false;
+
+            for (const capNum in bookContent) {
+                const chapterVerses = bookContent[capNum];
+                
+                if (isChapterMode) {
+                    // MODO CAPÍTULO: Todos os termos devem estar no capítulo (mesmo que em versículos diferentes)
+                    const fullChapterText = Object.values(chapterVerses).join(' ').toLowerCase();
+                    const match = searchTerms.every(term => fullChapterText.includes(term));
+                    
+                    if (match) {
+                        bookHasMatch = true;
+                        allSearchResults.push({
+                            book: book.nome, cap: capNum, verse: 1,
+                            text: "Vários versículos neste capítulo contêm os termos pesquisados.",
+                            termsToHighlight: searchTerms,
+                            isChapter: true
+                        });
+                    }
+                } else {
+                    // MODO VERSÍCULO: Todos os termos no mesmo versículo
+                    for (const vNum in chapterVerses) {
+                        const verseText = chapterVerses[vNum].toLowerCase();
                         const match = searchTerms.every(term => verseText.includes(term));
                         
                         if (match) {
                             bookHasMatch = true;
                             allSearchResults.push({
-                                book: book.nome,
-                                cap: capNum,
-                                verse: vNum,
-                                text: bookContent[capNum][vNum],
-                                termsToHighlight: searchTerms // <--- PASSA AS PALAVRAS
+                                book: book.nome, cap: capNum, verse: vNum,
+                                text: chapterVerses[vNum],
+                                termsToHighlight: searchTerms
                             });
                         }
                     }
                 }
-                if (bookHasMatch && shouldUpdateBookChips) booksWithHits.add(book.nome);
             }
-            window.renderNextSearchPage(true);
-            if (shouldUpdateBookChips) renderSearchBookFilters();
-        };
+            if (bookHasMatch && shouldUpdateBookChips) booksWithHits.add(book.nome);
+        }
+        renderNextSearchPage(true);
+        if (shouldUpdateBookChips) renderSearchBookFilters();
+    } catch (e) { console.error("Erro na busca:", e); }
+};
+    }
+}, 2000);
 
-        // 3. EXIBIÇÃO (Faz o sublinhado amarelo)
-   window.renderNextSearchPage = function(isFirstPage = false) {
+window.renderNextSearchPage = function(isFirstPage = false) {
     const resultsDiv = document.getElementById('bible-search-results');
     const loadMoreContainer = document.getElementById('search-load-more-container');
+    const countSpan = document.getElementById('search-count');
+
     if (isFirstPage) { resultsDiv.innerHTML = ''; currentSearchPage = 0; }
 
     const start = currentSearchPage * resultsPerPage;
     const end = start + resultsPerPage;
     const pageItems = allSearchResults.slice(start, end);
 
-    // --- COR MAIS SUAVE (Laranja Transparente com Sublinhado) ---
-    const hStyle = "background: rgba(230, 126, 34, 0.3) !important; color: #fff !important; padding: 0 4px; border-radius: 3px; border-bottom: 2px solid #e67e22; text-decoration: none; font-weight: bold;";
+    const hStyle = "background: rgba(230, 126, 34, 0.3) !important; color: #fff !important; padding: 0 4px; border-radius: 3px; border-bottom: 2px solid #e67e22; font-weight: bold;";
 
     let html = pageItems.map(item => {
-        const ref = `${item.book} ${item.cap}:${item.verse}`;
+        const ref = item.isChapter ? `${item.book} ${item.cap}` : `${item.book} ${item.cap}:${item.verse}`;
         let text = item.text;
 
+        // Aplica destaque para cada termo individualmente
         if (item.termsToHighlight) {
             item.termsToHighlight.forEach(t => {
-                const regex = new RegExp(`(${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, "gi");
+                // Escapa caracteres especiais e cria regex global e case-insensitive
+                const safeTerm = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`(${safeTerm})`, "gi");
                 text = text.replace(regex, `<mark style="${hStyle}">$1</mark>`);
             });
         }
@@ -8551,23 +8531,26 @@ setTimeout(() => {
         return `
             <div class="bk-verse-item" onclick="window.goToSearchRef('${item.book}', ${item.cap}, ${item.verse})" 
                  style="border-bottom: 1px solid #333; padding: 15px; cursor: pointer;">
-                <div style="color: var(--accent-color); font-weight: bold; font-size: 0.95rem; margin-bottom: 5px;">📜 ${ref}</div>
+                <div style="color: var(--accent-color); font-weight: bold; font-size: 0.95rem; margin-bottom: 5px;">
+                    ${item.isChapter ? '📖' : '📜'} ${ref}
+                </div>
                 <div style="color: #bbb; font-size: 0.9rem; line-height: 1.5; pointer-events: none;">${text}</div>
             </div>`;
     }).join('');
 
-    if (isFirstPage) resultsDiv.innerHTML = html;
-    else {
-        const temp = document.createElement('div'); temp.innerHTML = html;
+    if (isFirstPage) {
+        resultsDiv.innerHTML = html;
+        if (loadMoreContainer) resultsDiv.appendChild(loadMoreContainer);
+    } else {
+        const temp = document.createElement('div');
+        temp.innerHTML = html;
         while(temp.firstChild) resultsDiv.insertBefore(temp.firstChild, loadMoreContainer);
     }
 
     currentSearchPage++;
     if (loadMoreContainer) loadMoreContainer.style.display = (allSearchResults.length > (currentSearchPage * resultsPerPage)) ? 'block' : 'none';
-    document.getElementById('search-count').innerText = `${allSearchResults.length} resultados encontrados.`;
+    if (countSpan) countSpan.innerText = `${allSearchResults.length} resultados encontrados.`;
 };
-    }
-}, 2000);
 
     </script>
 </body>
