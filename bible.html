@@ -1655,6 +1655,21 @@ mark.search-highlight {
     border-radius: 3px !important;
 }
 
+/* Remove o fundo verde ao passar o rato e coloca um cinza discreto */
+.bk-verse-item:hover { 
+    background-color: rgba(255, 255, 255, 0.05) !important; 
+}
+
+/* Estilo forçado para a palavra encontrada */
+mark.search-highlight {
+    background-color: #f1c40f !important; /* Amarelo Ouro */
+    color: #000 !important;               /* Texto Preto para contraste */
+    font-weight: bold !important;
+    text-decoration: underline !important;
+    padding: 0 2px !important;
+    border-radius: 3px !important;
+}
+
 </style>
 
 </head>
@@ -7919,57 +7934,6 @@ window.initializeBibleSearch = function() {
     }
 };
 
-// --- FUNÇÃO DE EXIBIÇÃO CORRIGIDA (Destaque Amarelo/Preto) ---
-window.renderNextSearchPage = function(isFirstPage = false) {
-    const resultsDiv = document.getElementById('bible-search-results');
-    const loadMoreContainer = document.getElementById('search-load-more-container');
-    const countSpan = document.getElementById('search-count');
-
-    if (isFirstPage) {
-        resultsDiv.innerHTML = '';
-        currentSearchPage = 0;
-    }
-
-    const start = currentSearchPage * resultsPerPage;
-    const end = start + resultsPerPage;
-    const pageItems = allSearchResults.slice(start, end);
-
-    // Estilo de Destaque Vibrante
-    const hStyle = "background:#f1c40f !important; color:#000 !important; font-weight:bold; border-radius:3px; padding:0 3px; text-decoration:underline;";
-
-    let html = pageItems.map(item => {
-        const ref = `${item.book} ${item.cap}:${item.verse}`;
-        let text = item.text;
-
-        if (item.termsToHighlight) {
-            item.termsToHighlight.forEach(t => {
-                const regex = new RegExp(`(${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, "gi");
-                text = text.replace(regex, `<mark style="${hStyle}">$1</mark>`);
-            });
-        }
-
-        return `
-            <div class="bk-verse-item" onclick="window.goToSearchRef('${item.book}', ${item.cap}, ${item.verse})" 
-                 style="border-bottom: 1px solid #333; padding: 15px; cursor: pointer; background: transparent;">
-                <div style="color: var(--accent-color); font-weight: bold; font-size: 0.95rem; margin-bottom: 5px;">📜 ${ref}</div>
-                <div style="color: #bbb; font-size: 0.9rem; line-height: 1.5; pointer-events: none;">${text}</div>
-            </div>`;
-    }).join('');
-
-    if (isFirstPage) {
-        resultsDiv.innerHTML = html;
-        resultsDiv.scrollTop = 0;
-    } else {
-        const temp = document.createElement('div');
-        temp.innerHTML = html;
-        while(temp.firstChild) resultsDiv.insertBefore(temp.firstChild, loadMoreContainer);
-    }
-
-    currentSearchPage++;
-    loadMoreContainer.style.display = (allSearchResults.length > (currentSearchPage * resultsPerPage)) ? 'block' : 'none';
-    countSpan.innerText = `${allSearchResults.length} resultados encontrados.`;
-};
-
 // 5. BOTÃO PARA ABRIR O MODAL (Injeção Segura)
 setTimeout(() => {
     // Cria o HTML do modal se não existir
@@ -8461,7 +8425,149 @@ window.resetSearchUI = function() {
 };
 
 
+window.resetSearchUI = function() {
+    allSearchResults = [];
+    currentSearchPage = 0;
+    if (typeof booksWithHits !== 'undefined') booksWithHits.clear();
 
+    const resultsDiv = document.getElementById('bible-search-results');
+    const countSpan = document.getElementById('search-count');
+    const loadMoreBtn = document.getElementById('search-load-more-container');
+
+    if (resultsDiv) {
+        // Volta ao estado inicial (ícone de livro e mensagem)
+        resultsDiv.innerHTML = `
+            <div style="text-align:center; padding:50px; color:#555;">
+                <div style="font-size:3rem; opacity:0.3;">📖</div>
+                <p>Digite para começar a pesquisar...</p>
+            </div>`;
+    }
+    if (countSpan) countSpan.innerText = "Pronto.";
+    if (loadMoreBtn) loadMoreBtn.style.display = 'none';
+    
+    // Atualiza os filtros de livros para voltarem ao normal (sem destaques)
+    if (typeof renderSearchBookFilters === 'function') renderSearchBookFilters();
+};
+
+
+setTimeout(() => {
+    console.log("🔧 A aplicar motor de busca final com destaques...");
+    const input = document.getElementById('bible-search-input');
+    
+    if (input) {
+        // 1. GESTÃO DA DIGITAÇÃO
+        input.oninput = function(e) {
+            const val = e.target.value.trim();
+            
+            if (val === "") {
+                clearTimeout(window.searchTimer);
+                if (typeof window.resetSearchUI === 'function') window.resetSearchUI();
+                return;
+            }
+
+            if (val.length < 3) return;
+
+            if (window.searchTimer) clearTimeout(window.searchTimer);
+            window.searchTimer = setTimeout(() => {
+                window.executeBibleSearch(true);
+            }, 600);
+        };
+
+        // 2. MOTOR DE BUSCA (Guarda as palavras para destacar)
+        window.executeBibleSearch = async function(shouldUpdateBookChips = true) {
+            const resultsDiv = document.getElementById('bible-search-results');
+            const rawQuery = input.value.trim().toLowerCase();
+            
+            allSearchResults = [];
+            currentSearchPage = 0;
+            if (shouldUpdateBookChips) booksWithHits.clear();
+            
+            resultsDiv.innerHTML = '<div style="text-align:center; padding:40px;"><p style="color:#888;">A pesquisar...</p></div>';
+
+            // SEPARA AS PALAVRAS PARA DESTAQUE
+            const searchTerms = rawQuery.split(/\s+/).filter(t => t.length >= 2);
+
+            for (const book of BIBLE_DATA) {
+                if (searchFilterTestament === 'at' && book.id >= 40) continue;
+                if (searchFilterTestament === 'nt' && book.id <= 39) continue;
+                if (searchSelectedBook && book.nome !== searchSelectedBook) continue;
+
+                const filename = getBibleFilename(book.nome);
+                if (!localBibleCache[filename]) {
+                    const resp = await fetch(`./js/bible/${filename}.json`);
+                    if (resp.ok) localBibleCache[filename] = await resp.json(); else continue;
+                }
+
+                const bookContent = localBibleCache[filename][book.nome];
+                let bookHasMatch = false;
+
+                for (const capNum in bookContent) {
+                    for (const vNum in bookContent[capNum]) {
+                        const verseText = bookContent[capNum][vNum].toLowerCase();
+                        const match = searchTerms.every(term => verseText.includes(term));
+                        
+                        if (match) {
+                            bookHasMatch = true;
+                            allSearchResults.push({
+                                book: book.nome,
+                                cap: capNum,
+                                verse: vNum,
+                                text: bookContent[capNum][vNum],
+                                termsToHighlight: searchTerms // <--- PASSA AS PALAVRAS
+                            });
+                        }
+                    }
+                }
+                if (bookHasMatch && shouldUpdateBookChips) booksWithHits.add(book.nome);
+            }
+            window.renderNextSearchPage(true);
+            if (shouldUpdateBookChips) renderSearchBookFilters();
+        };
+
+        // 3. EXIBIÇÃO (Faz o sublinhado amarelo)
+   window.renderNextSearchPage = function(isFirstPage = false) {
+    const resultsDiv = document.getElementById('bible-search-results');
+    const loadMoreContainer = document.getElementById('search-load-more-container');
+    if (isFirstPage) { resultsDiv.innerHTML = ''; currentSearchPage = 0; }
+
+    const start = currentSearchPage * resultsPerPage;
+    const end = start + resultsPerPage;
+    const pageItems = allSearchResults.slice(start, end);
+
+    // --- COR MAIS SUAVE (Laranja Transparente com Sublinhado) ---
+    const hStyle = "background: rgba(230, 126, 34, 0.3) !important; color: #fff !important; padding: 0 4px; border-radius: 3px; border-bottom: 2px solid #e67e22; text-decoration: none; font-weight: bold;";
+
+    let html = pageItems.map(item => {
+        const ref = `${item.book} ${item.cap}:${item.verse}`;
+        let text = item.text;
+
+        if (item.termsToHighlight) {
+            item.termsToHighlight.forEach(t => {
+                const regex = new RegExp(`(${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, "gi");
+                text = text.replace(regex, `<mark style="${hStyle}">$1</mark>`);
+            });
+        }
+
+        return `
+            <div class="bk-verse-item" onclick="window.goToSearchRef('${item.book}', ${item.cap}, ${item.verse})" 
+                 style="border-bottom: 1px solid #333; padding: 15px; cursor: pointer;">
+                <div style="color: var(--accent-color); font-weight: bold; font-size: 0.95rem; margin-bottom: 5px;">📜 ${ref}</div>
+                <div style="color: #bbb; font-size: 0.9rem; line-height: 1.5; pointer-events: none;">${text}</div>
+            </div>`;
+    }).join('');
+
+    if (isFirstPage) resultsDiv.innerHTML = html;
+    else {
+        const temp = document.createElement('div'); temp.innerHTML = html;
+        while(temp.firstChild) resultsDiv.insertBefore(temp.firstChild, loadMoreContainer);
+    }
+
+    currentSearchPage++;
+    if (loadMoreContainer) loadMoreContainer.style.display = (allSearchResults.length > (currentSearchPage * resultsPerPage)) ? 'block' : 'none';
+    document.getElementById('search-count').innerText = `${allSearchResults.length} resultados encontrados.`;
+};
+    }
+}, 2000);
 
     </script>
 </body>
