@@ -2773,7 +2773,7 @@ function buildVerseHTML(data, num) {
                 if (focusId && FOCUS_LABELS[focusId]) {
                     label = FOCUS_LABELS[focusId];
                     // Cores específicas para Focos Especiais
-                    if (focusId === 'perola') borderColor = "#0032FD";
+                    if (focusId === 'perola') borderColor = "#075CCD";
                     else if (focusId === 'estudo_pessoal') borderColor = "#4169E1";
                 }
             }
@@ -3506,8 +3506,8 @@ window.deletePuzzleItem = async (vNum, index) => {
         const itemOriginal = existingUserData[vNumOriginal].puzzleBoard[indexOriginal];
         const targetNoteId = itemOriginal.noteId;
 
-        // 2. Determinar TODOS os versículos a serem atualizados (O Ativo + Categorias)
-        let allTargetVerses = [activeVerseFullName]; // Onde a nota nasceu
+        // 2. Determinar TODOS os versículos a serem atualizados
+        let allTargetVerses = [activeVerseFullName]; 
         
         if (currentFlashLinks && currentFlashLinks.categories) {
             currentFlashLinks.categories.forEach(cat => {
@@ -3522,9 +3522,8 @@ window.deletePuzzleItem = async (vNum, index) => {
         const safeTopics = JSON.stringify(currentFlashTopics || {}).replace(/"/g, '&quot;');
         const safeBoxLinks = JSON.stringify(currentFlashLinks || {}).replace(/"/g, '&quot;');
         const focusAttr = currentFlashFocus ? `data-focus="${currentFlashFocus}"` : "";
-        const boxUniqueId = itemOriginal.noteId ? `box_${itemOriginal.noteId}` : `box_${Date.now()}`;
+        const boxUniqueId = targetNoteId ? `box_${targetNoteId}` : `box_${Date.now()}`;
         
-        // Reconstrução do Wrapper (Importante para manter cores e links)
         const isQuestion = newContent.includes('question-mode') || (document.getElementById('edit-card-content').style.borderColor === 'rgb(46, 204, 113)');
         let wrapperClass = isQuestion ? "mini-note-wrapper question-mode" : "mini-note-wrapper";
         
@@ -3534,15 +3533,13 @@ window.deletePuzzleItem = async (vNum, index) => {
         const newSnippetEncoded = encodeURIComponent(newSnippetRaw);
         const newColor = selectedColorHex || itemOriginal.noteColor || '#3498db';
 
-        const updatePromises = [];
-
         // 4. ATUALIZAR EM TODOS OS VERSÍCULOS ENVOLVIDOS
+        const updatePromises = [];
         for (const verseName of allTargetVerses) {
             const vNum = verseName.split(':')[1].trim().split('-')[0];
             
-            // Grava ou Atualiza no Firebase
-            const q = query(collection(db, 'textosbiblicos'), where('nome', '==', verseName), where('userId', '==', currentUser.uid));
-            const snap = await getDocs(q);
+            const qVerse = query(collection(db, 'textosbiblicos'), where('nome', '==', verseName), where('userId', '==', currentUser.uid));
+            const snap = await getDocs(qVerse);
 
             const newItem = {
                 noteId: targetNoteId,
@@ -3556,47 +3553,48 @@ window.deletePuzzleItem = async (vNum, index) => {
             if (!snap.empty) {
                 const vDoc = snap.docs[0];
                 let board = vDoc.data().puzzleBoard || [];
-                
-                // Se a nota já existia neste verso, substitui. Se não, adiciona.
                 const idx = board.findIndex(b => b.noteId === targetNoteId);
                 if (idx !== -1) board[idx] = newItem; else board.push(newItem);
-                
                 updatePromises.push(updateDoc(doc(db, 'textosbiblicos', vDoc.id), { puzzleBoard: board }));
             } else {
-                // Cria o versículo se ele não existir na DB
                 updatePromises.push(addDoc(collection(db, 'textosbiblicos'), {
                     nome: verseName, userId: currentUser.uid, puzzleBoard: [newItem], dossie: [], panelLinks: [], createdAt: serverTimestamp()
                 }));
             }
 
-            // ATUALIZAÇÃO VISUAL LOCAL (Laranja)
             if (!existingUserData[vNum]) existingUserData[vNum] = { puzzleBoard: [] };
             const localIdx = existingUserData[vNum].puzzleBoard.findIndex(b => b.noteId === targetNoteId);
             if (localIdx !== -1) existingUserData[vNum].puzzleBoard[localIdx] = newItem; else existingUserData[vNum].puzzleBoard.push(newItem);
-
-            const numEl = document.getElementById(`vnum-${vNum}`);
-            if (numEl) numEl.classList.add('has-data');
         }
 
-        // 5. ATUALIZAR A NOTA MESTRE (Mochila)
-        if (targetNoteId) {
-            updatePromises.push(updateDoc(doc(db, 'pastas', targetNoteId), {
-                nome: newTitle, conteudo: newSnippetRaw, ultimaedicao: serverTimestamp()
-            }));
-        }
-
+        // Executa atualizações dos versículos
         await Promise.all(updatePromises);
+
+        // 5. ATUALIZAR A NOTA MESTRE (Com tratamento de erro se não existir)
+        if (targetNoteId) {
+            try {
+                await updateDoc(doc(db, 'pastas', targetNoteId), {
+                    nome: newTitle, conteudo: newSnippetRaw, ultimaedicao: serverTimestamp()
+                });
+            } catch (err) {
+                if (err.code === 'not-found') {
+                    console.warn("⚠️ A nota original não existe mais na coleção 'pastas'. O vínculo no versículo foi atualizado localmente.");
+                } else {
+                    throw err;
+                }
+            }
+        }
 
         // 6. Fechar e Limpar
         document.getElementById('edit-card-modal').style.display = 'none';
         if (typeof window.refreshVisualHighlights === 'function') window.refreshVisualHighlights();
-        window.openModalForVerse(vNumOriginal); // Recarrega a vista atual
+        window.openModalForVerse(vNumOriginal);
 
     } catch (e) {
         console.error("Erro ao gravar edição:", e);
         window.showCustomAlert("Erro ao atualizar nota.");
     } finally {
-        btn.textContent = "Gravar Alterações";
+        btn.textContent = "GRAVAR ALTERAÇÕES";
         btn.disabled = false;
     }
 };
