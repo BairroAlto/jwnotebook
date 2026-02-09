@@ -2074,6 +2074,7 @@ const FLASH_FOCUS_OPTIONS = {
         // Removido o "Original" daqui
         { id: "resumo", name: "Resumo", color: "#1a3a5f" },
         { id: "estudo_pessoal", name: "Estudo Pessoal", color: "#4169E1" },
+         { id: "perola", name: "Pérola", color: "#0032FD" },
         { id: "ponto_chave", name: "Ponto Chave", color: "#85C1E9" },
         { id: "palestra", name: "Palestra", color: "#5c6bc0" }
     ],
@@ -2899,16 +2900,15 @@ if (puzzleCount > 0) {
             return window.showCustomAlert("O título é obrigatório!"); 
         }
 
-        // --- 4. LÓGICA DE IDENTIFICAÇÃO DE VERSÍCULOS (CORREÇÃO MULTI-VERSÍCULO) ---
-        // Começamos com a seleção atual ou o versículo ativo
+        // --- 4. LÓGICA DE IDENTIFICAÇÃO DE VERSÍCULOS (MULTI-VERSÍCULO / CATEGORIAS) ---
+        // Começamos com os versículos selecionados ou o ativo
         let versesToAttach = (currentSelectionVerses && currentSelectionVerses.length > 0) 
             ? [...currentSelectionVerses] 
             : [activeVerseFullName];
 
-        // NOVO: Verifica na aba "Categorias" se o utilizador adicionou mais versículos manualmente
+        // Adicionar versículos que foram selecionados manualmente na aba Categorias
         if (currentFlashLinks && currentFlashLinks.categories) {
             currentFlashLinks.categories.forEach(cat => {
-                // Se o tipo for bíblia (pesquisa global), adicionamos à lista de anexos
                 if (cat.type === 'bible_public' || cat.type === 'textobiblico') {
                     if (!versesToAttach.includes(cat.name)) {
                         versesToAttach.push(cat.name);
@@ -2916,33 +2916,36 @@ if (puzzleCount > 0) {
                 }
             });
         }
-        
-        // Remove duplicados e entradas vazias por segurança
         versesToAttach = [...new Set(versesToAttach)].filter(v => v);
 
-        // 5. Preparar Firebase e Metadados
+        // --- 5. LÓGICA DE FOCO (CORES) ---
+        const allFocusOptions = [...FLASH_FOCUS_OPTIONS.default, ...FLASH_FOCUS_OPTIONS.question];
+        const selectedFocusObj = allFocusOptions.find(o => o.id === currentFlashFocus);
+        
+        // A cor da borda da nota será a cor do Foco, ou a cor do picker, ou o padrão azul/verde
+        const newColor = selectedFocusObj ? selectedFocusObj.color : (selectedColorHex || (noteType === 'question' ? '#2ecc71' : '#3498db'));
+
+        // 6. Preparar Firebase e Metadados
         const { collection, addDoc, doc, updateDoc, arrayUnion, serverTimestamp, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
         const fullHighlightText = currentSelectionText || (activeHighlightContext ? activeHighlightContext.text : null);
-        const colorToSave = selectedColorHex || (activeHighlightContext ? activeHighlightContext.color : '#3498db');
         const boxUniqueId = "box_" + Date.now();
 
-        // Serializar Tópicos, Links e Foco
+        // Serializar metadados para o HTML
         const safeTopics = JSON.stringify(currentFlashTopics || {}).replace(/"/g, '&quot;');
         const safeBoxLinks = JSON.stringify(currentFlashLinks || {}).replace(/"/g, '&quot;');
         const focusAttr = currentFlashFocus ? `data-focus="${currentFlashFocus}"` : "";
 
         const commonToolbarHTML = `<div class="mini-note-toolbar" contenteditable="false"><button type="button" data-action="sharing-settings">🔐</button><div class="toolbar-btn-group"><button type="button" data-action="move-up">🔺</button><button type="button" data-action="move-down">🔻</button></div><button type="button" data-action="manage-box-links">⚡</button><button type="button" data-action="append-mini-note">🧬</button><button type="button" data-action="highlight-color">🎨</button><button type="button" data-action="manage-mini-note-topics">📋</button><button type="button" data-action="delete-mini-note">🗑️</button></div>`;
 
-        let wrapperClass = "mini-note-wrapper";
-        if (noteType === 'question') wrapperClass += " question-mode";
+        let wrapperClass = (noteType === 'question') ? "mini-note-wrapper question-mode" : "mini-note-wrapper";
 
-        // Montar HTML da caixa (Padrão NotaBook)
-        const subNoteHtml = `<div class="${wrapperClass}" id="${boxUniqueId}" ${focusAttr} data-topics='${safeTopics}' data-shared="false" data-box-links='${safeBoxLinks}' contenteditable="false"><textarea class="mini-note-title-input" rows="1">${title}</textarea>${commonToolbarHTML}<div class="mini-note-content" contenteditable="true">${content}</div></div><p><br></p>`;
+        // Montar HTML final (incluindo o data-focus e cor da borda via inline style se necessário)
+        const subNoteHtml = `<div class="${wrapperClass}" id="${boxUniqueId}" ${focusAttr} data-topics='${safeTopics}' data-box-links='${safeBoxLinks}' contenteditable="false" style="border-left-color: ${newColor}"><textarea class="mini-note-title-input" rows="1">${title}</textarea>${commonToolbarHTML}<div class="mini-note-content" contenteditable="true">${content}</div></div><p><br></p>`;
 
-        // 6. EXECUÇÃO FIREBASE
+        // 7. EXECUÇÃO FIREBASE
 
-        // A. Criar a nota principal na Mochila (pastas)
+        // A. Gravar nota principal na Mochila (pastas)
         const noteRef = await addDoc(collection(db, 'pastas'), {
             nome: title, 
             conteudo: subNoteHtml, 
@@ -2955,64 +2958,60 @@ if (puzzleCount > 0) {
             ultimaedicao: serverTimestamp()
         });
 
-        // B. Tratar Trechos Picotados (se houver seleção)
+        // B. Tratar Destaques (Picotados)
         if (fullHighlightText) {
             const qCheck = query(collection(db, 'trechosbiblicos'), where('userId', '==', currentUser.uid), where('nome', '==', fullHighlightText));
             const snapCheck = await getDocs(qCheck);
             if (!snapCheck.empty) {
-                await updateDoc(doc(db, 'trechosbiblicos', snapCheck.docs[0].id), { noteIds: arrayUnion(noteRef.id), cor: colorToSave });
+                await updateDoc(doc(db, 'trechosbiblicos', snapCheck.docs[0].id), { noteIds: arrayUnion(noteRef.id), cor: newColor });
             } else {
                 await addDoc(collection(db, 'trechosbiblicos'), {
-                    userId: currentUser.uid, textosbiblicos: versesToAttach, nome: fullHighlightText, cor: colorToSave, noteIds: [noteRef.id], createdAt: serverTimestamp()
+                    userId: currentUser.uid, textosbiblicos: versesToAttach, nome: fullHighlightText, cor: newColor, noteIds: [noteRef.id], createdAt: serverTimestamp()
                 });
             }
         }
 
-        // C. VINCULAR A CADA VERSÍCULO (Loop em todos os anexados)
+        // C. VINCULAR A CADA VERSÍCULO (Loop em todos os anexados pelas Categorias)
         for (const verseName of versesToAttach) {
-            const cleanName = verseName.trim();
-            // Extrai o número para atualizar a UI (Ex: "2 Samuel 10:3" -> "3")
-            const vNum = cleanName.split(':')[1].trim().split('-')[0];
+            const vNum = verseName.split(':')[1].trim().split('-')[0];
 
             const puzzleItem = { 
-                type: 'ref', 
                 noteId: noteRef.id, 
                 noteName: title, 
                 snippet: encodeURIComponent(subNoteHtml), 
                 addedAt: Date.now(), 
-                noteColor: colorToSave, 
+                noteColor: newColor, 
                 highlightRef: fullHighlightText || "Nota Geral" 
             };
 
-            // Atualiza memória local
+            // Atualiza cache local
             if (!existingUserData[vNum]) existingUserData[vNum] = { puzzleBoard: [], dossie: [], panelLinks: [] };
             existingUserData[vNum].puzzleBoard.push(puzzleItem);
 
-            // Grava no Firebase do versículo específico
-            const qVerse = query(collection(db, 'textosbiblicos'), where('nome', '==', cleanName), where('userId', '==', currentUser.uid));
+            // Grava na DB do versículo
+            const qVerse = query(collection(db, 'textosbiblicos'), where('nome', '==', verseName), where('userId', '==', currentUser.uid));
             const snapshot = await getDocs(qVerse);
             
             if (!snapshot.empty) {
                 await updateDoc(doc(db, 'textosbiblicos', snapshot.docs[0].id), { puzzleBoard: arrayUnion(puzzleItem) });
             } else {
                 await addDoc(collection(db, 'textosbiblicos'), {
-                    nome: cleanName, userId: currentUser.uid, createdAt: serverTimestamp(), puzzleBoard: [puzzleItem], dossie: [], panelLinks: []
+                    nome: verseName, userId: currentUser.uid, createdAt: serverTimestamp(), puzzleBoard: [puzzleItem], dossie: [], panelLinks: []
                 });
             }
 
-            // PINTAR O NÚMERO DE LARANJA NA UI
+            // PINTAR O NÚMERO DE LARANJA NA UI IMEDIATAMENTE
             const numEl = document.getElementById(`vnum-${vNum}`);
             if (numEl) numEl.classList.add('has-data');
         }
 
-        // 7. FINALIZAÇÃO E LIMPEZA
+        // 8. FINALIZAÇÃO
         document.getElementById('flash-note-modal').style.display = 'none';
         if (typeof window.refreshVisualHighlights === 'function') window.refreshVisualHighlights();
         
-        // Retorna à vista de detalhes do versículo original
         window.returnToVerseDetails();
 
-        // Reset de variáveis globais
+        // Limpeza de variáveis globais
         currentSelectionText = ""; 
         currentSelectionVerses = []; 
         selectedColorHex = null;
@@ -3024,7 +3023,7 @@ if (puzzleCount > 0) {
 
     } catch (e) {
         console.error("Erro Crítico ao gravar Nota Flash:", e);
-        window.showCustomAlert("Erro ao gravar. Tente novamente.");
+        window.showCustomAlert("Erro ao gravar. Verifique a sua ligação.");
     } finally {
         if (btn) { 
             btn.textContent = "GRAVAR NOTA"; 
@@ -3308,7 +3307,7 @@ window.deletePuzzleItem = async (vNum, index) => {
  window.openEditCard = (vNum, index) => {
     console.group(`🔍 [EDIÇÃO] A abrir cartão (Verso: ${vNum}, Index: ${index})`);
 
-    // 1. Localizar os dados no cache local da página
+    // 1. Localizar os dados no cache local
     const data = existingUserData[vNum];
     if (!data || !data.puzzleBoard || !data.puzzleBoard[index]) {
         console.error("❌ Erro: Dados não encontrados na memória local.");
@@ -3318,23 +3317,21 @@ window.deletePuzzleItem = async (vNum, index) => {
 
     const item = data.puzzleBoard[index];
 
-    // 2. Descodificar e Processar o Snippet HTML da nota
+    // 2. Descodificar o Snippet HTML da nota
     let rawSnippet = "";
     try {
         const snippetToDecode = item.snippet || "";
-        // Verifica se está codificado em URI (contém %)
         rawSnippet = snippetToDecode.includes('%') ? decodeURIComponent(snippetToDecode) : snippetToDecode;
     } catch(e) {
-        console.warn("⚠️ Falha ao descodificar snippet, usando formato original.");
+        console.warn("⚠️ Falha ao descodificar snippet.");
         rawSnippet = item.snippet || "";
     }
 
     const parser = new DOMParser();
     const docHTML = parser.parseFromString(rawSnippet, 'text/html');
     
-    // --- 3. Recuperar Títulos e Conteúdo ---
+    // 3. Recuperar Títulos e Conteúdo
     let title = "";
-    // Tenta encontrar o título em vários inputs possíveis (compatibilidade de versões)
     const titleInput = docHTML.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
     const h2 = docHTML.querySelector('h2');
     
@@ -3345,23 +3342,22 @@ window.deletePuzzleItem = async (vNum, index) => {
     const contentDiv = docHTML.querySelector('.mini-note-content, .redator-content, .sign-content, .card-desc-content, .cube-content');
     if (contentDiv) content = contentDiv.innerHTML;
 
-    // --- 4. RECUPERAR METADADOS (Tópicos, Links e FOCO) ---
-    // Isto é vital para que, ao abrires o modal de links/tópicos, eles mostrem o que já estava gravado
+    // 4. RECUPERAR METADADOS (Vital para manter Tópicos, Links e FOCO)
     const wrapper = docHTML.querySelector('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
     
     if (wrapper) {
-        // Recuperar Tópicos 📋
+        // Tópicos 📋
         try { 
             currentFlashTopics = JSON.parse(wrapper.getAttribute('data-topics') || '{}'); 
         } catch(e) { currentFlashTopics = {}; }
 
-        // Recuperar Links ⚡
+        // Links ⚡
         try { 
             const rawLinks = wrapper.getAttribute('data-box-links');
             currentFlashLinks = (rawLinks && rawLinks !== "null") ? JSON.parse(rawLinks) : {};
         } catch(e) { currentFlashLinks = {}; }
 
-        // Recuperar Foco 🎨
+        // Foco 🎨
         const focusInAttr = wrapper.getAttribute('data-focus');
         currentFlashFocus = focusInAttr || null;
     } else {
@@ -3370,59 +3366,65 @@ window.deletePuzzleItem = async (vNum, index) => {
         currentFlashFocus = null;
     }
 
-    // 5. Preencher os campos fixos do Modal de Edição
+    // 5. Preencher os campos do Modal de Edição
     document.getElementById('edit-card-title').value = title;
     document.getElementById('edit-card-content').innerHTML = content;
     document.getElementById('edit-card-index').value = index;
     document.getElementById('edit-card-verse').value = vNum;
 
-    // 6. Atualizar a Cor Atual para o Seletor de Cores (usado no highlight picotado)
+    // A cor base para o picotado
     selectedColorHex = item.noteColor || item.cor || '#3498db'; 
 
-    // 7. Mostrar o Modal
+    // 6. Mostrar o Modal
     document.getElementById('edit-card-modal').style.display = 'flex';
 
-    // --- 8. ATUALIZAR ESTILO DOS BOTÕES DA TOOLBAR (Feedback Visual) ---
+    // 7. Feedback Visual na Toolbar (⚡ e 📋)
     const btnLinks = document.getElementById('btn-edit-links');
     const btnTopics = document.getElementById('btn-edit-topics');
     const btnFocus = document.getElementById('btn-edit-focus');
 
-    // Verifica se existem links reais gravados
-    const hasLinksData = (currentFlashLinks.urls && Object.keys(currentFlashLinks.urls).length > 0) || 
-                         (currentFlashLinks.codex && currentFlashLinks.codex.length > 0) || 
-                         (currentFlashLinks.categories && currentFlashLinks.categories.length > 0);
+    const hasLinks = (currentFlashLinks.urls && Object.keys(currentFlashLinks.urls).length > 0) || 
+                     (currentFlashLinks.codex && currentFlashLinks.codex.length > 0) || 
+                     (currentFlashLinks.categories && currentFlashLinks.categories.length > 0);
 
     if (btnLinks) {
-        btnLinks.style.color = hasLinksData ? "#f1c40f" : ""; 
-        btnLinks.style.borderColor = hasLinksData ? "#f1c40f" : "";
+        btnLinks.style.color = hasLinks ? "#f1c40f" : ""; 
+        btnLinks.style.borderColor = hasLinks ? "#f1c40f" : "";
     }
-
     if (btnTopics) {
-        const hasTopicsData = Object.keys(currentFlashTopics).length > 0;
-        btnTopics.style.color = hasTopicsData ? "#f1c40f" : "";
+        const hasTopics = Object.keys(currentFlashTopics).length > 0;
+        btnTopics.style.color = hasTopics ? "#f1c40f" : "";
     }
 
-    // 9. Injetar Seletor de Cores e Foco Visual
+    // 8. Aplicar a Cor do Foco no Editor (Incluindo Pérola)
     setTimeout(() => {
-        // Injeta as bolinhas de cores para mudar a cor da nota/picotado
         if (typeof window.injectColorPickerIntoEditModal === 'function') {
             window.injectColorPickerIntoEditModal();
         }
         
-        // Aplica a cor do Foco à borda do editor se existir
         const editEditor = document.getElementById('edit-card-content');
-        if (editEditor && currentFlashFocus) {
-            const allOptions = [...FLASH_FOCUS_OPTIONS.default, ...FLASH_FOCUS_OPTIONS.question];
-            const currentMode = allOptions.find(o => o.id === currentFlashFocus);
-            if (currentMode) editEditor.style.borderColor = currentMode.color;
-        } else if (editEditor) {
-            // Se não tiver foco, define a cor base (Verde se for questão, azul se subnota)
-            const isQuestion = rawSnippet.includes('question-mode');
-            editEditor.style.borderColor = isQuestion ? '#2ecc71' : '#3498db'; 
+        if (editEditor) {
+            if (currentFlashFocus) {
+                // Procura a cor nas tabelas de foco (default ou question)
+                const allFocusOptions = [...FLASH_FOCUS_OPTIONS.default, ...FLASH_FOCUS_OPTIONS.question];
+                const focusObj = allFocusOptions.find(o => o.id === currentFlashFocus);
+                
+                if (focusObj) {
+                    editEditor.style.borderColor = focusObj.color;
+                    editEditor.style.borderWidth = "2px";
+                    if (btnFocus) btnFocus.style.color = focusObj.color;
+                }
+            } else {
+                // Se não tiver foco, usa a cor base do tipo de nota
+                const isQuestion = rawSnippet.includes('question-mode');
+                editEditor.style.borderColor = isQuestion ? '#2ecc71' : '#3498db';
+                editEditor.style.borderWidth = "1px";
+                if (btnFocus) btnFocus.style.color = "";
+            }
         }
     }, 50);
 
-    console.log("✅ Edição preparada. Foco atual:", currentFlashFocus);
+    console.log("✅ Edição aberta. Foco atual:", currentFlashFocus || "Padrão");
     console.groupEnd();
 };
 
@@ -6811,34 +6813,45 @@ window.applyFlashFocus = (opt) => {
     const flashModal = document.getElementById('flash-note-modal');
     const editModal = document.getElementById('edit-card-modal');
     
-    // Identifica qual editor está ativo
-    let activeEditor = null;
-    if (flashModal && flashModal.style.display !== 'none') {
-        activeEditor = document.getElementById('flash-editor');
-    } else if (editModal && editModal.style.display !== 'none') {
-        activeEditor = document.getElementById('edit-card-content');
+    // Identificar qual editor deve receber a cor
+    let editorParaPintar = null;
+
+    // Se o modal de EDIÇÃO estiver visível, ele tem prioridade absoluta
+    if (editModal && editModal.style.display !== 'none') {
+        editorParaPintar = document.getElementById('edit-card-content');
+    } 
+    // Caso contrário, se for o de criação
+    else if (flashModal && flashModal.style.display !== 'none') {
+        editorParaPintar = document.getElementById('flash-editor');
     }
 
-    if (!opt) {
-        currentFlashFocus = null;
-        if (activeEditor) {
-            // Se for "Padrão", volta à cor original (Azul ou Verde)
-            const type = document.getElementById('flash-type-select')?.value;
-            // Se estiver no modo edição, tenta manter a cor da borda atual ou resetar
-activeEditor.style.borderColor = (type === 'question') ? '#1e8449' : '#4a90e2';
-        }
-    } else {
-        currentFlashFocus = opt.id;
-        if (activeEditor) {
-            // APLICA A COR NA BORDA
-            activeEditor.style.borderColor = opt.color;
+    if (editorParaPintar) {
+        if (!opt) {
+            // Se escolher "Padrão" (sem foco)
+            currentFlashFocus = null;
+            // Verifica se é modo questão (verde) ou subnota (azul) para repor a cor base
+            const isQuestion = editorParaPintar.classList.contains('question-mode') || 
+                               (document.getElementById('flash-type-select')?.value === 'question');
+            
+            editorParaPintar.style.borderColor = isQuestion ? '#2ecc71' : '#3498db';
+        } else {
+            // APLICAR A COR DO FOCO SELECIONADO
+            currentFlashFocus = opt.id;
+            editorParaPintar.style.borderColor = opt.color;
+            // Forçar a espessura da borda para garantir que se vê
+            editorParaPintar.style.borderWidth = "2px";
+            editorParaPintar.style.borderStyle = "solid";
         }
     }
-    
-    // Atualiza o ícone do botão para mostrar que está ativo
-    const btn = document.getElementById('btn-flash-focus') || document.getElementById('btn-edit-focus');
+
+    // Atualizar o ícone do botão 🎨 no modal que estiver ativo
+    const btn = (editModal && editModal.style.display !== 'none') 
+                ? document.getElementById('btn-edit-focus') 
+                : document.getElementById('btn-flash-focus');
+                
     if (btn) btn.style.color = opt ? opt.color : "";
 
+    // Fechar o popup de focos
     modal.style.display = 'none';
 };
 
