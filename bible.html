@@ -3043,38 +3043,55 @@ function buildVerseHTML(data, num) {
         }
 
         // C. VINCULAR A CADA VERSÍCULO (Loop em todos os anexados pelas Categorias)
-        for (const verseName of versesToAttach) {
-            const vNum = verseName.split(':')[1].trim().split('-')[0];
+    for (const verseName of versesToAttach) {
+    const vNum = verseName.split(':')[1].trim().split('-')[0];
 
-            const puzzleItem = { 
-                noteId: noteRef.id, 
-                noteName: title, 
-                snippet: encodeURIComponent(subNoteHtml), 
-                addedAt: Date.now(), 
-                noteColor: newColor, 
-                highlightRef: fullHighlightText || "Nota Geral" 
-            };
+    const puzzleItem = { 
+        noteId: noteRef.id, 
+        noteName: title, 
+        snippet: encodeURIComponent(subNoteHtml), 
+        addedAt: Date.now(), 
+        noteColor: newColor, 
+        highlightRef: fullHighlightText || "Nota Geral" 
+    };
 
-            // Atualiza cache local
-            if (!existingUserData[vNum]) existingUserData[vNum] = { puzzleBoard: [], dossie: [], panelLinks: [] };
-            existingUserData[vNum].puzzleBoard.push(puzzleItem);
+    // 1. ATUALIZA CACHE LOCAL (Usando unshift para ir para o topo)
+    if (!existingUserData[vNum]) {
+        existingUserData[vNum] = { puzzleBoard: [], dossie: [], panelLinks: [] };
+    }
+    // Mudamos de .push() para .unshift()
+    existingUserData[vNum].puzzleBoard.unshift(puzzleItem);
 
-            // Grava na DB do versículo
-            const qVerse = query(collection(db, 'textosbiblicos'), where('nome', '==', verseName), where('userId', '==', currentUser.uid));
-            const snapshot = await getDocs(qVerse);
-            
-            if (!snapshot.empty) {
-                await updateDoc(doc(db, 'textosbiblicos', snapshot.docs[0].id), { puzzleBoard: arrayUnion(puzzleItem) });
-            } else {
-                await addDoc(collection(db, 'textosbiblicos'), {
-                    nome: verseName, userId: currentUser.uid, createdAt: serverTimestamp(), puzzleBoard: [puzzleItem], dossie: [], panelLinks: []
-                });
-            }
+    // 2. GRAVA NA DB DO VERSÍCULO
+    const qVerse = query(collection(db, 'textosbiblicos'), where('nome', '==', verseName), where('userId', '==', currentUser.uid));
+    const snapshot = await getDocs(qVerse);
+    
+    if (!snapshot.empty) {
+        const docSnap = snapshot.docs[0];
+        const docRef = doc(db, 'textosbiblicos', docSnap.id);
+        
+        // Em vez de arrayUnion (que põe no fim), pegamos no array atual,
+        // adicionamos ao início e gravamos o array inteiro.
+        let currentBoard = docSnap.data().puzzleBoard || [];
+        currentBoard.unshift(puzzleItem); // Adiciona ao início
+        
+        await updateDoc(docRef, { puzzleBoard: currentBoard });
+    } else {
+        // Se o documento é novo, o primeiro item fica naturalmente no topo
+        await addDoc(collection(db, 'textosbiblicos'), {
+            nome: verseName, 
+            userId: currentUser.uid, 
+            createdAt: serverTimestamp(), 
+            puzzleBoard: [puzzleItem], 
+            dossie: [], 
+            panelLinks: []
+        });
+    }
 
-            // PINTAR O NÚMERO DE LARANJA NA UI IMEDIATAMENTE
-            const numEl = document.getElementById(`vnum-${vNum}`);
-            if (numEl) numEl.classList.add('has-data');
-        }
+    // PINTAR O NÚMERO DE LARANJA NA UI
+    const numEl = document.getElementById(`vnum-${vNum}`);
+    if (numEl) numEl.classList.add('has-data');
+}
 
         // 8. FINALIZAÇÃO
         document.getElementById('flash-note-modal').style.display = 'none';
@@ -3330,43 +3347,39 @@ window.deletePuzzleItem = async (vNum, index) => {
         // 3. ATUALIZAR UI (AQUI ESTÁ A NOVIDADE)
         
         // A. Redesenha a Bíblia (remove o picotado se não houver mais notas)
-        if (typeof window.refreshVisualHighlights === 'function') {
-            window.refreshVisualHighlights();
-        }
+ if (typeof window.refreshVisualHighlights === 'function') {
+    window.refreshVisualHighlights();
+}
 
-        // B. Decide para onde ir
-        if (activeHighlightContext) {
-            // Estamos dentro de um Painel de Trecho.
-            // Vamos verificar se AINDA SOBRARAM notas para este trecho neste versículo.
-            const currentData = existingUserData[vNum];
-            
-            // Filtra: quantas notas restam que têm o mesmo texto do trecho?
-            // (Usamos activeHighlightContext.text porque é o mestre)
-            const notesRemainingForHighlight = currentData.puzzleBoard.filter(item => 
-                item.highlightRef === activeHighlightContext.text || 
-                (itemToDelete && item.highlightRef === itemToDelete.highlightRef)
-            );
+if (activeHighlightContext) {
+    // Verifica o que sobrou para este trecho específico
+    const currentData = existingUserData[vNum];
+    const notesRemaining = currentData.puzzleBoard.filter(item => 
+        item.highlightRef === activeHighlightContext.text
+    );
 
-            if (notesRemainingForHighlight.length === 0) {
-                // SE NÃO SOBROU NADA: O trecho morreu.
-                // Volta para a vista geral do versículo (Verse Details)
-                window.returnToVerseDetails();
-            } else {
-                // AINDA HÁ NOTAS (ex: tinhas 2 cards, apagaste 1):
-                // Recarrega o painel do trecho para mostrar as que sobraram.
-                const safeText = encodeURIComponent(activeHighlightContext.text);
-                const safeColor = encodeURIComponent(activeHighlightContext.color);
-                
-                // Simula evento
-                const verseEl = document.getElementById(`vnum-${vNum}`)?.closest('.verse-item');
-                setTimeout(() => {
-                    window.openHighlightDetails({stopPropagation:()=>{}, target: verseEl}, safeText, safeColor);
-                }, 50);
-            }
-        } else {
-            // Estávamos na vista normal, recarrega normal
-            window.openModalForVerse(vNum);
+    if (notesRemaining.length === 0) {
+        // Se não restam notas, volta à vista geral sem animações bruscas
+        window.returnToVerseDetails();
+    } else {
+        // EM VEZ DE REABRIR (openHighlightDetails), apenas re-renderizamos o conteúdo
+        // Isso evita que o painel mobile "salte" ou mude de altura
+        const contentDiv = document.getElementById(window.innerWidth >= 768 ? 'sidebar-content' : 'details-content');
+        if (contentDiv) {
+            // Criamos uma lista de notas com os índices ATUALIZADOS para o novo array
+            const updatedNotesForDisplay = [];
+            currentData.puzzleBoard.forEach((item, idx) => {
+                if (item.highlightRef === activeHighlightContext.text) {
+                    updatedNotesForDisplay.push({ ...item, originalIndex: idx, sourceVerse: vNum });
+                }
+            });
+            renderHighlightContentConsolidated(contentDiv, updatedNotesForDisplay, activeHighlightContext.color);
         }
+    }
+} else {
+    // Vista geral do versículo
+    window.openModalForVerse(vNum);
+}
 
     } catch (e) {
         console.error("Erro ao apagar:", e);
