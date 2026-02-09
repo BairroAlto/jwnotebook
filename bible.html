@@ -1484,6 +1484,52 @@ input:checked + .slider:before { transform: translateX(16px); }
 .dossie-content-wrapper {
     -webkit-tap-highlight-color: transparent;
 }
+/* Estilo para os itens dentro do popup de Foco */
+.focus-mode-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 15px;
+    margin-bottom: 5px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.focus-mode-item:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+    transform: translateX(5px);
+}
+
+.focus-mode-item.active {
+    background-color: rgba(74, 144, 226, 0.15);
+    border-color: var(--accent-color);
+}
+
+/* A bolinha de cor ao lado do nome do foco */
+.focus-preview-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    margin-right: 15px;
+    flex-shrink: 0;
+    box-shadow: 0 0 5px rgba(0,0,0,0.3);
+}
+
+.focus-label {
+    flex-grow: 1;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: #eee;
+}
+
+/* Símbolo de check para o item ativo */
+.focus-check {
+    color: var(--accent-color);
+    font-weight: bold;
+    font-size: 1.1rem;
+}
 
 </style>
 
@@ -1582,6 +1628,7 @@ input:checked + .slider:before { transform: translateX(16px); }
                     <button onclick="document.execCommand('underline')"><u>U</u></button>
                     <button id="btn-flash-topics" title="Tópicos do Bloco" style="margin-left:5px;">📋</button>
                     <button id="btn-flash-links" title="Gestão de Links" style="margin-left:2px;">⚡</button>
+                    <button id="btn-flash-focus" title="Definir Foco" style="margin-left:2px;">🎨</button>
 
                     <!-- Novo Seletor de Tipo -->
                     <select id="flash-type-select">
@@ -1676,6 +1723,7 @@ input:checked + .slider:before { transform: translateX(16px); }
         <!-- Botões de Funcionalidade -->
         <button id="btn-edit-topics" title="Editar Tópicos" style="margin-left:10px;">📋</button>
         <button id="btn-edit-links" title="Editar Links" style="margin-left:2px;">⚡</button>
+        <button id="btn-flash-focus" title="Definir Foco" style="margin-left:2px;">🎨</button>
     </div>
 
     <label style="font-size:0.8rem; color:#888;">Conteúdo</label>
@@ -1908,6 +1956,18 @@ input:checked + .slider:before { transform: translateX(16px); }
     </div>
 </div>
 
+<!-- Modal de Foco -->
+<div id="flash-focus-modal" class="modal-overlay" style="z-index: 13000;">
+    <div class="modal-content" style="max-width: 350px;">
+        <div class="modal-header">
+            <h3>🎭 Definir Foco</h3>
+            <button class="modal-close" onclick="document.getElementById('flash-focus-modal').style.display='none'">×</button>
+        </div>
+        <div class="details-body" id="flash-focus-list">
+            <!-- Gerado via JS -->
+        </div>
+    </div>
+</div>
 
 
   <script type="module">
@@ -1951,7 +2011,7 @@ let startHeight = 0;
 let isDragging = false;
 let verseObserver = null;
 let isFirstLoad = true;
-
+let currentFlashFocus = null;
 
 
         // --- REFERÊNCIAS DOM ---
@@ -1994,7 +2054,19 @@ const HIGHLIGHT_COLORS = [
     { name: 'Cinzento', hex: '#95a5a6' }
 ];
  const initialUrlSearch = window.location.search; 
-
+const FLASH_FOCUS_OPTIONS = {
+    default: [ // Subnotas (Azul)
+        { id: "resumo", name: "Resumo", color: "#1a3a5f" },
+        { id: "ponto_chave", name: "Ponto Chave", color: "#5dade2" },
+        { id: "palestra", name: "Palestra", color: "#5c6bc0" }
+    ],
+    question: [ // Questões (Verde)
+        { id: "revisao", name: "Pergunta Revisão", color: "#2B6467" },
+        { id: "dilema", name: "Dilema", color: "#052c1e" },
+        { id: "hipotese", name: "Hipótese", color: "#27ae60" },
+        { id: "paradoxo", name: "Paradoxo", color: "#82e0aa" }
+    ]
+};
 
         // --- AUTENTICAÇÃO E INICIALIZAÇÃO ---
     const globalShield = document.getElementById('global-auth-shield');
@@ -2776,11 +2848,17 @@ if (puzzleCount > 0) {
 };
 
  window.saveFlashNoteGlobal = async (clickedBtn = null) => {
+    // 1. Gerir estado do botão para evitar cliques duplos
     const btn = clickedBtn || document.getElementById('btn-submit-flash') || document.getElementById('btn-save-flash');
     if (btn && btn.disabled) return; 
-    if (btn) { btn.textContent = "A gravar..."; btn.disabled = true; btn.style.opacity = "0.7"; }
+    if (btn) { 
+        btn.textContent = "A gravar..."; 
+        btn.disabled = true; 
+        btn.style.opacity = "0.7"; 
+    }
 
     try {
+        // 2. Identificar o contentor ativo (Sidebar no PC ou Modal no Mobile)
         let container;
         const sidePanel = document.getElementById('side-panel');
         if (sidePanel && sidePanel.classList.contains('open') && window.innerWidth >= 768) {
@@ -2789,9 +2867,11 @@ if (puzzleCount > 0) {
             container = document.getElementById('flash-note-modal');
         }
 
+        // 3. Recolher dados do formulário
         const titleInput = container.querySelector('#flash-title');
         const editor = container.querySelector('#flash-editor');
         const typeSelect = container.querySelector('#flash-type-select');
+        
         const title = titleInput.value.trim();
         const content = editor.innerHTML;
         const noteType = typeSelect ? typeSelect.value : 'default';
@@ -2801,6 +2881,7 @@ if (puzzleCount > 0) {
             return window.showCustomAlert("O título é obrigatório!"); 
         }
 
+        // 4. Preparar metadados e atributos
         const { collection, addDoc, doc, updateDoc, arrayUnion, serverTimestamp, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
         const fullHighlightText = currentSelectionText || (activeHighlightContext ? activeHighlightContext.text : null);
@@ -2808,37 +2889,61 @@ if (puzzleCount > 0) {
         const boxUniqueId = "box_" + Date.now();
         const versesToAttach = (currentSelectionVerses && currentSelectionVerses.length > 0) ? currentSelectionVerses : [activeVerseFullName];
 
+        // Lógica de Tópicos e Links
         const safeTopics = JSON.stringify(currentFlashTopics || {}).replace(/"/g, '&quot;');
-        const safeBoxLinks = JSON.stringify(currentFlashLinks).replace(/"/g, '&quot;');
+        const safeBoxLinks = JSON.stringify(currentFlashLinks || {}).replace(/"/g, '&quot;');
+        
+        // --- NOVO: Atributo de Foco ---
+        const focusAttr = currentFlashFocus ? `data-focus="${currentFlashFocus}"` : "";
 
+        // Toolbar padrão do NotaBook
         const commonToolbarHTML = `<div class="mini-note-toolbar" contenteditable="false"><button type="button" data-action="sharing-settings">🔐</button><div class="toolbar-btn-group"><button type="button" data-action="move-up">🔺</button><button type="button" data-action="move-down">🔻</button></div><button type="button" data-action="manage-box-links">⚡</button><button type="button" data-action="append-mini-note">🧬</button><button type="button" data-action="highlight-color">🎨</button><button type="button" data-action="manage-mini-note-topics">📋</button><button type="button" data-action="delete-mini-note">🗑️</button></div>`;
 
         let wrapperClass = "mini-note-wrapper";
         if (noteType === 'question') wrapperClass += " question-mode";
 
-        // HTML LIMPO para o note.html
-        const subNoteHtml = `<div class="${wrapperClass}" id="${boxUniqueId}" data-topics='${safeTopics}' data-shared="false" data-box-links='${safeBoxLinks}' contenteditable="false"><textarea class="mini-note-title-input" rows="1">${title}</textarea>${commonToolbarHTML}<div class="mini-note-content" contenteditable="true">${content}</div></div><p><br></p>`;
+        // 5. Montar o HTML final da caixa (O que será lido pelo note.html)
+        const subNoteHtml = `<div class="${wrapperClass}" id="${boxUniqueId}" ${focusAttr} data-topics='${safeTopics}' data-shared="false" data-box-links='${safeBoxLinks}' contenteditable="false"><textarea class="mini-note-title-input" rows="1">${title}</textarea>${commonToolbarHTML}<div class="mini-note-content" contenteditable="true">${content}</div></div><p><br></p>`;
 
-        // 1. GRAVAR NOTA EM 'PASTAS'
+        // 6. EXECUÇÃO NO FIREBASE
+        
+        // A. Criar a nota principal na coleção 'pastas' (para aparecer no NotaBook)
         const noteRef = await addDoc(collection(db, 'pastas'), {
-            nome: title, conteudo: subNoteHtml, tipo: 'nota', oque: 'back',
-            userId: currentUser.uid, estado: 'ativa', boxIds: [boxUniqueId],
-            createdAt: serverTimestamp(), ultimaedicao: serverTimestamp()
+            nome: title, 
+            conteudo: subNoteHtml, 
+            tipo: 'nota', 
+            oque: 'back', // Fica guardado na "Bag" (Mochila)
+            userId: currentUser.uid, 
+            estado: 'ativa', 
+            boxIds: [boxUniqueId],
+            createdAt: serverTimestamp(), 
+            ultimaedicao: serverTimestamp()
         });
 
-        // 2. ATUALIZAR/CRIAR TRECHO GLOBAL
+        // B. Se houver texto selecionado, atualizar/criar o Trecho Global
         if (fullHighlightText) {
             const qCheck = query(collection(db, 'trechosbiblicos'), where('userId', '==', currentUser.uid), where('nome', '==', fullHighlightText));
             const snapCheck = await getDocs(qCheck);
+            
             if (!snapCheck.empty) {
-                await updateDoc(doc(db, 'trechosbiblicos', snapCheck.docs[0].id), { noteIds: arrayUnion(noteRef.id), cor: colorToSave });
+                // Se o trecho já existe, apenas adiciona esta nota à lista dele
+                await updateDoc(doc(db, 'trechosbiblicos', snapCheck.docs[0].id), { 
+                    noteIds: arrayUnion(noteRef.id), 
+                    cor: colorToSave 
+                });
             } else {
+                // Cria um novo trecho picotado
                 await addDoc(collection(db, 'trechosbiblicos'), {
-                    userId: currentUser.uid, textosbiblicos: versesToAttach, nome: fullHighlightText, cor: colorToSave, noteIds: [noteRef.id], createdAt: serverTimestamp()
+                    userId: currentUser.uid, 
+                    textosbiblicos: versesToAttach, 
+                    nome: fullHighlightText, 
+                    cor: colorToSave, 
+                    noteIds: [noteRef.id], 
+                    createdAt: serverTimestamp()
                 });
             }
 
-            // --- CORREÇÃO: LÓGICA DE MÚLTIPLAS CORES NO CACHE LOCAL ---
+            // Atualiza cache local de destaques para o picotado aparecer sem dar refresh
             let existingH = currentChapterHighlights.find(h => h.texto === fullHighlightText);
             if (existingH) {
                 if (!existingH.colors.includes(colorToSave)) existingH.colors.push(colorToSave);
@@ -2847,28 +2952,36 @@ if (puzzleCount > 0) {
             }
         }
 
-        // 3. ATUALIZAR CADA VERSÍCULO
+        // C. Atualizar a ficha de cada versículo envolvido (textosbiblicos)
         for (const verseName of versesToAttach) {
             const cleanName = verseName.trim();
             const vNum = cleanName.split(':')[1].trim().split('-')[0];
             const verseSpan = document.getElementById(`vtext-${vNum}`);
 
+            // Calcula se o destaque se aplica a este verso específico (para seleções multi-verso)
             let verseSpecificHighlight = fullHighlightText;
             if (fullHighlightText && verseSpan && versesToAttach.length > 1) {
                 verseSpecificHighlight = calculateVerseIntersection(verseSpan.innerText, fullHighlightText) || fullHighlightText;
             }
 
             const puzzleItem = { 
-                type: 'ref', noteId: noteRef.id, noteName: title, 
-                snippet: encodeURIComponent(subNoteHtml), addedAt: Date.now(), 
-                noteColor: colorToSave, highlightRef: verseSpecificHighlight || "Nota Geral" 
+                type: 'ref', 
+                noteId: noteRef.id, 
+                noteName: title, 
+                snippet: encodeURIComponent(subNoteHtml), 
+                addedAt: Date.now(), 
+                noteColor: colorToSave, 
+                highlightRef: verseSpecificHighlight || "Nota Geral" 
             };
 
+            // Atualiza cache de UI local do versículo
             if (!existingUserData[vNum]) existingUserData[vNum] = { puzzleBoard: [], dossie: [], panelLinks: [] };
             existingUserData[vNum].puzzleBoard.push(puzzleItem);
 
+            // Grava no Firebase do versículo
             const qVerse = query(collection(db, 'textosbiblicos'), where('nome', '==', cleanName), where('userId', '==', currentUser.uid));
             const snapshot = await getDocs(qVerse);
+            
             if (!snapshot.empty) {
                 await updateDoc(doc(db, 'textosbiblicos', snapshot.docs[0].id), { puzzleBoard: arrayUnion(puzzleItem) });
             } else {
@@ -2876,13 +2989,18 @@ if (puzzleCount > 0) {
                     nome: cleanName, userId: currentUser.uid, createdAt: serverTimestamp(), puzzleBoard: [puzzleItem], dossie: [], panelLinks: []
                 });
             }
+            // Pinta o número do versículo de laranja
             document.getElementById(`vnum-${vNum}`)?.classList.add('has-data');
         }
 
-        // --- ATUALIZAÇÃO VISUAL INSTANTÂNEA ---
+        // 7. FINALIZAÇÃO DA UI
         document.getElementById('flash-note-modal').style.display = 'none';
+        
+        // Atualiza os sublinhados picotados no texto
         if (typeof window.refreshVisualHighlights === 'function') window.refreshVisualHighlights();
         
+        // Se a nota foi criada num trecho, abre os detalhes desse trecho. 
+        // Se foi no versículo geral, volta para a lista de notas do versículo.
         if (fullHighlightText) {
             activeHighlightContext = { text: fullHighlightText, color: colorToSave };
             const vNumFirst = versesToAttach[0].split(':')[1].trim().split('-')[0];
@@ -2892,13 +3010,23 @@ if (puzzleCount > 0) {
             window.returnToVerseDetails();
         }
 
-        currentSelectionText = ""; currentSelectionVerses = []; selectedColorHex = null;
+        // Limpeza de variáveis globais de seleção
+        currentSelectionText = ""; 
+        currentSelectionVerses = []; 
+        selectedColorHex = null;
+        currentFlashFocus = null; // Reset do foco
+        
         if (window.getSelection) window.getSelection().removeAllRanges();
 
     } catch (e) {
-        console.error("Erro:", e);
-        alert("Erro ao gravar.");
-        if(btn) { btn.textContent = "GRAVAR NOTA"; btn.disabled = false; btn.style.opacity = "1"; }
+        console.error("Erro Crítico ao gravar Nota Flash:", e);
+        window.showCustomAlert("Erro ao gravar. Verifique a sua ligação.");
+    } finally {
+        if (btn) { 
+            btn.textContent = "GRAVAR NOTA"; 
+            btn.disabled = false; 
+            btn.style.opacity = "1"; 
+        }
     }
 };
 
@@ -3174,35 +3302,33 @@ window.deletePuzzleItem = async (vNum, index) => {
 
         // 3. Abrir Modal de Edição
  window.openEditCard = (vNum, index) => {
-    console.group(`🔍 [DEBUG] A abrir cartão para edição (Verso: ${vNum}, Index: ${index})`);
+    console.group(`🔍 [EDIÇÃO] A abrir cartão (Verso: ${vNum}, Index: ${index})`);
 
+    // 1. Localizar os dados no cache local da página
     const data = existingUserData[vNum];
     if (!data || !data.puzzleBoard[index]) {
-        console.error("❌ Dados não encontrados na memória.");
+        console.error("❌ Erro: Dados não encontrados na memória local.");
         console.groupEnd();
         return;
     }
 
-  const item = data.puzzleBoard[index];
+    const item = data.puzzleBoard[index];
 
+    // 2. Descodificar e Processar o Snippet HTML da nota
     let rawSnippet = "";
     try {
         const snippetToDecode = item.snippet || "";
-        // Só tenta decodificar se houver indícios de codificação
-        if (typeof snippetToDecode === 'string' && snippetToDecode.includes('%')) {
-            rawSnippet = decodeURIComponent(snippetToDecode);
-        } else {
-            rawSnippet = snippetToDecode;
-        }
+        // Verifica se está codificado em URI (contém %)
+        rawSnippet = snippetToDecode.includes('%') ? decodeURIComponent(snippetToDecode) : snippetToDecode;
     } catch(e) {
-        console.warn("⚠️ Erro ao descodificar snippet na edição, usando raw:", e);
+        console.warn("⚠️ Falha ao descodificar snippet, usando formato original.");
         rawSnippet = item.snippet || "";
     }
 
     const parser = new DOMParser();
     const docHTML = parser.parseFromString(rawSnippet, 'text/html');
     
-    // --- 1. Recuperar Título e Conteúdo ---
+    // --- 3. Recuperar Títulos e Conteúdo ---
     let title = "";
     const titleInput = docHTML.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
     const h2 = docHTML.querySelector('h2');
@@ -3214,106 +3340,82 @@ window.deletePuzzleItem = async (vNum, index) => {
     const contentDiv = docHTML.querySelector('.mini-note-content, .redator-content, .sign-content, .card-desc-content, .cube-content');
     if (contentDiv) content = contentDiv.innerHTML;
 
-    // --- 2. RECUPERAR DADOS EXTRA (CORREÇÃO DE SELETOR + LOGS) ---
-    
-    // CORREÇÃO: Adicionei todos os tipos de classes possíveis (.redator-wrapper, .journal-sign-wrapper, etc.)
-    // Se o seletor for apenas '.mini-note-wrapper', os links dos Redatores não aparecem.
+    // --- 4. RECUPERAR METADADOS (Tópicos, Links e FOCO) ---
     const wrapper = docHTML.querySelector('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
     
     if (wrapper) {
-        
-        // TÓPICOS
-        const rawTopics = wrapper.getAttribute('data-topics');
+        // Recuperar Tópicos
         try { 
-            currentFlashTopics = JSON.parse(rawTopics || '{}'); 
+            currentFlashTopics = JSON.parse(wrapper.getAttribute('data-topics') || '{}'); 
         } catch(e) { currentFlashTopics = {}; }
 
-        // LINKS (O PONTO CRÍTICO)
-        const rawLinks = wrapper.getAttribute('data-box-links');
-
+        // Recuperar Links (⚡)
         try { 
-            // Tenta parsear. Se for 'null' string ou vazio, cria objeto vazio
-            if (!rawLinks || rawLinks === "null" || rawLinks === "{}") {
-                currentFlashLinks = {};
-            } else {
-                currentFlashLinks = JSON.parse(rawLinks);
-                
-                // Verificar conteúdo
-                const urlCount = currentFlashLinks.urls ? Object.keys(currentFlashLinks.urls).length : 0;
-                const codexCount = currentFlashLinks.codex ? currentFlashLinks.codex.length : 0;
-            }
-        } catch(e) { 
-            console.error("❌ Erro ao fazer JSON.parse dos links:", e);
-            currentFlashLinks = {}; 
-        }
+            const rawLinks = wrapper.getAttribute('data-box-links');
+            currentFlashLinks = (rawLinks && rawLinks !== "null") ? JSON.parse(rawLinks) : {};
+        } catch(e) { currentFlashLinks = {}; }
 
+        // --- NOVO: Recuperar Foco (🎨) ---
+        const focusInAttr = wrapper.getAttribute('data-focus');
+        currentFlashFocus = focusInAttr || null;
     } else {
-        console.warn("⚠️ AVISO: Nenhum wrapper (.mini-note-wrapper ou similar) encontrado no HTML. É uma nota antiga?");
         currentFlashTopics = {};
         currentFlashLinks = {};
+        currentFlashFocus = null;
     }
 
-    // 3. Carregar a Cor Atual
-    selectedColorHex = item.noteColor || item.cor || '#3498db'; 
-
-    // 4. Preencher UI
+    // 5. Preencher os campos do Modal de Edição
     document.getElementById('edit-card-title').value = title;
     document.getElementById('edit-card-content').innerHTML = content;
     document.getElementById('edit-card-index').value = index;
     document.getElementById('edit-card-verse').value = vNum;
 
+    // 6. Atualizar a Cor Atual para o Seletor de Cores
+    selectedColorHex = item.noteColor || item.cor || '#3498db'; 
+
+    // 7. Mostrar o Modal
     document.getElementById('edit-card-modal').style.display = 'flex';
 
-    // 5. Configurar Botões da Toolbar
-    const btnTopics = document.getElementById('btn-edit-topics');
-    const btnLinks = document.getElementById('btn-edit-links');
+    // --- 8. CONFIGURAR BOTÕES DA TOOLBAR (Visual e Ação) ---
+    const btnTopics = document.getElementById('btn-edit-topics') || document.getElementById('btn-flash-topics');
+    const btnLinks = document.getElementById('btn-edit-links') || document.getElementById('btn-flash-links');
+    const btnFocus = document.getElementById('btn-edit-focus') || document.getElementById('btn-flash-focus');
 
-    if (btnTopics) {
-        btnTopics.onclick = () => {
-            activeTopicIdForFlash = null; 
-            window.openTopicsModal();
-        };
-    }
+    // Estilo do botão de Links (Amarelo se tiver dados)
+    const hasLinksData = (currentFlashLinks.urls && Object.keys(currentFlashLinks.urls).length > 0) || 
+                         (currentFlashLinks.codex && currentFlashLinks.codex.length > 0) || 
+                         (currentFlashLinks.categories && currentFlashLinks.categories.length > 0);
 
     if (btnLinks) {
-        // Atualiza a cor do botão se já houver links
-        const hasData = (currentFlashLinks.urls && Object.keys(currentFlashLinks.urls).length > 0) || 
-                        (currentFlashLinks.codex && currentFlashLinks.codex.length > 0) || 
-                        (currentFlashLinks.categories && currentFlashLinks.categories.length > 0);
-    
-
-        if (hasData) {
-            btnLinks.style.color = "#f1c40f"; 
-            btnLinks.style.borderColor = "#f1c40f";
-        } else {
-            btnLinks.style.color = ""; 
-            btnLinks.style.borderColor = "";
-        }
-
-        btnLinks.onclick = () => {
-            window.openFlashLinkManager();
-        };
+        btnLinks.style.color = hasLinksData ? "#f1c40f" : ""; 
+        btnLinks.style.borderColor = hasLinksData ? "#f1c40f" : "";
     }
 
-    // 6. Injeções Finais
+    // Estilo do botão de Foco (Laranja se tiver foco definido)
+    if (btnFocus) {
+        btnFocus.style.color = currentFlashFocus ? "#e67e22" : ""; 
+        btnFocus.style.borderColor = currentFlashFocus ? "#e67e22" : "";
+    }
+
+    // 9. Injetar Seletor de Cores e Configurações Finais
     setTimeout(() => {
         if (typeof window.injectColorPickerIntoEditModal === 'function') {
             window.injectColorPickerIntoEditModal();
         }
         
-        // Configuração de colar texto simples (mantém-se igual)
+        // Mudar cor da borda do editor se houver foco
         const editEditor = document.getElementById('edit-card-content');
-        if (editEditor) {
-            const newEditEditor = editEditor.cloneNode(true);
-            editEditor.parentNode.replaceChild(newEditEditor, editEditor);
-            newEditEditor.addEventListener('paste', (e) => {
-                e.preventDefault();
-                const text = (e.clipboardData || window.clipboardData).getData('text');
-                document.execCommand('insertText', false, text);
-            });
+        if (editEditor && currentFlashFocus) {
+            const allOptions = [...FLASH_FOCUS_OPTIONS.default, ...FLASH_FOCUS_OPTIONS.question];
+            const currentMode = allOptions.find(o => o.id === currentFlashFocus);
+            if (currentMode) editEditor.style.borderColor = currentMode.color;
+        } else if (editEditor) {
+            // Reseta borda se não houver foco
+            editEditor.style.borderColor = ""; 
         }
     }, 50);
 
+    console.log("✅ Edição preparada. Foco atual:", currentFlashFocus);
     console.groupEnd();
 };
 
@@ -4119,6 +4221,7 @@ window.getFlashFormHTML = (customLabel = null) => {
                 
                 <button id="btn-flash-topics" onclick="window.openTopicsModal()" title="Tópicos">📋</button>
                 <button id="btn-flash-links" onclick="window.openFlashLinkManager()" title="Links">⚡</button>
+                <button id="btn-flash-focus" title="Definir Foco" style="margin-left:2px;">🎨</button>
 
                 <select id="flash-type-select" onchange="window.changeFlashBorder(this)">
                     <option value="default">📘 Subnota</option>
@@ -6665,6 +6768,138 @@ window.getFlashCodexData = (row) => {
         type: 'codex'
     };
 };
+
+// Abrir Modal de Foco
+window.openFocusModal = () => {
+    const typeSelect = document.getElementById('flash-type-select');
+    const editModal = document.getElementById('edit-card-modal');
+    
+    let currentType = 'default';
+
+    // Se estiver no modal de edição, o tipo é fixo (baseado na classe ou borda)
+    if (editModal && editModal.style.display === 'flex') {
+        const editEditor = document.getElementById('edit-card-content');
+        if (editEditor.style.borderColor === 'rgb(46, 204, 113)' || editEditor.style.borderColor === '#2ecc71') {
+            currentType = 'question';
+        }
+    } else {
+        // No modo criação, lê SEMPRE o valor atual do dropdown
+        currentType = typeSelect.value;
+    }
+
+    const list = document.getElementById('flash-focus-list');
+    const options = FLASH_FOCUS_OPTIONS[currentType] || [];
+    
+    list.innerHTML = '';
+    
+    // Renderizar opção "Padrão"
+    const noneDiv = document.createElement('div');
+    noneDiv.className = `focus-mode-item ${!currentFlashFocus ? 'active' : ''}`;
+    noneDiv.innerHTML = `
+        <div class="focus-preview-dot" style="border:1px dashed #666; background:none;"></div>
+        <span class="focus-label">Padrão</span>
+        ${!currentFlashFocus ? '<span class="focus-check">✓</span>' : ''}
+    `;
+    noneDiv.onclick = () => window.applyFlashFocus(null);
+    list.appendChild(noneDiv);
+
+    // Renderizar opções dinâmicas conforme o tipo selecionado no dropdown
+    options.forEach(opt => {
+        const div = document.createElement('div');
+        const isSelected = currentFlashFocus === opt.id;
+        div.className = `focus-mode-item ${isSelected ? 'active' : ''}`;
+        
+        div.innerHTML = `
+            <div class="focus-preview-dot" style="background-color: ${opt.color}"></div>
+            <span class="focus-label">${opt.name}</span>
+            ${isSelected ? '<span class="focus-check">✓</span>' : ''}
+        `;
+        div.onclick = () => window.applyFlashFocus(opt);
+        list.appendChild(div);
+    });
+
+    document.getElementById('flash-focus-modal').style.display = 'flex';
+};
+
+// Aplicar Foco Selecionado
+window.applyFlashFocus = (opt) => {
+    const modal = document.getElementById('flash-focus-modal');
+    const flashModal = document.getElementById('flash-note-modal');
+    const editModal = document.getElementById('edit-card-modal');
+    
+    // Identifica qual editor está ativo
+    let activeEditor = null;
+    if (flashModal && flashModal.style.display !== 'none') {
+        activeEditor = document.getElementById('flash-editor');
+    } else if (editModal && editModal.style.display !== 'none') {
+        activeEditor = document.getElementById('edit-card-content');
+    }
+
+    if (!opt) {
+        currentFlashFocus = null;
+        if (activeEditor) {
+            // Se for "Padrão", volta à cor original (Azul ou Verde)
+            const type = document.getElementById('flash-type-select')?.value;
+            // Se estiver no modo edição, tenta manter a cor da borda atual ou resetar
+            activeEditor.style.borderColor = (type === 'question' || activeEditor.classList.contains('question-mode')) ? '#2ecc71' : '#3498db';
+        }
+    } else {
+        currentFlashFocus = opt.id;
+        if (activeEditor) {
+            // APLICA A COR NA BORDA
+            activeEditor.style.borderColor = opt.color;
+        }
+    }
+    
+    // Atualiza o ícone do botão para mostrar que está ativo
+    const btn = document.getElementById('btn-flash-focus') || document.getElementById('btn-edit-focus');
+    if (btn) btn.style.color = opt ? opt.color : "";
+
+    modal.style.display = 'none';
+};
+
+// Ouvinte global corrigido para os botões de Foco
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('#btn-flash-focus, #btn-edit-focus');
+    if (btn) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.openFocusModal();
+    }
+});
+
+// Monitorar mudança no dropdown de tipo (Questão / Subnota)
+const typeSelect = document.getElementById('flash-type-select');
+if (typeSelect) {
+    typeSelect.addEventListener('change', () => {
+        const newType = typeSelect.value; // 'default' ou 'question'
+        const editor = document.getElementById('flash-editor');
+        const focusBtn = document.getElementById('btn-flash-focus');
+
+        // 1. O PONTO CHAVE: Resetar obrigatoriamente para "Padrão"
+        currentFlashFocus = null; 
+
+        // 2. Reset visual do botão 🎨 (volta à cor neutra/padrão)
+        if (focusBtn) {
+            focusBtn.style.color = ""; 
+            focusBtn.style.borderColor = "";
+        }
+
+        // 3. Reset da cor da borda do editor para a cor base do novo tipo
+        if (editor) {
+            // Se mudou para Questão -> Verde. Se mudou para Subnota -> Azul.
+            editor.style.borderColor = (newType === 'question') ? '#2ecc71' : '#3498db';
+            editor.style.boxShadow = ""; // Remove brilhos de focos anteriores
+        }
+
+        // 4. Se o popup de Foco estiver aberto, ele atualiza a lista na hora
+        // Agora o item "Padrão" aparecerá com o check ✓
+        const focusModal = document.getElementById('flash-focus-modal');
+        if (focusModal && focusModal.style.display === 'flex') {
+            window.openFocusModal();
+        }
+    });
+}
 
     </script>
 </body>
