@@ -49,16 +49,21 @@
     }
 
     /* --- CABEÇALHO --- */
-    header {
-        padding: 0 15px;
-        background-color: #1a1a1a;
-        border-bottom: 1px solid var(--border-color);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        height: 45px;
-        flex-shrink: 0;
-    }
+header {
+    position: fixed; /* Força a barra a ficar fixa */
+    top: 0;
+    left: 0;
+    width: 100%;
+    padding: 0 15px;
+    background-color: #1a1a1a;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 45px;
+    z-index: 10000; /* Garante que fique acima do texto bíblico */
+    box-sizing: border-box;
+}
 
     #back-btn {
         background: none;
@@ -516,13 +521,16 @@ input:checked + .slider:before { transform: translateX(16px); }
 
 /* --- LAYOUT HÍBRIDO (SIDEBAR) --- */
     /* Wrapper para colocar a Bíblia e a Sidebar lado a lado */
-    #main-layout {
-        display: flex;
-        flex: 1;
-        overflow: hidden;
-        position: relative;
-        height: calc(100vh - 45px); /* Desconta o header */
-    }
+#main-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    /* Ajustes para compensar o header fixo */
+    margin-top: 45px; 
+    height: calc(100vh - 45px); 
+    width: 100%;
+}
 
     /* A área da Bíblia ocupa o espaço restante */
     .container {
@@ -779,18 +787,18 @@ input:checked + .slider:before { transform: translateX(16px); }
     
     /* --- ECRÃ DE CARREGAMENTO DE CAPÍTULO --- */
     #loading-overlay {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background-color: var(--bg-color); /* Fundo preto para tapar tudo */
-        z-index: 5000;
-        display: none; /* Escondido por defeito */
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-    }
+    position: fixed; /* Mudado de absolute para fixed */
+    top: 45px; /* Começa abaixo do header */
+    left: 0;
+    width: 100%;
+    height: calc(100% - 45px);
+    background-color: var(--bg-color);
+    z-index: 5000;
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
 
     .spinner-main {
         width: 50px;
@@ -1783,6 +1791,25 @@ input:checked + .slider:before { transform: translateX(16px); }
                     </div>
                 </div>
 
+                <!-- Configuração do Comportamento do Painel -->
+<div class="config-row">
+    <span class="config-label">Configurar Painel</span>
+    <div class="config-controls" style="background:transparent; border:none;">
+        <button id="btn-toggle-panel-behavior" class="btn-cfg-toggle" onclick="togglePanelBehavior()">
+            Fechar (Padrão)
+        </button>
+    </div>
+</div>
+
+<div class="config-row">
+    <span class="config-label">Notas (Mobile)</span>
+    <div class="config-controls" style="background:transparent; border:none;">
+        <button id="btn-toggle-mobile-note-mode" class="btn-cfg-toggle" onclick="toggleMobileNoteMode()">
+            Popup (Padrão)
+        </button>
+    </div>
+</div>
+
                 <!-- Tamanho Texto Versículos -->
                 <div class="config-row">
                     <span class="config-label">Tamanho Versículos</span>
@@ -2163,12 +2190,15 @@ input:checked + .slider:before { transform: translateX(16px); }
         let activeVerseDocId = ""; 
 
         // Configurações do Utilizador
-        let userConfig = {
-            verseTextSize: 100,
-            cardTextSize: 100,
-              tileSize: 100,
-            viewMode: 'list' // 'list' = Grelha (padrão), 'text' = Sequência
-        };
+   let userConfig = {
+    verseTextSize: 100,
+    cardTextSize: 100,
+    tileSize: 100,
+    viewMode: 'list',
+    panelBehavior: 'close',
+    mobileNoteMode: 'popup'
+};
+
         let currentFlashTopics = {}; // Formato: { "topicID": ["subID1", "subID2"] }
 let activeTopicIdForFlash = null;
 let currentFlashLinks = {};
@@ -2272,6 +2302,8 @@ const FOCUS_LABELS = {
     rastreador: "Rastreador"
 };
 
+
+
         // --- AUTENTICAÇÃO E INICIALIZAÇÃO ---
     const globalShield = document.getElementById('global-auth-shield');
 
@@ -2327,56 +2359,76 @@ const FOCUS_LABELS = {
         });
 
         // --- LÓGICA DE CONFIGURAÇÕES ---
-    async function loadUserConfig() {
-            if (!currentUser) return;
-            try {
-                const docRef = doc(db, 'configuracoes', currentUser.uid);
-                const snap = await getDoc(docRef);
-                
-                if (snap.exists()) {
-                    const data = snap.data();
-                    if (data.bibleVerseSize) userConfig.verseTextSize = data.bibleVerseSize;
-                    if (data.bibleCardSize) userConfig.cardTextSize = data.bibleCardSize;
-                    if (data.bibleViewMode) userConfig.viewMode = data.bibleViewMode;
-                    
-                    // >>> LINHA NOVA:
-                    if (data.bibleTileSize) userConfig.tileSize = data.bibleTileSize;
-                }
-                applyConfigToUI();
-            } catch (e) {
-                console.error("Erro ao carregar configs:", e);
-            }
+async function loadUserConfig() {
+    if (!currentUser) return;
+    try {
+        const docRef = doc(db, 'configuracoes', currentUser.uid);
+        const snap = await getDoc(docRef);
+        
+        if (snap.exists()) {
+            const data = snap.data();
+            // Carrega os valores ou usa os padrões se não existirem
+            if (data.bibleVerseSize) userConfig.verseTextSize = data.bibleVerseSize;
+            if (data.bibleCardSize) userConfig.cardTextSize = data.bibleCardSize;
+            if (data.bibleViewMode) userConfig.viewMode = data.bibleViewMode;
+            if (data.bibleTileSize) userConfig.tileSize = data.bibleTileSize;
+            if (data.panelBehavior) userConfig.panelBehavior = data.panelBehavior;
+            
+            // --- LINHA IMPORTANTE: Recupera a opção Notas Mobile ---
+            userConfig.mobileNoteMode = data.mobileNoteMode || 'popup';
         }
+        // Aplica os dados carregados na Interface
+        applyConfigToUI();
+    } catch (e) {
+        console.error("Erro ao carregar configs:", e);
+    }
+}
 
-       function applyConfigToUI() {
-            document.documentElement.style.setProperty('--verse-size-pct', `${userConfig.verseTextSize}%`);
-            document.documentElement.style.setProperty('--card-size-pct', `${userConfig.cardTextSize}%`);
-            
-            // >>> LINHA NOVA: Aplica ao CSS (sem o símbolo % porque usamos calc)
-            document.documentElement.style.setProperty('--tile-size-pct', userConfig.tileSize);
-            
-            const dispVerse = document.getElementById('disp-verse-size');
-            const dispCard = document.getElementById('disp-card-size');
-            
-            // >>> LINHA NOVA: Atualiza mostrador do modal
-            const dispTile = document.getElementById('disp-tile-size');
+function applyConfigToUI() {
+    // Variáveis de Estilo CSS
+    document.documentElement.style.setProperty('--verse-size-pct', `${userConfig.verseTextSize}%`);
+    document.documentElement.style.setProperty('--card-size-pct', `${userConfig.cardTextSize}%`);
+    document.documentElement.style.setProperty('--tile-size-pct', userConfig.tileSize);
+    
+    // Indicadores de Texto (Porcentagens)
+    const dispVerse = document.getElementById('disp-verse-size');
+    const dispCard = document.getElementById('disp-card-size');
+    const dispTile = document.getElementById('disp-tile-size');
+    if(dispVerse) dispVerse.innerText = `${userConfig.verseTextSize}%`;
+    if(dispCard) dispCard.innerText = `${userConfig.cardTextSize}%`;
+    if(dispTile) dispTile.innerText = `${userConfig.tileSize}%`;
 
-            if(dispVerse) dispVerse.innerText = `${userConfig.verseTextSize}%`;
-            if(dispCard) dispCard.innerText = `${userConfig.cardTextSize}%`;
-            
-            // >>> LINHA NOVA:
-            if(dispTile) dispTile.innerText = `${userConfig.tileSize}%`;
+    // Botão Modo Visualização (Grelha/Texto)
+    const btnView = document.getElementById('btn-toggle-view');
+    if (btnView) {
+        btnView.innerText = (userConfig.viewMode === 'text') ? "Texto (Sequência)" : "Lista (Grelha)";
+        btnView.style.color = (userConfig.viewMode === 'text') ? "var(--accent-color)" : "#fff";
+        btnView.style.borderColor = (userConfig.viewMode === 'text') ? "var(--accent-color)" : "#444";
+    }
 
-            if (userConfig.viewMode === 'text') {
-                versesList.classList.add('sequence-mode');
-                btnToggleView.innerText = "Texto (Sequência)";
-                btnToggleView.style.borderColor = "var(--accent-color)";
-            } else {
-                versesList.classList.remove('sequence-mode');
-                btnToggleView.innerText = "Lista (Grelha)";
-                btnToggleView.style.borderColor = "#444";
-            }
+    // Botão Comportamento do Painel (Auto/Manual)
+    const btnPanel = document.getElementById('btn-toggle-panel-behavior');
+    if (btnPanel) {
+        btnPanel.innerText = (userConfig.panelBehavior === 'keep') ? "Manter (Manual)" : "Fechar (Auto)";
+        btnPanel.style.color = (userConfig.panelBehavior === 'keep') ? "var(--accent-color)" : "#fff";
+        btnPanel.style.borderColor = (userConfig.panelBehavior === 'keep') ? "var(--accent-color)" : "#444";
+    }
+
+    // --- LOGICA NOTAS MOBILE (Popup/Painel) ---
+    const btnMobileNote = document.getElementById('btn-toggle-mobile-note-mode');
+    if (btnMobileNote) {
+        if (userConfig.mobileNoteMode === 'panel') {
+            btnMobileNote.innerText = "Painel (Lateral)";
+            btnMobileNote.style.color = "var(--accent-color)";
+            btnMobileNote.style.borderColor = "var(--accent-color)";
+        } else {
+            btnMobileNote.innerText = "Popup (Central)";
+            btnMobileNote.style.color = "#fff";
+            btnMobileNote.style.borderColor = "#444";
         }
+    }
+}
+
 
      window.changeConfig = (type, delta) => {
             if (type === 'verse') {
@@ -2405,28 +2457,29 @@ const FOCUS_LABELS = {
             settingsModal.style.display = 'flex';
         };
 
-      btnSaveCfg.onclick = async () => {
-            btnSaveCfg.innerText = "A gravar...";
-            try {
-                await setDoc(doc(db, 'configuracoes', currentUser.uid), {
-                    bibleVerseSize: userConfig.verseTextSize,
-                    bibleCardSize: userConfig.cardTextSize,
-                    bibleViewMode: userConfig.viewMode,
-                    
-                    // >>> LINHA NOVA: Grava na base de dados
-                    bibleTileSize: userConfig.tileSize 
-                    
-                }, { merge: true });
+btnSaveCfg.onclick = async () => {
+    btnSaveCfg.innerText = "A gravar...";
+    try {
+        // Envia para o Firebase
+        await setDoc(doc(db, 'configuracoes', currentUser.uid), {
+            bibleVerseSize: userConfig.verseTextSize,
+            bibleCardSize: userConfig.cardTextSize,
+            bibleViewMode: userConfig.viewMode,
+            bibleTileSize: userConfig.tileSize,
+            panelBehavior: userConfig.panelBehavior,
+            // --- LINHA IMPORTANTE: Grava a opção Notas Mobile ---
+            mobileNoteMode: userConfig.mobileNoteMode 
+        }, { merge: true });
 
-                settingsModal.style.display = 'none';
-            } catch (e) {
-                console.error("Erro:", e);
-                // Pode usar o seu novo alerta aqui ;)
-                window.showCustomAlert("Erro ao gravar configurações.");
-            } finally {
-                btnSaveCfg.innerText = "GRAVAR E FECHAR";
-            }
-        };
+        settingsModal.style.display = 'none';
+    } catch (e) {
+        console.error("Erro ao gravar:", e);
+        window.showCustomAlert("Erro ao gravar configurações.");
+    } finally {
+        btnSaveCfg.innerText = "GRAVAR E FECHAR";
+        btnSaveCfg.disabled = false;
+    }
+};
 
 
         // --- FUNÇÕES DE UTILIDADE ---
@@ -2520,17 +2573,20 @@ function renderBooks() {
 }
 
 async function openVerses(chapter) {
-    // --- NOVO: Forçar o scroll do contentor para o topo ---
+    // Forçar o scroll do contentor para o topo
     const container = document.querySelector('.container');
     if (container) container.scrollTop = 0;
-    // -----------------------------------------------------
- window.closeSidePanel(); 
 
-    // 1. ATIVAR O LOADING IMEDIATAMENTE
+    // --- NOVA LÓGICA: Respeita a decisão do user (Fechar ou Manter) ---
+    if (userConfig.panelBehavior === 'close') {
+        window.closeSidePanel(); 
+    }
+
+    // Ativar o loading
     const loader = document.getElementById('loading-overlay');
     if (loader) loader.style.display = 'flex';
 
-    // Pequeno delay para garantir que o browser renderiza o loader antes de bloquear a thread
+    // Pequeno delay para garantir que o browser renderiza o loader
     await new Promise(r => setTimeout(r, 50));
 
     try {
@@ -2542,16 +2598,13 @@ async function openVerses(chapter) {
         applyConfigToUI();
 
         const totalVerses = selectedBook.versiculos[chapter - 1] || 50;
-        
-        // Array para guardar as promessas de carregamento do texto
         const textLoadPromises = [];
 
         // Construção do DOM (Placeholders)
         for (let i = 1; i <= totalVerses; i++) {
             const row = document.createElement('div'); 
             row.className = 'verse-item';
-            
-  row.setAttribute('data-vnum', i);
+            row.setAttribute('data-vnum', i);
 
             const spanId = `vtext-${i}`; 
             const numId = `vnum-${i}`;
@@ -2566,26 +2619,20 @@ async function openVerses(chapter) {
             textLoadPromises.push(fetchVerseText(selectedBook.nome, chapter, i, spanId));
         }
 
-        // Muda a vista para Versículos (o loader ainda está por cima a tapar tudo)
         updateUI('verses');
+        setupScrollObserver(); 
 
-           setupScrollObserver(); 
-
-        // 2. ESPERA QUE TODO O TEXTO BÍBLICO CHEGUE
+        // Espera que todo o texto bíblico chegue
         await Promise.all(textLoadPromises);
 
-        // 3. CARREGA DADOS DO UTILIZADOR E DESENHA OS PICOTADOS
+        // Carrega dados do utilizador e desenha os picotados
         if (currentUser) {
-            // Esta função já chama o window.refreshVisualHighlights() no final da execução
             await loadUserDataForChapter(selectedBook.nome, chapter);
         }
 
     } catch (error) {
         console.error("Erro crítico ao abrir capítulo:", error);
-        alert("Ocorreu um erro ao carregar o capítulo.");
     } finally {
-        // 4. SÓ AGORA ESCONDE O LOADER
-        // Um pequeno delay extra (300ms) dá uma sensação de suavidade e garante que o CSS dos picotados "assentou"
         if (loader) {
             setTimeout(() => {
                 loader.style.display = 'none';
@@ -3288,12 +3335,22 @@ setTimeout(() => {
 
         // --- NAVEGAÇÃO UI ---
 function updateUI(view) {
-     const container = document.querySelector('.container');
+    const container = document.querySelector('.container');
     if (container) {
         container.scrollTop = 0;
     }
-    // Fecha painéis laterais ao mudar de vista
-    window.closeSidePanel(); 
+
+    // --- NOVA LÓGICA: Comportamento do Painel Lateral ---
+    if (view === 'books') {
+        // Se voltar para os Livros, fechamos sempre para limpar o contexto
+        window.closeSidePanel();
+    } else {
+        // Em outras navegações, respeita a preferência gravada
+        if (userConfig.panelBehavior === 'close') {
+            window.closeSidePanel(); 
+        }
+    }
+
     document.getElementById('verse-details-modal').style.display = 'none';
 
     currentView = view;
@@ -3303,43 +3360,33 @@ function updateUI(view) {
     
     const anchorBtn = document.getElementById('bible-anchors-btn');
     
-  if (view === 'books') { 
+    if (view === 'books') { 
         viewBooks.classList.remove('hidden'); 
         pageTitle.innerText = "BÍBLIA"; 
         backBtn.style.display = 'none'; 
         if(anchorBtn) anchorBtn.style.display = 'none';
 
-        // CORREÇÃO: SÓ LIMPA O URL SE NÃO FOR O CARREGAMENTO INICIAL
-        // Isto impede que o ?b=Génesis seja apagado antes de ser lido
         if (!isFirstLoad && typeof updateUrlParams === 'function') {
             updateUrlParams(null, null, null);
         }
 
     } else if (view === 'chapters') {
         viewChapters.classList.remove('hidden'); 
-        
-        // PROTEÇÃO: Só tenta ler o nome se o livro existir
         if (selectedBook) {
             pageTitle.innerText = selectedBook.nome;
-            
-            // ATUALIZA URL: Apenas Livro
             if (typeof updateUrlParams === 'function') {
                 updateUrlParams(selectedBook.nome, null, null);
             }
         }
-        
         backBtn.style.display = 'block'; 
         if(anchorBtn) anchorBtn.style.display = 'none';
 
     } else if (view === 'verses') { 
         viewVerses.classList.remove('hidden'); 
-        
         if (selectedBook && selectedChapter) {
-            // ATUALIZA URL: Livro e Capítulo (usa selectedChapter, não 'chapter')
             if (typeof updateUrlParams === 'function') {
                 updateUrlParams(selectedBook.nome, selectedChapter, null);
             }
-
             pageTitle.innerHTML = `
                 <button class="nav-arrow" onclick="window.changeChapter(-1)">❮</button>
                 <span id="page-title-span" 
@@ -3351,7 +3398,6 @@ function updateUI(view) {
                 <button class="nav-arrow" onclick="window.changeChapter(1)">❯</button>
             `;
         }
-        
         backBtn.style.display = 'block'; 
         if(anchorBtn) anchorBtn.style.display = 'inline-block';
     }
@@ -3538,7 +3584,11 @@ if (activeHighlightContext) {
  window.openEditCard = (vNum, index) => {
     console.group(`🔍 [EDIÇÃO] A abrir cartão (Verso: ${vNum}, Index: ${index})`);
 
-    // 1. Localizar os dados no cache local
+    // 1. Deteção de Contexto (PC ou Configuração Mobile)
+    const isDesktop = window.innerWidth >= 768;
+    const usePanel = isDesktop || userConfig.mobileNoteMode === 'panel';
+
+    // 2. Localizar os dados no cache local
     const data = existingUserData[vNum];
     if (!data || !data.puzzleBoard || !data.puzzleBoard[index]) {
         console.error("❌ Erro: Dados não encontrados na memória local.");
@@ -3548,7 +3598,7 @@ if (activeHighlightContext) {
 
     const item = data.puzzleBoard[index];
 
-    // 2. Descodificar o Snippet HTML da nota
+    // 3. Descodificar o Snippet HTML da nota
     let rawSnippet = "";
     try {
         const snippetToDecode = item.snippet || "";
@@ -3561,99 +3611,116 @@ if (activeHighlightContext) {
     const parser = new DOMParser();
     const docHTML = parser.parseFromString(rawSnippet, 'text/html');
     
-    // 3. Recuperar Títulos e Conteúdo
+    // 4. Extrair Títulos e Conteúdo
     let title = "";
     const titleInput = docHTML.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input');
-    const h2 = docHTML.querySelector('h2');
-    
     if (titleInput) title = titleInput.value || titleInput.getAttribute('value') || "";
-    else if (h2) title = h2.textContent;
+    else {
+        const h2 = docHTML.querySelector('h2');
+        if (h2) title = h2.textContent;
+    }
 
     let content = "";
     const contentDiv = docHTML.querySelector('.mini-note-content, .redator-content, .sign-content, .card-desc-content, .cube-content');
     if (contentDiv) content = contentDiv.innerHTML;
 
-    // 4. RECUPERAR METADADOS (Vital para manter Tópicos, Links e FOCO)
-    const wrapper = docHTML.querySelector('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
-    
+    // 5. Extrair Metadados (Tópicos, Links e Foco)
+    const wrapper = docHTML.querySelector('.mini-note-wrapper, .redator-wrapper');
     if (wrapper) {
-        // Tópicos 📋
-        try { 
-            currentFlashTopics = JSON.parse(wrapper.getAttribute('data-topics') || '{}'); 
-        } catch(e) { currentFlashTopics = {}; }
-
-        // Links ⚡
-        try { 
+        try { currentFlashTopics = JSON.parse(wrapper.getAttribute('data-topics') || '{}'); } catch(e) { currentFlashTopics = {}; }
+        try {
             const rawLinks = wrapper.getAttribute('data-box-links');
             currentFlashLinks = (rawLinks && rawLinks !== "null") ? JSON.parse(rawLinks) : {};
         } catch(e) { currentFlashLinks = {}; }
-
-        // Foco 🎨
-        const focusInAttr = wrapper.getAttribute('data-focus');
-        currentFlashFocus = focusInAttr || null;
+        currentFlashFocus = wrapper.getAttribute('data-focus') || null;
     } else {
         currentFlashTopics = {};
         currentFlashLinks = {};
         currentFlashFocus = null;
     }
 
-    // 5. Preencher os campos do Modal de Edição
-    document.getElementById('edit-card-title').value = title;
-    document.getElementById('edit-card-content').innerHTML = content;
-    document.getElementById('edit-card-index').value = index;
-    document.getElementById('edit-card-verse').value = vNum;
+    selectedColorHex = item.noteColor || item.cor || '#3498db';
 
-    // A cor base para o picotado
-    selectedColorHex = item.noteColor || item.cor || '#3498db'; 
+    // 6. RENDERIZAÇÃO DA INTERFACE
+    if (usePanel) {
+        // --- MODO PAINEL (4ª COLUNA) ---
+        const sidePanel = document.getElementById('side-panel');
+        const contentDivSide = document.getElementById('sidebar-content');
+        const backBtn = document.getElementById('sidebar-back-btn');
+        const titleEl = document.getElementById('sidebar-verse-title');
+        const centerActions = document.getElementById('sidebar-center-actions');
 
-    // 6. Mostrar o Modal
-    document.getElementById('edit-card-modal').style.display = 'flex';
+        sidePanel.classList.add('open');
+        if (!isDesktop) sidePanel.style.height = '100vh'; // No mobile ocupa tudo se for modo nota
 
-    // 7. Feedback Visual na Toolbar (⚡ e 📋)
-    const btnLinks = document.getElementById('btn-edit-links');
-    const btnTopics = document.getElementById('btn-edit-topics');
-    const btnFocus = document.getElementById('btn-edit-focus');
+        if(backBtn) backBtn.style.display = 'block';
+        if(centerActions) centerActions.style.display = 'none';
+        if(titleEl) titleEl.innerText = "Editar Nota";
 
-    const hasLinks = (currentFlashLinks.urls && Object.keys(currentFlashLinks.urls).length > 0) || 
-                     (currentFlashLinks.codex && currentFlashLinks.codex.length > 0) || 
-                     (currentFlashLinks.categories && currentFlashLinks.categories.length > 0);
+        contentDivSide.innerHTML = `
+            <div style="padding:15px;">
+                <label style="font-size:0.75rem; color:#888; text-transform: uppercase; font-weight: bold;">Título da Nota</label>
+                <input type="text" id="edit-card-title" class="flash-input-title" value="${title}" style="font-size:1.1rem; margin-bottom:15px; border-bottom: 1px solid #444;">
+                
+                <div class="flash-toolbar" style="margin-bottom: 10px; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px;">
+                    <button onclick="document.execCommand('bold')"><b>B</b></button>
+                    <button onclick="document.execCommand('italic')"><i>I</i></button>
+                    <button onclick="document.execCommand('underline')"><u>U</u></button>
+                    <div style="width: 1px; height: 20px; background: #444; margin: 0 5px;"></div>
+                    <button id="btn-edit-topics" onclick="window.openTopicsModal()" title="Tópicos">📋</button>
+                    <button id="btn-edit-links" onclick="window.openFlashLinkManager()" title="Links">⚡</button>
+                    <button id="btn-edit-focus" onclick="window.openFocusModal()" title="Foco">🎨</button>
+                </div>
 
-    if (btnLinks) {
-        btnLinks.style.color = hasLinks ? "#f1c40f" : ""; 
-        btnLinks.style.borderColor = hasLinks ? "#f1c40f" : "";
+                <label style="font-size:0.75rem; color:#888; text-transform: uppercase; font-weight: bold;">Conteúdo</label>
+                <div id="edit-card-content" class="flash-editor" contenteditable="true" style="min-height:200px; border: 1px solid #333; margin-top:5px;">${content}</div>
+                
+                <input type="hidden" id="edit-card-index" value="${index}">
+                <input type="hidden" id="edit-card-verse" value="${vNum}">
+
+                <div style="display:flex; gap:10px; margin-top:20px;">
+                    <button onclick="window.returnToVerseDetails()" style="flex:1; padding:12px; background:#333; border:none; color:#ccc; border-radius:6px; cursor:pointer; font-weight: bold;">CANCELAR</button>
+                    <button id="btn-confirm-edit-card" onclick="window.saveEditFromUI()" style="flex:1; padding:12px; background:var(--accent-color); border:none; color:white; border-radius:6px; font-weight:bold; cursor:pointer;">GRAVAR</button>
+                </div>
+            </div>
+        `;
+    } else {
+        // --- MODO POPUP (MODAL EDIT-CARD-MODAL) ---
+        document.getElementById('edit-card-title').value = title;
+        document.getElementById('edit-card-content').innerHTML = content;
+        document.getElementById('edit-card-index').value = index;
+        document.getElementById('edit-card-verse').value = vNum;
+        document.getElementById('edit-card-modal').style.display = 'flex';
     }
-    if (btnTopics) {
-        const hasTopics = Object.keys(currentFlashTopics).length > 0;
-        btnTopics.style.color = hasTopics ? "#f1c40f" : "";
-    }
 
-    // 8. Aplicar a Cor do Foco no Editor (Incluindo Pérola)
+    // 7. Configurações visuais pós-renderização
     setTimeout(() => {
-        if (typeof window.injectColorPickerIntoEditModal === 'function') {
-            window.injectColorPickerIntoEditModal();
-        }
+        if (typeof window.injectColorPickerIntoEditModal === 'function') window.injectColorPickerIntoEditModal();
         
         const editEditor = document.getElementById('edit-card-content');
-        if (editEditor) {
-            if (currentFlashFocus) {
-                // Procura a cor nas tabelas de foco (default ou question)
-                const allFocusOptions = [...FLASH_FOCUS_OPTIONS.default, ...FLASH_FOCUS_OPTIONS.question];
-                const focusObj = allFocusOptions.find(o => o.id === currentFlashFocus);
-                
-                if (focusObj) {
-                    editEditor.style.borderColor = focusObj.color;
-                    editEditor.style.borderWidth = "2px";
-                    if (btnFocus) btnFocus.style.color = focusObj.color;
-                }
-            } else {
-                // Se não tiver foco, usa a cor base do tipo de nota
-                const isQuestion = rawSnippet.includes('question-mode');
-                editEditor.style.borderColor = isQuestion ? '#2ecc71' : '#3498db';
-                editEditor.style.borderWidth = "1px";
-                if (btnFocus) btnFocus.style.color = "";
+        const btnFocus = document.getElementById('btn-edit-focus');
+        const btnLinks = document.getElementById('btn-edit-links');
+        const btnTopics = document.getElementById('btn-edit-topics');
+
+        // Feedback visual dos botões (Links e Tópicos)
+        const hasLinks = (currentFlashLinks.urls && Object.keys(currentFlashLinks.urls).length > 0) || 
+                         (currentFlashLinks.codex && currentFlashLinks.codex.length > 0) || 
+                         (currentFlashLinks.categories && currentFlashLinks.categories.length > 0);
+        
+        if (btnLinks && hasLinks) { btnLinks.style.color = "#f1c40f"; btnLinks.style.borderColor = "#f1c40f"; }
+        if (btnTopics && Object.keys(currentFlashTopics).length > 0) btnTopics.style.color = "#f1c40f";
+
+        // Cor do Foco
+        if (editEditor && currentFlashFocus) {
+            const allFocusOptions = [...FLASH_FOCUS_OPTIONS.default, ...FLASH_FOCUS_OPTIONS.question];
+            const focusObj = allFocusOptions.find(o => o.id === currentFlashFocus);
+            if (focusObj) {
+                editEditor.style.borderColor = focusObj.color;
+                editEditor.style.borderWidth = "2px";
+                if (btnFocus) btnFocus.style.color = focusObj.color;
             }
         }
-    }, 50);
+    }, 100);
 
     console.log("✅ Edição aberta. Foco atual:", currentFlashFocus || "Padrão");
     console.groupEnd();
@@ -4460,114 +4527,55 @@ window.getFlashFormHTML = (customLabel = null) => {
 
 // Quando clica em "+ Adicionar Nota"
 window.handleCreateNoteClick = () => {
-    // 1. Esconde a barra flutuante se estiver aberta
     const toolbar = document.getElementById('selection-toolbar');
     if (toolbar) toolbar.style.display = 'none';
 
-    // 2. Lógica de Contexto (Trecho vs Versículo Geral)
-    const shouldShowColors = (activeHighlightContext !== null) || (currentSelectionText && currentSelectionText.trim() !== "");
+    const isDesktop = window.innerWidth >= 768;
+    // Decisão: Usa painel se for PC OU se o user configurou 'panel' no mobile
+    const usePanel = isDesktop || userConfig.mobileNoteMode === 'panel';
 
-    // 3. Reset das Variáveis Globais
+    const shouldShowColors = (activeHighlightContext !== null) || (currentSelectionText && currentSelectionText.trim() !== "");
+    
+    // Reset de dados
     document.getElementById('flash-title').value = "";
     document.getElementById('flash-editor').innerHTML = "";
     currentFlashTopics = {}; 
     currentFlashLinks = {};
     activeTopicIdForFlash = null;
-    
-    // Reset do Dropdown
-    const typeSelect = document.getElementById('flash-type-select');
-    if(typeSelect) typeSelect.value = "default";
 
-    // 4. Definir Rótulo "Anexado a"
     let labelParaMostrar = activeVerseFullName; 
-
     if (activeHighlightContext && activeHighlightContext.text) {
         labelParaMostrar = `Trecho: "${activeHighlightContext.text.substring(0, 25)}..."`;
-    } 
-    else if (currentSelectionVerses && currentSelectionVerses.length > 1) {
-        const primeiro = currentSelectionVerses[0];
-        const ultimo = currentSelectionVerses[currentSelectionVerses.length - 1];
-        let numFinal = ultimo.includes(':') ? ultimo.split(':')[1] : ultimo.split(' ').pop();
-        labelParaMostrar = `${primeiro} ➝ ${numFinal}`;
     }
 
-    // 5. Renderização (PC vs Mobile)
-    const isDesktop = window.innerWidth >= 768;
-    let containerForButtons; // Para sabermos onde procurar os botões depois
-
-    if (isDesktop) {
-        // --- PC (Sidebar) ---
+    if (usePanel) {
+        // --- MODO PAINEL (4ª COLUNA) ---
         const sidePanel = document.getElementById('side-panel');
         const contentDiv = document.getElementById('sidebar-content');
         const backBtn = document.getElementById('sidebar-back-btn');
-        const centerBtn = document.getElementById('sidebar-center-actions');
         const titleEl = document.getElementById('sidebar-verse-title');
+        const centerBtn = document.getElementById('sidebar-center-actions');
 
-        if (sidePanel) sidePanel.classList.add('open'); 
+        sidePanel.classList.add('open'); 
+        if (!isDesktop) sidePanel.style.height = '100vh'; // No mobile, nota em painel ocupa tudo
+        
         if(backBtn) backBtn.style.display = 'block';     
         if(centerBtn) centerBtn.style.display = 'none';  
         if(titleEl) titleEl.innerText = "Nova Nota";     
         
         contentDiv.innerHTML = window.getFlashFormHTML(labelParaMostrar);
-        containerForButtons = contentDiv;
     } else {
-        // --- MOBILE (Popup) ---
+        // --- MODO POPUP (CENTRAL) ---
         const modal = document.getElementById('flash-note-modal');
         const modalBody = modal.querySelector('.details-body');
         modalBody.innerHTML = window.getFlashFormHTML(labelParaMostrar);
         modal.style.display = 'flex';
-        containerForButtons = modalBody;
     }
 
-    // 6. FORÇAR A LIGAÇÃO DOS BOTÕES E CORES (A CORREÇÃO)
-      setTimeout(() => {
-        // A. Injeta Seletor de Cores se for Trecho
-        if (shouldShowColors && typeof window.injectColorPickerIntoForm === 'function') {
-            window.injectColorPickerIntoForm();
-        }
-
-        // B. Foca no Título
-        const input = document.getElementById('flash-title');
-        if(input) input.focus();
-
-         const editor = document.getElementById('flash-editor');
-        if (editor) {
-            // Remove listeners antigos para evitar duplicados (opcional mas seguro)
-            const newEditor = editor.cloneNode(true);
-            editor.parentNode.replaceChild(newEditor, editor);
-            
-            newEditor.addEventListener('paste', (e) => {
-                e.preventDefault(); // Impede a colagem padrão (com formatação)
-                // Obtém apenas o texto simples da área de transferência
-                const text = (e.clipboardData || window.clipboardData).getData('text');
-                // Insere o texto na posição do cursor
-                document.execCommand('insertText', false, text);
-            });
-            // Reatribuir a variável para que o resto do código use o novo elemento se necessário
-            // (Embora neste caso o ID se mantenha, o listener fica limpo)
-        }
-        // -----------------------------------------------
-
-        // C. REPARAÇÃO DOS BOTÕES DA TOOLBAR (Raio e Prancheta)
-        // Procuramos os botões dentro do contentor ativo para garantir que são os certos
-        if (containerForButtons) {
-            const btnLinks = containerForButtons.querySelector('#btn-flash-links');
-            const btnTopics = containerForButtons.querySelector('#btn-flash-topics');
-
-            if (btnLinks) {
-                btnLinks.onclick = (e) => {
-                    e.preventDefault(); // Evita recargas estranhas
-                    window.openFlashLinkManager();
-                };
-            }
-
-            if (btnTopics) {
-                btnTopics.onclick = (e) => {
-                    e.preventDefault();
-                    window.openTopicsModal();
-                };
-            }
-        }
+    // Inicializar listeners (Cores, Foco, etc)
+    setTimeout(() => {
+        if (shouldShowColors && typeof window.injectColorPickerIntoForm === 'function') window.injectColorPickerIntoForm();
+        document.getElementById('flash-title').focus();
     }, 100);
 };
 
@@ -7366,6 +7374,23 @@ function debounce(func, wait) {
 function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+
+window.togglePanelBehavior = () => {
+    userConfig.panelBehavior = (userConfig.panelBehavior === 'close') ? 'keep' : 'close';
+    applyConfigToUI();
+};
+
+// 2. Função Toggle
+window.toggleMobileNoteMode = () => {
+    // Inverte entre 'popup' e 'panel'
+    userConfig.mobileNoteMode = (userConfig.mobileNoteMode === 'popup') ? 'panel' : 'popup';
+    
+    // Atualiza o visual dos botões no Modal de Configurações imediatamente
+    applyConfigToUI();
+};
+
+
 
     </script>
 </body>
