@@ -54950,23 +54950,21 @@ document.getElementById('confirm-auto-insert').onclick = async () => {
     const month = document.getElementById('auto-month-select').value;
     const articleIdx = document.getElementById('auto-article-select').value;
 
-    // Configuração de Títulos Completos (conforme as tuas definições)
     const isFullTitleEnabled = typeof appSettings !== 'undefined' && appSettings.showFullTitles;
     const wrapClass = isFullTitleEnabled ? ' wrap-enabled' : '';
 
-    // Determinar o prefixo da publicação para a busca (Ex: W25_02)
-    // Nota: Ajusta o prefixo 'W' se usares para Despertai 'G' etc.
+    // Prefixo para IDs internos (Ex: W25_02)
     const pubPrefix = `W${year.toString().slice(-2)}_${month}`;
+    // Sigla para o Codex (Ex: w25 02)
+    const codexSerie = `w${year.toString().slice(-2)} ${month}`;
 
     try {
-        // 1. Carregar o JSON da revista
         const response = await fetch(`./js/publicacoes/sentinelas/${year}/${month}.json`);
         const data = await response.json();
         const lista = data.artigos ? data.artigos : [data];
         const artigo = lista[articleIdx];
-        const serieCodex = artigo.referencia; 
 
-        // 2. BUSCA INTELIGENTE: Localizar respostas prévias (oque: "back")
+        // 1. BUSCA INTELIGENTE: Localizar respostas prévias
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
         const qBack = query(
@@ -54977,41 +54975,38 @@ document.getElementById('confirm-auto-insert').onclick = async () => {
             where('qId', '<=', pubPrefix + '\uf8ff')
         );
 
-    const backSnap = await getDocs(qBack);
-const solvedQuestions = {};
+        const backSnap = await getDocs(qBack);
+        const solvedQuestions = {};
 
-backSnap.forEach(docSnap => {
-    const d = docSnap.data();
-    if (d.qId && d.conteudo) {
-        const parser = new DOMParser();
-        const docHTML = parser.parseFromString(d.conteudo, 'text/html');
-        const wrapper = docHTML.querySelector('.mini-note-wrapper');
-        const inner = docHTML.querySelector('.mini-note-content');
-        
-        // GUARDAMOS O TEXTO E A COR
-        solvedQuestions[d.qId] = {
-            html: inner ? inner.innerHTML : "<p><br></p>",
-            highlight: wrapper ? wrapper.getAttribute('data-highlight') : ""
-        };
-    }
-});
+        backSnap.forEach(docSnap => {
+            const d = docSnap.data();
+            if (d.qId && d.conteudo) {
+                const parser = new DOMParser();
+                const docHTML = parser.parseFromString(d.conteudo, 'text/html');
+                const wrapper = docHTML.querySelector('.mini-note-wrapper');
+                const inner = docHTML.querySelector('.mini-note-content');
+                solvedQuestions[d.qId] = {
+                    html: inner ? inner.innerHTML : "<p><br></p>",
+                    highlight: wrapper ? wrapper.getAttribute('data-highlight') : ""
+                };
+            }
+        });
 
-        // 3. Gerar Estrutura HTML
+        // 2. Gerar Estrutura HTML
         let fullHTML = "";
         let inRecapMode = false;
-        let insertedIds = []; 
+        const toolbarHTML = `<div class="mini-note-toolbar" contenteditable="false"><button type="button" data-action="sharing-settings">🔐</button><div class="toolbar-btn-group"><button type="button" data-action="move-up">🔺</button><button type="button" data-action="move-down">🔻</button></div><button type="button" data-action="manage-box-links">⚡</button><button type="button" data-action="append-mini-note">🧬</button><button type="button" data-action="highlight-color">🎨</button><button type="button" data-action="manage-mini-note-topics">📋</button><button type="button" data-action="delete-mini-note">🗑️</button></div>`;
 
         artigo.conteudo.forEach((bloco, idx) => {
             let isQuestion = false;
             let questionText = "";
             let currentQNum = bloco.numero_ref;
 
-            // Identificar se é pergunta de parágrafo ou resumo (Recap)
             if (bloco.tipo === "pergunta") {
                 isQuestion = true;
                 questionText = `${bloco.numero_ref}. ${bloco.texto}`;
             } 
-            else if (bloco.tipo === "subtema" && bloco.texto.includes("COMO RESPONDERIA")) {
+            else if (bloco.tipo === "subtema" && bloco.texto.toUpperCase().includes("COMO RESPONDERIA")) {
                 inRecapMode = true;
                 fullHTML += `<p><br></p><p><strong>${bloco.texto}</strong></p>`;
             }
@@ -55022,47 +55017,48 @@ backSnap.forEach(docSnap => {
                 currentQNum = bloco.numero_ref || `recap_${idx}`;
             }
 
-           if (isQuestion) {
-    const uniqueId = `auto_sent_${Date.now()}_${idx}`;
-    const currentQId = `${pubPrefix}_Q${currentQNum}`;
-    
-    // BUSCA OS DADOS GUARDADOS
-    const savedData = solvedQuestions[currentQId];
-    const answerHTML = savedData ? savedData.html : "<p><br></p>";
-    const highlightColor = savedData ? savedData.highlight : "#2ecc71"; // Verde se for nova
+            if (isQuestion) {
+                const uniqueId = `auto_sent_${Date.now()}_${idx}`;
+                const currentQId = `${pubPrefix}_Q${currentQNum}`;
+                
+                // --- DEFINIÇÃO DO CODEXDATA (O FIX) ---
+                const codexData = {
+                    codex: [{
+                        serie: codexSerie,
+                        capitulo: month,
+                        paragrafos: [String(currentQNum)],
+                        codiceshow: `${artigo.referencia} pr. ${currentQNum}`
+                    }]
+                };
 
-    fullHTML += `
-    <div class="mini-note-wrapper question-mode" id="${uniqueId}" 
-         data-highlight="${highlightColor}" 
-         data-box-links='${JSON.stringify(codexData)}' 
-         contenteditable="false">
-        <textarea class="mini-note-title-input${wrapClass}">${questionText}</textarea>
-        ${toolbarHTML}
-        <div class="mini-note-content" contenteditable="true" 
-             style="${savedData?.highlight ? `background-color: ${savedData.highlight}; color: #1a1a1d;` : ''}">
-            ${answerHTML}
-        </div>
-    </div><p><br></p>`;
-}
-            
+                const savedData = solvedQuestions[currentQId];
+                const answerHTML = savedData ? savedData.html : "<p><br></p>";
+                const highlightColor = savedData ? savedData.highlight : "#2ecc71";
+
+                fullHTML += `
+                <div class="mini-note-wrapper question-mode" id="${uniqueId}" 
+                     data-highlight="${highlightColor}" 
+                     data-box-links='${JSON.stringify(codexData)}' 
+                     contenteditable="false">
+                    <textarea class="mini-note-title-input${wrapClass}">${questionText}</textarea>
+                    ${toolbarHTML}
+                    <div class="mini-note-content" contenteditable="true" 
+                         style="${savedData?.highlight ? `background-color: ${savedData.highlight}; color: #1a1a1d;` : ''}">
+                        ${answerHTML}
+                    </div>
+                </div><p><br></p>`;
+            }
         });
 
-        // 4. Inserir no Editor
+        // 3. Inserir no Editor
         const editor = document.getElementById('note-content-editor');
         editor.focus();
         document.execCommand('insertHTML', false, fullHTML);
 
-        // 5. Ajustes Finais (Resize de títulos e persistência)
+        // 4. Ajustes Finais
         setTimeout(() => {
-            insertedIds.forEach(id => {
-                const el = document.getElementById(id);
-                if (el) {
-                    const textarea = el.querySelector('.mini-note-title-input');
-                    if (textarea && typeof autoResizeTitle === 'function') autoResizeTitle(textarea);
-                }
-            });
             if (typeof fixLegacyMiniNotes === 'function') fixLegacyMiniNotes();
-            saveNote(true); // Grava a nota agora com as respostas importadas
+            saveNote(true);
         }, 200);
 
         document.getElementById('auto-insert-selection-modal').style.display = 'none';
