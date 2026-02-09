@@ -7137,44 +7137,69 @@ window.setTestamentFilter = (type, btn) => {
 // 2. LÓGICA DE PESQUISA CORE
 async function performSearch() {
     const inputEl = document.getElementById('search-input-main');
-    if (!inputEl) return;
-    
-    const input = inputEl.value;
     const itemsContainer = document.getElementById('search-items-container');
+    const chipsContainer = document.getElementById('search-book-chips');
+    const scopeContainer = document.getElementById('search-scope-container');
+    
+    if (!inputEl || !itemsContainer) return;
 
+    const input = inputEl.value.trim();
+
+    // 1. Extrair termos de pesquisa
+    const phrases = [];
+    const phraseRegex = /"([^"]+)"/g;
+    let match;
+    while ((match = phraseRegex.exec(input)) !== null) {
+        phrases.push(match[1].toLowerCase());
+    }
+
+    // --- LÓGICA DE RESET AUTOMÁTICO DO TOGGLE ---
+    // O toggle só aparece se houver 2 ou mais expressões entre aspas
+    if (phrases.length < 2) {
+        if (scopeContainer) scopeContainer.style.display = 'none';
+        
+        // Reset forçado para modo Versículo
+        searchState.scope = 'verse';
+        const btnVerse = document.getElementById('scope-verse');
+        const btnChapter = document.getElementById('scope-chapter');
+        if (btnVerse) btnVerse.classList.add('active');
+        if (btnChapter) btnChapter.classList.remove('active');
+    } else {
+        if (scopeContainer) scopeContainer.style.display = 'flex';
+    }
+
+    // Validar tamanho da pesquisa
     if (input.length < 2) {
-        if (itemsContainer) itemsContainer.innerHTML = '<div style="text-align: center; color: #555; margin-top: 50px;">Introduza termos para pesquisar...</div>';
-        const chips = document.getElementById('search-book-chips');
-        if (chips) chips.innerHTML = '';
+        itemsContainer.innerHTML = '<div style="text-align: center; color: #555; margin-top: 50px;">Introduza termos para pesquisar...</div>';
+        if (chipsContainer) chipsContainer.innerHTML = '';
+        const loadMoreBtn = document.getElementById('search-load-more');
+        if (loadMoreBtn) loadMoreBtn.style.display = 'none';
         return;
     }
 
-    // 1. Extrair frases entre aspas e palavras soltas
-    const phrases = [];
-    const regex = /"([^"]+)"/g;
-    let match;
-    while ((match = regex.exec(input)) !== null) { phrases.push(match[1].toLowerCase()); }
-    
-    // 2. Mostrar/Esconder Toggle (apenas se houver 2 ou mais expressões entre aspas)
-    const scopeContainer = document.getElementById('search-scope-container');
-    if (scopeContainer) scopeContainer.style.display = phrases.length >= 2 ? 'flex' : 'none';
-
-    const words = input.replace(regex, ' ').toLowerCase().split(/\s+/).filter(w => w.length > 1);
+    // Palavras fora das aspas
+    const words = input.replace(phraseRegex, ' ').toLowerCase().split(/\s+/).filter(w => w.length > 1);
     const allSearchTerms = phrases.concat(words);
 
+    // 2. Preparar Filtros de Livros
     searchState.allResults = [];
     let booksToSearch = BIBLE_DATA;
     if (searchState.testament === 'at') booksToSearch = BIBLE_DATA.filter(b => b.id <= 39);
     if (searchState.testament === 'nt') booksToSearch = BIBLE_DATA.filter(b => b.id >= 40);
 
+    // 3. Executar Pesquisa nos ficheiros JSON
     for (const book of booksToSearch) {
         const filename = book.nome.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().replace(/\s+/g, "_");
         
+        // Carregamento assíncrono do Livro (Cache)
         if (!localBibleCache[filename]) {
             try {
                 const response = await fetch(`./js/bible/${filename}.json`);
                 localBibleCache[filename] = await response.json();
-            } catch (e) { continue; }
+            } catch (e) { 
+                console.error("Erro ao carregar livro:", filename);
+                continue; 
+            }
         }
 
         const bookContent = localBibleCache[filename][book.nome];
@@ -7183,31 +7208,33 @@ async function performSearch() {
             
             if (searchState.scope === 'chapter' && phrases.length >= 2) {
                 // --- MODO CAPÍTULO ---
-                // 1. Verifica se o texto INTEGRAL do capítulo contém TODOS os termos
                 const fullChapterText = Object.values(verses).join(' ').toLowerCase();
+                
+                // Valida se o capítulo como um todo contém TODOS os termos procurados
                 const chapterHasAll = phrases.every(p => fullChapterText.includes(p)) && 
                                      words.every(w => fullChapterText.includes(w));
 
                 if (chapterHasAll) {
-                    // 2. Se o capítulo tem tudo, adicionamos cada versículo que contribui para o match
+                    // Se o capítulo é válido, recolhemos os versículos que contêm algum dos termos
                     for (const [verNum, text] of Object.entries(verses)) {
                         const lowText = text.toLowerCase();
-                        // Adiciona se o versículo contiver PELO MENOS UM dos termos (para destaque)
                         if (allSearchTerms.some(term => lowText.includes(term))) {
                             searchState.allResults.push({ 
                                 book: book.nome, 
                                 chapter: capNum, 
                                 verse: verNum, 
-                                text: text 
+                                text: text,
+                                bookId: book.id 
                             });
                         }
                     }
                 }
             } else {
-                // --- MODO VERSÍCULO (Padrão) ---
+                // --- MODO VERSÍCULO ---
                 for (const [verNum, text] of Object.entries(verses)) {
                     const lowText = text.toLowerCase();
-                    // O versículo individual tem de ter TODOS os termos
+                    
+                    // O versículo individual tem de conter TODOS os termos (phrases + words)
                     const verseHasAll = phrases.every(p => lowText.includes(p)) && 
                                        words.every(w => lowText.includes(w));
                     
@@ -7216,15 +7243,19 @@ async function performSearch() {
                             book: book.nome, 
                             chapter: capNum, 
                             verse: verNum, 
-                            text: text 
+                            text: text,
+                            bookId: book.id
                         });
                     }
                 }
             }
         }
     }
+
+    // 4. Chamar Renderização da UI
     renderSearchUI(allSearchTerms);
 }
+
 
 // 3. RENDERIZAÇÃO
 function renderSearchUI(highlightTerms) {
@@ -7331,6 +7362,7 @@ function debounce(func, wait) {
     };
 }
 
+// Função utilitária necessária para a Regex de Highlight
 function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
