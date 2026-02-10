@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="pt-pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerador Automático JW (V14)</title>
+    <style>
+        :root {
+            --primary: #3498db;
+            --success: #27ae60;
+            --dark: #2c3e50;
+            --bg: #f4f4f9;
+        }
+        body { font-family: 'Segoe UI', sans-serif; display: flex; height: 100vh; margin: 0; background: var(--bg); overflow: hidden; }
+        
+        .tabs-bar {
+            display: flex; flex-wrap: wrap; background: #ccc;
+            padding: 8px 8px 0 8px; gap: 4px; border-bottom: 2px solid #bbb;
+        }
+        .tab {
+            padding: 6px 12px; background: #eee; border: 1px solid #aaa;
+            cursor: pointer; font-weight: bold; font-size: 0.8em; border-radius: 4px;
+            transition: 0.2s; min-width: 30px; text-align: center; margin-bottom: 5px;
+        }
+        .tab.active { background: var(--primary); color: white; border-color: var(--dark); }
+        .tab.has-text { border-top: 3px solid #f1c40f; } /* Amarelo se tiver texto mas não processado */
+        .tab.has-blocks { border-top: 3px solid var(--success); background: #eafaf1; } /* Verde se já analisado */
+
+        .tab-end { background: var(--dark); color: white; flex-grow: 1; max-width: 100px; }
+
+        .panel { flex: 1; padding: 20px; display: flex; flex-direction: column; overflow-y: auto; }
+        .left { border-right: 2px solid #ddd; max-width: 38%; background: white; padding: 0; }
+        .right { background: #f8f9fa; }
+
+        .editor-content { padding: 20px; flex-grow: 1; display: flex; flex-direction: column; }
+
+        h2 { margin-top: 5px; font-size: 1.1em; color: #333; }
+        label { font-size: 0.75em; font-weight: bold; color: #666; margin-top: 10px; display: block; }
+        input, textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        textarea { flex: 1; min-height: 150px; resize: none; font-family: monospace; font-size: 0.95em; line-height: 1.5; }
+        
+        /* Blocos da Direita */
+        .block-item {
+            background: white; border: 1px solid #e0e0e0; border-radius: 6px;
+            padding: 10px; margin-bottom: 8px; display: flex; gap: 10px; align-items: flex-start;
+        }
+        .type-pergunta { border-left: 5px solid #e67e22; }
+        .type-paragrafo { border-left: 5px solid var(--primary); }
+        .type-subtema { border-left: 5px solid var(--dark); background: #edf2f7; }
+        .type-rodape { border-left: 5px solid #95a5a6; color: #777; font-style: italic; }
+        .type-resumo { border-left: 5px solid #9b59b6; background: #f5eef8; }
+
+        .page-wrapper { display: flex; flex-direction: column; align-items: center; width: 45px; flex-shrink: 0; }
+        .page-input { width: 100%; text-align: center; font-weight: bold; border: 2px solid #ddd; padding: 4px; font-size: 0.85em; }
+        .page-input.manual { border-color: var(--success); background: #eafaf1; }
+        
+        .badge { font-size: 0.6em; text-transform: uppercase; font-weight: bold; color: #aaa; margin-bottom: 2px; }
+        .content-text { flex: 1; font-size: 0.9em; line-height: 1.4; white-space: pre-wrap; }
+        .type-label { font-size: 0.65em; font-weight: 900; text-transform: uppercase; margin-right: 5px; background: rgba(0,0,0,0.05); padding: 2px 4px; border-radius: 3px; }
+        
+        .num-tag { background: #333; color: white; padding: 1px 5px; border-radius: 4px; font-size: 0.75em; margin-right: 5px; font-weight: bold; }
+        .num-tag-auto { background: #8e44ad; color: white; padding: 1px 5px; border-radius: 4px; font-size: 0.75em; margin-right: 5px; font-weight: bold; }
+
+        .btn-generate { background: var(--dark); height: 60px; font-size: 1.2em; color: white; border: none; cursor: pointer; font-weight: bold; margin-top: 10px; width: 100%; }
+        .btn-generate:hover { background: #000; }
+    </style>
+</head>
+<body>
+
+    <div class="panel left">
+        <div class="tabs-bar" id="tabsBar"></div>
+
+        <div class="editor-content">
+            <h2 id="editorTitle">Artigo 1</h2>
+            <label>Referência</label>
+            <input type="text" id="chapRef" placeholder="Ex: w25 Dezembro pp. 2-7">
+            
+            <label>Título</label>
+            <input type="text" id="chapTitle" placeholder="Ex: O livro de Jó ajuda-nos...">
+
+            <label>Conteúdo (O sistema analisa automaticamente ao mudar de aba)</label>
+            <textarea id="rawInput" placeholder="Cole o texto aqui..."></textarea>
+        </div>
+    </div>
+
+    <div class="panel right">
+        <h2 id="previewHeader">Pré-visualização Automática</h2>
+        <div id="previewContainer" style="flex:1; overflow-y:auto;"></div>
+        <button class="btn-generate" onclick="finalizeAll()">🏁 FIM: Gerar JSON Consolidado</button>
+    </div>
+
+<script>
+    let articles = Array.from({ length: 20 }, () => ({
+        ref: "", title: "", raw: "", blocks: []
+    }));
+    
+    let currentIdx = 0;
+    const MAX_TITLE_LENGTH = 110;
+
+    function initTabs() {
+        const bar = document.getElementById('tabsBar');
+        bar.innerHTML = '';
+        for (let i = 0; i < 20; i++) {
+            const btn = document.createElement('div');
+            const hasText = articles[i].raw.length > 0;
+            const hasBlocks = articles[i].blocks.length > 0;
+            
+            btn.className = `tab ${i === currentIdx ? 'active' : ''} ${hasText ? 'has-text' : ''} ${hasBlocks ? 'has-blocks' : ''}`;
+            btn.textContent = i + 1;
+            btn.onclick = () => switchTab(i);
+            bar.appendChild(btn);
+        }
+        const endBtn = document.createElement('div');
+        endBtn.className = 'tab tab-end';
+        endBtn.textContent = 'FIM 🏁';
+        endBtn.onclick = () => finalizeAll();
+        bar.appendChild(endBtn);
+    }
+
+    function switchTab(newIdx) {
+        // 1. Analisar e Guardar aba atual antes de sair
+        autoProcess(currentIdx);
+        
+        // 2. Mudar para nova aba
+        currentIdx = newIdx;
+        
+        // 3. Carregar dados
+        document.getElementById('chapRef').value = articles[currentIdx].ref;
+        document.getElementById('chapTitle').value = articles[currentIdx].title;
+        document.getElementById('rawInput').value = articles[currentIdx].raw;
+        
+        document.getElementById('editorTitle').textContent = `Artigo ${currentIdx + 1}`;
+        
+        initTabs();
+        renderPreview();
+    }
+
+    // Função que transforma texto em blocos sem precisar de botão
+    function autoProcess(idx) {
+        const ref = document.getElementById('chapRef').value;
+        const title = document.getElementById('chapTitle').value;
+        const raw = document.getElementById('rawInput').value;
+
+        // Atualizar memória básica
+        articles[idx].ref = ref;
+        articles[idx].title = title;
+        articles[idx].raw = raw;
+
+        if (!raw) {
+            articles[idx].blocks = [];
+            return;
+        }
+
+        let tempBlocks = [];
+        let isFootnote = false;
+        let isRecap = false;
+        let subCounter = 0;
+        let foundFirstNum = false;
+
+        raw.split('\n').forEach(line => {
+            let txt = line.trim();
+            if (!txt || txt.toLowerCase() === "a sua resposta") return;
+
+            const up = txt.toUpperCase();
+            const lw = txt.toLowerCase();
+
+            // Lógica de Reconhecimento
+            if (up.includes('PERGUNTAS DE RECAPITULAÇÃO') || up.includes('COMO RESPONDERIA?') || up === 'RESUMO') {
+                isRecap = true; subCounter++;
+                tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
+                return;
+            }
+
+            if (isRecap) {
+                if (lw.includes('[nota') || lw.includes('rodapé]') || up.startsWith("CÂNTICO")) {
+                    isFootnote = true; isRecap = false;
+                } else {
+                    tempBlocks.push({ type: 'resumo', text: txt.replace(/^[❑\-\u2022]\s*/, ""), number: null });
+                    return;
+                }
+            }
+
+            if (lw.includes('[nota') || lw.includes('rodapé]') || txt.match(/^[ab]\s/) || up.startsWith("CÂNTICO")) isFootnote = true;
+
+            if (isFootnote) {
+                tempBlocks.push({ type: 'rodape', text: txt, number: null });
+            } else {
+                const qMatch = txt.match(/^(\d+(?:[\s\-\,\&]+\d+)*)\.\s+(.*)/);
+                const pMatch = txt.match(/^(\d+)\s+(.*)/);
+                const vMatch = txt.match(/^[\“\"].*[\–\—].*\.$/);
+
+                if (qMatch && txt.includes('?')) {
+                    foundFirstNum = true;
+                    tempBlocks.push({ type: 'pergunta', text: qMatch[2], number: qMatch[1] });
+                } else if (pMatch) {
+                    foundFirstNum = true;
+                    tempBlocks.push({ type: 'paragrafo', text: pMatch[2], number: pMatch[1] });
+                } else if (vMatch || up === "OBJETIVO" || (!foundFirstNum && txt.length < MAX_TITLE_LENGTH)) {
+                    subCounter++;
+                    tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
+                } else {
+                    if (txt.length > MAX_TITLE_LENGTH) {
+                        tempBlocks.push({ type: 'paragrafo', text: txt, number: null });
+                    } else {
+                        subCounter++;
+                        tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
+                    }
+                }
+            }
+        });
+
+        // Auto-numeração
+        let lastP = 0;
+        tempBlocks.forEach(b => {
+            if (b.type === 'paragrafo') {
+                if (b.number) lastP = parseInt(b.number.match(/\d+/)[0]);
+                else { lastP++; b.number = lastP.toString(); b.inferred = true; }
+            }
+        });
+
+        articles[idx].blocks = tempBlocks;
+    }
+
+    function renderPreview() {
+        const container = document.getElementById('previewContainer');
+        container.innerHTML = '';
+        const blocks = articles[currentIdx].blocks;
+
+        if (blocks.length === 0) {
+            container.innerHTML = '<p style="text-align:center; color:#999; margin-top:50px;">O conteúdo aparecerá aqui assim que mudares de aba ou clicares em FIM.</p>';
+            return;
+        }
+
+        blocks.forEach((block, index) => {
+            const div = document.createElement('div');
+            div.className = `block-item type-${block.type}`;
+            let num = block.number ? `<span class="${block.type==='subtema'?'num-tag-auto':'num-tag'}">${block.type==='subtema'?'#':''}${block.number}</span>` : '';
+
+            div.innerHTML = `
+                <div class="page-wrapper">
+                    <span class="badge">PÁG</span>
+                    <input type="text" class="page-input" id="page-${index}" 
+                           value="${block.manualPage || ''}" 
+                           oninput="articles[currentIdx].blocks[${index}].manualPage = this.value; updateCascadingUI();" placeholder="⬇">
+                </div>
+                <div class="content-text"><span class="type-label">${block.type}</span> ${num} ${block.text}</div>
+            `;
+            container.appendChild(div);
+        });
+        updateCascadingUI();
+    }
+
+    function updateCascadingUI() {
+        let activeP = ""; 
+        articles[currentIdx].blocks.forEach((_, i) => {
+            const input = document.getElementById(`page-${i}`);
+            if (!input) return;
+            if (input.value.trim() !== "") {
+                activeP = input.value.trim();
+                input.classList.add('manual');
+            } else {
+                input.classList.remove('manual');
+                input.placeholder = activeP || "⬇";
+            }
+        });
+    }
+
+    function finalizeAll() {
+        // Processar a aba atual uma última vez
+        autoProcess(currentIdx);
+        
+        const finalData = articles
+            .filter(art => art.ref.trim() !== "" && art.blocks.length > 0)
+            .map(art => {
+                let lastPg = null;
+                const conteudo = art.blocks.map(b => {
+                    if (b.manualPage) lastPg = parseInt(b.manualPage);
+                    return {
+                        tipo: b.type,
+                        texto: b.text,
+                        pagina: lastPg,
+                        numero_ref: b.number
+                    };
+                });
+                return { referencia: art.ref, titulo: art.title, conteudo: conteudo };
+            });
+
+        if (finalData.length === 0) {
+            alert("Nenhum artigo válido para exportar! Preenche pelo menos a Referência e o Conteúdo.");
+            return;
+        }
+
+        const jsonStr = JSON.stringify(finalData, null, 4);
+        const blob = new Blob([jsonStr], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "sentinela_completa.json";
+        a.click();
+        
+        alert(`Exportação concluída! ${finalData.length} artigos incluídos.`);
+    }
+
+    initTabs();
+</script>
+</body>
+</html>
