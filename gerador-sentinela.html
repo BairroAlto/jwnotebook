@@ -480,17 +480,21 @@ function renderPreview() {
     }
 
 function changeBlockType(index, newType) {
-    // 1. Atualiza permanentemente no array de memória
+    // 1. Atualiza o tipo no array de memória
     articles[currentIdx].blocks[index].type = newType;
     
-    // 2. Atualiza a interface visual (cor e classes)
-    const wrapper = document.getElementById(`block-wrapper-${index}`);
-    if (wrapper) {
-        wrapper.className = `block-item type-${newType}`;
+    // 2. Se mudou para algo que não é subtema, removemos o prefixo de subtema (#)
+    // Se mudou para parágrafo e não tem número, preparamos para ser inferido
+    if (newType !== 'subtema' && articles[currentIdx].blocks[index].number) {
+        // Limpa referências antigas de subtema se necessário
     }
 
-    // 3. Re-executa a validação (para atualizar os OK/Erro no topo)
-    runValidation();
+    // 3. RE-SINCRONIZA TODA A LÓGICA DO ARTIGO
+    syncNumbers(currentIdx);
+
+    // 4. REDESENHA A PREVISUALIZAÇÃO
+    // Precisamos de redesenhar para que os números e as cores se ajustem globalmente
+    renderPreview();
 }
 
     function updateCascadingUI() {
@@ -633,6 +637,57 @@ function runValidation() {
         : `<span style="color:#e67e22">⚠️ RESUMO (${resumoCount}/4)</span>`;
 
     statusDiv.innerHTML = `${qMsg} | ${rMsg}`;
+}
+
+function syncNumbers(idx) {
+    let subCounter = 0;
+    let lastQuestionNum = null;
+
+    articles[idx].blocks.forEach(b => {
+        // Lógica para SUBTEMAS (#1, #2, #3...)
+        if (b.type === 'subtema') {
+            subCounter++;
+            b.number = subCounter.toString();
+        } 
+        
+        // Lógica para PERGUNTAS (Mantém o número original se existir)
+        else if (b.type === 'pergunta') {
+            if (b.number) {
+                lastQuestionNum = b.number;
+            } else {
+                // Se transformaste um subtema em pergunta, ele precisa de um número.
+                // Tentamos ver se o texto começa com um número, senão deixamos vazio para o user preencher.
+                const m = b.text.match(/^(\d+)/);
+                if (m) {
+                    b.number = m[1];
+                    lastQuestionNum = m[1];
+                }
+            }
+        }
+
+        // Lógica para PARÁGRAFOS (Herda da pergunta anterior se não tiver número próprio)
+        else if (b.type === 'paragrafo') {
+            // Se o parágrafo não tem número OU se o número dele era de um subtema antigo
+            const isOldSubtemaNum = b.number && !lastQuestionNum; 
+            
+            // Se o parágrafo começa com número (ex: "2 "), mantém esse número
+            const manualNumMatch = b.text.match(/^(\d+)\s/);
+            
+            if (manualNumMatch) {
+                b.number = manualNumMatch[1];
+                lastQuestionNum = manualNumMatch[1];
+            } else if (lastQuestionNum) {
+                // Herança da pergunta
+                b.number = lastQuestionNum;
+                b.inferred = true;
+            }
+        }
+        
+        // Limpar números de resumo e rodapé para não confundir
+        else if (b.type === 'resumo' || b.type === 'rodape') {
+            b.number = null;
+        }
+    });
 }
 
 
