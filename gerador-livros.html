@@ -3,17 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gerador Pro JW (V20 - Box Detection)</title>
+    <title>Gerador Pro JW (V21 - Box Mode Fix)</title>
     <style>
-        :root {
-            --primary: #3498db; --success: #27ae60; --dark: #2c3e50; --bg: #f4f4f9; --pergunta: #e67e22;
-        }
+        :root { --primary: #3498db; --success: #27ae60; --dark: #2c3e50; --bg: #f4f4f9; --pergunta: #e67e22; }
         body { font-family: 'Segoe UI', sans-serif; display: flex; height: 100vh; margin: 0; background: var(--bg); overflow: hidden; }
         .tabs-bar { display: flex; flex-wrap: wrap; background: #ddd; padding: 5px; gap: 3px; border-bottom: 2px solid #bbb; overflow-y: auto; max-height: 120px; }
         .tab { padding: 5px 8px; background: #eee; border: 1px solid #aaa; cursor: pointer; font-weight: bold; font-size: 0.7em; border-radius: 3px; min-width: 25px; text-align: center; }
         .tab.active { background: var(--primary); color: white; border-color: var(--dark); }
-        .tab.has-text { border-bottom: 3px solid #f1c40f; } 
-        .tab.has-blocks { border-bottom: 3px solid var(--success); }
+        .tab.has-text { border-bottom: 3px solid #f1c40f; } .tab.has-blocks { border-bottom: 3px solid var(--success); }
         .panel { flex: 1; padding: 15px; display: flex; flex-direction: column; overflow-y: auto; }
         .left { border-right: 2px solid #ddd; max-width: 38%; background: white; }
         .right { background: #f8f9fa; }
@@ -22,10 +19,8 @@
         input, textarea { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
         textarea { flex: 1; min-height: 150px; resize: none; font-family: monospace; font-size: 0.85em; }
         .block-item { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px; margin-bottom: 6px; display: flex; gap: 10px; align-items: flex-start; }
-        .type-pergunta { border-left: 5px solid var(--pergunta); }
-        .type-paragrafo { border-left: 5px solid var(--primary); }
-        .type-subtema { border-left: 5px solid var(--dark); background: #f0f4f8; }
-        .type-rodape { border-left: 5px solid #95a5a6; color: #666; font-style: italic; background: #f9f9f9; }
+        .type-pergunta { border-left: 5px solid var(--pergunta); } .type-paragrafo { border-left: 5px solid var(--primary); }
+        .type-subtema { border-left: 5px solid var(--dark); background: #f0f4f8; } .type-rodape { border-left: 5px solid #95a5a6; color: #666; font-style: italic; background: #f9f9f9; }
         .page-wrapper { display: flex; flex-direction: column; align-items: center; width: 45px; flex-shrink: 0; }
         .page-input { width: 100%; text-align: center; font-weight: bold; border: 2px solid #ddd; padding: 3px; font-size: 0.8em; }
         .page-input.manual { border-color: var(--success); background: #eafaf1; }
@@ -97,50 +92,56 @@
         const raw = articles[idx].raw;
         let tempBlocks = []; let isFootnote = false; let subCounter = 0;
         let lastParaNum = 0; let paragraphsFound = 0;
-        let lineIdx = 0;
+        let isInsideBox = false;
 
         raw.split(/\n+/).forEach(line => {
             let txt = line.trim(); if (!txt) return;
+            
+            // Ativa modo rodapé
             if (txt.toLowerCase().includes('[nota') || txt.toLowerCase().includes('[rodapé]')) { isFootnote = true; return; }
+
+            // DETEÇÃO DE QUADRO (BOX MODE)
+            // Se o texto for "PRINCÍPIOS DA BÍBLIA", "RESUMO" ou similar, entramos no modo quadro
+            const boxHeaders = ["PRINCÍPIOS DA BÍBLIA", "RESUMO", "COMO RESPONDERIA?", "QUADRO", "ENTENDA MELHOR"];
+            if (boxHeaders.some(h => txt.toUpperCase().includes(h))) { isInsideBox = true; }
 
             let type = '', cleanText = txt, numberRef = null, isInferred = false;
 
             if (isFootnote) {
-                type = 'rodape'; const noteMatch = txt.match(/^(\d+)\.\s+(.*)/);
+                type = 'rodape'; 
+                const noteMatch = txt.match(/^(\d+)\.\s+(.*)/);
                 if (noteMatch) { numberRef = noteMatch[1]; cleanText = noteMatch[2]; }
             } else {
                 const qMatch = txt.match(/^(\d+[\d\s\.,\-\(a-z\)]*?\.)\s+(.*)/);
                 const pMatch = txt.match(/^(\d+)\s+(.*)/);
 
-                if (qMatch) {
-                    const numPart = qMatch[1].match(/\d+/);
-                    const currentNum = numPart ? parseInt(numPart[0]) : 0;
-                    // Lógica de RESET: se o número da pergunta for menor que o último parágrafo, é Subtema (Box)
-                    if (paragraphsFound > 0 && currentNum < lastParaNum) {
-                        type = 'subtema'; subCounter++; numberRef = subCounter.toString();
-                    } else {
-                        type = 'pergunta'; numberRef = qMatch[1].replace(/\.$/, ''); cleanText = qMatch[2];
-                    }
+                // Se detetar um "1 " ou "1. " e já tivermos muitos parágrafos, é um reset (Box detectado)
+                if ((qMatch || pMatch) && paragraphsFound > 10) {
+                    const num = parseInt((qMatch ? qMatch[1] : pMatch[1]).match(/\d+/)[0]);
+                    if (num === 1) isInsideBox = true;
+                }
+
+                if (isInsideBox) {
+                    // DENTRO DO QUADRO: Tudo é subtema, mesmo que comece com número
+                    type = 'subtema'; subCounter++; numberRef = subCounter.toString();
+                } else if (qMatch) {
+                    type = 'pergunta'; numberRef = qMatch[1].replace(/\.$/, ''); cleanText = qMatch[2];
                 } else if (pMatch) {
-                    const currentNum = parseInt(pMatch[1]);
-                    // Lógica de RESET: se o número do parágrafo for menor que o anterior, vira Subtema
-                    if (paragraphsFound > 0 && currentNum <= lastParaNum) {
-                        type = 'subtema'; subCounter++; numberRef = subCounter.toString();
-                    } else {
-                        type = 'paragrafo'; numberRef = pMatch[1]; cleanText = pMatch[2];
-                        lastParaNum = currentNum; paragraphsFound++;
-                    }
+                    type = 'paragrafo'; numberRef = pMatch[1]; cleanText = pMatch[2];
+                    lastParaNum = parseInt(pMatch[1]); paragraphsFound++;
                 } else {
                     const isCitation = txt.startsWith('“') || txt.startsWith('"') || txt.includes(' — ');
                     if (!isCitation && txt.length > MIN_PARA_LENGTH && paragraphsFound === 0) {
                         type = 'paragrafo'; numberRef = "1"; isInferred = true; paragraphsFound++; lastParaNum = 1;
+                    } else if (!isCitation && txt.length > MIN_PARA_LENGTH && paragraphsFound > 0) {
+                        // Se já começámos os parágrafos, continua a numeração
+                        type = 'paragrafo'; paragraphsFound++; numberRef = paragraphsFound.toString(); isInferred = true;
                     } else {
                         type = 'subtema'; subCounter++; numberRef = subCounter.toString();
                     }
                 }
             }
             tempBlocks.push({ type, text: cleanText, number: numberRef, inferred: isInferred });
-            lineIdx++;
         });
         articles[idx].blocks = tempBlocks;
     }
