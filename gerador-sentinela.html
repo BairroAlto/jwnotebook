@@ -379,15 +379,39 @@ function autoProcess(idx) {
 
 
 raw.split('\n').forEach(line => {
-    let txt = line.trim();
+            let txt = line.trim();
 
-    // 1. FILTRO DE LIMPEZA: Ignora se estiver vazio OU se for uma das frases da lista
-    if (!txt || frasesParaIgnorar.includes(txt.toLowerCase())) return;
+            // 1. FILTROS BÁSICOS (Linhas vazias e botões de resposta)
+            const frasesParaIgnorar = [
+                "a sua resposta", "a sua reposta", "sua resposta", 
+                "as suas respostas", "suas respostas", "suas repostas",
+                "descrição da imagem" // Ignora também o prefixo de descrição
+            ];
+            
+            if (!txt || frasesParaIgnorar.includes(txt.toLowerCase())) return;
+            if (txt.toLowerCase().startsWith("descrição da imagem:")) return;
 
+            // 2. REGRA DE OURO: IGNORAR LEGENDAS DE IMAGEM
+            // Se a frase contém "(Veja o parágrafo...)" ou "(Veja os parágrafos...)"
+            const isInstrucaoLegenda = txt.match(/\(Veja (?:também )?os? parágrafos? \d+/i);
+            
+            if (isInstrucaoLegenda) {
+                // Se encontrarmos esta instrução, removemos o bloco anterior (a legenda/descrição)
+                if (tempBlocks.length > 0) {
+                    let ultimoBloco = tempBlocks[tempBlocks.length - 1];
+                    // Só removemos se o anterior for um subtema ou parágrafo sem número (típico de legendas)
+                    if (ultimoBloco.type === 'subtema' || (ultimoBloco.type === 'paragrafo' && !ultimoBloco.number)) {
+                        tempBlocks.pop(); 
+                    }
+                }
+                return; // Ignora a própria frase "(Veja o parágrafo...)"
+            }
+
+            // --- INÍCIO DA LÓGICA DE PROCESSAMENTO NORMAL ---
             const up = txt.toUpperCase();
             const lw = txt.toLowerCase();
 
-            // Gatilhos de Recapitulação (Resumo)
+            // Gatilhos de Recapitulação
             const isCapsRecapTrigger = (txt === up && txt.endsWith('...') && txt.length > 10);
             if (up.includes('PERGUNTAS DE RECAPITULAÇÃO') || up.includes('QUAL É A SUA RESPOSTA?') || 
                 up.includes('COMO RESPONDERIA?') || up === 'RESUMO' || isCapsRecapTrigger) {
@@ -410,32 +434,33 @@ raw.split('\n').forEach(line => {
                 const pMatch = txt.match(/^(\d+)\s+(.*)/);
 
                 if (qMatch) {
-                    foundFirstQuestion = true; // Primeira pergunta encontrada!
+                    foundFirstQuestion = true;
                     lastQuestionNum = qMatch[1]; 
                     tempBlocks.push({ type: 'pergunta', text: qMatch[2], number: qMatch[1] });
                 } 
                 else if (pMatch) {
-                    foundFirstQuestion = true; // Se houver um parágrafo numerado (ex: "1 "), também conta
+                    foundFirstQuestion = true;
                     tempBlocks.push({ type: 'paragrafo', text: pMatch[2], number: pMatch[1] });
                 } 
                 else {
-                    // SE NÃO TEM NÚMERO:
-                    // Se ainda não encontrámos a primeira pergunta, é obrigatoriamente SUBTEMA
                     if (!foundFirstQuestion) {
                         subCounter++;
                         tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
                     } else {
-                        // Se já passámos pela primeira pergunta, usamos a lógica de tamanho
-                        if (txt.length > MAX_TITLE_LENGTH) {
+                        // Se for longo e tivermos uma pergunta ativa, é parágrafo
+                        if (txt.length > MAX_TITLE_LENGTH && lastQuestionNum !== null) {
                             tempBlocks.push({ type: 'paragrafo', text: txt, number: null, refFromQuestion: lastQuestionNum });
                         } else {
+                            // Caso contrário, é Subtema (limpa a pergunta ativa)
                             subCounter++;
+                            lastQuestionNum = null; 
                             tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
                         }
                     }
                 }
             }
         });
+
 
         // Lógica de numeração final
       let currentPNum = 0;
