@@ -3260,99 +3260,79 @@ function buildVerseHTML(data, num) {
     }, 50);
 };
 
- window.saveFlashNoteGlobal = async (clickedBtn = null) => {
-    // 1. Gerir estado do botão para evitar cliques duplos
+window.saveFlashNoteGlobal = async (clickedBtn = null) => {
     const btn = clickedBtn || document.getElementById('btn-submit-flash') || document.getElementById('btn-save-flash');
     if (btn && btn.disabled) return; 
-    if (btn) { 
-        btn.textContent = "A gravar..."; 
-        btn.disabled = true; 
-        btn.style.opacity = "0.7"; 
-    }
 
     try {
-        // 2. Identificar o contentor ativo (Sidebar no PC ou Modal no Mobile)
+        // --- LÓGICA DE DETEÇÃO DE CONTENTOR CORRIGIDA ---
         let container;
         const sidePanel = document.getElementById('side-panel');
-        if (sidePanel && sidePanel.classList.contains('open') && window.innerWidth >= 768) {
-            container = document.getElementById('sidebar-content');
+        const flashModal = document.getElementById('flash-note-modal');
+
+        // Se o painel estiver aberto E contiver o campo de título, usamos o painel.
+        // Isto cobre PC e Mobile (quando a opção Painel Flutuante está ativa).
+        if (sidePanel && sidePanel.classList.contains('open') && sidePanel.querySelector('#flash-title')) {
+            container = sidePanel;
         } else {
-            container = document.getElementById('flash-note-modal');
+            container = flashModal;
         }
 
-        // 3. Recolher dados do formulário
+        // Agora buscamos os elementos DENTRO do container identificado
         const titleInput = container.querySelector('#flash-title');
         const editor = container.querySelector('#flash-editor');
         const typeSelect = container.querySelector('#flash-type-select');
         
-        const title = titleInput.value.trim();
-        const content = editor.innerHTML;
+        const title = titleInput ? titleInput.value.trim() : "";
+        const content = editor ? editor.innerHTML : "";
         const noteType = typeSelect ? typeSelect.value : 'default';
 
+        // Validação de título no container correto
         if (!title) {
-            if (btn) { btn.textContent = "GRAVAR NOTA"; btn.disabled = false; btn.style.opacity = "1"; }
             return window.showCustomAlert("O título é obrigatório!"); 
         }
 
-        // --- 4. LÓGICA DE IDENTIFICAÇÃO DE VERSÍCULOS (MULTI-VERSÍCULO / CATEGORIAS) ---
-        // Começamos com os versículos selecionados ou o ativo
+        // Se chegou aqui, o título foi encontrado. Prossegue com a gravação...
+        if (btn) { 
+            btn.textContent = "A gravar..."; 
+            btn.disabled = true; 
+            btn.style.opacity = "0.7"; 
+        }
+
+        // --- RESTO DA LÓGICA DE GRAVAÇÃO (IGUAL AO ANTERIOR) ---
         let versesToAttach = (currentSelectionVerses && currentSelectionVerses.length > 0) 
             ? [...currentSelectionVerses] 
             : [activeVerseFullName];
 
-        // Adicionar versículos que foram selecionados manualmente na aba Categorias
         if (currentFlashLinks && currentFlashLinks.categories) {
             currentFlashLinks.categories.forEach(cat => {
-                if (cat.type === 'bible_public' || cat.type === 'textobiblico') {
-                    if (!versesToAttach.includes(cat.name)) {
-                        versesToAttach.push(cat.name);
-                    }
+                if ((cat.type === 'bible_public' || cat.type === 'textobiblico') && !versesToAttach.includes(cat.name)) {
+                    versesToAttach.push(cat.name);
                 }
             });
         }
         versesToAttach = [...new Set(versesToAttach)].filter(v => v);
 
-        // --- 5. LÓGICA DE FOCO (CORES) ---
         const allFocusOptions = [...FLASH_FOCUS_OPTIONS.default, ...FLASH_FOCUS_OPTIONS.question];
         const selectedFocusObj = allFocusOptions.find(o => o.id === currentFlashFocus);
-        
-        // A cor da borda da nota será a cor do Foco, ou a cor do picker, ou o padrão azul/verde
         const newColor = selectedFocusObj ? selectedFocusObj.color : (selectedColorHex || (noteType === 'question' ? '#2ecc71' : '#3498db'));
 
-        // 6. Preparar Firebase e Metadados
         const { collection, addDoc, doc, updateDoc, arrayUnion, serverTimestamp, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
         const fullHighlightText = currentSelectionText || (activeHighlightContext ? activeHighlightContext.text : null);
         const boxUniqueId = "box_" + Date.now();
-
-        // Serializar metadados para o HTML
         const safeTopics = JSON.stringify(currentFlashTopics || {}).replace(/"/g, '&quot;');
         const safeBoxLinks = JSON.stringify(currentFlashLinks || {}).replace(/"/g, '&quot;');
         const focusAttr = currentFlashFocus ? `data-focus="${currentFlashFocus}"` : "";
-
         const commonToolbarHTML = `<div class="mini-note-toolbar" contenteditable="false"><button type="button" data-action="sharing-settings">🔐</button><div class="toolbar-btn-group"><button type="button" data-action="move-up">🔺</button><button type="button" data-action="move-down">🔻</button></div><button type="button" data-action="manage-box-links">⚡</button><button type="button" data-action="append-mini-note">🧬</button><button type="button" data-action="highlight-color">🎨</button><button type="button" data-action="manage-mini-note-topics">📋</button><button type="button" data-action="delete-mini-note">🗑️</button></div>`;
 
         let wrapperClass = (noteType === 'question') ? "mini-note-wrapper question-mode" : "mini-note-wrapper";
-
-        // Montar HTML final (incluindo o data-focus e cor da borda via inline style se necessário)
         const subNoteHtml = `<div class="${wrapperClass}" id="${boxUniqueId}" ${focusAttr} data-topics='${safeTopics}' data-box-links='${safeBoxLinks}' contenteditable="false" style="border-left-color: ${newColor}"><textarea class="mini-note-title-input" rows="1">${title}</textarea>${commonToolbarHTML}<div class="mini-note-content" contenteditable="true">${content}</div></div><p><br></p>`;
 
-        // 7. EXECUÇÃO FIREBASE
-
-        // A. Gravar nota principal na Mochila (pastas)
         const noteRef = await addDoc(collection(db, 'pastas'), {
-            nome: title, 
-            conteudo: subNoteHtml, 
-            tipo: 'nota', 
-            oque: 'back', 
-            userId: currentUser.uid, 
-            estado: 'ativa', 
-            boxIds: [boxUniqueId],
-            createdAt: serverTimestamp(), 
-            ultimaedicao: serverTimestamp()
+            nome: title, conteudo: subNoteHtml, tipo: 'nota', oque: 'back', userId: currentUser.uid, estado: 'ativa', boxIds: [boxUniqueId], createdAt: serverTimestamp(), ultimaedicao: serverTimestamp()
         });
 
-        // B. Tratar Destaques (Picotados)
         if (fullHighlightText) {
             const qCheck = query(collection(db, 'trechosbiblicos'), where('userId', '==', currentUser.uid), where('nome', '==', fullHighlightText));
             const snapCheck = await getDocs(qCheck);
@@ -3365,82 +3345,41 @@ function buildVerseHTML(data, num) {
             }
         }
 
-        // C. VINCULAR A CADA VERSÍCULO (Loop em todos os anexados pelas Categorias)
-    for (const verseName of versesToAttach) {
-    const vNum = verseName.split(':')[1].trim().split('-')[0];
+        for (const verseName of versesToAttach) {
+            const vNum = verseName.split(':')[1].trim().split('-')[0];
+            const puzzleItem = { noteId: noteRef.id, noteName: title, snippet: encodeURIComponent(subNoteHtml), addedAt: Date.now(), noteColor: newColor, highlightRef: fullHighlightText || "Nota Geral" };
+            if (!existingUserData[vNum]) existingUserData[vNum] = { puzzleBoard: [], dossie: [], panelLinks: [] };
+            existingUserData[vNum].puzzleBoard.unshift(puzzleItem);
 
-    const puzzleItem = { 
-        noteId: noteRef.id, 
-        noteName: title, 
-        snippet: encodeURIComponent(subNoteHtml), 
-        addedAt: Date.now(), 
-        noteColor: newColor, 
-        highlightRef: fullHighlightText || "Nota Geral" 
-    };
+            const qVerse = query(collection(db, 'textosbiblicos'), where('nome', '==', verseName), where('userId', '==', currentUser.uid));
+            const snapshot = await getDocs(qVerse);
+            if (!snapshot.empty) {
+                const docSnap = snapshot.docs[0];
+                let currentBoard = docSnap.data().puzzleBoard || [];
+                currentBoard.unshift(puzzleItem);
+                await updateDoc(doc(db, 'textosbiblicos', docSnap.id), { puzzleBoard: currentBoard });
+            } else {
+                await addDoc(collection(db, 'textosbiblicos'), { nome: verseName, userId: currentUser.uid, createdAt: serverTimestamp(), puzzleBoard: [puzzleItem], dossie: [], panelLinks: [] });
+            }
+            const numEl = document.getElementById(`vnum-${vNum}`);
+            if (numEl) numEl.classList.add('has-data');
+        }
 
-    // 1. ATUALIZA CACHE LOCAL (Usando unshift para ir para o topo)
-    if (!existingUserData[vNum]) {
-        existingUserData[vNum] = { puzzleBoard: [], dossie: [], panelLinks: [] };
-    }
-    // Mudamos de .push() para .unshift()
-    existingUserData[vNum].puzzleBoard.unshift(puzzleItem);
-
-    // 2. GRAVA NA DB DO VERSÍCULO
-    const qVerse = query(collection(db, 'textosbiblicos'), where('nome', '==', verseName), where('userId', '==', currentUser.uid));
-    const snapshot = await getDocs(qVerse);
-    
-    if (!snapshot.empty) {
-        const docSnap = snapshot.docs[0];
-        const docRef = doc(db, 'textosbiblicos', docSnap.id);
-        
-        // Em vez de arrayUnion (que põe no fim), pegamos no array atual,
-        // adicionamos ao início e gravamos o array inteiro.
-        let currentBoard = docSnap.data().puzzleBoard || [];
-        currentBoard.unshift(puzzleItem); // Adiciona ao início
-        
-        await updateDoc(docRef, { puzzleBoard: currentBoard });
-    } else {
-        // Se o documento é novo, o primeiro item fica naturalmente no topo
-        await addDoc(collection(db, 'textosbiblicos'), {
-            nome: verseName, 
-            userId: currentUser.uid, 
-            createdAt: serverTimestamp(), 
-            puzzleBoard: [puzzleItem], 
-            dossie: [], 
-            panelLinks: []
-        });
-    }
-
-    // PINTAR O NÚMERO DE LARANJA NA UI
-    const numEl = document.getElementById(`vnum-${vNum}`);
-    if (numEl) numEl.classList.add('has-data');
-}
-
-        // 8. FINALIZAÇÃO
-        document.getElementById('flash-note-modal').style.display = 'none';
+        // Finalização
+        flashModal.style.display = 'none';
         if (typeof window.refreshVisualHighlights === 'function') window.refreshVisualHighlights();
-        
         window.returnToVerseDetails();
 
-        // Limpeza de variáveis globais
-        currentSelectionText = ""; 
-        currentSelectionVerses = []; 
-        selectedColorHex = null;
-        currentFlashFocus = null;
-        currentFlashLinks = {};
-        currentFlashTopics = {};
-
+        // Limpeza
+        currentSelectionText = ""; currentSelectionVerses = []; selectedColorHex = null;
+        currentFlashFocus = null; currentFlashLinks = {}; currentFlashTopics = {};
         if (window.getSelection) window.getSelection().removeAllRanges();
 
     } catch (e) {
-        console.error("Erro Crítico ao gravar Nota Flash:", e);
-        window.showCustomAlert("Erro ao gravar. Verifique a sua ligação.");
+        console.error("Erro ao gravar:", e);
+        window.showCustomAlert("Erro ao gravar nota.");
     } finally {
-        if (btn) { 
-            btn.textContent = "GRAVAR NOTA"; 
-            btn.disabled = false; 
-            btn.style.opacity = "1"; 
-        }
+        if (btn) { btn.textContent = "GRAVAR NOTA"; btn.disabled = false; btn.style.opacity = "1"; }
     }
 };
 
