@@ -628,50 +628,81 @@ function runValidation() {
 
     let questionList = [];
     let paragraphList = [];
+    let errors = [];
 
-    // 1. Coletar todos os números
-    blocks.forEach(b => {
-        if (b.type === 'pergunta' && b.number) {
-            b.number.split(/[\-\,]/).forEach(n => questionList.push(n.trim()));
+    // 1. Coletar números e detetar erros de sequência imediata
+    blocks.forEach((b, i) => {
+        if (b.type === 'pergunta') {
+            // Erro: Pergunta sem número definido
+            if (!b.number || b.number === '!') {
+                errors.push(`PERGUNTA SEM NÚMERO (Linha ${i + 1})`);
+            } else {
+                // Suporta números compostos como "1-2"
+                b.number.split(/[\-\,]/).forEach(n => {
+                    if (n.trim()) questionList.push(n.trim());
+                });
+            }
+
+            // Erro: Pergunta seguida de subtema (provavelmente falta o parágrafo de resposta)
+            if (i < blocks.length - 1 && blocks[i + 1].type === 'subtema') {
+                errors.push(`PERGUNTA ${b.number || ''} SEM RESPOSTA`);
+            }
         }
+
         if (b.type === 'paragrafo' && b.number) {
-            b.number.split(/[\-\,]/).forEach(n => paragraphList.push(n.trim()));
+            b.number.split(/[\-\,]/).forEach(n => {
+                if (n.trim()) paragraphList.push(n.trim());
+            });
         }
     });
 
-    // 2. Detetar Duplicados (Perguntas e Parágrafos)
+    // 2. Detetar Números Repetidos
     let qDuplicates = questionList.filter((item, index) => questionList.indexOf(item) !== index);
     let pDuplicates = paragraphList.filter((item, index) => paragraphList.indexOf(item) !== index);
-    
+
+    if (qDuplicates.length > 0) {
+        errors.push(`PERG. REPETIDAS: ${[...new Set(qDuplicates)].join(',')}`);
+    }
+    if (pDuplicates.length > 0) {
+        errors.push(`PARAG. REPETIDOS: ${[...new Set(pDuplicates)].join(',')}`);
+    }
+
+    // 3. Verificar Correspondências (Faltas)
     let uniqueQuestions = new Set(questionList);
     let uniqueParagraphs = new Set(paragraphList);
 
-    // 3. Verificar Correspondências
     let missingParas = [];
-    uniqueQuestions.forEach(q => { if (!uniqueParagraphs.has(q)) missingParas.push(q); });
+    uniqueQuestions.forEach(q => {
+        if (!uniqueParagraphs.has(q)) missingParas.push(q);
+    });
+    if (missingParas.length > 0) errors.push(`FALTA PARAGRÁFO: ${missingParas.join(',')}`);
 
     let missingQuests = [];
-    uniqueParagraphs.forEach(p => { if (!uniqueQuestions.has(p)) missingQuests.push(p); });
+    uniqueParagraphs.forEach(p => {
+        if (!uniqueQuestions.has(p)) missingQuests.push(p);
+    });
+    if (missingQuests.length > 0) errors.push(`FALTA PERGUNTA: ${missingQuests.join(',')}`);
 
-    // 4. Construir Mensagens de Erro
-    let errors = [];
-    if (qDuplicates.length > 0) errors.push(`PERG. REPETIDAS: ${[...new Set(qDuplicates)].join(',')}`);
-    if (pDuplicates.length > 0) errors.push(`PARAG. REPETIDOS: ${[...new Set(pDuplicates)].join(',')}`);
-    if (missingParas.length > 0) errors.push(`FALTA PARAG: ${missingParas.join(',')}`);
-    if (missingQuests.length > 0) errors.push(`FALTA PERG: ${missingQuests.join(',')}`);
-
-    // 5. Renderizar Status
+    // 4. Validar Quantidade de Resumo
     let resumoCount = blocks.filter(b => b.type === 'resumo').length;
-    let qMsg = errors.length === 0 
-        ? '<span style="color:#27ae60">✅ ESTRUTURA OK</span>' 
-        : `<span style="color:#e74c3c; background:#fdeaea; padding:2px 5px; border-radius:3px; border:1px solid #e74c3c; font-size:0.9em;">⚠️ ${errors.join(' | ')}</span>`;
+
+    // 5. Gerar o HTML do Status
+    let qMsg = "";
+    if (errors.length === 0) {
+        qMsg = '<span style="color:#27ae60; font-weight:bold;">✅ ESTRUTURA OK</span>';
+    } else {
+        // Exibe o primeiro erro da lista para não sobrecarregar a barra
+        qMsg = `<span style="color:#fff; background:#e74c3c; padding:3px 10px; border-radius:5px; font-size:0.85em; font-weight:bold; border:1px solid #c0392b;">⚠️ ${errors[0]}</span>`;
+    }
 
     let rMsg = (resumoCount === 3 || resumoCount === 4)
         ? `<span style="color:#27ae60">✅ RESUMO (${resumoCount})</span>`
-        : `<span style="color:#e67e22">⚠️ RESUMO (${resumoCount}/4)</span>`;
+        : `<span style="color:#e67e22; font-weight:bold;">⚠️ RESUMO (${resumoCount}/4)</span>`;
 
     statusDiv.innerHTML = `${qMsg} | ${rMsg}`;
 }
+
+  
 
 
 
