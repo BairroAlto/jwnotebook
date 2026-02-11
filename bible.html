@@ -1790,10 +1790,12 @@ input:checked + .slider:before { transform: translateX(16px); }
 <body>
 
      <!-- ESCUDO DE CARREGAMENTO INICIAL -->
-    <div id="global-auth-shield">
-        <div class="global-spinner"></div>
-        <div class="global-loading-text">A CARREGAR...</div>
-    </div>
+  <div id="global-auth-shield">
+    <div class="global-spinner"></div>
+    <div class="global-loading-text">A CARREGAR...</div>
+    <!-- Linha nova abaixo -->
+    <div id="global-progress-text" style="color: #666; font-family: monospace; font-size: 0.7rem; margin-top: 10px;">BÍBLIA: 0%</div>
+</div>
 
 <header>
     <button id="back-btn">⬅</button>
@@ -2433,59 +2435,86 @@ const FOCUS_LABELS = {
 
 
 
+
+async function downloadFullBible() {
+    const progressText = document.getElementById('global-progress-text');
+    let loadedBooks = 0;
+    const totalBooks = BIBLE_DATA.length;
+
+    // Criamos um array de promessas para descarregar tudo em paralelo (mais rápido)
+    const promises = BIBLE_DATA.map(async (book) => {
+        const filename = getBibleFilename(book.nome);
+        
+        if (!localBibleCache[filename]) {
+            try {
+                const response = await fetch(`./js/bible/${filename}.json`);
+                if (response.ok) {
+                    localBibleCache[filename] = await response.json();
+                }
+            } catch (e) {
+                console.error(`Erro ao baixar ${book.nome}:`, e);
+            }
+        }
+        
+        // Atualiza o contador de progresso
+        loadedBooks++;
+        if (progressText) {
+            const percent = Math.round((loadedBooks / totalBooks) * 100);
+            progressText.innerText = `BÍBLIA: ${percent}%`;
+        }
+    });
+
+    // Espera que TODOS os downloads terminem
+    await Promise.all(promises);
+}
+
+
         // --- AUTENTICAÇÃO E INICIALIZAÇÃO ---
     const globalShield = document.getElementById('global-auth-shield');
 
-        onAuthStateChanged(auth, async (user) => {
-            // 1. VERIFICAÇÃO: UTILIZADOR NÃO AUTENTICADO
-            if (!user) {
-                console.warn("⛔ Acesso não autorizado. Redirecionando para 404...");
-                window.location.href = "404.html";
+onAuthStateChanged(auth, async (user) => {
+    if (!user) {
+        console.warn("⛔ Acesso não autorizado...");
+        window.location.href = "404.html";
+        return;
+    } 
+    else {
+        try {
+            const userDocRef = doc(db, "users", user.uid);
+            const userDocSnap = await getDoc(userDocRef);
+
+            if (!userDocSnap.exists() || userDocSnap.data().aceite !== "on") {
+                window.location.href = "index.html";
                 return;
-            } 
-            
-            // 2. VERIFICAÇÃO: UTILIZADOR AUTENTICADO
-            else {
-                try {
-                    // Consulta o perfil do utilizador na base de dados
-                    const userDocRef = doc(db, "users", user.uid);
-                    const userDocSnap = await getDoc(userDocRef);
-
-                    // Se o documento não existe ou o campo 'aceite' não é 'on'
-                    if (!userDocSnap.exists() || userDocSnap.data().aceite !== "on") {
-                        console.warn("⏳ Conta pendente ou inválida. Redirecionando para espera...");
-                        window.location.href = "index.html"; // Volta para a tela de "Pendente"
-                        return;
-                    }
-
-                    // --- SUCESSO: CONTA APROVADA (aceite = "on") ---
-                    currentUser = user; // Define a variável global essencial para este ficheiro
-
-                    // 1. Carrega configurações do utilizador
-                    await loadUserConfig(); 
-                    
-                    // 2. RECUPERA O ESTADO DO URL (Livro/Capítulo/Versículo)
-                    await loadStateFromUrl(); 
-                    
-                    // 3. Remove o escudo de carregamento (A Revelação)
-                    setTimeout(() => {
-                        // Revela o corpo do site (que estava com opacity: 0 no CSS)
-                        document.body.style.opacity = "1";
-                        
-                        if(globalShield) globalShield.classList.add('fade-out');
-                        
-                        // Marca que o carregamento inicial terminou (para gestão de URL)
-                        isFirstLoad = false; 
-                    
-                    }, 500);
-
-                } catch (error) { 
-                    console.error("Erro crítico no carregamento inicial:", error); 
-                    // Em caso de erro de rede ou permissões, manda para o index por segurança
-                    window.location.href = "index.html";
-                }
             }
-        });
+
+            currentUser = user;
+
+            // --- SEQUÊNCIA DE CARREGAMENTO CRÍTICA ---
+            
+            // 1. Carrega configurações do utilizador
+            await loadUserConfig(); 
+            
+            // 2. DESCARREGA A BÍBLIA TODA (A novidade aqui)
+            // O site vai ficar no ecrã de loading até isto terminar
+            await downloadFullBible();
+            
+            // 3. Tenta recuperar estado do URL (se houver)
+            await loadStateFromUrl(); 
+            
+            // 4. TUDO PRONTO: Esconde o escudo
+            setTimeout(() => {
+                document.body.style.opacity = "1";
+                if(globalShield) globalShield.classList.add('fade-out');
+                isFirstLoad = false; 
+            }, 500);
+
+        } catch (error) { 
+            console.error("Erro crítico:", error); 
+            window.location.href = "index.html";
+        }
+    }
+});
 
         // --- LÓGICA DE CONFIGURAÇÕES ---
 async function loadUserConfig() {
