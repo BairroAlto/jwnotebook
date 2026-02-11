@@ -23042,36 +23042,34 @@ if (activeBackBtn) {
         if (contentEditor) contentEditor.innerHTML = "";
 
         // 5. TROCA DE VISTAS (CORRIGIDA PARA FLASH)
-        const container = document.querySelector('.notebook-container');
-        if (container) container.classList.remove('middle-panel-collapsed');
-        
-        // Sai sempre do editor
-        document.body.classList.remove('mobile-view-editor');
+const container = document.querySelector('.notebook-container');
+if (container) container.classList.remove('middle-panel-collapsed');
 
-        if (currentViewMode === 'flash') {
-            // --- MODO FLASH: VAI PARA A COLUNA 1 ---
-            // Remover a classe 'mobile-view-middle' faz o CSS mostrar o #left-panel
-            document.body.classList.remove('mobile-view-middle');
-            
-            // Scroll na lista da ESQUERDA
-            if (idToScroll) {
-                setTimeout(() => {
-                    const noteItem = document.querySelector(`#left-panel-list .list-item[data-id="${idToScroll}"]`);
-                    if (noteItem) noteItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }, 150);
-            }
-        } else {
-            // --- MODO NORMAL: VAI PARA A COLUNA 2 ---
-            document.body.classList.add('mobile-view-middle');
+// Sai sempre do editor
+document.body.classList.remove('mobile-view-editor');
 
-            // Scroll na lista do MEIO
-            if (idToScroll) {
-                setTimeout(() => {
-                    const noteItem = document.querySelector(`#file-list .list-item[data-id="${idToScroll}"]`);
-                    if (noteItem) noteItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }, 150);
-            }
-        }
+// SE ESTIVER EM FLASH OU PINS, VOLTA PARA A COLUNA 1
+if (currentViewMode === 'flash' || currentViewMode === 'pins') {
+    document.body.classList.remove('mobile-view-middle');
+    
+    // Scroll na lista da ESQUERDA (Onde a Bag vive)
+    if (idToScroll) {
+        setTimeout(() => {
+            const noteItem = document.querySelector(`#left-panel-list .list-item[data-id="${idToScroll}"]`);
+            if (noteItem) noteItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 150);
+    }
+} else {
+    // MODO NORMAL: VAI PARA A COLUNA 2
+    document.body.classList.add('mobile-view-middle');
+
+    if (idToScroll) {
+        setTimeout(() => {
+            const noteItem = document.querySelector(`#file-list .list-item[data-id="${idToScroll}"]`);
+            if (noteItem) noteItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 150);
+    }
+}
 
         // 6. ATUALIZA OS BOTÕES FLUTUANTES
         updateMobileFABVisibility();
@@ -25451,7 +25449,6 @@ async function loadNoteBoxesForAggregation(noteId) {
     const backBtn = document.getElementById('agreg-back-btn');
     const pathSpan = document.getElementById('agreg-current-path');
 
-    // Atualiza UI
     pathSpan.textContent = "📄 " + aggregationStack[aggregationStack.length - 1].name;
     backBtn.style.display = 'block';
     list.innerHTML = '<li style="padding:10px;">A analisar conteúdo da nota...</li>';
@@ -25461,74 +25458,109 @@ async function loadNoteBoxesForAggregation(noteId) {
         if (!noteDoc.exists()) return;
 
         const content = noteDoc.data().conteudo || "";
-        
-        // Parse do HTML da nota
         const parser = new DOMParser();
         const docHTML = parser.parseFromString(content, 'text/html');
-        const wrappers = docHTML.querySelectorAll('.mini-note-wrapper');
+        
+        // NOVO SELETOR: Inclui todos os tipos de caixas
+        const wrappers = docHTML.querySelectorAll('.mini-note-wrapper, .redator-wrapper, details.toggle-section, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
 
         list.innerHTML = '';
         
         if (wrappers.length === 0) {
-            list.innerHTML = '<li style="padding:10px; color:#888;">Esta nota não tem Subnotas, Questões ou Contentores.</li>';
+            list.innerHTML = '<li style="padding:20px; color:#888; text-align:center;">Esta nota não tem blocos estruturados para agregar.</li>';
             return;
         }
 
-        wrappers.forEach((wrapper, index) => {
-            // Extrair Título
-            let title = "Sem Título";
-            let typeClass = "";
-            let typeLabel = "";
+// 1. Mapa de cores padrão do NotaBook
+const standardColors = {
+    subnote: "#4a90e2",   // Azul
+    question: "#1e8449",  // Verde
+    free: "#e67e22",      // Laranja
+    consultor: "#c0392b", // Vermelho
+    redator: "#555555",   // Cinza
+    toggle: "#c0392b"     // Castanho/Vermelho
+};
 
-            // Detetar Tipo
-            if (wrapper.classList.contains('question-mode')) {
-                typeClass = "agreg-box-question";
-                typeLabel = "Questão";
-                const input = wrapper.querySelector('input');
-                title = input ? input.value : "Questão sem título";
-            } else if (wrapper.classList.contains('free-mode')) {
-                typeClass = "agreg-box-free";
-                typeLabel = "Contentor";
-                // Lógica de primeira frase para contentores livres
-                const text = wrapper.querySelector('.mini-note-content').textContent.trim();
-                if (text) {
-                    const firstSentence = text.split(/[.!?]/)[0];
-                    title = firstSentence.length > 50 ? firstSentence.substring(0, 50) + "..." : firstSentence;
-                } else {
-                    title = "Contentor Vazio";
-                }
-            } else {
-                typeClass = "agreg-box-subnote";
-                typeLabel = "SubNota";
-                const input = wrapper.querySelector('input');
-                title = input ? input.value : "SubNota sem título";
-            }
+wrappers.forEach((wrapper, index) => {
+    let title = "Sem Título";
+    let typeLabel = "";
+    let finalColor = ""; // Cor que será aplicada
 
-            // Criar ID único temporário para controlo de seleção
-            const uniqueId = `${noteId}_${index}`;
-            const isSelected = aggregationSelectedItems.some(i => i.uniqueId === uniqueId);
+    // 2. Identificar a Categoria Base
+    let baseCategory = 'subnote';
+    if (wrapper.classList.contains('question-mode')) baseCategory = 'question';
+    else if (wrapper.classList.contains('free-mode')) baseCategory = 'free';
+    else if (wrapper.classList.contains('consultor-mode')) baseCategory = 'consultor';
+    else if (wrapper.classList.contains('redator-wrapper')) baseCategory = 'redator';
+    else if (wrapper.tagName === 'DETAILS') baseCategory = 'toggle';
 
-            const li = document.createElement('li');
-            li.className = `agreg-box-item ${typeClass} ${isSelected ? 'selected' : ''}`;
-            
-            // Checkbox visual
-            const check = isSelected ? "☑️" : "⬜";
+    // 3. Tentar obter dados do FOCO (data-focus)
+    const focusId = wrapper.getAttribute('data-focus');
+    if (focusId) {
+        const modeData = FOCUS_MODES_CONFIG[baseCategory]?.find(m => m.id === focusId);
+        if (modeData) {
+            typeLabel = modeData.name.replace(' (Original)', '');
+            finalColor = modeData.color;
+        }
+    }
 
-            li.innerHTML = `
-                <div style="font-size:1.2em;">${check}</div>
-                <div style="display:flex; flex-direction:column;">
-                    <span style="font-weight:bold; font-size:0.9em; color:var(--text-muted-color); text-transform:uppercase;">${typeLabel}</span>
-                    <span style="color:var(--text-color);">${title}</span>
-                </div>
-            `;
+    // 4. Se não tem foco ou a cor é transparente, usa a COR PADRÃO da categoria
+    if (!typeLabel) {
+        const labels = { subnote: "SubNota", question: "Questão", free: "Contentor", consultor: "Consultor", redator: "Redator", toggle: "Toggle" };
+        typeLabel = labels[baseCategory];
+    }
+    
+    if (!finalColor || finalColor === 'transparent') {
+        finalColor = standardColors[baseCategory];
+    }
 
-            li.onclick = () => {
-                toggleAggregationItem(uniqueId, wrapper.outerHTML, li);
-            };
+    // 5. Obter o Título (Input, H2 ou Conteúdo)
+    if (wrapper.tagName === 'DETAILS') {
+        title = wrapper.querySelector('h2')?.textContent || "Secção expansível";
+    } else {
+        const input = wrapper.querySelector('.mini-note-title-input, .redator-input, .sign-title-input');
+        if (input && input.value) {
+            title = input.value;
+        } else {
+            const content = wrapper.querySelector('.mini-note-content, .redator-content')?.textContent.trim();
+            title = content ? (content.substring(0, 50) + "...") : "Bloco sem título";
+        }
+    }
 
-            list.appendChild(li);
-        });
+    const uniqueId = `${noteId}_${index}`;
+    const isSelected = aggregationSelectedItems.some(i => i.uniqueId === uniqueId);
+    const li = document.createElement('li');
+    
+    li.className = `agreg-box-item ${isSelected ? 'selected' : ''}`;
+    
+    // APLICAR A COR FINAL NA BORDA ESQUERDA
+    li.style.borderLeft = `5px solid ${finalColor}`;
 
+    li.innerHTML = `
+        <div style="font-size:1.2em;">${isSelected ? "☑️" : "⬜"}</div>
+        <div style="display:flex; flex-direction:column; overflow:hidden;">
+            <span style="font-weight:bold; font-size:0.7em; color:var(--text-muted-color); text-transform:uppercase; letter-spacing:0.5px;">
+                ${typeLabel}
+            </span>
+            <span style="color:var(--text-color); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${title}</span>
+        </div>
+    `;
+
+    li.onclick = () => {
+        const existingIndex = aggregationSelectedItems.findIndex(i => i.uniqueId === uniqueId);
+        if (existingIndex > -1) {
+            aggregationSelectedItems.splice(existingIndex, 1);
+            li.classList.remove('selected');
+            li.querySelector('div').textContent = "⬜";
+        } else {
+            aggregationSelectedItems.push({ uniqueId, html: wrapper.outerHTML });
+            li.classList.add('selected');
+            li.querySelector('div').textContent = "☑️";
+        }
+        updateAggregationCount();
+    };
+    list.appendChild(li);
+});
     } catch (e) {
         console.error(e);
         list.innerHTML = '<li>Erro ao ler nota.</li>';
