@@ -65,5 +65,5 @@ export const BIBLE_ABBREVIATIONS = {
     "2 Jo": "2 João",
     "3 Jo": "3 João",
     "Ju": "Judas",
-    "Apo": "Apocalipse", "Re": "Apocalipse"
+    "Apo": "Apocalipse", "Re": "Apocalipse", "Re": "Revelação", "Apo": "Revelação",
 };
