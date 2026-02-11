@@ -354,152 +354,148 @@ document.getElementById('rawInput').addEventListener('change', () => {
 
     // Função que transforma texto em blocos sem precisar de botão
 function autoProcess(idx) {
-        const ref = document.getElementById('chapRef').value;
-        const title = document.getElementById('chapTitle').value;
-        const raw = document.getElementById('rawInput').value;
+    const ref = document.getElementById('chapRef').value;
+    const title = document.getElementById('chapTitle').value;
+    const raw = document.getElementById('rawInput').value;
 
-        articles[idx].ref = ref;
-        articles[idx].title = title;
-        articles[idx].raw = raw;
+    articles[idx].ref = ref;
+    articles[idx].title = title;
+    articles[idx].raw = raw;
 
-        if (!raw) {
-            articles[idx].blocks = [];
+    if (!raw) {
+        articles[idx].blocks = [];
+        return;
+    }
+
+    let tempBlocks = [];
+    let isFootnote = false;
+    let isRecap = false;
+    let subCounter = 0;
+    let lastQuestionNum = null; 
+    let foundFirstQuestion = false; 
+
+    raw.split('\n').forEach(line => {
+        let txt = line.trim();
+
+        // 1. FILTRO DE FRASES PARA IGNORAR
+        const frasesParaIgnorar = [
+            "a sua resposta", "a sua reposta", "sua resposta", 
+            "as suas respostas", "as suas repostas", "suas respostas", "suas repostas",
+            "descrição da imagem"
+        ];
+        
+        if (!txt || frasesParaIgnorar.includes(txt.toLowerCase())) return;
+        if (txt.toLowerCase().startsWith("descrição da imagem:")) return;
+
+        // 2. REGRA PARA LEGENDAS DE IMAGEM
+        const isInstrucaoLegenda = txt.match(/\(Veja (?:também )?os? parágrafos? \d+/i);
+        if (isInstrucaoLegenda) {
+            if (tempBlocks.length > 0) {
+                let ultimoBloco = tempBlocks[tempBlocks.length - 1];
+                if (ultimoBloco.type === 'subtema' || (ultimoBloco.type === 'paragrafo' && !ultimoBloco.number)) {
+                    tempBlocks.pop(); 
+                }
+            }
+            return; 
+        }
+
+        const up = txt.toUpperCase();
+        const lw = txt.toLowerCase();
+
+        // --- NOVIDADE: DETECTAR NÚMEROS PARA SAIR DO MODO RESUMO ---
+         const qMatch = txt.match(/^(\d+(?:[\s\-\,\&]+\d+)*)\.\s+(.*)/); 
+        const pMatch = txt.match(/^(\d+)\s+(.*)/); 
+
+        if (isRecap && (qMatch || pMatch)) {
+            isRecap = false; 
+        }
+
+        // 3. GATILHOS DE RECAPITULAÇÃO (RESUMO)
+        // Gatilho A: Frases isoladas em CAPSLOCK que terminam em ...
+        const isCapsRecapTrigger = (txt === up && txt.endsWith('...') && txt.length > 5);
+        
+        // Gatilho B: Termos específicos
+        const hasRecapTerm = up.includes('PERGUNTAS DE RECAPITULAÇÃO') || 
+                             up.includes('QUAL É A SUA RESPOSTA?') || 
+                             up.includes('COMO RESPONDERIA?') || 
+                             up.includes('O QUE ACHA?') || 
+                             up.includes('LEMBRA-SE?') || 
+                             up === 'RESUMO';
+
+        if (hasRecapTerm || isCapsRecapTrigger) {
+            isRecap = true; 
+            subCounter++;
+            tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
             return;
         }
 
-        let tempBlocks = [];
-        let isFootnote = false;
-        let isRecap = false;
-        let subCounter = 0;
-        let foundFirstNum = false;
-        let lastQuestionNum = null; 
-        let foundFirstQuestion = false; 
-
-
-
-
-raw.split('\n').forEach(line => {
-            let txt = line.trim();
-
-            // 1. FILTRO DE FRASES PARA IGNORAR (Respostas e variações com erro)
-            const frasesParaIgnorar = [
-                "a sua resposta", "a sua reposta", "sua resposta", 
-                "as suas respostas", "as suas repostas", "suas respostas", "suas repostas",
-                "descrição da imagem"
-            ];
-            
-            if (!txt || frasesParaIgnorar.includes(txt.toLowerCase())) return;
-            if (txt.toLowerCase().startsWith("descrição da imagem:")) return;
-
-            // 2. REGRA PARA LEGENDAS DE IMAGEM
-            // Se encontrar "(Veja o parágrafo...)", remove a frase anterior (legenda) e ignora esta
-            const isInstrucaoLegenda = txt.match(/\(Veja (?:também )?os? parágrafos? \d+/i);
-            if (isInstrucaoLegenda) {
-                if (tempBlocks.length > 0) {
-                    let ultimoBloco = tempBlocks[tempBlocks.length - 1];
-                    // Só remove se o bloco anterior não tiver número (típico de legendas)
-                    if (ultimoBloco.type === 'subtema' || (ultimoBloco.type === 'paragrafo' && !ultimoBloco.number)) {
-                        tempBlocks.pop(); 
-                    }
-                }
-                return; 
-            }
-
-            const up = txt.toUpperCase();
-            const lw = txt.toLowerCase();
-
-            // 3. GATILHOS DE RECAPITULAÇÃO (RESUMO)
-            const isCapsRecapTrigger = (txt === up && txt.endsWith('...') && txt.length > 10);
-            if (up.includes('PERGUNTAS DE RECAPITULAÇÃO') || up.includes('QUAL É A SUA RESPOSTA?') || 
-                up.includes('COMO RESPONDERIA?') || up.includes('LEMBRA-SE?') || up === 'RESUMO' || isCapsRecapTrigger) {
-                isRecap = true; subCounter++;
+        // 4. GATILHO DE NOTAS / CÂNTICOS / RODAPÉ
+        const isCantico = up.startsWith("CÂNTICO");
+        if (lw.includes('[nota') || lw.includes('rodapé]') || txt.match(/^[a-z]\s/) || isCantico) {
+            if (isCantico && !foundFirstQuestion) {
+                subCounter++;
                 tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
                 return;
             }
+            isRecap = false; 
+            isFootnote = true;
+        }
 
-            // 4. GATILHO DE NOTAS / CÂNTICOS / RODAPÉ
-            const isCantico = up.startsWith("CÂNTICO");
-            if (lw.includes('[nota') || lw.includes('rodapé]') || txt.match(/^[a-z]\s/) || isCantico) {
-                
-                // Se for Cântico e estiver no topo (antes da 1ª pergunta), vira Subtema
-                if (isCantico && !foundFirstQuestion) {
+        // 5. PROCESSAMENTO DE CONTEÚDO
+        if (isRecap) {
+            // Remove marcadores comuns de listas de resumo
+            tempBlocks.push({ type: 'resumo', text: txt.replace(/^[❑\-\u2022]\s*/, ""), number: null });
+        } else if (isFootnote) {
+            tempBlocks.push({ type: 'rodape', text: txt, number: null });
+        } else {
+            if (qMatch) {
+                foundFirstQuestion = true;
+                lastQuestionNum = qMatch[1]; 
+                tempBlocks.push({ type: 'pergunta', text: qMatch[2], number: qMatch[1] });
+            } 
+            else if (pMatch) {
+                foundFirstQuestion = true;
+                tempBlocks.push({ type: 'paragrafo', text: pMatch[2], number: pMatch[1] });
+            } 
+            else {
+                if (!foundFirstQuestion) {
                     subCounter++;
                     tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
-                    return;
-                }
-                isRecap = false; 
-                isFootnote = true;
-            }
-
-            // 5. PROCESSAMENTO DE CONTEÚDO (PERGUNTA, PARÁGRAFO OU SUBTEMA)
-            if (isRecap) {
-                tempBlocks.push({ type: 'resumo', text: txt.replace(/^[❑\-\u2022]\s*/, ""), number: null });
-            } else if (isFootnote) {
-                tempBlocks.push({ type: 'rodape', text: txt, number: null });
-            } else {
-                const qMatch = txt.match(/^(\d+(?:[\s\-\,\&]+\d+)*)\.\s+(.*)/);
-                const pMatch = txt.match(/^(\d+)\s+(.*)/);
-
-                if (qMatch) {
-                    foundFirstQuestion = true;
-                    lastQuestionNum = qMatch[1]; 
-                    tempBlocks.push({ type: 'pergunta', text: qMatch[2], number: qMatch[1] });
-                } 
-                else if (pMatch) {
-                    foundFirstQuestion = true;
-                    tempBlocks.push({ type: 'paragrafo', text: pMatch[2], number: pMatch[1] });
-                } 
-                else {
-                    // LÓGICA PARA TEXTO SEM NÚMERO
-                    if (!foundFirstQuestion) {
-                        // Tudo antes da primeira pergunta é tratado como Subtema
-                        subCounter++;
-                        tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
-                    } else {
-                        // Depois da 1ª pergunta: decide pelo tamanho e se há pergunta ativa
-                        if (txt.length > MAX_TITLE_LENGTH && lastQuestionNum !== null) {
-                            tempBlocks.push({ type: 'paragrafo', text: txt, number: null, refFromQuestion: lastQuestionNum });
-                        } else {
-                            // Se for curto OU se não houver pergunta ativa (ex: depois de outro subtema)
-                            // Vira Subtema e faz o "Reset" da pergunta ativa
-                            subCounter++;
-                            lastQuestionNum = null; 
-                            tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
-                        }
-                    }
-                }
-            }
-        });
-
-
-        // Lógica de numeração final
-      let currentPNum = 0;
-        tempBlocks.forEach(b => {
-            if (b.type === 'paragrafo') {
-                if (b.number) {
-                    // Se o parágrafo já tem número (ex: "2"), atualizamos o contador
-                    let m = b.number.match(/\d+/);
-                    if(m) currentPNum = parseInt(m[0]);
-                } else if (b.refFromQuestion) {
-                    // --- AJUSTE AQUI ---
-                    // Se a pergunta era "1-2", pegamos apenas no "1"
-                    let firstNumMatch = b.refFromQuestion.match(/\d+/); 
-                    if (firstNumMatch) {
-                        b.number = firstNumMatch[0]; // Transforma "1-2" em "1"
-                        currentPNum = parseInt(firstNumMatch[0]);
-                    }
-                    b.inferred = true;
                 } else {
-                    // Caso não haja referência nenhuma, apenas incrementa o anterior
-                    currentPNum++;
-                    b.number = currentPNum.toString();
-                    b.inferred = true;
+                    if (txt.length > MAX_TITLE_LENGTH && lastQuestionNum !== null) {
+                        tempBlocks.push({ type: 'paragrafo', text: txt, number: null, refFromQuestion: lastQuestionNum });
+                    } else {
+                        subCounter++;
+                        lastQuestionNum = null; 
+                        tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
+                    }
                 }
             }
-        });
+        }
+    });
 
-        articles[idx].blocks = tempBlocks;
-    }
+    // Lógica de numeração de parágrafos automática
+    let currentPNum = 0;
+    tempBlocks.forEach(b => {
+        if (b.type === 'paragrafo') {
+            if (b.number) {
+                let m = b.number.match(/\d+/);
+                if(m) currentPNum = parseInt(m[0]);
+            } else if (b.refFromQuestion) {
+                let firstNumMatch = b.refFromQuestion.match(/\d+/); 
+                if (firstNumMatch) {
+                    b.number = firstNumMatch[0];
+                    currentPNum = parseInt(firstNumMatch[0]);
+                }
+            } else {
+                currentPNum++;
+                b.number = currentPNum.toString();
+            }
+        }
+    });
+
+    articles[idx].blocks = tempBlocks;
+}
 
 
     
