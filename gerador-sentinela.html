@@ -373,45 +373,45 @@ function autoProcess(idx) {
     let subCounter = 0;
     let lastQuestionNum = null; 
     let foundFirstQuestion = false; 
-    const MAX_TITLE_LENGTH = 110;
 
-    raw.split('\n').forEach(line => {
-        let txt = line.trim();
+    const lines = raw.split('\n');
 
-        // 1. FILTRO DE FRASES PARA IGNORAR
-        const frasesParaIgnorar = [
-            "a sua resposta", "a sua reposta", "sua resposta", 
-            "as suas respostas", "as suas repostas", "suas respostas", "suas repostas",
-            "descrição da imagem"
-        ];
-        
-        if (!txt || frasesParaIgnorar.includes(txt.toLowerCase())) return;
-        if (txt.toLowerCase().startsWith("descrição da imagem:")) return;
-
-        // 2. REGRA PARA LEGENDAS DE IMAGEM
-        const isInstrucaoLegenda = txt.match(/\(Veja (?:também )?os? parágrafos? \d+/i);
-        if (isInstrucaoLegenda) {
-            if (tempBlocks.length > 0) {
-                let ultimoBloco = tempBlocks[tempBlocks.length - 1];
-                if (ultimoBloco.type === 'subtema' || (ultimoBloco.type === 'paragrafo' && !ultimoBloco.number)) {
-                    tempBlocks.pop(); 
-                }
-            }
-            return; 
-        }
+    for (let i = 0; i < lines.length; i++) {
+        let txt = lines[i].trim();
+        if (!txt) continue;
 
         const up = txt.toUpperCase();
         const lw = txt.toLowerCase();
 
-        // DETECTAR NÚMEROS PARA SAIR DO MODO RESUMO SE NECESSÁRIO
-        const qMatch = txt.match(/^(\d+(?:[\s\-\,\&]+\d+)*)\.\s+(.*)/); 
-        const pMatch = txt.match(/^(\d+)\s+(.*)/); 
-
-        if (isRecap && (qMatch || pMatch)) {
-            isRecap = false; 
+        // --- 1. DETEÇÃO DE LEGENDAS DE IMAGEM (A CHAVE DA TUA QUESTÃO) ---
+        // Se a linha contém "(Veja o parágrafo...)", ignoramos esta linha E a anterior
+        const isInstrucaoLegenda = txt.match(/\(Veja (?:também )?os? parágrafos? \d+/i);
+        
+        if (isInstrucaoLegenda) {
+            if (tempBlocks.length > 0) {
+                // Remove o bloco anterior que foi adicionado por engano (a descrição da imagem)
+                tempBlocks.pop(); 
+            }
+            continue; // Salta esta linha atual (a instrução em si)
         }
 
-        // 3. GATILHOS DE RECAPITULAÇÃO (RESUMO)
+        // Deteção de sequência de imagens na mesma linha (ex: 1. ... 2. ...)
+        const isMultiScene = txt.match(/^1\.\s+.*\s+2\.\s+/i);
+        if (isMultiScene) {
+            // Se a próxima linha ou esta tiverem indícios de imagem, ignoramos logo
+            continue; 
+        }
+
+        // --- 2. FILTROS GERAIS ---
+        if (lw.includes("descrição da imagem") || lw.startsWith("descrição da imagem:")) continue;
+        
+        const frasesParaIgnorar = [
+            "a sua resposta", "a sua reposta", "sua resposta", 
+            "as suas respostas", "as suas repostas", "suas respostas", "suas repostas"
+        ];
+        if (frasesParaIgnorar.includes(lw)) continue;
+
+        // --- 3. GATILHOS DE RECAPITULAÇÃO ---
         // Regex que aceita "..." ou ". . ." no final da linha
       const temReticencias = /\.\s*\.\s*\.$/.test(txt);
         
@@ -435,26 +435,29 @@ function autoProcess(idx) {
                              up.includes('LEMBRA-SE?') || 
                              up === 'RESUMO';
 
-        if (hasRecapTerm || isCapsRecapTrigger) {
+         if (hasRecapTerm || (txt === up && temReticencias && txt.length > 5)) {
             isRecap = true; 
             subCounter++;
             tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
-            return;
+            continue;
         }
 
-        // 4. GATILHO DE NOTAS / CÂNTICOS / RODAPÉ / SÍMBOLO ^
+        // --- 4. GATILHO DE RODAPÉ / CÂNTICO ---
         const isCantico = up.startsWith("CÂNTICO");
         if (lw.includes('[nota') || lw.includes('rodapé]') || txt.match(/^[a-z]\s/) || isCantico || txt.includes('^')) {
             if (isCantico && !foundFirstQuestion) {
                 subCounter++;
                 tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
-                return;
+                continue;
             }
             isRecap = false; 
             isFootnote = true;
         }
 
-        // 5. PROCESSAMENTO DE CONTEÚDO
+        // --- 5. PROCESSAMENTO DE CONTEÚDO ---
+        const qMatch = txt.match(/^(\d+(?:[\s\-\,\&]+\d+)*)\.\s+(.*)/); 
+        const pMatch = txt.match(/^(\d+)\s+(.*)/); 
+
         if (isRecap) {
             tempBlocks.push({ type: 'resumo', text: txt.replace(/^[❑\-\u2022]\s*/, ""), number: null });
         } else if (isFootnote) {
@@ -474,7 +477,7 @@ function autoProcess(idx) {
                     subCounter++;
                     tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
                 } else {
-                    if (txt.length > MAX_TITLE_LENGTH && lastQuestionNum !== null) {
+                    if (txt.length > 110 && lastQuestionNum !== null) {
                         tempBlocks.push({ type: 'paragrafo', text: txt, number: null, refFromQuestion: lastQuestionNum });
                     } else {
                         subCounter++;
@@ -484,9 +487,9 @@ function autoProcess(idx) {
                 }
             }
         }
-    });
+    }
 
-    // Lógica de numeração automática final
+    // Sincronização final de números
     let currentPNum = 0;
     tempBlocks.forEach(b => {
         if (b.type === 'paragrafo') {
