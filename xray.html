@@ -83,22 +83,28 @@
             background: rgba(52, 152, 219, 0.05);
         }
 
-        .tab-content { flex: 1; overflow-y: auto; padding: 15px; display: none; }
+.tab-content { 
+    flex: 1; 
+    overflow-y: auto; 
+    padding: 0; /* Estava 15px, mudamos para 0 */
+    display: none; 
+    position: relative;
+}
         .tab-content.active { display: block; }
 
         /* PICCARDS (FILTROS) */
-        .tab-filter-container {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            padding: 5px 0 15px 0;
-            margin-bottom: 10px;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
-            position: sticky;
-            top: 0;
-            background: var(--sidebar-color);
-            z-index: 10;
-        }
+.tab-filter-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 15px; /* Espaçamento interno da barra */
+    background: var(--sidebar-color); /* Garante que é opaca */
+    border-bottom: 1px solid rgba(255,255,255,0.1); /* Linha subtil de separação */
+    position: sticky;
+    top: 0;
+    z-index: 100; /* Garante que fica acima do texto ao fazer scroll */
+    width: 100%;
+}
         .piccard {
             background: rgba(255,255,255,0.03);
             border: 1px solid #444;
@@ -119,11 +125,20 @@
         .piccard.active::after { content: '✓'; font-size: 0.6rem; }
 
         /* RESULTADOS */
-        .res-card {
-            background: var(--panel-bg); border: 1px solid var(--border-color);
-            border-radius: 8px; padding: 15px; margin-bottom: 12px;
-            cursor: pointer; transition: 0.2s;
-        }
+.res-card {
+    background: var(--panel-bg); 
+    border: 1px solid var(--border-color);
+    border-radius: 8px; 
+    padding: 15px; 
+    margin: 12px 15px; /* Adicionámos 15px de margem lateral */
+    cursor: pointer; 
+    transition: 0.2s;
+}
+
+.tab-content > p {
+    padding: 20px;
+    text-align: center;
+}
         .res-card:hover { border-color: var(--accent-color); transform: translateY(-1px); }
         .res-ref { color: var(--accent-color); font-weight: bold; font-size: 0.85rem; margin-bottom: 8px; display: block; }
         .res-text { font-size: 0.95rem; color: #bbb; line-height: 1.5; text-align: justify; }
@@ -273,13 +288,31 @@
     background: #000;
 }
 
+.filter-pane {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 10px;
+}
+.filter-item {
+    background: #252528; border: 1px solid #333; padding: 8px;
+    border-radius: 6px; font-size: 0.75rem; cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.filter-item.active { border-color: var(--accent-color); color: white; background: rgba(52, 152, 219, 0.1); }
+.filter-item span.check { color: var(--accent-color); font-weight: bold; opacity: 0; }
+.filter-item.active span.check { opacity: 1; }
+
+
     </style>
 </head>
 <body>
 
     <!-- ESCUDO DE CARREGAMENTO E SEGURANÇA -->
 <div id="global-auth-shield">
-    <div class="global-spinner"></div>
+    <div style="display: flex; flex-direction: column; align-items: center;">
+        <div class="global-spinner"></div>
+        <div id="global-progress-text" style="color: #666; font-family: monospace; font-size: 0.8rem; margin-top: 15px; letter-spacing: 1px;">SINCRONIZAR: 0%</div>
+    </div>
 </div>
 
 <header>
@@ -352,396 +385,525 @@
 </div>
 
 
-    <script type="module">
-    // --- 1. IMPORTAÇÕES DE SEGURANÇA E FIREBASE ---
-    import { db, auth } from './js/firebase-config.js';
-    import { 
-        doc, getDoc, collection, addDoc, getDocs, query, where, orderBy, serverTimestamp 
-    } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
-    import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
-
-    // --- 2. IMPORTAÇÕES DE DADOS LOCAIS ---
-    import { BIBLE_DATA } from './js/bible-data.js';
-    import { SIGLAS_PUBLICACOES } from './js/siglas-data.js';
-    import { BIBLE_ABBREVIATIONS } from './js/bible-map.js';
-
-    // --- 3. CONFIGURAÇÕES E ESTADO GLOBAL ---
-    const XRAY_LOADER_HTML = `
-        <div class="loader-container">
-            <div class="scanner-ui">
-                <div class="falling-icon icon-1">📔</div>
-                <div class="falling-icon icon-2">📄</div>
-                <div class="falling-icon icon-3">📚</div>
-                <div class="wave wave-1"></div><div class="wave wave-2"></div><div class="wave wave-3"></div>
-                <div class="dish"></div>
-            </div>
-            <div class="loader-text">ESCANEAR FREQUÊNCIAS...</div>
+<!-- MODAL DE DEFINIÇÕES DE FILTROS -->
+<div id="xray-filter-modal" class="modal-overlay" style="z-index: 210000;">
+    <div class="modal-content" style="max-width: 600px; height: 85vh;">
+        <div class="modal-header">
+            <h3 style="color: var(--accent-color);">⚙️ Definições de Filtro</h3>
+            <button onclick="document.getElementById('xray-filter-modal').style.display='none'" style="background:none; border:none; color:#888; font-size:24px; cursor:pointer;">&times;</button>
         </div>
-    `;
+        
+        <!-- Abas Internas do Modal -->
+        <div class="tabs" style="background: #1a1a1d; margin-top: -20px;">
+            <button class="tab-btn active" onclick="switchFilterTab('f-books', this)" style="font-size: 0.9rem;">Livros</button>
+            <button class="tab-btn" onclick="switchFilterTab('f-pubs', this)" style="font-size: 0.9rem;">Pubs</button>
+            <button class="tab-btn" onclick="switchFilterTab('f-w', this)" style="font-size: 0.9rem;">Sentinela</button>
+            <button class="tab-btn" onclick="switchFilterTab('f-g', this)" style="font-size: 0.9rem;">Despertai</button>
+        </div>
 
-    const CONFIG_SCAN = {
-        anoInicio: 1950,
-        anoFim: 2026,
-        meses: ["12", "11", "10", "09", "08", "07", "06", "05", "04", "03", "02", "01"]
+        <div style="padding: 10px; background: #111; display: flex; justify-content: flex-end; gap: 10px;">
+            <button class="btn-xray" onclick="toggleAllInActiveTab(true)" style="font-size: 0.7rem;">Marcar Tudo</button>
+            <button class="btn-xray" onclick="toggleAllInActiveTab(false)" style="font-size: 0.7rem;">Desmarcar Tudo</button>
+        </div>
+
+<div id="filter-scroll-area" style="flex: 1; overflow-y: auto; padding: 15px;">
+    <div id="f-books" class="filter-pane active" style="display: grid;"></div>
+    <div id="f-pubs" class="filter-pane" style="display: none;"></div>
+    <div id="f-w" class="filter-pane" style="display: none;"></div>
+    <div id="f-g" class="filter-pane" style="display: none;"></div>
+</div>
+
+        <div style="padding: 15px; border-top: 1px solid #333;">
+            <button class="action-btn save-btn" style="width: 100%; justify-content: center;" onclick="applyFiltersAndRescan()">
+                APLICAR E REESCANEAR
+            </button>
+        </div>
+    </div>
+</div>
+
+
+    <script type="module">
+   // --- 1. IMPORTAÇÕES DE SEGURANÇA E FIREBASE ---
+// --- 1. IMPORTAÇÕES DE SEGURANÇA E FIREBASE ---
+import { db, auth } from './js/firebase-config.js';
+import { 
+    doc, getDoc, collection, addDoc, getDocs, query, where, orderBy, serverTimestamp 
+} from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
+
+// --- 2. IMPORTAÇÕES DE DADOS LOCAIS ---
+import { BIBLE_DATA } from './js/bible-data.js';
+import { SIGLAS_PUBLICACOES } from './js/siglas-data.js';
+import { BIBLE_ABBREVIATIONS } from './js/bible-map.js';
+
+// --- 3. VARIÁVEIS DE ESTADO GLOBAL E CACHE ---
+let currentUser = null;
+let localLibraryCache = {}; 
+let localBibleCache = {};
+let detectedCoords = []; 
+let rawResultsCache = { books: [], pubs: [] }; 
+let scanTimeout;
+
+const editor = document.getElementById('xray-editor');
+const statusInfo = document.getElementById('status-info');
+
+// Configuração do Scanner
+const CONFIG_SCAN = {
+    anoInicio: 1950,
+    anoFim: 2026,
+    meses: ["12", "11", "10", "09", "08", "07", "06", "05", "04", "03", "02", "01"]
+};
+
+// Estado dos Filtros
+let xrayFilters = {
+    books: {}, 
+    pubs: {},  
+    watchtower: {}, 
+    awake: {}       
+};
+
+const XRAY_LOADER_HTML = `
+    <div class="loader-container">
+        <div class="scanner-ui">
+            <div class="falling-icon icon-1">📔</div>
+            <div class="falling-icon icon-2">📄</div>
+            <div class="falling-icon icon-3">📚</div>
+            <div class="wave wave-1"></div><div class="wave wave-2"></div><div class="wave wave-3"></div>
+            <div class="dish"></div>
+        </div>
+        <div class="loader-text">ESCANEAR FREQUÊNCIAS...</div>
+    </div>
+`;
+
+// --- 4. INICIALIZAÇÃO DE FILTROS E PRE-DOWNLOAD ---
+
+function initFilters() {
+    const exclusoesPeriodicos = ["w", "g", "wp", "km", "mwb", "jwbvod", "jwb", "mwbv"];
+    // Livros
+    Object.keys(SIGLAS_PUBLICACOES).forEach(s => {
+        if (!exclusoesPeriodicos.includes(s)) xrayFilters.books[s] = true;
+    });
+    // Publicações secundárias (MWB, KM)
+    ["mwb", "km"].forEach(s => { xrayFilters.pubs[s] = true; });
+    // Anos
+    for (let ano = CONFIG_SCAN.anoInicio; ano <= CONFIG_SCAN.anoFim; ano++) {
+        xrayFilters.watchtower[ano.toString()] = true;
+        xrayFilters.awake[ano.toString()] = true;
+    }
+}
+
+async function preloadXrayCore() {
+    const progressText = document.getElementById('global-progress-text');
+    const booksToLoad = Object.keys(xrayFilters.books);
+    const bibleToLoad = BIBLE_DATA;
+
+    let loaded = 0;
+    const total = booksToLoad.length + bibleToLoad.length;
+
+    const updateProgress = () => {
+        loaded++;
+        if (progressText) {
+            const percent = Math.round((loaded / total) * 100);
+            progressText.innerText = `SINCRONIZAR: ${percent}%`;
+        }
     };
 
-    let detectedCoords = []; 
-    let rawResultsCache = { books: [], pubs: [] }; 
-    let scanTimeout;
-    const bibleCache = {}; 
+    const biblePromises = bibleToLoad.map(async (book) => {
+        const filename = book.nome.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "_");
+        try {
+            const resp = await fetch(`./js/bible/${filename}.json`);
+            if (resp.ok) localBibleCache[filename] = await resp.json();
+        } catch (e) {}
+        updateProgress();
+    });
 
-    const editor = document.getElementById('xray-editor');
-    const statusInfo = document.getElementById('status-info');
+    const bookPromises = booksToLoad.map(async (id) => {
+        try {
+            const resp = await fetch(`./js/books/${id}.json`);
+            if (resp.ok) localLibraryCache[id] = await resp.json();
+        } catch (e) {}
+        updateProgress();
+    });
 
-    // --- 4. BLOCO DE SEGURANÇA (AUTENTICAÇÃO) ---
-    onAuthStateChanged(auth, async (user) => {
-        const shield = document.getElementById('global-auth-shield');
-        if (!user) { 
-            window.location.href = "404.html"; 
+    await Promise.all([...biblePromises, ...bookPromises]);
+}
+
+// --- 5. BLOCO DE SEGURANÇA E AUTH ---
+
+onAuthStateChanged(auth, async (user) => {
+    const shield = document.getElementById('global-auth-shield');
+    if (!user) { window.location.href = "404.html"; return; }
+
+    try {
+        const userDoc = await getDoc(doc(db, "users", user.uid));
+        if (!userDoc.exists() || userDoc.data().aceite !== "on") { 
+            window.location.href = "index.html"; 
             return; 
         }
 
-        try {
-            const userDoc = await getDoc(doc(db, "users", user.uid));
-            if (!userDoc.exists() || userDoc.data().aceite !== "on") { 
-                window.location.href = "index.html"; 
-                return; 
-            }
-            if (shield) shield.style.display = 'none';
-        } catch (e) { 
-            console.error("Erro na verificação de acesso:", e); 
+        currentUser = user;
+        initFilters();
+        await preloadXrayCore();
+
+        if (shield) {
+            shield.style.transition = "opacity 0.5s ease";
+            shield.style.opacity = "0";
+            setTimeout(() => shield.style.display = 'none', 500);
         }
+    } catch (e) { console.error(e); }
+});
+
+// --- 6. FUNÇÕES DO MODAL DE FILTROS ---
+
+window.openFilterModal = () => {
+    renderFilterGrid('f-books', xrayFilters.books, SIGLAS_PUBLICACOES);
+    renderFilterGrid('f-pubs', xrayFilters.pubs, SIGLAS_PUBLICACOES);
+    renderFilterGrid('f-w', xrayFilters.watchtower, null, "Ano ");
+    renderFilterGrid('f-g', xrayFilters.awake, null, "Ano ");
+    
+    document.getElementById('xray-filter-modal').style.display = 'flex';
+    const firstTabBtn = document.querySelector('#xray-filter-modal .tab-btn');
+    window.switchFilterTab('f-books', firstTabBtn);
+};
+
+window.switchFilterTab = (paneId, btn) => {
+    const modal = document.getElementById('xray-filter-modal');
+    modal.querySelectorAll('.filter-pane').forEach(p => {
+        p.style.display = 'none';
+        p.classList.remove('active');
+    });
+    const target = document.getElementById(paneId);
+    if (target) {
+        target.style.display = 'grid';
+        target.classList.add('active');
+    }
+    modal.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+};
+
+function renderFilterGrid(containerId, filterObj, labelsObj, prefix = "") {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    const keys = Object.keys(filterObj).sort((a, b) => isNaN(a) ? a.localeCompare(b) : b - a);
+
+    keys.forEach(key => {
+        const div = document.createElement('div');
+        div.className = `filter-item ${filterObj[key] ? 'active' : ''}`;
+        const label = labelsObj ? (labelsObj[key] || key.toUpperCase()) : prefix + key;
+        div.innerHTML = `<span>${label}</span> <span class="check">✓</span>`;
+        div.onclick = () => {
+            filterObj[key] = !filterObj[key];
+            div.classList.toggle('active');
+        };
+        container.appendChild(div);
+    });
+}
+
+window.toggleAllInActiveTab = (state) => {
+    const activePane = document.querySelector('.filter-pane.active');
+    if (!activePane) return;
+    const items = activePane.querySelectorAll('.filter-item');
+    let filterTarget;
+    if (activePane.id === 'f-books') filterTarget = xrayFilters.books;
+    else if (activePane.id === 'f-pubs') filterTarget = xrayFilters.pubs;
+    else if (activePane.id === 'f-w') filterTarget = xrayFilters.watchtower;
+    else if (activePane.id === 'f-g') filterTarget = xrayFilters.awake;
+
+    if (filterTarget) {
+        Object.keys(filterTarget).forEach(k => filterTarget[k] = state);
+        items.forEach(item => {
+            if (state) item.classList.add('active');
+            else item.classList.remove('active');
+        });
+    }
+};
+
+window.applyFiltersAndRescan = () => {
+    document.getElementById('xray-filter-modal').style.display = 'none';
+    performXRay(); 
+};
+
+// --- 7. MOTOR DO SCANNER (CORRIGIDO PARA PUBLICACÖESS) ---
+
+async function performXRay() {
+    const text = editor.innerText;
+    if (text.length < 3) return;
+
+    const bibleRegex = createBibleRegex();
+    const matches = [...new Set(text.match(bibleRegex) || [])];
+    
+    detectedCoords = matches.map(m => {
+        const info = parseReference(m);
+        if (!info) return null;
+        const existing = detectedCoords.find(c => c.book === info.book && c.originalVerses === info.originalVerses);
+        
+        const variants = Object.keys(BIBLE_ABBREVIATIONS).filter(s => BIBLE_ABBREVIATIONS[s] === info.book);
+        variants.push(info.book);
+        const escaped = [...new Set(variants)].map(v => v.replace(/\./g, '\\.')).join('|');
+        const searchPatterns = info.verses.map(ver => new RegExp(`(?:^|\\s|—|\\()(${escaped})\\.?\\s*${info.cap}[:.]${ver}\\b`, 'i'));
+
+        return { ...info, isActive: existing ? existing.isActive : true, searchPatterns };
+    }).filter(v => v !== null);
+
+    rawResultsCache = { books: [], pubs: [] };
+    document.getElementById('tab-bible').innerHTML = XRAY_LOADER_HTML;
+    document.getElementById('tab-books').innerHTML = XRAY_LOADER_HTML;
+    document.getElementById('tab-pubs').innerHTML = XRAY_LOADER_HTML;
+
+    statusInfo.textContent = "Scanner em curso...";
+
+    renderBibleTranscription(); 
+
+    // Busca nos Livros (RAM)
+    scanExternalData('books').then(() => {
+        applyFilters('books'); 
     });
 
-    // --- 5. SISTEMA DE GRAVAÇÃO (SAVE) ---
-
-    window.saveXrayDoc = () => {
-        const text = editor.innerText.trim();
-        if (!text) return alert("O editor está vazio!");
-        
-        const modal = document.getElementById('save-xray-modal');
-        const input = document.getElementById('save-xray-title-input');
-        
-        // Sugere um nome com base na data
-        input.value = "Analise_" + new Date().toLocaleDateString().replace(/\//g, '-');
-        modal.style.display = 'flex';
-        input.focus();
-    };
-
-    window.confirmSaveXray = async () => {
-        const titleInput = document.getElementById('save-xray-title-input');
-        const title = titleInput.value.trim();
-        const text = editor.innerText.trim();
-        
-        if (!title) return alert("Por favor, dê um nome ao documento.");
-
-        try {
-            statusInfo.textContent = "A gravar no Firestore...";
-            document.getElementById('save-xray-modal').style.display = 'none';
-
-            await addDoc(collection(db, "xray"), {
-                userId: auth.currentUser.uid,
-                titulo: title,
-                conteudo: text,
-                timestamp: serverTimestamp()
-            });
-
-            statusInfo.textContent = "Documento guardado: " + title;
-            alert("Documento gravado com sucesso!");
-        } catch (e) {
-            console.error(e);
-            alert("Erro ao gravar documento.");
-            statusInfo.textContent = "Erro ao gravar.";
-        }
-    };
-
-    // --- 6. SISTEMA DE CARREGAMENTO (LOAD) ---
-
-    window.openLoadXrayModal = async () => {
-        const modal = document.getElementById('load-xray-modal');
-        const container = document.getElementById('load-list-container');
-        modal.style.display = 'flex';
-        container.innerHTML = '<div style="color:#666; text-align:center; padding: 20px;">A procurar documentos...</div>';
-
-        try {
-            const q = query(
-                collection(db, "xray"), 
-                where("userId", "==", auth.currentUser.uid),
-                orderBy("timestamp", "desc")
-            );
-            const snap = await getDocs(q);
-            container.innerHTML = "";
-
-            if (snap.empty) {
-                container.innerHTML = '<div style="color:#666; text-align:center; padding: 20px;">Nenhum documento encontrado no seu arquivo.</div>';
-                return;
-            }
-
-            snap.forEach(docSnap => {
-                const data = docSnap.data();
-                const date = data.timestamp?.toDate().toLocaleDateString() || "---";
-                const item = document.createElement('div');
-                item.className = 'load-item';
-                item.innerHTML = `
-                    <div style="display:flex; flex-direction:column;">
-                        <strong style="color:#eee;">${data.titulo}</strong>
-                        <small style="color:#666;">${date}</small>
-                    </div>
-                    <span style="color:var(--accent-color);">Abrir ➔</span>
-                `;
-                item.onclick = () => {
-                    editor.innerText = data.conteudo;
-                    modal.style.display = 'none';
-                    performXRay(); // Inicia o scanner automaticamente após carregar
-                };
-                container.appendChild(item);
-            });
-        } catch (e) {
-            console.error(e);
-            container.innerHTML = '<div style="color:red; text-align:center; padding: 20px;">Erro ao carregar lista de documentos.</div>';
-        }
-    };
-
-    // --- 7. MOTOR DO SCANNER (PERFORMXRAY) ---
-
-    async function performXRay() {
-        const text = editor.innerText;
-        if (text.length < 3) return;
-
-        const bibleRegex = createBibleRegex();
-        const matches = [...new Set(text.match(bibleRegex) || [])];
-        
-        detectedCoords = matches.map(m => {
-            const info = parseReference(m);
-            if (!info) return null;
-            const existing = detectedCoords.find(c => c.book === info.book && c.originalVerses === info.originalVerses);
-            
-            const variants = Object.keys(BIBLE_ABBREVIATIONS).filter(s => BIBLE_ABBREVIATIONS[s] === info.book);
-            variants.push(info.book);
-
-            if (info.book === "Apocalipse" || info.book === "Revelação") {
-                variants.push("Apocalipse", "Revelação", "Revelacao", "Apo", "Re", "Rev");
-            }
-
-            const escaped = [...new Set(variants)].map(v => v.replace(/\./g, '\\.')).join('|');
-            const searchPatterns = info.verses.map(ver => new RegExp(`(?:^|\\s|—|\\()(${escaped})\\.?\\s*${info.cap}[:.]${ver}\\b`, 'i'));
-
-            return { ...info, isActive: existing ? existing.isActive : true, searchPatterns };
-        }).filter(v => v !== null);
-
-        // Reset visual e mostrar loaders
-        document.getElementById('tab-bible').innerHTML = XRAY_LOADER_HTML;
-        document.getElementById('tab-books').innerHTML = XRAY_LOADER_HTML;
-        document.getElementById('tab-pubs').innerHTML = XRAY_LOADER_HTML;
-
-        rawResultsCache = { books: [], pubs: [] };
-        statusInfo.textContent = "Scanner em curso...";
-
-        await Promise.all([
-            renderBibleTranscription(),
-            scanExternalData('books'),
-            scanExternalData('publicacoes')
-        ]);
-
-        refreshAllTabs();
+    // Busca nas Revistas e Pubs (Rede)
+    scanExternalData('publicacoes').then(() => {
+        applyFilters('publicacoes'); 
         statusInfo.textContent = "X-Ray Concluído.";
-    }
+    });
+}
 
-    // --- 8. VARREDURA DE DADOS EXTERNOS (JSON) ---
+async function scanExternalData(folder) {
+    if (folder === 'publicacoes') {
+        // 1. Pesquisa Revistas nos Anos Ativos
+        for (let ano = CONFIG_SCAN.anoFim; ano >= CONFIG_SCAN.anoInicio; ano--) {
+            const wActive = xrayFilters.watchtower[ano.toString()];
+            const gActive = xrayFilters.awake[ano.toString()];
+            if (!wActive && !gActive) continue;
 
-    async function scanExternalData(folder) {
-        if (folder === 'publicacoes') {
-            for (let ano = CONFIG_SCAN.anoFim; ano >= CONFIG_SCAN.anoInicio; ano--) {
-                for (const mes of CONFIG_SCAN.meses) {
-                    const sigla = `sentinelas/${ano}/${mes}`;
-                    await fetchAndProcess(`./js/publicacoes/${sigla}.json`, sigla, 'publicacoes', rawResultsCache.pubs, `${mes}/${ano}`);
+            for (const mes of CONFIG_SCAN.meses) {
+                if (wActive) {
+                    const siglaW = `sentinelas/${ano}/${mes}`;
+                    // AJUSTE PARA O CAMINHO DA IMAGEM: publicacoess
+                    await fetchAndProcess(`./js/publicacoess/${siglaW}.json`, siglaW, 'publicacoes', rawResultsCache.pubs, `${mes}/${ano}`);
+                }
+                if (gActive) {
+                    const siglaG = `despertai/${ano}/${mes}`;
+                    await fetchAndProcess(`./js/publicacoess/${siglaG}.json`, siglaG, 'publicacoes', rawResultsCache.pubs, `${mes}/${ano}`);
                 }
             }
-        } else {
-            const exclusoes = ["w", "g", "wp", "km", "mwb", "jwbvod", "jwb", "mwbv"];
-            const siglasLivros = Object.keys(SIGLAS_PUBLICACOES).filter(s => !exclusoes.includes(s));
+        }
+        // 2. Pesquisa Outras Publicações (MWB, KM)
+        const siglasPubs = Object.keys(xrayFilters.pubs).filter(s => xrayFilters.pubs[s]);
+        for (const sigla of siglasPubs) {
+            await fetchAndProcess(`./js/publicacoess/${sigla}.json`, sigla, 'publicacoes', rawResultsCache.pubs);
+        }
 
-            for (const sigla of siglasLivros) {
-                await fetchAndProcess(`./js/books/${sigla}.json`, sigla, 'books', rawResultsCache.books);
-            }
+    } else {
+        // Busca Livros em js/books/
+        const siglasLivros = Object.keys(xrayFilters.books).filter(s => xrayFilters.books[s]);
+        for (const sigla of siglasLivros) {
+            await fetchAndProcess(`./js/books/${sigla}.json`, sigla, 'books', rawResultsCache.books);
         }
     }
+}
 
-    async function fetchAndProcess(url, sigla, folder, targetArray, dateLabel = "") {
-        try {
+async function fetchAndProcess(url, sigla, folder, targetArray, dateLabel = "") {
+    try {
+        let data;
+        if (localLibraryCache[sigla]) {
+            data = localLibraryCache[sigla];
+        } else {
             const resp = await fetch(url);
             if (!resp.ok) return;
-            const data = await resp.json();
-            const secoes = data.artigos || data.capitulos || [];
-            secoes.forEach((secao, sIdx) => {
-                secao.conteudo.forEach((block, bIdx) => {
-                    if (!block.texto) return;
-                    detectedCoords.forEach(v => {
-                        if (v.searchPatterns.some(p => p.test(block.texto))) {
-                            targetArray.push({
-                                sigla, folder, matchKey: `${v.book} ${v.cap}:${v.originalVerses}`,
-                                pubTitle: dateLabel ? `${data.titulo || "Revista"} (${dateLabel})` : (data.titulo || sigla),
-                                capTitle: secao.titulo, capIdx: sIdx, blockIdx: bIdx, pNum: block.numero_ref,
-                                text: block.texto, matchRef: `${v.book} ${v.cap}:${v.originalVerses}`
-                            });
-                        }
-                    });
-                });
-            });
-        } catch (e) {}
-    }
-
-    // --- 9. RENDERIZAÇÃO DA INTERFACE ---
-
-    function getPiccardsHTML() {
-        if (detectedCoords.length === 0) return '';
-        return `<div class="tab-filter-container">${detectedCoords.map((coord, idx) => `
-            <div class="piccard ${coord.isActive ? 'active' : ''}" onclick="window.togglePiccard(${idx})">
-                ${coord.book} ${coord.cap}:${coord.originalVerses}
-            </div>`).join('')}</div>`;
-    }
-
-    window.togglePiccard = (index) => {
-        detectedCoords[index].isActive = !detectedCoords[index].isActive;
-        refreshAllTabs();
-    };
-
-    function refreshAllTabs() {
-        renderBibleTranscription();
-        applyFilters();
-    }
-
-    function applyFilters() {
-        const activeKeys = detectedCoords.filter(c => c.isActive).map(c => `${c.book} ${c.cap}:${c.originalVerses}`);
-        const fBooks = rawResultsCache.books.filter(res => activeKeys.includes(res.matchKey));
-        const fPubs = rawResultsCache.pubs.filter(res => activeKeys.includes(res.matchKey));
-        renderResults(fBooks, document.getElementById('tab-books'), 'books');
-        renderResults(fPubs, document.getElementById('tab-pubs'), 'publicacoes');
-    }
-
-    function renderResults(data, container, folder) {
-        const picHTML = getPiccardsHTML();
-        if (data.length === 0) { 
-            container.innerHTML = picHTML + '<p style="text-align:center; padding:20px; color:#666;">Nenhum resultado nos livros/revistas.</p>'; 
-            return; 
-        }
-        const unique = data.filter((v, i, a) => a.findIndex(t => t.sigla === v.sigla && t.blockIdx === v.blockIdx) === i);
-        const cards = unique.map(res => `
-            <div class="res-card" onclick="window.openInViewer('${res.sigla}', ${res.capIdx}, ${res.blockIdx}, '${res.folder}')">
-                <span class="res-ref">${res.pubTitle}</span>
-                <div style="font-size:0.7rem; color:#666; margin-bottom:5px;">${res.capTitle}</div>
-                <div class="res-text">Referência: <b>${res.matchRef}</b><br>${res.text}</div>
-            </div>
-        `).join('');
-        container.innerHTML = picHTML + cards;
-    }
-
-    async function renderBibleTranscription() {
-        const container = document.getElementById('tab-bible');
-        const activeCoords = detectedCoords.filter(c => c.isActive);
-        const picHTML = getPiccardsHTML();
-        
-        if (activeCoords.length === 0) { 
-            container.innerHTML = picHTML + '<p style="text-align:center; padding:20px; color:#666;">Aguardando deteção de referências...</p>'; 
-            return; 
+            data = await resp.json();
+            localLibraryCache[sigla] = data; 
         }
 
-        let html = '';
-        for (const coord of activeCoords) {
-            let nomeNoFicheiro = coord.book === "Revelação" ? "Apocalipse" : coord.book;
-            const bookFile = getBibleFilename(nomeNoFicheiro);
-            try {
-                if (!bibleCache[bookFile]) {
-                    const resp = await fetch(`./js/bible/${bookFile}.json`);
-                    bibleCache[bookFile] = await resp.json();
-                }
-                const bookData = bibleCache[bookFile][nomeNoFicheiro];
-                let trans = '';
-                coord.verses.forEach(vNum => { 
-                    if (bookData[coord.cap] && bookData[coord.cap][vNum]) {
-                        trans += `<span style="color:var(--accent-color); font-weight:bold; font-size:0.75em; vertical-align:super; margin-right:4px;">${vNum}</span>${bookData[coord.cap][vNum]} `; 
+        const secoes = data.artigos || data.capitulos || [];
+        secoes.forEach((secao, sIdx) => {
+            secao.conteudo.forEach((block, bIdx) => {
+                if (!block.texto) return;
+                detectedCoords.forEach(v => {
+                    if (v.searchPatterns.some(p => p.test(block.texto))) {
+                        targetArray.push({
+                            sigla, folder, matchKey: `${v.book} ${v.cap}:${v.originalVerses}`,
+                            pubTitle: dateLabel ? `${data.titulo || "Revista"} (${dateLabel})` : (data.titulo || sigla),
+                            capTitle: secao.titulo, capIdx: sIdx, blockIdx: bIdx, pNum: block.numero_ref,
+                            text: block.texto, matchRef: `${v.book} ${v.cap}:${v.originalVerses}`
+                        });
                     }
                 });
-                html += `<div class="res-card"><span class="res-ref">📖 ${coord.book} ${coord.cap}:${coord.originalVerses}</span><div class="res-text">${trans}</div></div>`;
-            } catch (e) { html += `<div class="res-card"><div class="res-text">Livro ${coord.book} indisponível.</div></div>`; }
-        }
-        container.innerHTML = picHTML + html;
-    }
-
-    // --- 10. UTILITÁRIOS E EVENTOS DE INTERFACE ---
-
-    editor.addEventListener('paste', (e) => {
-        e.preventDefault();
-        const text = (e.originalEvent || e).clipboardData.getData('text/plain');
-        document.execCommand("insertText", false, text);
-    });
-
-    editor.addEventListener('input', () => {
-        statusInfo.textContent = "Digitando...";
-        clearTimeout(scanTimeout);
-        scanTimeout = setTimeout(performXRay, 1000);
-    });
-
-    function createBibleRegex() {
-        const books = BIBLE_DATA.map(b => b.nome);
-        const siglas = Object.keys(BIBLE_ABBREVIATIONS);
-        const all = [...books, ...siglas].sort((a,b) => b.length - a.length);
-        return new RegExp(`\\b((?:${all.map(p => p.replace(/\./g, '\\.')).join('|')})\\.?\\s+\\d+[:.]\\d+(?:\\s*[-–,;]\\s*\\d+[:.-]?\\d*)*)`, 'gi');
-    }
-
-    function parseReference(ref) {
-        const match = ref.match(/^(.+?)\.?\s+(\d+.*)$/);
-        if (!match) return null;
-        const bookName = BIBLE_ABBREVIATIONS[match[1].trim()] || match[1].trim();
-        const parts = match[2].split(/[:.]/);
-        if (parts.length < 2) return null;
-        const versesRaw = parts[1].trim();
-        let verses = [];
-        if (versesRaw.includes('-')) {
-            const r = versesRaw.split('-');
-            for (let i = parseInt(r[0]); i <= parseInt(r[1]); i++) verses.push(i.toString());
-        } else { verses = versesRaw.split(/[,;]/).map(v => v.trim().split(' ')[0]); }
-        return { book: bookName, cap: parts[0].trim(), verses, originalVerses: versesRaw };
-    }
-
-    function getBibleFilename(book) { 
-        return book.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "_"); 
-    }
-
-    window.openInViewer = async (sigla, capIdx, targetBlockIdx, folder) => {
-        // Ativa a aba Viewer visualmente
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === 'viewer'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-viewer'));
-        
-        const container = document.getElementById('viewer-container');
-        container.innerHTML = XRAY_LOADER_HTML;
-
-        try {
-            const resp = await fetch(`./js/${folder}/${sigla}.json`);
-            const data = await resp.json();
-            const secoes = data.artigos || data.capitulos || [];
-            const cap = secoes[capIdx];
-            let html = `<div class="viewer-title" style="color:var(--accent-color); font-size:1.4rem; border-bottom:1px solid #333; padding-bottom:10px; margin-bottom:20px;">${cap.titulo}</div>`;
-            
-            cap.conteudo.forEach((block, idx) => {
-                const isTarget = (idx === targetBlockIdx);
-                html += `<div class="viewer-block ${isTarget ? 'highlight-target' : ''}" id="block-${idx}">
-                    ${block.numero_ref ? `<span class="para-badge">${block.numero_ref}</span>` : ''} ${block.texto}
-                </div>`;
             });
-            container.innerHTML = html;
-            setTimeout(() => { document.getElementById(`block-${targetBlockIdx}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 300);
-        } catch (e) { container.innerHTML = 'Erro ao carregar documento no Viewer.'; }
-    };
+        });
+    } catch (e) {}
+}
 
-    // Tabs logic
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        btn.classList.add('active');
-        document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
-    });
+// --- 8. RENDERIZAÇÃO DA UI ---
+
+function getPiccardsHTML() {
+    let html = `<div class="tab-filter-container">
+        <div class="piccard" onclick="window.openFilterModal()" style="background: #252528; color: #aaa; border-color: #444;">
+            ⚙️ Filtros
+        </div>`;
+    
+    if (detectedCoords.length > 0) {
+        html += detectedCoords.map((coord, idx) => `
+            <div class="piccard ${coord.isActive ? 'active' : ''}" onclick="window.togglePiccard(${idx})">
+                ${coord.book} ${coord.cap}:${coord.originalVerses}
+            </div>`).join('');
+    }
+    return html + `</div>`;
+}
+
+window.togglePiccard = (index) => {
+    detectedCoords[index].isActive = !detectedCoords[index].isActive;
+    refreshAllTabs();
+};
+
+function refreshAllTabs() {
+    renderBibleTranscription();
+    applyFilters('all');
+}
+
+function applyFilters(target = 'all') {
+    const activeKeys = detectedCoords.filter(c => c.isActive).map(c => `${c.book} ${c.cap}:${c.originalVerses}`);
+    
+    if (target === 'all' || target === 'books') {
+        const fBooks = rawResultsCache.books.filter(res => activeKeys.includes(res.matchKey));
+        renderResults(fBooks, document.getElementById('tab-books'), 'books');
+    }
+    
+    if (target === 'all' || target === 'publicacoes') {
+        const fPubs = rawResultsCache.pubs.filter(res => activeKeys.includes(res.matchKey));
+        renderResults(fPubs, document.getElementById('tab-pubs'), 'publicacoess');
+    }
+}
+
+function renderResults(data, container, folder) {
+    const picHTML = getPiccardsHTML();
+    if (data.length === 0) { 
+        container.innerHTML = picHTML + '<p style="text-align:center; padding:20px; color:#666;">Nenhum resultado.</p>'; 
+        return; 
+    }
+    const unique = data.filter((v, i, a) => a.findIndex(t => t.sigla === v.sigla && t.blockIdx === v.blockIdx) === i);
+    const cards = unique.map(res => `
+        <div class="res-card" onclick="window.openInViewer('${res.sigla}', ${res.capIdx}, ${res.blockIdx}, '${res.folder === 'publicacoes' ? 'publicacoess' : 'books'}')">
+            <span class="res-ref">${res.pubTitle}</span>
+            <div style="font-size:0.7rem; color:#666; margin-bottom:5px;">${res.capTitle}</div>
+            <div class="res-text">Referência: <b>${res.matchRef}</b><br>${res.text}</div>
+        </div>
+    `).join('');
+    container.innerHTML = picHTML + cards;
+}
+
+async function renderBibleTranscription() {
+    const container = document.getElementById('tab-bible');
+    const activeCoords = detectedCoords.filter(c => c.isActive);
+    const picHTML = getPiccardsHTML();
+    
+    if (activeCoords.length === 0) { 
+        container.innerHTML = picHTML + '<p style="text-align:center; padding:20px; color:#666;">Aguardando deteção...</p>'; 
+        return; 
+    }
+
+    let html = '';
+    for (const coord of activeCoords) {
+        let nomeNoFicheiro = coord.book === "Revelação" ? "Apocalipse" : coord.book;
+        const bookFile = getBibleFilename(nomeNoFicheiro);
+        try {
+            if (!localBibleCache[bookFile]) {
+                const resp = await fetch(`./js/bible/${bookFile}.json`);
+                localBibleCache[bookFile] = await resp.json();
+            }
+            const bookData = localBibleCache[bookFile][nomeNoFicheiro];
+            let trans = '';
+            coord.verses.forEach(vNum => { 
+                if (bookData[coord.cap] && bookData[coord.cap][vNum]) {
+                    trans += `<span style="color:var(--accent-color); font-weight:bold; font-size:0.75em; vertical-align:super; margin-right:4px;">${vNum}</span>${bookData[coord.cap][vNum]} `; 
+                }
+            });
+            html += `<div class="res-card"><span class="res-ref">📖 ${coord.book} ${coord.cap}:${coord.originalVerses}</span><div class="res-text">${trans}</div></div>`;
+        } catch (e) { html += `<div class="res-card"><div class="res-text">Erro ao carregar ${coord.book}.</div></div>`; }
+    }
+    container.innerHTML = picHTML + html;
+}
+
+// --- 9. UTILITÁRIOS E EVENTOS ---
+
+function createBibleRegex() {
+    const books = BIBLE_DATA.map(b => b.nome);
+    const siglas = Object.keys(BIBLE_ABBREVIATIONS);
+    const all = [...books, ...siglas].sort((a,b) => b.length - a.length);
+    return new RegExp(`\\b((?:${all.map(p => p.replace(/\./g, '\\.')).join('|')})\\.?\\s+\\d+[:.]\\d+(?:\\s*[-–,;]\\s*\\d+[:.-]?\\d*)*)`, 'gi');
+}
+
+function parseReference(ref) {
+    const match = ref.match(/^(.+?)\.?\s+(\d+.*)$/);
+    if (!match) return null;
+    const bookName = BIBLE_ABBREVIATIONS[match[1].trim()] || match[1].trim();
+    const parts = match[2].split(/[:.]/);
+    if (parts.length < 2) return null;
+    const versesRaw = parts[1].trim();
+    let verses = [];
+    if (versesRaw.includes('-')) {
+        const r = versesRaw.split('-');
+        for (let i = parseInt(r[0]); i <= parseInt(r[1]); i++) verses.push(i.toString());
+    } else { verses = versesRaw.split(/[,;]/).map(v => v.trim().split(' ')[0]); }
+    return { book: bookName, cap: parts[0].trim(), verses, originalVerses: versesRaw };
+}
+
+function getBibleFilename(book) { 
+    return book.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "_"); 
+}
+
+window.openInViewer = async (sigla, capIdx, targetBlockIdx, folder) => {
+    document.querySelectorAll('#xray-panel > .tabs > .tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === 'viewer'));
+    document.querySelectorAll('#xray-panel .tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-viewer'));
+    
+    const container = document.getElementById('viewer-container');
+    container.innerHTML = XRAY_LOADER_HTML;
+
+    try {
+        let data;
+        if (localLibraryCache[sigla]) data = localLibraryCache[sigla];
+        else {
+            const resp = await fetch(`./js/${folder}/${sigla}.json`);
+            data = await resp.json();
+        }
+        const secoes = data.artigos || data.capitulos || [];
+        const cap = secoes[capIdx];
+        let html = `<div class="viewer-title" style="color:var(--accent-color); font-size:1.4rem; border-bottom:1px solid #333; padding-bottom:10px; margin-bottom:20px;">${cap.titulo}</div>`;
+        
+        cap.conteudo.forEach((block, idx) => {
+            const isTarget = (idx === targetBlockIdx);
+            html += `<div class="viewer-block ${isTarget ? 'highlight-target' : ''}" id="block-${idx}">
+                ${block.numero_ref ? `<span class="para-badge">${block.numero_ref}</span>` : ''} ${block.texto}
+            </div>`;
+        });
+        container.innerHTML = html;
+        setTimeout(() => { document.getElementById(`block-${targetBlockIdx}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 300);
+    } catch (e) { container.innerHTML = 'Erro ao carregar no Viewer.'; }
+};
+
+document.querySelectorAll('#xray-panel > .tabs > .tab-btn').forEach(btn => {
+    btn.onclick = () => {
+        const targetTabId = `tab-${btn.dataset.tab}`;
+        const targetContent = document.getElementById(targetTabId);
+        if (targetContent) {
+            document.querySelectorAll('#xray-panel > .tabs > .tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('#xray-panel .tab-content').forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            targetContent.classList.add('active');
+        }
+    };
+});
+
+editor.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const text = (e.originalEvent || e).clipboardData.getData('text/plain');
+    document.execCommand("insertText", false, text);
+});
+
+editor.addEventListener('input', () => {
+    statusInfo.textContent = "Digitando...";
+    clearTimeout(scanTimeout);
+    scanTimeout = setTimeout(performXRay, 1200);
+});
 
 </script>
 </body>
-</html>
+</html> 
