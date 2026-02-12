@@ -373,40 +373,42 @@ function autoProcess(idx) {
     let subCounter = 0;
     let lastQuestionNum = null; 
     let foundFirstQuestion = false; 
+    const MAX_TITLE_LENGTH = 110;
 
     raw.split('\n').forEach(line => {
         let txt = line.trim();
-        if (!txt) return;
 
-        const up = txt.toUpperCase();
-        const lw = txt.toLowerCase();
-
-        // 1. FILTRO DE FRASES PARA IGNORAR (Imagens e lixo)
+        // 1. FILTRO DE FRASES PARA IGNORAR
         const frasesParaIgnorar = [
             "a sua resposta", "a sua reposta", "sua resposta", 
             "as suas respostas", "as suas repostas", "suas respostas", "suas repostas",
             "descrição da imagem"
         ];
         
-        if (frasesParaIgnorar.includes(lw)) return;
-        if (lw.startsWith("descrição da imagem:")) return;
+        if (!txt || frasesParaIgnorar.includes(txt.toLowerCase())) return;
+        if (txt.toLowerCase().startsWith("descrição da imagem:")) return;
 
-        // 2. DETETAR SE É SEQUÊNCIA DE IMAGENS (Ex: 1. ... 2. ... 3. ...)
-        const isImageSequence = txt.match(/^1\.\s+.*\s+2\.\s+.*\s+3\.\s+/i) || txt.match(/^1\.\s+.*\s+2\.\s+/i);
-        
-        // 3. REGRA PARA LEGENDAS DE IMAGEM (Ex: Veja o parágrafo 11)
+        // 2. REGRA PARA LEGENDAS DE IMAGEM
         const isInstrucaoLegenda = txt.match(/\(Veja (?:também )?os? parágrafos? \d+/i);
-
-        if (isImageSequence || isInstrucaoLegenda) {
-            // Se detetar instrução de imagem, apaga o bloco anterior (que era a legenda/título da imagem)
+        if (isInstrucaoLegenda) {
             if (tempBlocks.length > 0) {
-                let ultimo = tempBlocks[tempBlocks.length - 1];
-                // Se o anterior for subtema ou parágrafo sem número, é lixo de imagem
-                if (ultimo.type === 'subtema' || (ultimo.type === 'paragrafo' && !ultimo.number)) {
+                let ultimoBloco = tempBlocks[tempBlocks.length - 1];
+                if (ultimoBloco.type === 'subtema' || (ultimoBloco.type === 'paragrafo' && !ultimoBloco.number)) {
                     tempBlocks.pop(); 
                 }
             }
-            return; // Ignora a linha atual também
+            return; 
+        }
+
+        const up = txt.toUpperCase();
+        const lw = txt.toLowerCase();
+
+        // DETECTAR NÚMEROS PARA SAIR DO MODO RESUMO SE NECESSÁRIO
+        const qMatch = txt.match(/^(\d+(?:[\s\-\,\&]+\d+)*)\.\s+(.*)/); 
+        const pMatch = txt.match(/^(\d+)\s+(.*)/); 
+
+        if (isRecap && (qMatch || pMatch)) {
+            isRecap = false; 
         }
 
         // 3. GATILHOS DE RECAPITULAÇÃO (RESUMO)
@@ -441,7 +443,7 @@ function autoProcess(idx) {
         }
 
         // 4. GATILHO DE NOTAS / CÂNTICOS / RODAPÉ / SÍMBOLO ^
-         const isCantico = up.startsWith("CÂNTICO");
+        const isCantico = up.startsWith("CÂNTICO");
         if (lw.includes('[nota') || lw.includes('rodapé]') || txt.match(/^[a-z]\s/) || isCantico || txt.includes('^')) {
             if (isCantico && !foundFirstQuestion) {
                 subCounter++;
@@ -452,10 +454,7 @@ function autoProcess(idx) {
             isFootnote = true;
         }
 
-        // 6. PROCESSAMENTO DE CONTEÚDO (Pergunta vs Parágrafo)
-        const qMatch = txt.match(/^(\d+(?:[\s\-\,\&]+\d+)*)\.\s+(.*)/); 
-        const pMatch = txt.match(/^(\d+)\s+(.*)/); 
-
+        // 5. PROCESSAMENTO DE CONTEÚDO
         if (isRecap) {
             tempBlocks.push({ type: 'resumo', text: txt.replace(/^[❑\-\u2022]\s*/, ""), number: null });
         } else if (isFootnote) {
@@ -471,13 +470,11 @@ function autoProcess(idx) {
                 tempBlocks.push({ type: 'paragrafo', text: pMatch[2], number: pMatch[1] });
             } 
             else {
-                // Se não tem número, ou é subtema inicial ou parágrafo de continuação
                 if (!foundFirstQuestion) {
                     subCounter++;
                     tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
                 } else {
-                    // Se o texto for grande e houver uma pergunta ativa, assume-se parágrafo
-                    if (txt.length > 110 && lastQuestionNum !== null) {
+                    if (txt.length > MAX_TITLE_LENGTH && lastQuestionNum !== null) {
                         tempBlocks.push({ type: 'paragrafo', text: txt, number: null, refFromQuestion: lastQuestionNum });
                     } else {
                         subCounter++;
@@ -489,7 +486,7 @@ function autoProcess(idx) {
         }
     });
 
-    // Numeração Automática de parágrafos que não tinham número
+    // Lógica de numeração automática final
     let currentPNum = 0;
     tempBlocks.forEach(b => {
         if (b.type === 'paragrafo') {
