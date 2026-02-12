@@ -12401,7 +12401,7 @@ html, body {
             <input type="checkbox" id="search-bible-toggle">
             <span class="slider round"></span>
         </label>
-        <span style="font-size: 0.85em; color: var(--text-muted-color);">Procurar na Bíblia (Biblioteca Global)</span>
+        <span style="font-size: 0.85em; color: var(--text-muted-color);">Procurar na Bíblia</span>
     </div>
     
     <div id="category-search-results" style="max-height: 200px; overflow-y: auto; margin-top: 10px; border-bottom: 1px solid var(--border-color);"></div>
@@ -14767,10 +14767,13 @@ async function navigateWithUnsavedCheck(navigationAction) {
 async function openTopicsModal(targetId, type) {
     if (!targetId) return alert("Erro: Nenhum item selecionado.");
     
+    const anchorsTabBtn = document.querySelector('#topics-modal-tabs button[data-tab="anchors"]');
+    if (anchorsTabBtn) anchorsTabBtn.style.display = 'block';
+    
     // 1. CONFIGURAÇÃO DE ESTADO
     window.topicTargetId = targetId; 
-    
-    if (type !== 'box') window.activeMiniNoteElement = null; 
+    // Como é para a página, garantimos que não há nenhuma caixa individual ativa
+    window.activeMiniNoteElement = null; 
 
     currentNoteAnchors = {};
     currentNoteAssociations = []; 
@@ -14793,68 +14796,43 @@ async function openTopicsModal(targetId, type) {
     modal.style.visibility = "visible";
     modal.style.opacity = "1";
 
-    // ============================================================
-    // 3. RESET DE INTERFACE (CORREÇÃO AQUI)
-    // ============================================================
-    
-    // Esconde o Card de ID sempre que o popup abre (porque abre na aba Tópicos)
+    // 3. DEFINIR TÍTULO DA PÁGINA
+    const modalTitle = document.getElementById('topics-modal-title');
+    if (modalTitle) {
+        modalTitle.textContent = "Interligar a Página";
+    }
+
+    // 4. RESET DE INTERFACE
     const idCard = document.getElementById('note-id-pill-container');
     if (idCard) idCard.style.display = 'none';
 
-    // Reset dos botões das abas
     document.querySelectorAll('#topics-modal-tabs button').forEach(b => b.classList.remove('active'));
     const defaultTabBtn = document.querySelector('#topics-modal-tabs button[data-tab="topics"]');
     if (defaultTabBtn) defaultTabBtn.classList.add('active');
     
-    // Reset dos conteúdos
     document.getElementById('tm-content-topics').style.display = 'flex';
     document.getElementById('tm-content-anchors').style.display = 'none';
     document.getElementById('tm-content-autolink').style.display = 'none';
     document.getElementById('tm-content-associar').style.display = 'none';
 
-    // Reset do Botão "+" (Azul padrão)
-    const plusBtn = document.getElementById('manage-topics-btn');
-    if (plusBtn) {
-        plusBtn.style.display = 'block';
-        plusBtn.title = "Criar/Gerir Tópicos";
-        plusBtn.style.color = "var(--accent-color)";
-        plusBtn.style.borderColor = "var(--accent-color)";
-    }
-
-    // 4. ATUALIZAR O TEXTO DO ID (Mesmo estando escondido, ele fica pronto)
-    const displayIdEl = document.getElementById('display-current-note-id');
-    if (displayIdEl) displayIdEl.textContent = targetId;
-
-    // 5. CARREGAR DADOS DO FIREBASE...
+    // 5. CARREGAR DADOS DO FIREBASE (DOC DA NOTA)
     try {
-        let data = {};
-        if (window.activeMiniNoteElement) {
-            const topicsString = window.activeMiniNoteElement.getAttribute('data-topics') || '{}';
-            try { data.topicosSelecionados = JSON.parse(topicsString); } catch(e) {}
-            if (selectedNoteId) {
-                const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-                const noteSnap = await getDoc(doc(db, 'pastas', selectedNoteId));
-                if(noteSnap.exists()) {
-                    data.tags = noteSnap.data().tags || [];
-                    data.noteAssociations = noteSnap.data().noteAssociations || [];
-                }
-            }
-        } else {
-            const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-            const docSnap = await getDoc(doc(db, 'pastas', targetId));
-            if (docSnap.exists()) data = docSnap.data();
+        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const docSnap = await getDoc(doc(db, 'pastas', targetId));
+        
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            currentNoteTopics = data.topicosSelecionados || {};
+            currentNoteAnchors = data.ancorasSelecionadas || {};
+            currentNoteTags = data.tags || []; 
+            currentNoteAssociations = data.noteAssociations || []; 
         }
-
-        currentNoteTopics = data.topicosSelecionados || {};
-        currentNoteAnchors = data.ancorasSelecionadas || {};
-        currentNoteTags = data.tags || []; 
-        currentNoteAssociations = data.noteAssociations || []; 
 
         if (typeof renderTopicsSelectionList === 'function') await renderTopicsSelectionList();
         if (typeof renderNoteAssociationsList === 'function') renderNoteAssociationsList();
 
     } catch (e) {
-        console.error("Erro ao carregar dados:", e);
+        console.error("Erro ao carregar dados da página:", e);
     }
 }
 
@@ -15373,59 +15351,67 @@ if (archiveFeedEl) {
 
 // B. FUNÇÃO PARA ABRIR O MODAL (Modo SubNota)
 window.openTopicsModalForMiniNote = async function(wrapperElement) {
-
     if (!wrapperElement) return console.error("❌ [ERRO] wrapperElement nulo.");
 
-    // 1. Configuração de Estado Global
+    // 1. CONFIGURAÇÃO DE ESTADO GLOBAL
     window.activeMiniNoteElement = wrapperElement; 
-    window.topicTargetId = null; 
+    window.topicTargetId = null; // Indica que o alvo NÃO é a página, mas a caixa
 
-    // 2. Leitura dos Dados
+    // 2. LEITURA DOS DADOS LOCAIS DA CAIXA (Atributos HTML)
     const topicsString = wrapperElement.getAttribute('data-topics') || '{}';
     try {
         currentNoteTopics = JSON.parse(topicsString);
     } catch (e) {
-        console.warn("⚠️ JSON de tópicos inválido, resetando.");
         currentNoteTopics = {};
     }
 
-    // 3. CAPTURA E MOVIMENTAÇÃO DO MODAL
+    // 3. CAPTURA E EXIBIÇÃO DO MODAL
     const modal = document.getElementById('topics-modal');
     if (!modal) return console.error("❌ Modal #topics-modal não encontrado!");
 
-    // Move para o body (topo da hierarquia)
-    document.body.appendChild(modal);
+    // --- LOGICA OPÇÃO B: ESCONDER ABA ÂNCORAS ---
+    const anchorsTabBtn = modal.querySelector('button[data-tab="anchors"]');
+    if (anchorsTabBtn) {
+        anchorsTabBtn.style.display = 'none';
+    }
 
-    // 4. FORÇAR VISIBILIDADE SUPREMA (Z-Index: 2147483647)
+    document.body.appendChild(modal);
     modal.style.cssText = `
         display: flex !important;
         visibility: visible !important;
         opacity: 1 !important;
         position: fixed !important;
-        z-index: 2147483647 !important; /* MÁXIMO ABSOLUTO */
+        z-index: 2147483647 !important;
         top: 0; left: 0; width: 100vw; height: 100vh;
         background-color: rgba(0, 0, 0, 0.85) !important;
         justify-content: center !important;
         align-items: center !important;
     `;
 
-    // 5. Configuração Visual
-    const modalTitle = modal.querySelector('h3');
+    // 4. DEFINIR TÍTULO DA CAIXA
+    const modalTitle = document.getElementById('topics-modal-title');
     if (modalTitle) {
-        const isQuestion = wrapperElement.classList.contains('question-mode');
-        modalTitle.textContent = isQuestion ? "Tópicos da Questão" : "Tópicos do Bloco";
+        modalTitle.textContent = "Interligar a Caixa";
     }
 
-    // Reset de busca e seleção anterior
-    activeTopicIdForSelection = null;
-    const subList = document.getElementById('subtopics-list-select');
-    if(subList) subList.innerHTML = '<li style="color:#888; padding:10px;">Selecione um tópico à esquerda.</li>';
+    // 5. CARREGAR DADOS EXTRA (Associações da Caixa)
+    try {
+        let boxLinks = {};
+        const rawLinks = wrapperElement.getAttribute('data-box-links');
+        try { boxLinks = JSON.parse(rawLinks || '{}'); } catch(e) {}
+        
+        currentNoteAssociations = boxLinks.noteAssociations || [];
+        
+        // Renderiza as listas iniciais (Tópicos e Associações)
+        if (typeof renderTopicsSelectionList === 'function') await renderTopicsSelectionList();
+        if (typeof renderNoteAssociationsList === 'function') renderNoteAssociationsList();
+        
+        // Garante que a aba visível é a de Tópicos (já que a de Âncoras sumiu)
+        const topicsTabBtn = modal.querySelector('button[data-tab="topics"]');
+        if (topicsTabBtn) topicsTabBtn.click();
 
-    // 6. Carregar a Lista
-    if (typeof renderTopicsSelectionList === 'function') {
-        await renderTopicsSelectionList();
-    } else {
-        console.error("❌ Função renderTopicsSelectionList não encontrada!");
+    } catch (e) {
+        console.error("Erro ao carregar dados da caixa:", e);
     }
 };
 
