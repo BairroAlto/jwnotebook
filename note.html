@@ -549,10 +549,23 @@ a[data-anexo-id] { color: inherit; text-decoration: none; border-bottom: 1px dot
     background-color: rgba(30, 132, 73, 0.15); color: var(--question-color); border-color: var(--question-color);
 }
 /* Esconde botões desnecessários dentro da mini-nota */
-.mini-note-toolbar button:not([data-action="sharing-settings"]):not([data-action="delete-mini-note"]):not([data-action="manage-mini-note-topics"]):not([data-action="highlight-color"]):not([data-action="append-mini-note"]):not([data-action="move-up"]):not([data-action="move-down"]):not([data-action="manage-box-links"]),
+.mini-note-toolbar button:not([data-action="sharing-settings"]):not([data-action="delete-mini-note"]):not([data-action="manage-mini-note-topics"]):not([data-action="highlight-color"]):not([data-action="append-mini-note"]):not([data-action="move-up"]):not([data-action="move-down"]):not([data-action="manage-box-links"]):not([data-action="jump-to-origin"]),
 .mini-note-toolbar input[type="color"],
 .mini-note-toolbar .toolbar-separator { 
     display: none !important; 
+}
+
+/* 2. Restaura a Marca de Água no canto inferior direito */
+.statue-card-wrapper::after {
+    content: '🗿';
+    position: absolute;
+    bottom: 5px;
+    right: 5px;
+    font-size: 20px;
+    opacity: 0.15; /* Deixei um pouco mais suave */
+    pointer-events: none;
+    filter: grayscale(1);
+    z-index: 1;
 }
 
 /* Atualização na secção .mini-note-toolbar */
@@ -10322,17 +10335,6 @@ a[data-anexo-id] {
     padding: 0; /* Padding gerido pelos filhos */
 }
 
-/* Indicador Visual de Estátua (Icone no canto) */
-.statue-card-wrapper::after {
-    content: '🗿';
-    position: absolute;
-    bottom: 5px;
-    right: 5px;
-    font-size: 20px;
-    opacity: 0.2;
-    pointer-events: none;
-    filter: grayscale(1);
-}
 
 /* Conteúdo da Estátua (Bloqueado) */
 .statue-content-lock {
@@ -26485,10 +26487,6 @@ if (window.appendMode === 'statue') {
 
             const statueId = `statue_${Date.now()}`;
             
-            // AQUI: Inserimos o botão DIRETAMENTE no HTML com o data-action correto
-            const jumpAction = `event.preventDefault(); window.handleGoToNote('${selectedNoteId}', '${originBoxId}')`;
-
-            // >>> CORREÇÃO APLICADA ABAIXO NA VARIÁVEL finalContentToAppend <<<
             finalContentToAppend = `
                 <div class="mini-note-wrapper statue-card-wrapper" id="${statueId}" 
                      data-origin-note="${selectedNoteId}" 
@@ -26497,15 +26495,22 @@ if (window.appendMode === 'statue') {
                      contenteditable="false">
                     
                     <div class="mini-note-toolbar" contenteditable="false">
-                        <button type="button" data-action="sharing-settings" title="Partilha (Independente)">🔐</button>
+                        <button type="button" data-action="sharing-settings" title="Partilha">🔐</button>
+                        
                         <div class="toolbar-btn-group">
                             <button type="button" data-action="move-up" title="Subir">🔺</button>
                             <button type="button" data-action="move-down" title="Descer">🔻</button>
                         </div>
-                        <button type="button" data-action="highlight-color" title="Cor (Independente)">🎨</button>
-                        
-                        <button type="button" data-action="jump-to-origin" onclick="${jumpAction}" title="Ir para Origem" 
-                                style="color: #a569bd; font-weight: bold; border-color: #a569bd; margin-right:2px;">🗿</button>
+
+                        <!-- 1º PALETA -->
+                        <button type="button" data-action="highlight-color" title="Cor">🎨</button>
+
+                        <!-- 2º O 🗿 À DIREITA DA PALETA -->
+                        <button type="button" data-action="jump-to-origin" 
+                                data-note="${selectedNoteId}" 
+                                data-box="${originBoxId}" 
+                                title="Ir para Origem" 
+                                style="color: #a569bd; font-weight: bold; border-color: #a569bd; margin-left: 2px;">🗿</button>
 
                         <button type="button" data-action="delete-mini-note" title="Apagar Estátua">🗑️</button>
                     </div>
@@ -26517,7 +26522,7 @@ if (window.appendMode === 'statue') {
                 </div>
                 <p><br></p>
             `;
-            
+    
         } else {
             // --- MODO CÓPIA 🪞 ---
             const tempDiv = document.createElement('div');
@@ -29067,207 +29072,138 @@ entitySuggestionList.addEventListener('mousedown', (e) => {
 // ====================================================================
 // LÓGICA DA TESOURA (Converter Post-it em Texto)
 // ====================================================================
+// ====================================================================
+// GESTOR ÚNICO DE CLIQUES NO EDITOR (UNIFICADO: CAIXAS, WIDGETS E ESTÁTUA)
+// ====================================================================
 noteContentEditor.addEventListener('click', async (e) => {
-
-// -----------------------------------------------------------
-// 1. LÓGICA DO POST-IT (✂️) - TESOURA
-// -----------------------------------------------------------
-if (e.target.classList.contains('post-it-cut-btn')) {
-    e.preventDefault(); e.stopPropagation();
-    const postIt = e.target.closest('.post-it-note');
-    if (!postIt) return;
-
-    const contentDiv = postIt.querySelector('.post-it-content');
-    const savedHTML = contentDiv.innerHTML;
-    const postItRect = postIt.getBoundingClientRect();
+    const target = e.target;
     
-    const newPara = document.createElement('p');
-    newPara.innerHTML = savedHTML || "<br>";
-    
-    const children = Array.from(noteContentEditor.children);
-    let inserted = false;
-    for (const child of children) {
-        if (child === postIt || child.classList.contains('post-it-note')) continue;
-        if (child.getBoundingClientRect().top > postItRect.top) {
-            noteContentEditor.insertBefore(newPara, child);
-            inserted = true;
-            break;
-        }
-    }
-    if (!inserted) noteContentEditor.appendChild(newPara);
+    // 1. Identifica se o clique foi num botão ou num elemento que se comporta como tal
+    const btn = target.closest('button');
+    const action = btn ? btn.dataset.action : null;
 
-    postIt.remove();
-    
-    // Focar
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(newPara);
-    range.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    
-    saveNote();
-    return; 
-}
-
-// -----------------------------------------------------------
-// 2. LÓGICA DO CARTÃO WEB (✕) - REVERTER PARA LINK
-// -----------------------------------------------------------
-if (e.target.classList.contains('url-card-close')) {
-    e.preventDefault(); e.stopPropagation();
-
-    const card = e.target.closest('.url-card-widget');
-    if (!card) return;
-
-    const originalUrl = card.dataset.originalUrl;
-
-    // Criar o link de texto original
-    const a = document.createElement('a');
-    a.href = originalUrl;
-    a.textContent = originalUrl;
-    a.target = "_blank";
-    a.style.color = "var(--accent-color)";
-    a.style.textDecoration = "underline";
-
-    card.replaceWith(a);
-    
-    const space = document.createTextNode('\u00A0');
-    a.after(space);
-
-    saveNote();
-    return;
-}
-
-// -----------------------------------------------------------
-// 3. NAVEGAÇÃO DO CARTÃO WEB (Abrir Link) - NOVO!
-// -----------------------------------------------------------
-const cardWidget = e.target.closest('.url-card-widget');
-// Se clicou num card, MAS NÃO no botão de fechar
-if (cardWidget && !e.target.classList.contains('url-card-close')) {
-    e.preventDefault(); 
-    e.stopPropagation();
-
-    const url = cardWidget.dataset.originalUrl;
-    
-    if (url) {
-        // Abre numa nova aba
-        window.open(url, '_blank');
-    }
-    return;
-}
-
-// -----------------------------------------------------------
-// 4. LÓGICA DE APAGAR SECÇÃO/TOGGLE (🗑️)
-// -----------------------------------------------------------
-const toggleDelBtn = e.target.closest('.toggle-delete-btn');
-if (toggleDelBtn) {
-    e.preventDefault(); e.stopPropagation();
-    const detailsElement = toggleDelBtn.closest('details');
-    if (!detailsElement) return;
-
-    const success = await archiveMiniNote(detailsElement); 
-    if (success) {
-        const marker = document.createElement('span');
-        marker.id = `marker_${detailsElement.id}`;
-        marker.className = 'hidden-note-marker';
-        marker.style.display = 'none';
-        detailsElement.replaceWith(marker);
-        saveNote();
-    }
-    return;
-}
-
-// -----------------------------------------------------------
-// 5. LÓGICA DE APAGAR SUBNOTA/QUESTÃO (🗑️)
-// -----------------------------------------------------------
-const deleteBtn = e.target.closest('button[data-action="delete-mini-note"]');
-if (deleteBtn) {
-    console.group("🗑️ [DEBUG] Processo de Eliminação Iniciado");
-    console.log("1. Botão clicado:", deleteBtn);
-
-    // 1. Verificações de segurança
-    if (noteContentEditor.contentEditable === "false") {
-        console.warn("🚫 Tentativa de apagar em modo leitura.");
-        alert("Não tem permissão para editar esta nota partilhada.");
-        console.groupEnd();
-        return;
-    }
-    
-    e.preventDefault(); 
-    e.stopPropagation();
-
-    // 2. Identificar a caixa (AQUI É CRÍTICO: TEM DE TER .redator-wrapper)
-    const wrapper = deleteBtn.closest('.mini-note-wrapper, .redator-wrapper');
-    
-    if (!wrapper) {
-        console.error("❌ ERRO: Não encontrei o wrapper pai (.mini-note-wrapper ou .redator-wrapper)!");
-        console.groupEnd();
-        return; 
-    }
-
-    console.log("2. Wrapper Pai encontrado:", wrapper);
-    console.log("   - Classes:", wrapper.className);
-    console.log("   - ID:", wrapper.id);
-
-    const wrapperId = wrapper.id; 
-    
-    // Identificar tipo para a mensagem
-    let label = "Item";
-    if (wrapper.classList.contains('redator-wrapper')) label = "Redator"; // <--- LOGICA NOVA
-    else if (wrapper.classList.contains('question-mode')) label = "Questão";
-    else label = "SubNota";
-
-    console.log("3. Tipo identificado para o popup:", label);
-
-    // 3. Confirmação
-    const confirmed = await showConfirmation("Mover para a Lixeira?", `Deseja ocultar este ${label}?`);
-    
-    if (!confirmed) {
-        console.log("🚫 Utilizador cancelou a ação.");
-        console.groupEnd();
-        return;
-    }
-
-    console.log("✅ Utilizador confirmou. Iniciando arquivo...");
-
-    // Esconde logo visualmente
-    wrapper.style.display = 'none';
-
-    try {
-        // 4. Arquivar na Base de Dados
-        const success = await archiveMiniNote(wrapper, true);
+    // --- A. SALTO PARA ORIGEM (🗿) NO MODO ESTÁTUA ---
+  const jumpBtn = target.closest('button[data-action="jump-to-origin"]');
+    if (jumpBtn) {
+        e.preventDefault();
+        e.stopPropagation();
         
-        console.log("4. Resultado do archiveMiniNote:", success);
+        // Lê os IDs que gravámos no Passo 1
+        const noteId = jumpBtn.getAttribute('data-note');
+        const boxId = jumpBtn.getAttribute('data-box');
+        
+        console.log("🚀 Tentando saltar para Nota:", noteId, "Caixa:", boxId);
 
-        if (success) {
-            console.log("5. Sucesso! Removendo do DOM e criando marcador.");
-            
-            const marker = document.createElement('span');
-            marker.id = `marker_${wrapperId}`;
-            marker.className = 'hidden-note-marker';
-            marker.style.display = 'none';
-            
-            // Substituição segura
-            const elementToRemove = document.getElementById(wrapperId) || wrapper;
-            if (elementToRemove && elementToRemove.parentNode) {
-                elementToRemove.replaceWith(marker);
-            }
-            
-            await saveNote(true);
-            console.log("💾 Nota guardada.");
+        if (noteId && typeof window.handleGoToNote === 'function') {
+            window.handleGoToNote(noteId, boxId);
         } else {
-            console.error("❌ archiveMiniNote retornou false.");
-            wrapper.style.display = 'block';
-            alert("Não foi possível arquivar. A caixa foi restaurada.");
+            console.error("❌ Falha no salto: handleGoToNote não existe ou IDs vazios.");
         }
-    } catch (err) {
-        console.error("🔥 Erro Crítico:", err);
-        wrapper.style.display = 'block'; 
+        return;
     }
-    
-    console.groupEnd();
-    return;
-}
+
+    // --- B. ELIMINAR CAIXA (🗑️) ---
+    if (action === 'delete-mini-note') {
+        e.preventDefault(); e.stopPropagation();
+        if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
+        const wrapper = target.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
+        if (!wrapper) return;
+        let lbl = wrapper.classList.contains('redator-wrapper') ? "Redator" : 
+                  (wrapper.classList.contains('question-mode') ? "Questão" : 
+                  (wrapper.classList.contains('statue-card-wrapper') ? "Estátua" : "SubNota"));
+        const confirmed = await showConfirmation("Mover para a Lixeira?", `Deseja ocultar este ${lbl}?`);
+        if (confirmed) {
+            await archiveMiniNote(wrapper);
+            if (typeof saveNote === 'function') saveNote(true);
+        }
+        return;
+    }
+
+    // --- C. PERSONALIZAR / CORES (🎨) ---
+    if (action === 'highlight-color') {
+        e.preventDefault(); e.stopPropagation();
+        const wrapper = target.closest('.mini-note-wrapper, details.toggle-section, .redator-wrapper');
+        if (wrapper) openHighlightPopup(wrapper);
+        return;
+    }
+
+    // --- D. TÓPICOS (📋) ---
+    if (action === 'manage-mini-note-topics') {
+        e.preventDefault(); e.stopPropagation();
+        const wrapper = target.closest('.mini-note-wrapper');
+        if (wrapper) openTopicsModalForMiniNote(wrapper);
+        return;
+    }
+
+    // --- E. LINKS E CODEX (⚡) ---
+    if (action === 'manage-box-links') {
+        e.preventDefault(); e.stopPropagation();
+        const wrapper = target.closest('.mini-note-wrapper, .redator-wrapper');
+        if (wrapper) openBoxLinkManager(wrapper);
+        return;
+    }
+
+    // --- F. CLONAR / ENVIAR (🧬) ---
+    if (action === 'append-mini-note') {
+        e.preventDefault(); e.stopPropagation();
+        const wrapper = target.closest('.mini-note-wrapper, .redator-wrapper');
+        if (wrapper) {
+            window.htmlToAppend = wrapper.outerHTML + "<p><br></p>"; 
+            openAppendModal();
+        }
+        return;
+    }
+
+    // --- G. TESOURA DO POST-IT (✂️) ---
+    if (target.classList.contains('post-it-cut-btn')) {
+        e.preventDefault(); e.stopPropagation();
+        const postIt = target.closest('.post-it-note');
+        if (postIt) {
+            const contentDiv = postIt.querySelector('.post-it-content');
+            const newPara = document.createElement('p');
+            newPara.innerHTML = contentDiv.innerHTML || "<br>";
+            postIt.replaceWith(newPara);
+            saveNote();
+        }
+        return;
+    }
+
+    // --- H. FECHAR CARTÃO WEB (✕) ---
+    if (target.classList.contains('url-card-close')) {
+        e.preventDefault(); e.stopPropagation();
+        const card = target.closest('.url-card-widget');
+        if (card) {
+            const a = document.createElement('a');
+            a.href = card.dataset.originalUrl;
+            a.textContent = card.dataset.originalUrl;
+            card.replaceWith(a);
+            saveNote();
+        }
+        return;
+    }
+
+    // --- I. APAGAR TOGGLE (🗑️) ---
+    const toggleDelBtn = target.closest('.toggle-delete-btn');
+    if (toggleDelBtn) {
+        e.preventDefault(); e.stopPropagation();
+        const details = toggleDelBtn.closest('details');
+        const confirmed = await showConfirmation("Ocultar Secção?", "O conteúdo será movido para a reciclagem.");
+        if (confirmed) await archiveMiniNote(details);
+        return;
+    }
+
+    // --- J. COR DO TOGGLE (🖌️) ---
+    const toggleColorBtn = target.closest('.toggle-color-btn');
+    if (toggleColorBtn) {
+        e.preventDefault(); e.stopPropagation();
+        window.activeToggleForColor = toggleColorBtn.closest('details.toggle-section');
+        const rect = toggleColorBtn.getBoundingClientRect();
+        const popup = document.getElementById('toggle-color-popup');
+        popup.style.display = 'block';
+        popup.style.top = `${rect.bottom + window.scrollY + 5}px`;
+        popup.style.left = `${(rect.left + window.scrollX) - 100}px`;
+        return;
+    }
 });
 
 // ====================================================================
@@ -39262,114 +39198,6 @@ else if (action === 'insert-table') {
 }
 
  
-
-// ============================================================
-// GESTOR DE CLIQUES NO EDITOR (BOTÕES DAS CAIXAS)
-// ============================================================
-noteContentEditor.addEventListener('click', async (e) => {
-    // Procura por um botão dentro do editor
-    const btn = e.target.closest('button');
-    const toggleColorBtn = e.target.closest('.toggle-color-btn');
-    const toggleDelBtn = e.target.closest('.toggle-delete-btn');
-
-    // Se não clicou num botão, sai
-    if (!btn && !toggleColorBtn && !toggleDelBtn) return;
-
-    const action = btn ? btn.dataset.action : null;
-
-    // --- 1. APAGAR SECÇÃO TOGGLE (☂) ---
-    if (toggleDelBtn) {
-        e.preventDefault(); e.stopPropagation();
-        const detailsElement = toggleDelBtn.closest('details');
-        if (!detailsElement) return;
-
-        const confirmed = await showConfirmation("Ocultar Secção?", "Todo o conteúdo dentro dela será movido para o histórico.");
-        if (confirmed) {
-            await archiveMiniNote(detailsElement);
-        }
-        return;
-    }
-
-    // --- 2. APAGAR ENTIDADE/CAIXA (🗑️) - CORREÇÃO ---
-    if (action === 'delete-mini-note') {
-        e.preventDefault(); 
-        e.stopPropagation(); 
-        
-        // Limpa timers de gravação para não interferir
-        if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
-        
-        const wrapper = btn.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper, .statue-card-wrapper');
-        if (!wrapper) return;
-
-        // Se for uma caixa de Raciocínio (Sign), tem função própria, mas o archiveMiniNote também funciona
-        if (wrapper.classList.contains('journal-sign-wrapper')) {
-            if (typeof window.confirmSignDelete === 'function') {
-                window.confirmSignDelete(btn);
-                return;
-            }
-        }
-
-        let label = "Item";
-        if (wrapper.classList.contains('redator-wrapper')) label = "Redator";
-        else if (wrapper.classList.contains('question-mode')) label = "Questão";
-        else if (wrapper.classList.contains('statue-card-wrapper')) label = "Estátua";
-        else label = "SubNota";
-
-        const confirmed = await showConfirmation("Mover para a Lixeira?", `Deseja ocultar este ${label}?`);
-        
-        if (confirmed) {
-            await archiveMiniNote(wrapper);
-        }
-        return;
-    }
-
-    // --- 3. BOTÃO DE COR (🎨) ---
-    if (action === 'highlight-color') {
-        e.preventDefault(); e.stopPropagation();
-        const wrapper = btn.closest('.mini-note-wrapper, details.toggle-section, .redator-wrapper');
-        if (wrapper) openHighlightPopup(wrapper);
-        return;
-    }
-
-    // --- 4. BOTÃO DE TÓPICOS (📋) ---
-    if (action === 'manage-mini-note-topics') {
-        e.preventDefault(); e.stopPropagation();
-        const wrapper = btn.closest('.mini-note-wrapper');
-        if (wrapper) openTopicsModalForMiniNote(wrapper);
-        return;
-    }
-
-    // --- 5. BOTÃO DE LINKS (⚡) ---
-    if (action === 'manage-box-links') {
-        e.preventDefault(); e.stopPropagation();
-        const wrapper = btn.closest('.mini-note-wrapper, .redator-wrapper');
-        if (wrapper) openBoxLinkManager(wrapper);
-        return;
-    }
-
-    // --- 6. BOTÃO DE CLONAR (🧬) ---
-    if (action === 'append-mini-note') {
-        e.preventDefault(); e.stopPropagation();
-        const wrapper = btn.closest('.mini-note-wrapper, .redator-wrapper');
-        if (wrapper) {
-            window.htmlToAppend = wrapper.outerHTML + "<p><br></p>"; 
-            openAppendModal();
-        }
-        return;
-    }
-
-    // --- 7. PINCEL DO TOGGLE (🖌️) ---
-    if (toggleColorBtn) {
-        e.preventDefault(); e.stopPropagation();
-        window.activeToggleForColor = toggleColorBtn.closest('details.toggle-section');
-        const rect = toggleColorBtn.getBoundingClientRect();
-        const popup = document.getElementById('toggle-color-popup');
-        popup.style.display = 'block';
-        popup.style.top = `${rect.bottom + window.scrollY + 5}px`;
-        popup.style.left = `${(rect.left + window.scrollX) - 100}px`;
-        return;
-    }
-});
 
 
 // ============================================================
@@ -51026,7 +50854,7 @@ async function syncStatueCardsInCurrentNote() {
     if (blockingModal) {
         if (loadingText) {
             originalText = loadingText.textContent;
-            loadingText.textContent = "A Sincronizar Estátuas..."; // Muda o texto para informar o user
+            loadingText.textContent = "A Sincronizar Estátuas 🗿 ..."; // Muda o texto para informar o user
         }
         
         // Força bruta de visibilidade
