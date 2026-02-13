@@ -17037,6 +17037,10 @@ async function displayNote(noteId, noteElement, searchTerm = null) {
                 if (document.activeElement !== noteTitleInput) noteTitleInput.value = serverTitle;
                 if (document.activeElement !== noteContentEditor || noteContentEditor.innerHTML === "") {
                      noteContentEditor.innerHTML = serverContent;
+                     setTimeout(() => {
+    ensureFirstLineIsText();
+    // Se a nota estava vazia, foca na linha 1, mas as ferramentas já estão protegidas
+}, 100);
                       window.migrateLegacyBoxes(noteContentEditor);
                 }
                 
@@ -17416,6 +17420,28 @@ window.insertMiniNoteAtCursor = function(type = 'default', extraData = null) {
     const scrollContainer = document.getElementById('editor-area') || editor;
     if (!editor) return;
 
+    // 1. DEFINIÇÃO DE BLOCOS PROTEGIDOS (isBox agora está no escopo correto)
+    const isBox = (el) => el && (
+        el.classList.contains('mini-note-wrapper') || 
+        el.classList.contains('redator-wrapper') || 
+        el.classList.contains('journal-sign-wrapper') ||
+        el.classList.contains('journal-id-card') ||
+        el.tagName === 'DETAILS' ||
+        el.classList.contains('jwn-table-wrapper') ||
+        el.classList.contains('ref-depot-wrapper') ||
+        el.classList.contains('journal-cube-wrapper')
+    );
+
+    // 2. GARANTIA DA LINHA 1 (A LINHA SAGRADA)
+    let firstLine = editor.firstElementChild;
+    if (!firstLine || isBox(firstLine)) {
+        const p = document.createElement('p');
+        p.innerHTML = '<br>';
+        p.className = 'sacred-first-line';
+        editor.prepend(p);
+        firstLine = p;
+    }
+
     const savedScrollTop = scrollContainer.scrollTop;
     editor.focus();
     
@@ -17423,10 +17449,30 @@ window.insertMiniNoteAtCursor = function(type = 'default', extraData = null) {
     if (!selection.rangeCount) return;
     let range = selection.getRangeAt(0);
 
-    // Expulsão de caixas para evitar aninhamento
+    // 3. EXPULSÃO DA LINHA 1: Se o cursor estiver no topo, movemos para a Linha 2
+    if (firstLine.contains(range.commonAncestorContainer) || editor.firstChild === range.commonAncestorContainer) {
+        console.log("🛡️ Proteção: Cursor na Linha 1. Movendo para Linha 2...");
+        
+        // Garante que existe um parágrafo na Linha 2 para receber a caixa
+        let secondLine = firstLine.nextElementSibling;
+        if (!secondLine || isBox(secondLine)) {
+            secondLine = document.createElement('p');
+            secondLine.innerHTML = '<br>';
+            firstLine.insertAdjacentElement('afterend', secondLine);
+        }
+        
+        // Teletransporta o cursor para a Linha 2
+        range = document.createRange();
+        range.setStart(secondLine, 0);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+
+    // 4. EVITAR ANINHAMENTO (Não criar dentro de outras caixas)
     const container = range.commonAncestorContainer;
     const element = container.nodeType === 3 ? container.parentElement : container;
-    const parentBox = element.closest('.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .journal-id-card, details.toggle-section, .jwn-table-wrapper');
+    const parentBox = element.closest('.mini-note-wrapper, .redator-wrapper, details, .jwn-table-wrapper, .journal-sign-wrapper');
 
     if (parentBox) {
         range.setStartAfter(parentBox);
@@ -17435,6 +17481,7 @@ window.insertMiniNoteAtCursor = function(type = 'default', extraData = null) {
         selection.addRange(range);
     }
 
+    // 5. PREPARAÇÃO DE DADOS
     const timestamp = Date.now();
     const isConsultor = type === 'consultor';
     const isRedator = type === 'redator';
@@ -17446,116 +17493,33 @@ window.insertMiniNoteAtCursor = function(type = 'default', extraData = null) {
 
     let finalHTML = "";
 
-    // --- CASO 1: CONSULTOR (CORRIGIDO COM PICKCARDS) ---
+    // Construção do HTML conforme o tipo
     if (isConsultor) {
-        const c = extraData || { biblia: [], livros: [], pubs: [], assoc: false };
-        finalHTML = `
-        <div class="mini-note-wrapper consultor-mode" id="${uniqueId}" contenteditable="false" 
-             data-topics='{}' data-shared="false" data-box-links='{}' 
-             data-biblia-tags='${JSON.stringify(c.biblia)}' 
-             data-livros-tags='${JSON.stringify(c.livros)}' 
-             data-pubs-tags='${JSON.stringify(c.pubs)}' 
-             data-assoc-active="${c.assoc}" 
-             data-results-state="visible">
-             
-            <div style="display: flex; justify-content: space-between; align-items: center; padding-right: 5px;">
-                <textarea class="mini-note-title-input${wrapClass}" placeholder="Título do Consultor..." rows="1" style="color: #c0392b !important; font-weight: bold; flex: 1;"></textarea>
-                <span class="subtitle-toggle" onclick="window.toggleConsultorSubtitle('${uniqueId}')">▼</span>
-            </div>
-            
-            <input type="text" class="consultor-subtitle-input" placeholder="Subtítulo..." value="">
-            ${toolbarHTML}
-            
-            <div class="mini-note-content" contenteditable="true"><p><br></p></div>
-            
-            <div class="mega-painel" id="mp-panel-${uniqueId}" contenteditable="false">
-                <div class="mega-painel-tabs">
-                    <span class="mp-tab active" onclick="window.switchMPTab(this, '🪂')">🪂</span>
-                    <span class="mp-tab" onclick="window.switchMPTab(this, '📖')">📖</span>
-                    <span class="mp-tab" onclick="window.switchMPTab(this, '📔')">📔</span>
-                    <span class="mp-tab" onclick="window.switchMPTab(this, '📚')">📚</span>
-                    <span class="mp-tab" onclick="window.switchMPTab(this, '📦')">📦</span>
-                    <span class="btn-mp-hide" onclick="window.toggleConsultorResults('${uniqueId}', false)">✖</span>
-                </div>
-                
-                <!-- AQUI ESTAVA A FALTA: CONTENTOR DOS PICKCARDS -->
-                <div class="mp-pickcards-container" id="pickcards-${uniqueId}" style="display:none;"></div>
-                
-                <div class="mega-painel-content">A carregar...</div>
-                
-                <div class="mp-controls-wrapper">
-                    <span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'biblia')">🀦</span>
-                    <span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'livros')">🀩</span>
-                    <span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'pubs')">🀧</span>
-                    <span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'assoc')">🀨</span>
-                    <span class="btn-mp-popup" onclick="window.handleMahjongClick('${uniqueId}')">🀄️</span>
-                </div>
-            </div>
-        </div>`;
-    } 
-    // --- CASO 2: REDATOR ---
-    else if (isRedator) {
-        finalHTML = `
-        <div class="redator-wrapper" id="${uniqueId}" contenteditable="false" data-shared="false" data-box-links='{}' data-paragraph="0">
-            <button class="redator-reopen-btn" onclick="window.toggleRedatorHeader('${uniqueId}', true)">T</button>
-            <button class="redator-collapsed-menu-btn" onclick="window.toggleRedatorMenu(this)">⋮</button>
-            <div class="redator-slide-menu">
-                <button class="tool-icon-btn" data-action="sharing-settings" title="Partilha">🔐</button>
-                <button class="tool-icon-btn" data-action="manage-box-links" title="Gestão de Conexões">⚡</button>
-                <button class="tool-icon-btn" data-action="move-up">🔺</button>
-                <button class="tool-icon-btn" data-action="move-down">🔻</button>
-                <button class="tool-icon-btn" data-action="highlight-color">🎨</button>
-                <button class="tool-icon-btn" data-action="manage-mini-note-topics">📋</button>
-                <button class="tool-icon-btn" data-action="append-mini-note">🧬</button>
-                <div style="width:1px; background:rgba(255,255,255,0.2); height:15px; margin:0 2px;"></div>
-                <button class="tool-icon-btn" data-action="delete-mini-note" style="color:#e74c3c;">🗑️</button>
-            </div>
-            <div class="redator-header" id="header-${uniqueId}">
-               <input type="text" class="redator-input" placeholder="Título do Redator..." value="" oninput="this.setAttribute('value', this.value)">
-                <div class="redator-top-tools">
-                    <button class="redator-menu-trigger" onclick="window.toggleRedatorMenu(this)">⋮</button>
-                </div>
-            </div>
-            <div class="redator-content" contenteditable="true" oninput="window.checkRedatorFocus(this, '${uniqueId}')"><p><br></p></div>
-            <div class="redator-dock">
-                 <button class="dock-btn" onclick="event.preventDefault(); window.openRedatorFocus('${uniqueId}')">⇱</button>
-                 <div class="dock-sep"></div>
-                 <button class="dock-btn" onclick="event.preventDefault(); window.addRedatorBelow('${uniqueId}')">+</button>
-            </div>
-        </div>`;
-    }
-    // --- CASO 3: OUTROS ---
-    else {
-        let wrapperClass = 'mini-note-wrapper';
-        if (type === 'question') wrapperClass += ' question-mode';
-        if (isFree) wrapperClass += ' free-mode';
-
+        finalHTML = `<div class="mini-note-wrapper consultor-mode" id="${uniqueId}" contenteditable="false" data-topics='{}' data-shared="false" data-box-links='{}' data-biblia-tags='[]' data-livros-tags='[]' data-pubs-tags='[]' data-assoc-active="false" data-results-state="visible"><div style="display: flex; justify-content: space-between; align-items: center; padding-right: 5px;"><textarea class="mini-note-title-input${wrapClass}" placeholder="Título do Consultor..." rows="1" style="color: #c0392b !important; font-weight: bold; flex: 1;"></textarea><span class="subtitle-toggle" onclick="window.toggleConsultorSubtitle('${uniqueId}')">▼</span></div><input type="text" class="consultor-subtitle-input" placeholder="Subtítulo..." value="">${toolbarHTML}<div class="mini-note-content" contenteditable="true"><p><br></p></div><div class="mega-painel" id="mp-panel-${uniqueId}" contenteditable="false"><div class="mega-painel-tabs"><span class="mp-tab active" onclick="window.switchMPTab(this, '🪂')">🪂</span><span class="mp-tab" onclick="window.switchMPTab(this, '📖')">📖</span><span class="mp-tab" onclick="window.switchMPTab(this, '📔')">📔</span><span class="mp-tab" onclick="window.switchMPTab(this, '📚')">📚</span><span class="mp-tab" onclick="window.switchMPTab(this, '📦')">📦</span><span class="btn-mp-hide" onclick="window.toggleConsultorResults('${uniqueId}', false)">✖</span></div><div class="mp-pickcards-container" id="pickcards-${uniqueId}" style="display:none;"></div><div class="mega-painel-content">A carregar...</div><div class="mp-controls-wrapper"><span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'biblia')">🀦</span><span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'livros')">🀩</span><span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'pubs')">🀧</span><span class="mp-icon-btn" onclick="window.editBoxSource('${uniqueId}', 'assoc')">🀨</span><span class="btn-mp-popup" onclick="window.handleMahjongClick('${uniqueId}')">🀄️</span></div></div></div>`;
+    } else if (isRedator) {
+        finalHTML = `<div class="redator-wrapper" id="${uniqueId}" contenteditable="false" data-shared="false" data-box-links='{}' data-paragraph="0"><button class="redator-reopen-btn" onclick="window.toggleRedatorHeader('${uniqueId}', true)">T</button><button class="redator-collapsed-menu-btn" onclick="window.toggleRedatorMenu(this)">⋮</button><div class="redator-slide-menu"><button class="tool-icon-btn" data-action="move-up">🔺</button><button class="tool-icon-btn" data-action="move-down">🔻</button><button class="tool-icon-btn" data-action="delete-mini-note" style="color:#e74c3c;">🗑️</button></div><div class="redator-header" id="header-${uniqueId}"><input type="text" class="redator-input" placeholder="Título do Redator..." value="" oninput="this.setAttribute('value', this.value)"><div class="redator-top-tools"><button class="redator-menu-trigger" onclick="window.toggleRedatorMenu(this)">⋮</button></div></div><div class="redator-content" contenteditable="true" oninput="window.checkRedatorFocus(this, '${uniqueId}')"><p><br></p></div><div class="redator-dock"><button class="dock-btn" onclick="event.preventDefault(); window.openRedatorFocus('${uniqueId}')">⇱</button><div class="dock-sep"></div><button class="dock-btn" onclick="event.preventDefault(); window.addRedatorBelow('${uniqueId}')">+</button></div></div>`;
+    } else {
+        let wrapperClass = 'mini-note-wrapper' + (type === 'question' ? ' question-mode' : (isFree ? ' free-mode' : ''));
         const titlePlaceholder = type === 'question' ? "Pergunta?" : "Título...";
         const titleHTML = isFree ? '' : `<textarea class="mini-note-title-input${wrapClass}" contenteditable="true" placeholder="${titlePlaceholder}" rows="1"></textarea>`;
         finalHTML = `<div class="${wrapperClass}" id="${uniqueId}" contenteditable="false" data-topics='{}' data-shared="false" data-box-links='{}'>${titleHTML}${toolbarHTML}<div class="mini-note-content" contenteditable="true"><p><br></p></div></div>`;
     }
 
+    // 6. INSERÇÃO E REGENERAÇÃO DE PARÁGRAFO
+    // Inserimos a caixa e um <p> vazio para garantir que o usuário pode clicar abaixo
     document.execCommand('insertHTML', false, finalHTML + '<p><br></p>');
     scrollContainer.scrollTop = savedScrollTop;
 
     setTimeout(() => {
         const newBox = document.getElementById(uniqueId);
         if (newBox) {
-            if (isRedator) {
-                const content = newBox.querySelector('.redator-content');
-                if (content) content.focus();
-            } else if (isFree) {
-                const content = newBox.querySelector('.mini-note-content');
-                if (content) content.focus();
-            } else {
-                const title = newBox.querySelector('.mini-note-title-input');
-                if (title) title.focus();
-            }
+            const focusTarget = isRedator ? '.redator-content' : (isFree ? '.mini-note-content' : '.mini-note-title-input');
+            const elToFocus = newBox.querySelector(focusTarget);
+            if (elToFocus) elToFocus.focus();
             
-            if (isConsultor) window.updateConsultorIconsVisual(newBox);
-            if (typeof window.fixLegacyMiniNotes === 'function') window.fixLegacyMiniNotes();
-            if (typeof window.updateRedatorParagraphs === 'function') window.updateRedatorParagraphs();
-            
+            if (isConsultor && window.updateConsultorIconsVisual) window.updateConsultorIconsVisual(newBox);
+            if (window.fixLegacyMiniNotes) window.fixLegacyMiniNotes();
+            if (window.updateRedatorParagraphs) window.updateRedatorParagraphs();
             updateSaveStatus('unsaved');
         }
     }, 50);
@@ -49465,18 +49429,34 @@ if (protectedEditor) {
             const selection = window.getSelection();
             if (!selection.rangeCount) return;
 
+            const range = selection.getRangeAt(0);
             const anchorNode = selection.anchorNode;
             const el = anchorNode.nodeType === 3 ? anchorNode.parentElement : anchorNode;
-            const contentDiv = el.closest(protectedClasses.join(','));
+            
+            // --- NOVA PROTEÇÃO: BLOQUEIO DE SUBIDA PARA LINHA 1 ---
+            // Verifica se existe a primeira linha sagrada
+            const firstLine = noteContentEditor.querySelector('.sacred-first-line') || noteContentEditor.firstElementChild;
+
+            // Se o cursor estiver no início de um bloco e o bloco anterior for a Linha 1
+            if (range.startOffset === 0) {
+                const currentBlock = el.closest('p, div, .mini-note-wrapper, details');
+                if (currentBlock && currentBlock.previousElementSibling === firstLine) {
+                    console.log("🛡️ Bloqueio: Impedindo que este bloco suba para a Linha 1.");
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                }
+            }
+            // -------------------------------------------------------
+
+            // Proteção original das caixas (Subnotas/Redator)
+            const contentDiv = el.closest('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content, .cube-content');
 
             if (contentDiv) {
-                // Só bloqueia se for o INÍCIO ABSOLUTO
                 if (isCursorAtStart(selection, contentDiv)) {
                     console.log("🛡️ [BARREIRA] Cursor no topo da caixa. Apagar bloqueado.");
                     e.preventDefault(); 
                     e.stopPropagation();
-                } else {
-                    // Se estiver na linha 2, permite apagar (o que vai fundir com a linha 1)
                 }
             }
         }
@@ -55761,6 +55741,26 @@ document.getElementById('aquarium-content-canvas').addEventListener('mousedown',
         activeTableWrapper = cell.closest('.jwn-table-wrapper');
     }
 });
+
+// Função para garantir que a primeira linha seja sempre um parágrafo de texto
+function ensureFirstLineIsText() {
+    const editor = document.getElementById('note-content-editor');
+    if (!editor) return;
+
+    const firstChild = editor.firstElementChild;
+
+    // Se o editor estiver vazio ou o primeiro elemento não for um parágrafo comum
+    if (!firstChild || firstChild.classList.contains('mini-note-wrapper') || 
+        firstChild.classList.contains('redator-wrapper') || 
+        firstChild.tagName === 'DETAILS' || 
+        firstChild.classList.contains('jwn-table-wrapper')) {
+        
+        const p = document.createElement('p');
+        p.innerHTML = '<br>';
+        p.className = 'sacred-first-line'; // Classe para identificarmos
+        editor.prepend(p);
+    }
+}
 
 // Aplicar com prioridade máxima (useCapture: true)
 // Usamos touchstart para Mobile e mousedown para garantir que não falha no simulador
