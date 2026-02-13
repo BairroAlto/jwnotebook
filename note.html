@@ -3942,20 +3942,20 @@ html, body {
 
     /* ============================================================
    EDITOR UNIFICADO: GERAL (PC E BASE MOBILE)
-   ============================================================ */ccccccccccccccccccccccc
+   ============================================================ */
 #note-content-editor {
-    /* 1. Estrutura e Scroll (Padrão PC) */
+    /* 1. Estrutura e Scroll */
     position: relative;
     flex: 1;
     width: 100%;
-    min-height: 100%;
+    min-height: 100%; /* Essencial para o padding funcionar em notas curtas */
     display: block;
     box-sizing: border-box;
-    overflow-y: auto;
+    overflow-y: auto;   /* Scroll interno no PC */
     overflow-x: hidden;
     
     /* 2. O GAP DE 30% NO FINAL (VITAL) */
-    /* Este padding garante que podes sempre "puxar" a nota para cima */
+    /* Permite "puxar" a nota para cima e deixa espaço para clicar no vazio */
     padding: 10px 20px 30vh 20px !important; 
     
     /* 3. Estética e Tipografia */
@@ -3965,20 +3965,36 @@ html, body {
     color: var(--text-color);
     font-size: 1.1em;
     line-height: 1.6;
-    cursor: text;
     
-    /* 4. Proteções de Sistema e Toque */
+    /* 4. Interatividade e Toque */
+    cursor: text;
+    pointer-events: auto !important; /* Garante que o fundo responde ao clique */
+    -webkit-tap-highlight-color: transparent;
+    
+    /* 5. Proteções de Sistema */
     overflow-anchor: none !important;
     overscroll-behavior-y: contain;
     -webkit-overflow-scrolling: touch;
     touch-action: pan-y;
-    -webkit-tap-highlight-color: transparent;
     
-    /* 5. Seleção de Texto (Crítico para Mobile) */
+    /* 6. Seleção de Texto (Crítico para Mobile/iOS) */
     user-select: text !important;
     -webkit-user-select: text !important;
     -webkit-touch-callout: default !important;
 }
+
+/* Garante que os parágrafos e elementos internos seguem o padrão */
+#note-content-editor p, 
+#note-content-editor div, 
+#note-content-editor li, 
+#note-content-editor span {
+    font-size: inherit;
+    line-height: inherit;
+}
+
+/* Estilos de Título dentro do Editor */
+#note-content-editor h1 { font-size: 2em; font-weight: bold; color: var(--accent-color); margin: 0.6em 0; }
+#note-content-editor h2 { font-size: 1.5em; font-weight: bold; color: var(--text-color); margin: 0.5em 0; }
 
 /* Garante que os parágrafos não herdam margens estranhas */
 #note-content-editor p, 
@@ -3992,11 +4008,11 @@ html, body {
     /* 6. Conteúdo da Nota (Padding Gigante para o Teclado) */
  #note-content-editor {
         display: block !important;
-        overflow: visible !important; /* Deixa o scroll para o container pai */
-        height: auto !important;      /* Permite que o editor cresça livremente */
+        overflow: visible !important; /* Deixa o scroll para o #editor-area */
+        height: auto !important;      /* Permite esticar */
         padding-left: 15px !important;
         padding-right: 15px !important;
-        /* O padding-bottom de 30vh é herdado do bloco acima automaticamente */
+        min-height: 70vh !important;  /* Reforço de área clicável */
     }
 }
 
@@ -54091,47 +54107,60 @@ document.getElementById('note-content-editor').addEventListener('input', (e) => 
 
 // FORÇAR CURSOR NO FINAL E IMPEDIR SALTO PARA A 1ª LINHA
 document.getElementById('note-content-editor').addEventListener('mousedown', function(e) {
-    // Se o clique foi no fundo (na própria div) e não num elemento lá dentro
+    // Só age se o clique for exatamente no fundo do editor (não dentro de uma caixa)
     if (e.target === this) {
-        // Impede comportamentos estranhos de seleção do browser
-        // e.preventDefault(); // Comentado para permitir foco nativo mais fluido
+        // e.preventDefault(); // Comentado para evitar bloqueio em alguns Androids
 
-        let last = this.lastElementChild;
-        
-        // Lista de blocos que não aceitam texto direto (precisam de um <p> depois)
+        // 1. Identifica o contentor de scroll
+        const scrollContainer = document.getElementById('editor-area') || this;
+        const savedScrollTop = scrollContainer.scrollTop;
+
+        // 2. Lista de elementos que NÃO aceitam escrita direta (Barreiras)
         const isBox = (el) => el && (
             el.classList.contains('mini-note-wrapper') || 
             el.classList.contains('redator-wrapper') || 
             el.classList.contains('journal-sign-wrapper') ||
             el.classList.contains('journal-id-card') ||
             el.classList.contains('journal-cube-wrapper') ||
-            el.tagName === 'DETAILS' ||
             el.classList.contains('jwn-table-wrapper') ||
-            el.classList.contains('jwn-timeline-wrapper')
+            el.classList.contains('jwn-timeline-wrapper') ||
+            el.classList.contains('ref-depot-wrapper') ||
+            el.tagName === 'DETAILS'
         );
 
-        // Se o último elemento for uma "caixa" ou se o editor estiver vazio, cria um parágrafo
+        let last = this.lastElementChild;
+
+        // 3. SEGREDO: Se a nota está vazia ou acaba numa "caixa", cria parágrafo de texto no fim
         if (!last || isBox(last)) {
             const p = document.createElement('p');
-            p.innerHTML = '<br>';
+            p.innerHTML = '<br>'; // Linha em branco
             this.appendChild(p);
             last = p;
         }
 
-        // Foca no editor
-        this.focus();
+        // 4. FORÇA O FOCO E O TECLADO
+        this.focus({ preventScroll: true }); 
 
-        // Posiciona o cursor no último parágrafo de texto
         const range = document.createRange();
         const sel = window.getSelection();
+        
         try {
+            // Tenta colocar o cursor no último parágrafo de texto real
             range.selectNodeContents(last);
-            range.collapse(false); // true = início, false = fim
+            range.collapse(false); // Coloca o cursor no fim
             sel.removeAllRanges();
             sel.addRange(range);
         } catch (err) {
-            console.warn("Erro ao focar no fundo:", err);
+            console.warn("Erro ao posicionar cursor:", err);
         }
+
+        // 5. RESTAURO DE SCROLL (Evita que a página salte)
+        if (scrollContainer.scrollTop !== savedScrollTop) {
+            scrollContainer.scrollTop = savedScrollTop;
+        }
+
+        // 6. Garante que o status visual muda para "por guardar"
+        if (typeof updateSaveStatus === 'function') updateSaveStatus('unsaved');
     }
 }, true);
 
