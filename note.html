@@ -11719,6 +11719,46 @@ html, body {
     border: none;
 }
 
+/* Estilos do Slash Menu */
+#slash-menu {
+    background-color: var(--sidebar-color);
+    border: 1px solid var(--accent-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+.slash-section-header {
+    padding: 10px 12px 5px 12px;
+    font-size: 11px;
+    font-weight: bold;
+    color: var(--text-muted-color);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background: rgba(255,255,255,0.02);
+}
+
+.slash-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 15px;
+    cursor: pointer;
+    transition: background 0.2s;
+    color: var(--text-color);
+    font-size: 14px;
+}
+
+.slash-item.selected {
+    background-color: var(--accent-color);
+    color: white;
+}
+
+.slash-item .icon {
+    font-size: 18px;
+    width: 24px;
+    text-align: center;
+}
+
 </style>
 
 
@@ -13941,6 +13981,13 @@ html, body {
             <button class="modal-btn primary" id="confirm-auto-insert" style="display: none; background-color: #2ecc71;">Gerar Estrutura</button>
         </div>
     </div>
+</div>
+
+<!-- Menu de Comandos Rápidos (Tipo Notion) -->
+<div id="slash-menu" class="suggestion-popup" style="display: none; position: absolute; z-index: 10000; width: 280px; max-height: 400px; overflow-y: auto;">
+    <ul id="slash-menu-list" class="suggestion-list">
+        <!-- Gerado via JavaScript -->
+    </ul>
 </div>
 
 </body>
@@ -56055,6 +56102,264 @@ window.toggleNoteStar = async function(noteId, currentlyStarred) {
     }
 };
 
+// ============================================================
+// MOTOR DO SLASH MENU (COMANDO <)
+// ============================================================
+
+let currentSlashIndex = 0;
+let slashRange = null;
+
+// Definição dos itens do menu
+const getSlashItems = (isJournal, isInsideBox) => {
+    
+    // --- CENÁRIO A: DENTRO DE UMA CAIXA ---
+    if (isInsideBox) {
+        const allowedItems = [
+            { label: "Título Toggle", icon: "☂", action: () => document.querySelector('button[data-action="insert-toggle-h2"]').click() },
+            { label: "Texto Arrastável", icon: "ᯓ", action: () => document.querySelector('button[data-action="make-draggable"]').click() },
+            { label: "Checklist", icon: "☑️", action: () => document.querySelector('button[data-action="insert-checkbox"]').click() },
+            { label: "Linha Separadora", icon: "―", action: () => document.execCommand('insertHorizontalRule') }
+        ];
+
+        if (isJournal) {
+            allowedItems.push(
+                { label: "Duas Colunas", icon: "⏸️", action: () => document.querySelector('button[data-action="insert-2-cols"]').click() },
+                { label: "Imagem", icon: "🖼️", action: () => document.querySelector('button[data-action="insert-image"]').click() }
+            );
+        }
+
+        return [{ title: "Permitido Aqui", items: allowedItems }];
+    }
+
+    // --- CENÁRIO B: NA RAIZ DA NOTA ---
+    const groups = [
+        {
+            title: "Caixas Conectoras",
+            items: [
+                { label: "SubNota", icon: "📘", action: () => insertMiniNoteAtCursor('default') },
+                { label: "Questão", icon: "📗", action: () => insertMiniNoteAtCursor('question') },
+                { label: "Contentor", icon: "📙", action: () => insertMiniNoteAtCursor('free') },
+                { label: "Consultor", icon: "📕", action: () => {
+                    const id = insertMiniNoteAtCursor('consultor');
+                    window.openConsultorWheel(id);
+                }}
+            ]
+        },
+        {
+            title: "Ferramentas",
+            items: [
+                { label: "Título Toggle", icon: "☂", action: () => document.querySelector('button[data-action="insert-toggle-h2"]').click() },
+                { label: "Texto Arrastável", icon: "ᯓ", action: () => document.querySelector('button[data-action="make-draggable"]').click() },
+                { label: "Checklist", icon: "☑️", action: () => document.querySelector('button[data-action="insert-checkbox"]').click() },
+                { label: "Linha Separadora", icon: "―", action: () => document.execCommand('insertHorizontalRule') },
+                { label: "Tabela", icon: "🧮", action: () => document.querySelector('button[data-action="insert-table"]').click() },
+                { label: "Calendário", icon: "📅", action: () => document.querySelector('button[data-action="insert-date"]').click() },
+                { label: "Linha Cronológica", icon: "🌳", action: () => document.querySelector('button[data-action="insert-timeline"]').click() },
+                { label: "Grua de Referências", icon: "🏗️", action: () => document.querySelector('button[data-action="insert-ref-depot"]').click() }
+            ]
+        }
+    ];
+
+    if (isJournal) {
+        groups[0].items.push({ label: "Redator", icon: "📓", action: () => insertMiniNoteAtCursor('redator') });
+        groups[1].items.push(
+            { label: "Imagem", icon: "🖼️", action: () => document.querySelector('button[data-action="insert-image"]').click() },
+            { label: "Bloco de Raciocínio", icon: "🪧", action: () => document.querySelector('button[data-action="insert-sign"]').click() },
+            { label: "Duas Colunas", icon: "⏸️", action: () => document.querySelector('button[data-action="insert-2-cols"]').click() },
+            { label: "Cartão Temático", icon: "🪪", action: () => document.querySelector('button[data-action="insert-card"]').click() },
+            { label: "Cubo", icon: "🧊", action: () => document.querySelector('button[data-action="insert-cube"]').click() }
+        );
+    }
+
+    // --- AQUI ESTÁ A ALTERAÇÃO ---
+    groups.push({
+        title: "Avançada",
+        items: [
+            { label: "Exportar Sentinela", icon: "🤖", action: () => window.openRobotModal() },
+            { label: "Editor de Margem", icon: "🔬", action: () => document.querySelector('button[data-action="open-margin-editor"]').click() },
+            
+            // Alterado: Chama createDirectPostIt() em vez de clicar no botão amarelo da barra
+            { label: "Post-It", icon: "📒", action: () => window.createDirectPostIt() } 
+        ]
+    });
+
+    return groups;
+};
+
+// Detetar a digitação do <
+noteContentEditor.addEventListener('keydown', (e) => {
+    const menu = document.getElementById('slash-menu');
+    const isVisible = menu.style.display === 'block';
+
+    // Se o menu está visível, controla as setas e enter
+    if (isVisible) {
+        const items = menu.querySelectorAll('.slash-item');
+        
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            currentSlashIndex = (currentSlashIndex + 1) % items.length;
+            updateSlashSelection(items);
+        } 
+        else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            currentSlashIndex = (currentSlashIndex - 1 + items.length) % items.length;
+            updateSlashSelection(items);
+        } 
+        else if (e.key === 'Enter') {
+            e.preventDefault();
+            items[currentSlashIndex].click();
+        } 
+        else if (e.key === 'Escape') {
+            hideSlashMenu();
+        }
+    }
+});
+
+noteContentEditor.addEventListener('input', (e) => {
+    const selection = window.getSelection();
+    if (!selection.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    const text = range.startContainer.textContent || "";
+    const offset = range.startOffset;
+
+    // Se o último caractere digitado for <
+    if (text.charAt(offset - 1) === '<') {
+        slashRange = range.cloneRange();
+        // Ajusta o range para apanhar apenas o caractere < para poder apagá-lo depois
+        slashRange.setStart(range.startContainer, offset - 1);
+        showSlashMenu();
+    } else {
+        if (document.getElementById('slash-menu').style.display === 'block') {
+            hideSlashMenu();
+        }
+    }
+});
+
+function showSlashMenu() {
+    const menu = document.getElementById('slash-menu');
+    const list = document.getElementById('slash-menu-list');
+    
+    // 1. Detetar Contexto
+    const selection = window.getSelection();
+    let node = selection.anchorNode;
+    // Se for nó de texto, pega o elemento pai
+    if (node && node.nodeType === 3) node = node.parentNode;
+    
+    // Verifica se estamos dentro de qualquer caixa "proibida"
+    // Inclui Subnotas, Redator, Raciocínio, Depósito, Cartão, Post-it
+    const boxSelectors = '.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .ref-depot-wrapper, .journal-id-card, .post-it-note';
+    const isInsideBox = !!node.closest(boxSelectors);
+
+    const isJournal = (window.currentNoteType === 'jornal');
+    
+    // 2. Obter itens filtrados
+    const groups = getSlashItems(isJournal, isInsideBox);
+
+    list.innerHTML = '';
+    currentSlashIndex = 0;
+
+    groups.forEach(group => {
+        const header = document.createElement('div');
+        header.className = 'slash-section-header';
+        header.textContent = group.title;
+        list.appendChild(header);
+
+        group.items.forEach(item => {
+            const li = document.createElement('li');
+            li.className = 'slash-item';
+            li.innerHTML = `<span class="icon">${item.icon}</span><span class="label">${item.label}</span>`;
+            li.onclick = () => {
+                // Apaga o <
+                if (slashRange) {
+                    slashRange.deleteContents();
+                }
+                // Executa ação
+                item.action();
+                hideSlashMenu();
+            };
+            list.appendChild(li);
+        });
+    });
+
+    // Posicionamento (Mantém igual)
+    const rect = window.getSelection().getRangeAt(0).getBoundingClientRect();
+    
+    // Ajuste de segurança para não sair do ecrã em baixo
+    let topPos = rect.bottom + window.scrollY + 5;
+    const menuHeight = 300; // Altura estimada
+    if (rect.bottom + menuHeight > window.innerHeight) {
+        topPos = rect.top + window.scrollY - menuHeight - 5; // Abre para cima se não couber
+    }
+
+    menu.style.display = 'block';
+    menu.style.top = `${topPos}px`;
+    menu.style.left = `${rect.left + window.scrollX}px`;
+
+    updateSlashSelection(menu.querySelectorAll('.slash-item'));
+}
+
+function updateSlashSelection(items) {
+    items.forEach((item, idx) => {
+        if (idx === currentSlashIndex) {
+            item.classList.add('selected');
+            item.scrollIntoView({ block: 'nearest' });
+        } else {
+            item.classList.remove('selected');
+        }
+    });
+}
+
+function hideSlashMenu() {
+    document.getElementById('slash-menu').style.display = 'none';
+}
+
+// Fechar se clicar fora
+document.addEventListener('mousedown', (e) => {
+    if (!e.target.closest('#slash-menu')) hideSlashMenu();
+});
+
+// Função para criar Post-it Médio diretamente (Bypassa o popup)
+window.createDirectPostIt = function() {
+    const editor = document.getElementById('note-content-editor');
+    if (!editor) return;
+
+    // Tamanho Médio Padrão
+    const width = '250px';
+    const height = '180px';
+
+    // Calcula a posição visível (onde o utilizador está a olhar)
+    const visibleTop = editor.scrollTop + 100; 
+    const visibleLeft = 50; 
+
+    // Cria o elemento
+    const container = document.createElement('div');
+    container.className = 'post-it-note active-note';
+    container.id = 'postit_' + Date.now();
+    container.setAttribute('draggable', 'false'); // O drag ativa-se no hover
+    
+    container.style.width = width;
+    container.style.height = height;
+    container.style.top = visibleTop + 'px';
+    container.style.left = visibleLeft + 'px';
+    container.style.position = 'absolute';
+    container.style.zIndex = '20';
+    
+    container.innerHTML = `
+        <div class="post-it-drag-handle" contenteditable="false">✥</div>
+        <div class="post-it-cut-btn" contenteditable="false" title="Cortar para Texto">✂️</div>
+        <div class="post-it-content" contenteditable="true" data-placeholder="Escreva aqui..."></div>
+    `;
+    
+    editor.appendChild(container);
+    
+    // Foca imediatamente para escrever
+    setTimeout(() => {
+        const content = container.querySelector('.post-it-content');
+        if(content) content.focus();
+    }, 100);
+
+    if (typeof saveNote === 'function') saveNote();
+};
 
 
 // Aplicar com prioridade máxima (useCapture: true)
