@@ -11712,6 +11712,13 @@ html, body {
     text-transform: uppercase;
 }
 
+/* No seu CSS, adicione isto para os botões das sub-abas do tópico */
+.modal-btn.primary-active {
+    background-color: var(--accent-color) !important;
+    color: white !important;
+    border: none;
+}
+
 </style>
 
 
@@ -18960,39 +18967,32 @@ document.getElementById('ref-tabs').addEventListener('click', (e) => {
     if (!btn) return;
     const target = btn.dataset.refTab;
     
-    // UI: Muda o estado ativo dos botões
     e.currentTarget.querySelectorAll('button').forEach(el => el.classList.remove('active'));
     btn.classList.add('active');
-
-    // UI: Esconde todos os conteúdos
     document.querySelectorAll('.ref-tab-content').forEach(el => el.style.display = 'none');
     
-    // Mostra o conteúdo da aba selecionada
     const contentEl = document.getElementById(`ref-content-${target}`);
-    if (contentEl) {
-        contentEl.style.display = (target === 'links' || target === 'puzzle' || target === 'dossie') ? 'flex' : 'block';
-    }
+    if (contentEl) contentEl.style.display = (target === 'links' || target === 'puzzle' || target === 'dossie') ? 'flex' : 'block';
 
-    // --- LÓGICA DE CARREGAMENTO SOB DEMANDA (LAZY LOAD) ---
+    // --- LÓGICA DE CARREGAMENTO ESPECÍFICO ---
     if (target === 'references') {
         const listElement = document.getElementById('references-list');
         
-        // Só carrega se a lista contiver o texto de placeholder ou estiver vazia
-        // Isso evita carregar de novo se o usuário ficar alternando entre abas
         if (listElement.innerHTML.includes('Clique na aba') || listElement.innerHTML === '') {
-            if (activeReferenceEntity && activeReferenceEntity.name) {
-                console.log("⚡ Carregando citações sob demanda para:", activeReferenceEntity.name);
+            const type = activeReferenceEntity.type;
+            
+            if (type === 'topico' || type === 'subtopico') {
+                // Chama a busca estruturada para Tópicos
+                renderTopicResultsList(activeReferenceEntity.id, type);
+            } else {
+                // Chama a busca por texto para Personagens, Locais, etc.
                 renderUniversalTextSearch(activeReferenceEntity.name);
             }
         }
     }
 
     if (target === 'links') renderPanelLinks();
-    if (target === 'dossie') {
-        activeMicaId = null;
-        isDossieEditMode = false;
-        renderDossie();
-    }
+    if (target === 'dossie') renderDossie();
 });
 
 // 2. Botão Editar do Painel
@@ -20011,22 +20011,6 @@ async function showTopicReferencesPanel(id, name, description, type) {
         referencesContent.style.display = 'block';
         referencesContent.classList.add('active');
 
-        // Injetar o layout de sub-abas (Notas | Caixas)
-        referencesContent.innerHTML = `
-            <div id="topic-subtabs" style="display: flex; gap: 5px; padding: 10px; background: rgba(0,0,0,0.1); border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 10;">
-                <button id="btn-subtab-notes" class="modal-btn secondary" 
-                        style="flex:1; font-size: 11px; padding: 8px; border-radius: 4px;" 
-                        onclick="window.switchTopicSubTab('notes')">
-                    📄 Notas (...)
-                </button>
-                <button id="btn-subtab-boxes" class="modal-btn secondary" 
-                        style="flex:1; font-size: 11px; padding: 8px; border-radius: 4px;" 
-                        onclick="window.switchTopicSubTab('boxes')">
-                    📦 Caixas (...)
-                </button>
-            </div>
-            <ul id="references-list" style="list-style: none; padding: 0;"></ul>
-        `;
     }
 
     // 5. ATUALIZAR TOOLBAR
@@ -20045,32 +20029,27 @@ async function showTopicReferencesPanel(id, name, description, type) {
     
 
 // Função Auxiliar para preencher a lista de referências (Aba 2)
-async function renderTopicResultsList(id, type) {
+async function renderTopicResultsList(targetId, targetType) {
     const listElement = document.getElementById('references-list');
     if (!listElement) return;
 
-    // 1. Garantia de que o ID é uma String limpa
-    const targetId = String(id).trim();
-    const targetType = String(type).trim();
-
-    console.group(`🔍 [BUSCA PROFUNDA] Tópico: ${targetId} (${targetType})`);
-    listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A organizar citações...</span></div>';
+    listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A organizar por Notas e Caixas...</span></div>';
 
     try {
         const { collection, query, where, getDocs, doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        
-        // BUSCAR FAVORITOS
+        const myUid = auth.currentUser.uid;
+
+        // 1. BUSCAR FAVORITOS
         const colName = getCollectionFromType(targetType);
         const entitySnap = await getDoc(doc(db, colName, targetId));
         const favoriteMap = entitySnap.exists() ? (entitySnap.data().favorites || {}) : {};
-        console.log("📍 Mapa de Favoritos:", favoriteMap);
 
-        // BUSCAR NOTAS
-        const q = query(collection(db, 'pastas'), where('estado', '==', 'ativa'), where('userId', '==', auth.currentUser.uid));
+        // 2. BUSCAR TODAS AS NOTAS ATIVAS
+        const q = query(collection(db, 'pastas'), where('estado', '==', 'ativa'), where('userId', '==', myUid));
         const snapshot = await getDocs(q);
         
-        window.topicNoteResults = [];
-        window.topicBoxResults = [];
+        window.topicNoteResults = []; // Global para as sub-abas
+        window.topicBoxResults = [];  // Global para as sub-abas
         const parser = new DOMParser();
 
         snapshot.forEach(docSnap => {
@@ -20079,16 +20058,14 @@ async function renderTopicResultsList(id, type) {
             const content = data.conteudo || "";
             const isStarred = !!favoriteMap[noteId];
 
-            // --- FILTRO NOTAS (🏷️) ---
+            // --- VERIFICAÇÃO A: NOTA (Interligar a Página) ---
             let matchInNote = false;
             if (data.topicosSelecionados) {
-                // Verificação robusta para Tópico Pai
                 if (targetType === 'topico' && data.topicosSelecionados[targetId]) {
                     matchInNote = true;
-                } 
-                // Verificação robusta para Subtópico
-                else if (targetType === 'subtopico') {
-                    const allSubs = Object.values(data.topicosSelecionados).flat().map(String);
+                } else if (targetType === 'subtopico') {
+                    // Verifica se o subId está dentro de qualquer array do mapa
+                    const allSubs = Object.values(data.topicosSelecionados).flat();
                     if (allSubs.includes(targetId)) matchInNote = true;
                 }
             }
@@ -20097,11 +20074,11 @@ async function renderTopicResultsList(id, type) {
                 window.topicNoteResults.push({
                     id: noteId, name: data.nome, isStarred,
                     snippet: `<p style="color:var(--accent-color); font-weight:bold;">📄 Tópico anexado à nota principal.</p>`,
-                    ultimaedicao: data.ultimaedicao?.toMillis() || 0
+                    ultimaedicao: data.ultimaedicao?.toMillis() || data.createdAt?.toMillis() || 0
                 });
             }
 
-            // --- FILTRO CAIXAS (📋) ---
+            // --- VERIFICAÇÃO B: CAIXAS (Tópicos da Caixa) ---
             const docHTML = parser.parseFromString(content, 'text/html');
             const boxes = docHTML.querySelectorAll('.mini-note-wrapper, .redator-wrapper');
             
@@ -20114,27 +20091,19 @@ async function renderTopicResultsList(id, type) {
 
                         if (targetType === 'topico' && boxTopics[targetId]) matchInBox = true;
                         else if (targetType === 'subtopico') {
-                            const allBoxSubs = Object.values(boxTopics).flat().map(String);
+                            const allBoxSubs = Object.values(boxTopics).flat();
                             if (allBoxSubs.includes(targetId)) matchInBox = true;
                         }
 
                         if (matchInBox) {
-                            // Tenta pegar o título real da caixa
                             const titleInput = box.querySelector('.mini-note-title-input, .redator-input');
-                            const contentDiv = box.querySelector('.mini-note-content, .redator-content');
-                            let boxTitle = titleInput ? (titleInput.value || titleInput.textContent).trim() : "";
-                            let rawText = contentDiv ? contentDiv.innerText.replace(/\s+/g, ' ').trim() : "";
-
-                            if (!boxTitle) {
-                                const words = rawText.split(' ');
-                                boxTitle = words.slice(0, 15).join(' ') + (words.length > 15 ? "..." : "");
-                            }
+                            const boxTitle = titleInput ? (titleInput.value || titleInput.textContent).trim() : "Caixa Sem Título";
 
                             window.topicBoxResults.push({
                                 id: noteId, boxId: box.id, isStarred,
-                                name: `CAIXA - ${boxTitle || "Sem título"}`,
-                                snippet: `<div style="padding:5px 0;"><p style="color:var(--text-muted-color); font-size:0.8em; margin-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:5px;">Local: 📄 ${data.nome}</p><div style="font-size:0.9em; line-height:1.5; color:var(--text-color); font-style: italic; opacity:0.8;">"${rawText.substring(0, 200)}..."</div></div>`,
-                                ultimaedicao: data.ultimaedicao?.toMillis() || 0
+                                name: `📦 ${boxTitle}`,
+                                snippet: `<p style="font-size:0.8em; color:var(--text-muted-color);">Local: 📄 ${data.nome}</p>`,
+                                ultimaedicao: data.ultimaedicao?.toMillis() || data.createdAt?.toMillis() || 0
                             });
                         }
                     } catch(e) {}
@@ -20142,34 +20111,28 @@ async function renderTopicResultsList(id, type) {
             });
         });
 
-        console.log(`✅ Notas encontradas: ${window.topicNoteResults.length}`);
-        console.log(`✅ Caixas encontradas: ${window.topicBoxResults.length}`);
-
-        // Ordenar: Favoritos (Estrelas) primeiro
+        // Ordenação
         const sortFunc = (list) => list.sort((a, b) => (a.isStarred === b.isStarred) ? (b.ultimaedicao - a.ultimaedicao) : a.isStarred ? -1 : 1);
         window.topicNoteResults = sortFunc(window.topicNoteResults);
         window.topicBoxResults = sortFunc(window.topicBoxResults);
 
-        // Atualizar visual dos botões de aba
-        const bNotes = document.getElementById('btn-subtab-notes');
-        const bBoxes = document.getElementById('btn-subtab-boxes');
-        if (bNotes) bNotes.textContent = `📄 Notas (${window.topicNoteResults.length})`;
-        if (bBoxes) bBoxes.textContent = `📦 Caixas (${window.topicBoxResults.length})`;
+        // 3. RENDERIZAR O LAYOUT DE SUB-ABAS
+        listElement.innerHTML = `
+            <div id="topic-subtabs" style="display: flex; gap: 5px; padding: 10px; background: rgba(0,0,0,0.1); border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 10;">
+                <button id="btn-subtab-notes" class="modal-btn" style="flex:1; font-size: 11px;" onclick="window.switchTopicSubTab('notes')">📄 Notas (${window.topicNoteResults.length})</button>
+                <button id="btn-subtab-boxes" class="modal-btn" style="flex:1; font-size: 11px;" onclick="window.switchTopicSubTab('boxes')">📦 Caixas (${window.topicBoxResults.length})</button>
+            </div>
+            <div id="topic-results-container"></div>
+        `;
 
-        // Determinar qual aba mostrar agora
-        let activeTab = 'notes';
-        // Se a aba de caixas estiver pintada de azul, mantém lá
-        if (bBoxes && bBoxes.classList.contains('primary-active')) activeTab = 'boxes';
-        // Se não, vai para a que tem conteúdo
-        else if (window.topicBoxResults.length > 0 && window.topicNoteResults.length === 0) activeTab = 'boxes';
-
-        window.switchTopicSubTab(activeTab);
+        // Ativa a aba que tem resultados primeiro
+        const initialTab = window.topicNoteResults.length >= window.topicBoxResults.length ? 'notes' : 'boxes';
+        window.switchTopicSubTab(initialTab);
 
     } catch (e) {
-        console.error("❌ Erro fatal na busca:", e);
+        console.error("Erro na busca de tópicos:", e);
         listElement.innerHTML = '<li style="padding:20px; color:red;">Erro ao processar dados.</li>';
     }
-    console.groupEnd();
 }
 
 // ====================================================================
@@ -55942,22 +55905,48 @@ function ensureFirstLineIsText() {
 window.switchTopicSubTab = function(tab) {
     const btnNotes = document.getElementById('btn-subtab-notes');
     const btnBoxes = document.getElementById('btn-subtab-boxes');
+    const container = document.getElementById('topic-results-container');
 
-    // Se os botões sumiram do DOM, abortamos a pintura mas deixamos os dados passarem
-    if (btnNotes && btnBoxes) {
-        btnNotes.className = 'modal-btn secondary';
-        btnBoxes.className = 'modal-btn secondary';
-        if (tab === 'notes') btnNotes.className = 'modal-btn primary-active';
-        else btnBoxes.className = 'modal-btn primary-active';
+    if (!btnNotes || !btnBoxes) return;
+
+    if (tab === 'notes') {
+        btnNotes.className = 'modal-btn primary-active'; // Ativo
+        btnBoxes.className = 'modal-btn secondary';      // Inativo
+        window.allCitationsResults = [...window.topicNoteResults];
+    } else {
+        btnBoxes.className = 'modal-btn primary-active'; // Ativo
+        btnNotes.className = 'modal-btn secondary';      // Inativo
+        window.allCitationsResults = [...window.topicBoxResults];
     }
 
-    // CARREGA DADOS PARA A VARIÁVEL GLOBAL DE RENDERIZAÇÃO
-    window.allCitationsResults = (tab === 'notes') ? [...window.topicNoteResults] : [...window.topicBoxResults];
+    // Chama a renderização padrão da página para desenhar os itens
+    // Usamos um container específico no Tópico para não apagar os botões das sub-abas
+    const listElement = document.getElementById('references-list');
+    const oldContainer = document.getElementById('topic-results-container');
+    
+    // Temporariamente redireciona o listElement para o container de resultados
+    const originalListElement = document.getElementById('references-list');
+    
+    // Hack temporário: renderCitationsPage usa listElement. Usamos o contentor interno.
+    const resultsHtml = window.allCitationsResults.map(item => {
+        const starIcon = item.isStarred ? '★' : '☆';
+        const starColor = item.isStarred ? '#f1c40f' : 'var(--text-muted-color)';
+        return `
+            <details class="reference-item">
+                <summary>
+                    <div class="ref-item-header" style="display: flex; align-items: center; gap: 8px;">
+                        <button class="add-to-puzzle-btn" onclick="event.preventDefault(); event.stopPropagation(); window.addItemToPuzzle('${item.id}', '${encodeURIComponent(item.name)}', '${encodeURIComponent(item.snippet)}')">+</button>
+                        <button class="star-btn" onclick="event.preventDefault(); event.stopPropagation(); window.toggleNoteStar('${item.id}', ${item.isStarred})" style="background:none; border:none; color:${starColor}; font-size:18px;">${starIcon}</button>
+                        <span class="ref-item-title" style="flex-grow: 1;">${item.name}</span>
+                        <button class="go-to-note-btn" onclick="event.preventDefault(); event.stopPropagation(); window.handleGoToNote('${item.id}', '${item.boxId || ''}')">➔</button>
+                    </div>
+                </summary>
+                <div class="reference-context">${item.snippet}</div>
+            </details>
+        `;
+    }).join('');
 
-    // RENDERIZA A LISTA FINAL
-    if (typeof window.renderCitationsPage === 'function') {
-        window.renderCitationsPage(false);
-    }
+    oldContainer.innerHTML = resultsHtml || '<p style="padding:20px; text-align:center; color:#666;">Nenhum item nesta categoria.</p>';
 };
 
 window.toggleNoteStar = async function(noteId, currentlyStarred) {
@@ -55968,28 +55957,36 @@ window.toggleNoteStar = async function(noteId, currentlyStarred) {
         const colName = getCollectionFromType(activeReferenceEntity.type);
         const docRef = doc(db, colName, activeReferenceEntity.id);
 
+        // 1. Grava a alteração no Firebase
         if (currentlyStarred) {
-            // DESLIGAR: Remove o campo do mapa de favoritos no Firebase
-            await updateDoc(docRef, {
-                [`favorites.${noteId}`]: deleteField()
-            });
-            console.log("⭐ Estrela removida.");
+            await updateDoc(docRef, { [`favorites.${noteId}`]: deleteField() });
         } else {
-            // LIGAR: Adiciona ao mapa de favoritos
-            await updateDoc(docRef, {
-                [`favorites.${noteId}`]: true
-            });
-            console.log("⭐ Item fixado no topo.");
+            await updateDoc(docRef, { [`favorites.${noteId}`]: true });
         }
 
-        // RE-RENDERIZAÇÃO: Chama a pesquisa novamente para aplicar a nova ordem
-        // O nome da entidade está guardado na variável global do painel
-        renderUniversalTextSearch(activeReferenceEntity.name);
+        // 2. DECISÃO DE RE-RENDERIZAÇÃO (O SEGREDO)
+        const type = activeReferenceEntity.type;
+
+        if (type === 'topico' || type === 'subtopico') {
+            // Se for tópico, chama o motor de busca por IDs (Notas/Caixas)
+            // Guardamos a sub-aba atual para não resetar a vista do utilizador
+            const currentSubTab = document.getElementById('btn-subtab-boxes')?.classList.contains('primary-active') ? 'boxes' : 'notes';
+            
+            await renderTopicResultsList(activeReferenceEntity.id, type);
+            
+            // Força a voltar para a sub-aba onde o utilizador estava
+            window.switchTopicSubTab(currentSubTab);
+        } else {
+            // Se for Personagem, Local, etc., chama a busca por texto normal
+            renderUniversalTextSearch(activeReferenceEntity.name);
+        }
 
     } catch (e) {
         console.error("Erro ao alternar estrela:", e);
     }
 };
+
+
 
 // Aplicar com prioridade máxima (useCapture: true)
 // Usamos touchstart para Mobile e mousedown para garantir que não falha no simulador
