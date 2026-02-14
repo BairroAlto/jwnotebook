@@ -17690,7 +17690,7 @@ selectionPopup.addEventListener('mousedown', (e) => {
 });
 
 // ====================================================================
-// LISTENER DO POPUP DE SELEÇÃO (Limpeza de Menus e Execução)
+// LISTENER DO POPUP DE SELEÇÃO (Ações da Barra Flutuante) - VERSÃO CORRIGIDA
 // ====================================================================
 selectionPopup.addEventListener('click', async (e) => {
     const btn = e.target.closest('button');
@@ -17698,51 +17698,105 @@ selectionPopup.addEventListener('click', async (e) => {
 
     const action = btn.dataset.action;
 
-    // 1. CONGELAR O LOCAL DO TEXTO (O FIX DO RANGE)
+    // 1. RECUPERAR A SELEÇÃO CONGELADA (O FIX DO RANGE)
+    const selection = window.getSelection();
     const range = window.currentSelectionRange || 
-                  (window.getSelection().rangeCount > 0 ? window.getSelection().getRangeAt(0).cloneRange() : null);
+                  (selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null);
 
-    // 2. LIMPEZA IMEDIATA DOS MENUS
-    selectionPopup.style.setProperty('display', 'none', 'important');
-    const insPopup = document.getElementById('insertion-popup');
-    if (insPopup) insPopup.style.setProperty('display', 'none', 'important');
-    window.getSelection().removeAllRanges();
+    if (!range) {
+        console.warn("⚠️ Nenhuma seleção detectada.");
+        selectionPopup.style.display = 'none';
+        return;
+    }
 
+    // 2. PREVENIR COMPORTAMENTO PADRÃO
     e.preventDefault();
     e.stopPropagation();
 
-    console.log("%c🚀 [GATILHO] Ação: " + action, "color: #3498db; font-weight: bold;");
+    console.log("%c🚀 [EXECUTANDO] Ação: " + action, "color: #3498db; font-weight: bold;");
 
-    // 3. EXECUÇÃO DAS AÇÕES (Usando chaves { } para isolar as variáveis)
+    // 3. FUNÇÃO AUXILIAR PARA REAPLICAR FOCO E EXECUTAR COMANDO
+    const execute = (command, value = null) => {
+        selection.removeAllRanges();
+        selection.addRange(range); // Devolve o azul (seleção) para o texto
+        document.execCommand(command, false, value);
+        
+        // Esconde o menu após a ação
+        selectionPopup.style.display = 'none';
+        // Limpa a seleção visual para finalizar
+        selection.removeAllRanges(); 
+        
+        if (typeof saveNote === 'function') saveNote(true);
+    };
+
+    // 4. EXECUÇÃO DAS AÇÕES
     switch (action) {
         
-        case 'create-url-card': {
-            if (typeof convertSelectionToUrlCard === 'function') {
-                convertSelectionToUrlCard();
+        case 'quick-bold': {
+            // Lógica de Negrito Branco
+            selection.removeAllRanges();
+            selection.addRange(range);
+            const isBold = document.queryCommandState('bold');
+            if (!isBold) {
+                document.execCommand('foreColor', false, '#f0f0f0');
+            }
+            execute('bold');
+            break;
+        }
+
+        case 'quick-italic': {
+            execute('italic');
+            break;
+        }
+
+        case 'quick-h1':
+        case 'quick-h2':
+        case 'quick-h3':
+        case 'quick-p': {
+            const tag = action.replace('quick-', '').toUpperCase();
+            // Restaurar range antes do formatBlock
+            selection.removeAllRanges();
+            selection.addRange(range);
+            document.execCommand('formatBlock', false, tag);
+            
+            // Limpeza de estilos residuais que impedem o título de crescer
+            setTimeout(() => {
+                const selNode = window.getSelection().anchorNode;
+                if (selNode) {
+                    let block = selNode.nodeType === 3 ? selNode.parentNode : selNode;
+                    const targetBlock = block.closest(tag);
+                    if (targetBlock) targetBlock.removeAttribute('style');
+                }
+                if (typeof saveNote === 'function') saveNote(true);
+            }, 10);
+
+            selectionPopup.style.display = 'none';
+            break;
+        }
+
+        case 'create-link': {
+            // Congela o range para o modal de links
+            window.savedRange = range.cloneRange();
+            window.currentSuperLinkRange = range.cloneRange();
+            selectionPopup.style.display = 'none';
+            if (typeof window.openSourceManager === 'function') {
+                window.openSourceManager();
             }
             break;
         }
 
-    case 'create-idea': {
-            console.log("💡 Processando Ideia com suporte a Ctrl+Z...");
-            if (!range || range.toString().trim() === "") return;
-
+        case 'create-idea': {
             const textIdea = range.toString().trim();
+            if (textIdea === "") return;
+
             const tempId = 'idea_tmp_' + Date.now();
-            
-            // 1. Preparamos o HTML completo (a ideia + um espaço no fim)
             const htmlIdea = `<span class="idea-span" id="${tempId}" style="cursor:pointer;" spellcheck="false">${textIdea}</span>&nbsp;`;
 
-            // 2. Restauramos a seleção no editor para o navegador saber onde "escrever"
-            const sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
-
-            // 3. O SEGREDO DO CTRL+Z: Usar o comando 'insertHTML'
-            // O navegador grava isto como uma única ação no histórico.
+            selection.removeAllRanges();
+            selection.addRange(range);
             document.execCommand('insertHTML', false, htmlIdea);
 
-            // 4. Gravação no Firebase (Background)
+            // Gravação no Firebase
             try {
                 const { collection, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
                 addDoc(collection(db, 'ideias'), {
@@ -17759,154 +17813,12 @@ selectionPopup.addEventListener('click', async (e) => {
                 });
             } catch (err) { console.error(err); }
             
+            selectionPopup.style.display = 'none';
             if (typeof saveNote === 'function') saveNote(true);
             break;
         }
 
-        case 'quick-bold': {
-            const isBold = document.queryCommandState('bold');
-            if (!isBold) document.execCommand('foreColor', false, '#f0f0f0');
-            document.execCommand('bold', false, null);
-            if (typeof saveNote === 'function') saveNote();
-            break;
-        }
-
-        case 'quick-italic': {
-            document.execCommand('italic', false, null);
-            if (typeof saveNote === 'function') saveNote();
-            break;
-        }
-
-
-        // ------------------------------------------
-        // 1. NEGRITO BRANCO INTELIGENTE (B)
-        // ------------------------------------------
-        case 'quick-bold':
-            const isBold = document.queryCommandState('bold');
-            if (!isBold) document.execCommand('foreColor', false, '#f0f0f0');
-            document.execCommand('bold', false, null);
-            saveNote();
-            break;
-
-        case 'quick-italic':
-            document.execCommand('italic', false, null);
-            saveNote();
-            break;
-
-        case 'quick-h1':
-        case 'quick-h2':
-        case 'quick-h3':
-        case 'quick-p':
-            const tag = action.replace('quick-', '').toUpperCase();
-            document.execCommand('formatBlock', false, tag);
-            // Limpeza de estilos residuais
-            const selNode = window.getSelection().anchorNode;
-            if (selNode) {
-                let block = selNode.nodeType === 3 ? selNode.parentNode : selNode;
-                if (block.tagName === tag) block.removeAttribute('style');
-            }
-            saveNote();
-            break;
-
-        // ------------------------------------------
-        // 3. CRIAR CARTÃO WEB (🎴)
-        // ------------------------------------------
-        case 'create-url-card':
-            console.log("🎴 Acionando convertSelectionToUrlCard...");
-            // Passamos o popup para a função para ela saber quem esconder
-            if (typeof convertSelectionToUrlCard === 'function') {
-                selectionPopup.style.display = 'none';
-                convertSelectionToUrlCard();
-            } else {
-                console.error("❌ Função convertSelectionToUrlCard não definida!");
-            }
-            return; // Sai do listener pois a função do card assume o controle
-
-        // ------------------------------------------
-        // 4. CRIAR IDEIA (💡)
-        // ------------------------------------------
-        case 'create-idea':
-            console.log("💡 Iniciando Processo de Ideia...");
-            const text = range.toString().trim();
-            if (!text) return;
-
-            const tempId = 'idea_tmp_' + Date.now();
-            const span = document.createElement('span');
-            span.className = 'idea-span';
-            span.id = tempId;
-            span.textContent = text;
-            span.style.cursor = 'pointer';
-
-            // Inserção física no editor
-            range.deleteContents();
-            range.insertNode(span);
-            
-            // Espaço de escape para o cursor não ficar preso
-            const space = document.createTextNode('\u00A0');
-            span.parentNode.insertBefore(space, span.nextSibling);
-
-            // Gravação Firebase
-            try {
-                const { collection, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-                addDoc(collection(db, 'ideias'), {
-                    texto: text,
-                    origemNoteId: selectedNoteId,
-                    userId: auth.currentUser.uid,
-                    createdAt: serverTimestamp()
-                }).then(docRef => {
-                    const el = document.getElementById(tempId);
-                    if (el) {
-                        el.dataset.ideaId = docRef.id;
-                        el.removeAttribute('id');
-                    }
-                    console.log("✅ Ideia salva no Firebase!");
-                });
-            } catch (err) { console.error("Erro Firebase Ideia:", err); }
-            
-            saveNote(true);
-            break;
-
-     // ------------------------------------------
-        // 5. CRIAR LINK / EDITAR LINK (🔗) - CORRIGIDO
-        // ------------------------------------------
- case 'create-link': {
-    e.preventDefault();
-    e.stopPropagation();
-
-    // 1. Tenta capturar a seleção de várias formas para garantir
-    const sel = window.getSelection();
-    let rangeParaLink = null;
-
-    if (sel.rangeCount > 0 && !sel.isCollapsed) {
-        rangeParaLink = sel.getRangeAt(0).cloneRange();
-    } else if (window.currentSelectionRange) {
-        rangeParaLink = window.currentSelectionRange.cloneRange();
-    }
-
-    if (!rangeParaLink || rangeParaLink.toString().trim() === "") {
-        alert("Por favor, selecione o texto primeiro.");
-        return;
-    }
-
-    // 2. SALVAMENTO GLOBAL (O Segredo)
-    // Guardamos em variáveis globais para o modal conseguir ler depois
-    window.savedRange = rangeParaLink; 
-    window.currentSuperLinkRange = rangeParaLink;
-
-    console.log("✅ Seleção congelada com sucesso:", rangeParaLink.toString());
-
-    // 3. Fecha o painel e abre o modal
-    selectionPopup.style.display = 'none';
-    if (typeof window.openSourceManager === 'function') {
-        window.openSourceManager();
-    }
-    break;
-}
-
-        // ------------------------------------------
-        // 7. CRIAR POST-IT (📒)
-        // ------------------------------------------
-        case 'highlight':
+        case 'highlight': {
             const selectedText = range.toString().trim();
             if (selectedText) {
                 const postIt = document.createElement('div');
@@ -17920,17 +17832,30 @@ selectionPopup.addEventListener('click', async (e) => {
                     <div class="post-it-cut-btn" contenteditable="false">✂️</div>
                     <div class="post-it-content" contenteditable="true">${selectedText}</div>
                 `;
+                
+                selection.removeAllRanges();
+                selection.addRange(range);
                 range.deleteContents();
                 document.getElementById('note-content-editor').appendChild(postIt);
-                saveNote();
+                
+                selectionPopup.style.display = 'none';
+                if (typeof saveNote === 'function') saveNote(true);
             }
             break;
+        }
+
+        case 'create-url-card': {
+            selectionPopup.style.display = 'none';
+            if (typeof convertSelectionToUrlCard === 'function') {
+                convertSelectionToUrlCard();
+            }
+            break;
+        }
     }
 
-    // FINALIZAÇÃO PADRÃO
-    console.log("✅ Ação concluída. Fechando painel.");
-    selectionPopup.style.display = 'none';
-    window.getSelection().removeAllRanges();
+    // 5. LIMPEZA FINAL DOS MENUS E ESTADO
+    const insPopup = document.getElementById('insertion-popup');
+    if (insPopup) insPopup.style.display = 'none';
     window.currentSelectionRange = null; 
 });
 
@@ -56135,26 +56060,24 @@ let slashRange = null;
 // Definição dos itens do menu
 const getSlashItems = (isJournal, isInsideBox) => {
     
-    // --- CENÁRIO A: DENTRO DE UMA CAIXA ---
+    // Itens permitidos mesmo dentro de Subnotas/Questões
+    const insideBoxItems = [
+        { label: "Título Toggle", icon: "☂", action: () => {
+            const id = 'toggle_' + Date.now();
+            document.execCommand('insertHTML', false, `<details class="toggle-section" open id="${id}"><summary><h2 contenteditable="true">Título</h2><button class="toggle-delete-btn" contenteditable="false">🗑️</button></summary><div class="toggle-content" contenteditable="true"><p><br></p></div></details><p><br></p>`);
+        }},
+        { label: "Checklist", icon: "☑️", action: () => {
+            const cb = document.createElement('input'); cb.type = 'checkbox'; cb.style.marginRight = '8px';
+            insertNodeAtCursor(cb);
+        }},
+        { label: "Linha Separadora", icon: "―", action: () => document.execCommand('insertHorizontalRule') }
+    ];
+
     if (isInsideBox) {
-        const allowedItems = [
-            { label: "Título Toggle", icon: "☂", action: () => document.querySelector('button[data-action="insert-toggle-h2"]').click() },
-            { label: "Texto Arrastável", icon: "ᯓ", action: () => document.querySelector('button[data-action="make-draggable"]').click() },
-            { label: "Checklist", icon: "☑️", action: () => document.querySelector('button[data-action="insert-checkbox"]').click() },
-            { label: "Linha Separadora", icon: "―", action: () => document.execCommand('insertHorizontalRule') }
-        ];
-
-        if (isJournal) {
-            allowedItems.push(
-                { label: "Duas Colunas", icon: "⏸️", action: () => document.querySelector('button[data-action="insert-2-cols"]').click() },
-                { label: "Imagem", icon: "🖼️", action: () => document.querySelector('button[data-action="insert-image"]').click() }
-            );
-        }
-
-        return [{ title: "Permitido Aqui", items: allowedItems }];
+        return [{ title: "Permitido na Caixa", items: insideBoxItems }];
     }
 
-    // --- CENÁRIO B: NA RAIZ DA NOTA ---
+    // Itens para a Raiz da Nota
     const groups = [
         {
             title: "Caixas Conectoras",
@@ -56171,38 +56094,64 @@ const getSlashItems = (isJournal, isInsideBox) => {
         {
             title: "Ferramentas",
             items: [
-                { label: "Título Toggle", icon: "☂", action: () => document.querySelector('button[data-action="insert-toggle-h2"]').click() },
-                { label: "Texto Arrastável", icon: "ᯓ", action: () => document.querySelector('button[data-action="make-draggable"]').click() },
-                { label: "Checklist", icon: "☑️", action: () => document.querySelector('button[data-action="insert-checkbox"]').click() },
-                { label: "Linha Separadora", icon: "―", action: () => document.execCommand('insertHorizontalRule') },
-                { label: "Tabela", icon: "🧮", action: () => document.querySelector('button[data-action="insert-table"]').click() },
-                { label: "Calendário", icon: "📅", action: () => document.querySelector('button[data-action="insert-date"]').click() },
-                { label: "Linha Cronológica", icon: "🌳", action: () => document.querySelector('button[data-action="insert-timeline"]').click() },
+                { label: "Título Toggle", icon: "☂", action: () => {
+                    const id = 'toggle_' + Date.now();
+                    document.execCommand('insertHTML', false, `<details class="toggle-section" open id="${id}"><summary><h2 contenteditable="true">Título</h2><button class="toggle-delete-btn" contenteditable="false">🗑️</button></summary><div class="toggle-content" contenteditable="true"><p><br></p></div></details><p><br></p>`);
+                }},
+                { label: "Texto Arrastável", icon: "ᯓ", action: () => {
+                    const id = `drag_${Date.now()}`;
+                    document.execCommand('insertHTML', false, `<div class="draggable-line" draggable="true" id="${id}"><span class="drag-handle-icon" contenteditable="false">ᯓ</span><div class="drag-content-area" contenteditable="true">Texto Arrastável</div></div>`);
+                }},
+                { label: "Tabela", icon: "🧮", action: () => document.execCommand('insertHTML', false, `<div class="jwn-table-wrapper"><button class="table-settings-btn" contenteditable="false">🛠️ Opções</button><table class="jwn-table"><thead><tr><th>T1</th><th>T2</th></tr></thead><tbody><tr><td><br></td><td><br></td></tr></tbody></table></div><p><br></p>`) },
+                { label: "Calendário", icon: "📅", action: () => {
+                    const today = new Date(); const id = `cal_${Date.now()}`;
+                    document.execCommand('insertHTML', false, `<div class="jwn-calendar-widget" contenteditable="false" id="${id}" data-view="month" data-month="${today.getMonth()}" data-year="${today.getFullYear()}"><div class="cal-header"><button class="cal-btn cal-prev">◀</button><span class="cal-title">...</span><div style="display:flex; gap:5px;"><button class="cal-btn cal-next">▶</button><button class="cal-btn cal-settings">⚙️</button></div></div><div class="cal-settings-menu"><button class="cal-delete-btn">🗑️ Eliminar</button></div><div class="cal-grid"></div></div><p><br></p>`);
+                    setTimeout(() => renderCalendarUI(document.getElementById(id)), 50);
+                }},
+                { label: "Linha Cronológica", icon: "🌳", action: () => {
+                    const id = `tl_${Date.now()}`;
+                    document.execCommand('insertHTML', false, `<div class="jwn-timeline-wrapper" contenteditable="false" id="${id}"><div class="timeline-track"></div><div class="timeline-container"><div class="timeline-entry"><div class="t-marker"></div><div class="t-date" contenteditable="true">Data</div><div class="t-text" contenteditable="true">Evento...</div><button class="t-btn-del">×</button></div></div><button class="t-btn-add">➕ Ponto</button></div><p><br></p>`);
+                }},
                 { label: "Grua de Referências", icon: "🏗️", action: () => document.querySelector('button[data-action="insert-ref-depot"]').click() }
             ]
         }
     ];
 
     if (isJournal) {
-        groups[0].items.push({ label: "Redator", icon: "📓", action: () => insertMiniNoteAtCursor('redator') });
-        groups[1].items.push(
-            { label: "Imagem", icon: "🖼️", action: () => document.querySelector('button[data-action="insert-image"]').click() },
-            { label: "Bloco de Raciocínio", icon: "🪧", action: () => document.querySelector('button[data-action="insert-sign"]').click() },
-            { label: "Duas Colunas", icon: "⏸️", action: () => document.querySelector('button[data-action="insert-2-cols"]').click() },
-            { label: "Cartão Temático", icon: "🪪", action: () => document.querySelector('button[data-action="insert-card"]').click() },
-            { label: "Cubo", icon: "🧊", action: () => document.querySelector('button[data-action="insert-cube"]').click() }
-        );
+        groups.push({
+            title: "Extras de Jornal",
+            items: [
+                { label: "Redator", icon: "📓", action: () => insertMiniNoteAtCursor('redator') },
+                { label: "Imagem", icon: "🖼️", action: () => {
+                    const id = `img_${Date.now()}`;
+                    document.execCommand('insertHTML', false, `<div class="journal-img-wrapper img-size-md" id="${id}" contenteditable="false"><div class="journal-img-placeholder"><span>🖼️</span><input type="text" placeholder="URL da imagem..." class="img-url-input"><button class="cmd-convert-img modal-btn primary">OK</button></div></div><p><br></p>`);
+                }},
+                { label: "Bloco de Raciocínio", icon: "🪧", action: () => {
+                    const id = `sign_${Date.now()}`;
+                    document.execCommand('insertHTML', false, `<div class="journal-sign-wrapper" id="${id}" contenteditable="false"><div class="sign-toolbar"><span style="font-size: 1.2em; margin-right: auto;">🪧 Raciocínio</span><button class="sign-btn-del" onclick="window.confirmSignDelete(this)">🗑️</button></div><div class="sign-header"><input type="text" class="sign-title-input" placeholder="Título..."></div><div class="sign-content" contenteditable="true" data-placeholder="Escreva aqui..."></div><div class="sign-attachments-area"></div><div class="sign-add-btn-area"><button class="sign-add-btn" onclick="window.addAttachmentToSign(this)">+</button></div></div><p><br></p>`);
+                }},
+                { label: "Duas Colunas", icon: "⏸️", action: () => {
+                    const id = `cols_${Date.now()}`;
+                    document.execCommand('insertHTML', false, `<div class="journal-cols-wrapper" id="${id}" contenteditable="false"><div class="cols-toolbar"><button class="cols-btn-del" onclick="window.deleteCols(this)">🗑️</button></div><div class="journal-cols-container"><div class="journal-col" contenteditable="true" data-placeholder="Esquerda..."></div><div class="journal-col" contenteditable="true" data-placeholder="Direita..."></div></div></div><p><br></p>`);
+                }},
+                { label: "Cartão Temático", icon: "🪪", action: () => {
+                    const id = `card_${Date.now()}`;
+                    document.execCommand('insertHTML', false, `<div class="journal-id-card" id="${id}" contenteditable="false"><div class="card-toolbar"><button class="card-del-btn" onclick="window.deleteJournalWidget(this)">🗑️</button></div><div class="card-body"><div class="card-image-area"><div class="card-img-placeholder" onclick="window.setCardImage(this)"><span>📷</span></div></div><div class="card-text-area"><input type="text" class="card-title-input" placeholder="Nome..."><div class="card-desc-content" contenteditable="true" data-placeholder="Detalhes..."></div></div></div></div><p><br></p>`);
+                }},
+                { label: "Cubo", icon: "🧊", action: () => {
+                    const id = `cube_${Date.now()}`;
+                    document.execCommand('insertHTML', false, `<div class="journal-cube-wrapper" id="${id}" contenteditable="false" style="float:left; width:45%;"><div class="cube-toolbar"><span class="cube-drag-handle">✥</span><button onclick="window.deleteJournalWidget(this)">🗑️</button></div><div class="cube-content" contenteditable="true"><h3>Cubo</h3><p>Texto...</p></div></div><p style="clear:both;"><br></p>`);
+                }}
+            ]
+        });
     }
 
-    // --- AQUI ESTÁ A ALTERAÇÃO ---
     groups.push({
-        title: "Avançada",
+        title: "Avançado",
         items: [
             { label: "Exportar Sentinela", icon: "🤖", action: () => window.openRobotModal() },
             { label: "Editor de Margem", icon: "🔬", action: () => document.querySelector('button[data-action="open-margin-editor"]').click() },
-            
-            // Alterado: Chama createDirectPostIt() em vez de clicar no botão amarelo da barra
-            { label: "Post-It", icon: "📒", action: () => window.createDirectPostIt() } 
+            { label: "Post-It", icon: "📒", action: () => window.createDirectPostIt() }
         ]
     });
 
@@ -56258,24 +56207,25 @@ noteContentEditor.addEventListener('input', (e) => {
     }
 });
 
+// ============================================================
+// MOTOR DO SLASH MENU CORRIGIDO (☂ ― 📅 🌳)
+// ============================================================
 function showSlashMenu() {
     const menu = document.getElementById('slash-menu');
     const list = document.getElementById('slash-menu-list');
     
-    // 1. Detetar Contexto
     const selection = window.getSelection();
+    if (!selection.rangeCount) return;
+
     let node = selection.anchorNode;
-    // Se for nó de texto, pega o elemento pai
     if (node && node.nodeType === 3) node = node.parentNode;
     
-    // Verifica se estamos dentro de qualquer caixa "proibida"
-    // Inclui Subnotas, Redator, Raciocínio, Depósito, Cartão, Post-it
+    // Verifica se estamos dentro de uma caixa ou na raiz
     const boxSelectors = '.mini-note-wrapper, .redator-wrapper, .journal-sign-wrapper, .ref-depot-wrapper, .journal-id-card, .post-it-note';
     const isInsideBox = !!node.closest(boxSelectors);
-
     const isJournal = (window.currentNoteType === 'jornal');
     
-    // 2. Obter itens filtrados
+    // Pega a lista COMPLETA de itens
     const groups = getSlashItems(isJournal, isInsideBox);
 
     list.innerHTML = '';
@@ -56291,27 +56241,36 @@ function showSlashMenu() {
             const li = document.createElement('li');
             li.className = 'slash-item';
             li.innerHTML = `<span class="icon">${item.icon}</span><span class="label">${item.label}</span>`;
-            li.onclick = () => {
-                // Apaga o <
+            
+            li.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const editor = document.getElementById('note-content-editor');
+                editor.focus();
+
+                const sel = window.getSelection();
                 if (slashRange) {
-                    slashRange.deleteContents();
+                    sel.removeAllRanges();
+                    sel.addRange(slashRange);
+                    slashRange.deleteContents(); // Apaga o "<"
                 }
-                // Executa ação
-                item.action();
-                hideSlashMenu();
+
+                // Executa a ação da ferramenta
+                setTimeout(() => {
+                    item.action();
+                    hideSlashMenu();
+                    if (typeof saveNote === 'function') saveNote(true);
+                }, 10);
             };
             list.appendChild(li);
         });
     });
 
-    // Posicionamento (Mantém igual)
-    const rect = window.getSelection().getRangeAt(0).getBoundingClientRect();
-    
-    // Ajuste de segurança para não sair do ecrã em baixo
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
     let topPos = rect.bottom + window.scrollY + 5;
-    const menuHeight = 300; // Altura estimada
-    if (rect.bottom + menuHeight > window.innerHeight) {
-        topPos = rect.top + window.scrollY - menuHeight - 5; // Abre para cima se não couber
+    if (rect.bottom + 300 > window.innerHeight) {
+        topPos = rect.top + window.scrollY - 305;
     }
 
     menu.style.display = 'block';
@@ -56320,6 +56279,8 @@ function showSlashMenu() {
 
     updateSlashSelection(menu.querySelectorAll('.slash-item'));
 }
+
+
 
 function updateSlashSelection(items) {
     items.forEach((item, idx) => {
