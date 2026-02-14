@@ -18960,20 +18960,36 @@ document.getElementById('ref-tabs').addEventListener('click', (e) => {
     if (!btn) return;
     const target = btn.dataset.refTab;
     
+    // UI: Muda o estado ativo dos botões
     e.currentTarget.querySelectorAll('button').forEach(el => el.classList.remove('active'));
     btn.classList.add('active');
 
+    // UI: Esconde todos os conteúdos
     document.querySelectorAll('.ref-tab-content').forEach(el => el.style.display = 'none');
     
-    // Mostra o container correto
+    // Mostra o conteúdo da aba selecionada
     const contentEl = document.getElementById(`ref-content-${target}`);
     if (contentEl) {
         contentEl.style.display = (target === 'links' || target === 'puzzle' || target === 'dossie') ? 'flex' : 'block';
     }
 
+    // --- LÓGICA DE CARREGAMENTO SOB DEMANDA (LAZY LOAD) ---
+    if (target === 'references') {
+        const listElement = document.getElementById('references-list');
+        
+        // Só carrega se a lista contiver o texto de placeholder ou estiver vazia
+        // Isso evita carregar de novo se o usuário ficar alternando entre abas
+        if (listElement.innerHTML.includes('Clique na aba') || listElement.innerHTML === '') {
+            if (activeReferenceEntity && activeReferenceEntity.name) {
+                console.log("⚡ Carregando citações sob demanda para:", activeReferenceEntity.name);
+                renderUniversalTextSearch(activeReferenceEntity.name);
+            }
+        }
+    }
+
     if (target === 'links') renderPanelLinks();
     if (target === 'dossie') {
-        activeMicaId = null; // Sempre volta para a lista ao trocar de aba
+        activeMicaId = null;
         isDossieEditMode = false;
         renderDossie();
     }
@@ -19635,57 +19651,102 @@ let teleportNoteTitle = "";   // Guarda o título limpo
 document.getElementById('teleport-puzzle-btn').addEventListener('click', async (e) => {
     e.preventDefault(); e.stopPropagation();
 
-    // --- A. CONFIRMAÇÃO COM POPUP PERSONALIZADO ---
-    // Usamos a função 'showConfirmation' que já existe no seu código
     const confirmed = await showConfirmation(
         "Converter em Nota", 
-        "Deseja mesmo gerar uma nota através desta referência?"
+        "Deseja gerar uma nota permanente com o conteúdo deste Quadro?"
     );
 
-    if (!confirmed) return; // Se clicar em Cancelar, pára aqui.
+    if (!confirmed) return;
 
-    // --- B. Preparar Título ---
+    // 1. Preparar Título
     const panelTitle = document.getElementById('references-panel-title').textContent.trim();
-    // Regex para limpar o lixo à volta
-    teleportNoteTitle = panelTitle.replace(/^Referências para [🔖]*["“](.+)["”]$/i, '$1');
+    const teleportNoteTitle = panelTitle.replace(/^Referências para [🔖]*["“](.+)["”]$/i, '$1');
 
-    // --- C. Compilar Conteúdo do Quadro ---
-    teleportContentHTML = "";
+    // 2. Criar um container temporário para processar o conteúdo
+    const tempCompiler = document.createElement('div');
+    const anexosMap = {}; 
     const cards = document.querySelectorAll('#puzzle-board-container .board-card');
 
     if (cards.length === 0) {
-        alert("O quadro está vazio. Adicione algo antes de converter.");
+        alert("O quadro está vazio.");
         return;
     }
 
-    cards.forEach(card => {
-        // TIPO 1: Texto Editável
+    // 3. Processar cada cartão do Quadro
+    cards.forEach((card, index) => {
         if (card.classList.contains('type-text')) {
+            // --- TEXTO LIVRE: Agora como texto normal ---
             const textDiv = card.querySelector('.board-text-content');
             if (textDiv) {
-                teleportContentHTML += `<p>${textDiv.innerHTML}</p>`; 
+                const p = document.createElement('p');
+                p.innerHTML = textDiv.innerHTML;
+                tempCompiler.appendChild(p);
             }
         } 
-        // TIPO 2: Referência
         else if (card.classList.contains('type-ref')) {
+            // --- REFERÊNCIAS (Caixas estruturadas) ---
             let snippet = decodeURIComponent(card.dataset.snippet || "");
-            snippet = snippet.replace(/<mark>/g, "").replace(/<\/mark>/g, "");
-
-            if (snippet.includes('mini-note-wrapper') || snippet.includes('toggle-section')) {
-                teleportContentHTML += snippet;
+            
+            // Se for uma caixa estruturada (Subnota, Questão, Redator, etc), clonamos a estrutura
+            if (snippet.includes('mini-note-wrapper') || 
+                snippet.includes('toggle-section') || 
+                snippet.includes('redator-wrapper') || 
+                snippet.includes('journal-')) {
+                
+                const boxDiv = document.createElement('div');
+                // Regenerar ID para evitar duplicatas na nova nota
+                boxDiv.innerHTML = snippet.replace(/id="[^"]*"/, `id="clone_${Date.now()}_${index}"`);
+                tempCompiler.appendChild(boxDiv.firstElementChild);
             } else {
-                teleportContentHTML += `
-                    <blockquote style="border-left: 3px solid var(--accent-color); padding-left: 10px; margin: 10px 0; color: var(--text-muted-color);">
-                        ${snippet}
-                        <br><small>— De: 📄 ${card.dataset.noteName}</small>
-                    </blockquote>
-                `;
+                // Se for apenas um trecho de texto de outra nota, mantém como citação
+                const bq = document.createElement('blockquote');
+                bq.style.cssText = "border-left: 3px solid var(--accent-color); padding-left: 10px; margin: 10px 0; color: var(--text-muted-color);";
+                bq.innerHTML = `${snippet.replace(/<mark>/g, "").replace(/<\/mark>/g, "")}<br><small>— De: 📄 ${card.dataset.noteName}</small>`;
+                tempCompiler.appendChild(bq);
             }
         }
-        teleportContentHTML += "<p><br></p>";
+        // Adiciona um espaço entre cartões
+        tempCompiler.appendChild(document.createElement('p')).innerHTML = "<br>";
     });
 
-    // --- D. Abrir o Seletor de Pastas ---
+    // 4. PROCESSAR HIPERLIGAÇÕES (🌐) -> Converter em Anexos Reais
+    const boardLinks = tempCompiler.querySelectorAll('a.board-link');
+    boardLinks.forEach((link, idx) => {
+        const anexoId = `anexo_tp_${Date.now()}_${idx}`;
+        let urls = {};
+        
+        try {
+            // Extrai os URLs guardados no atributo JSON do link do quadro
+            const rawData = JSON.parse(decodeURIComponent(link.dataset.json));
+            if (Array.isArray(rawData)) {
+                rawData.forEach((u, i) => urls[`url_${i}`] = u);
+            }
+        } catch(e) { 
+            if (link.href) urls['url_0'] = link.href; 
+        }
+
+        if (Object.keys(urls).length > 0) {
+            // Adiciona ao mapa de anexos da nova nota
+            anexosMap[anexoId] = {
+                titulo: link.textContent,
+                urls: urls,
+                timestamp: Date.now()
+            };
+
+            // Transforma o link visual para o padrão de "Anexar Fontes"
+            link.classList.remove('board-link');
+            link.removeAttribute('data-json');
+            link.setAttribute('data-anexo-id', anexoId);
+            link.style.cssText = "color:inherit; text-decoration:none; border-bottom:1px solid rgba(200, 200, 200, 0.4); cursor:pointer;";
+        }
+    });
+
+    // 5. Guardar dados globais para o modal de salvar
+    window.teleportContentHTML = tempCompiler.innerHTML;
+    window.teleportAnexosMap = anexosMap;
+    window.teleportNoteTitle = teleportNoteTitle;
+
+    // 6. Abrir o seletor de pastas
     openTeleportFolderSelector();
 });
 
@@ -19917,117 +19978,198 @@ refCards.forEach((card, index) => {
 // FUNÇÃO PARA EXIBIR DETALHES DO TÓPICO (4ª COLUNA)
 // ============================================================
 async function showTopicReferencesPanel(id, name, description, type) {
+    console.log(`📑 [TÓPICOS] Abrindo aba Cita para: ${name}`);
 
-    
-    // 1. Gravar o puzzle/quadro anterior antes de mudar o contexto
-    // Isto evita que percas alterações se estivesses a editar outro tópico
-    await forceSaveAndClosePuzzleMode();
-  resetReferencesPanelUI();
-    // 2. DEFINIR ENTIDADE ATIVA (CRÍTICO para o +Ref funcionar)
-    // Se o 'type' vier vazio, assume 'topico' por padrão
-    activeReferenceEntity = { 
-        id: id, 
-        type: type || 'topico', 
-        name: name 
-    };
+    // 1. SALVAR E LIMPAR TUDO
+    // Garante que se estivesse editando o Puzzle, as alterações são salvas
+    if (typeof forceSaveAndClosePuzzleMode === 'function') {
+        await forceSaveAndClosePuzzleMode();
+    }
 
-    // RESET DE SEGURANÇA: Se não for livro, esconde o botão 🎯 e limpa texto
-    document.getElementById('references-target-btn').style.display = 'none';
-    document.getElementById('ref-content-book-text').style.display = 'none';
+    // Esconde visualmente o painel de descrição e reseta a UI base
+    resetReferencesPanelUI();
 
-    // 3. Configuração Visual da 4ª Coluna
-    document.getElementById('references-panel-description').style.display = 'block';
-    document.getElementById('references-toolbar').style.display = 'flex';
-    document.querySelectorAll('.references-separator').forEach(el => el.style.display = 'block');
-    
-    // 1. Mostrar o painel lateral
+    // 2. DEFINIR CONTEXTO
+    activeReferenceEntity = { id: id, type: type || 'topico', name: name };
     notebookContainer.classList.add('references-panel-visible');
+    document.getElementById('references-panel-title').textContent = `Citações: ${name}`;
+
+    // 3. GERIR ABAS (Visual do topo)
+    document.querySelectorAll('#ref-tabs button').forEach(btn => btn.classList.remove('active'));
+    const citaTabBtn = document.querySelector('[data-ref-tab="references"]');
+    if (citaTabBtn) citaTabBtn.classList.add('active');
+
+    // 4. LIMPAR E MOSTRAR CONTEÚDO (O segredo para não aparecer o "Quadro")
+    // Esconde todas as outras divs de conteúdo (Puzzle, Links, Dossié)
+    document.querySelectorAll('.ref-tab-content').forEach(el => {
+        el.style.display = 'none';
+        el.classList.remove('active');
+    });
+
+    const referencesContent = document.getElementById('ref-content-references');
+    if (referencesContent) {
+        referencesContent.style.display = 'block';
+        referencesContent.classList.add('active');
+
+        // Injetar o layout de sub-abas (Notas | Caixas)
+        referencesContent.innerHTML = `
+            <div id="topic-subtabs" style="display: flex; gap: 5px; padding: 10px; background: rgba(0,0,0,0.1); border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 10;">
+                <button id="btn-subtab-notes" class="modal-btn secondary" 
+                        style="flex:1; font-size: 11px; padding: 8px; border-radius: 4px;" 
+                        onclick="window.switchTopicSubTab('notes')">
+                    📄 Notas (...)
+                </button>
+                <button id="btn-subtab-boxes" class="modal-btn secondary" 
+                        style="flex:1; font-size: 11px; padding: 8px; border-radius: 4px;" 
+                        onclick="window.switchTopicSubTab('boxes')">
+                    📦 Caixas (...)
+                </button>
+            </div>
+            <ul id="references-list" style="list-style: none; padding: 0;"></ul>
+        `;
+    }
+
+    // 5. ATUALIZAR TOOLBAR
+    document.getElementById('references-toolbar').style.display = 'flex';
+    document.getElementById('references-edit-btn').style.display = 'block';
+
+    // 6. DISPARAR BUSCA
+    // Carrega o puzzle em background (aba 🧩), mas mantém a vista na Cita (aba ❝)
+    loadPuzzleData(id, type); 
     
-    // 2. Mostrar o botão 🎯 (Exclusivo para este modo)
-    document.getElementById('references-target-btn').style.display = 'block';
-
-    // 3. Definir o título do painel
-    document.getElementById('references-panel-title').innerHTML = `🎯 ${fullName}`;
-
-    // 4. Injetar o texto no contentor de scroll (ref-content-book-text)
-    document.getElementById('ref-content-book-text').innerHTML = `
-        <div class="book-text-box">
-            <small style="color: var(--accent-color); font-weight: bold;">CONTEÚDO DO PARÁGRAFO:</small>
-            <p style="margin-top:10px; font-style: normal;">"${text}"</p>
-        </div>
-    `;
-
-    // 5. Carregar dados das outras abas em background
-    loadPuzzleData(activeReferenceEntity.id, 'livro_ref');
-    renderBookCodexCitations(bookId, chapterNum, paragraphNum);
-
-    // 6. DECISÃO FINAL DE VISIBILIDADE (O que abre predefinidamente)
-    if (openDirectToTarget) {
-        // Se vieste das FONTES (⚡), abre no modo Texto 🎯
-        window.showParagraphContentMode(); 
-    } else {
-        // Se vieste da BIBLIOTECA, abre no modo Puzzle 🧩
-        document.getElementById('ref-content-book-text').style.display = 'none';
-        switchRefTab('puzzle');
+    if (typeof renderTopicResultsList === 'function') {
+        renderTopicResultsList(id, type);
     }
 }
+
+    
 
 // Função Auxiliar para preencher a lista de referências (Aba 2)
 async function renderTopicResultsList(id, type) {
     const listElement = document.getElementById('references-list');
-    listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar contextos...</span></div>';
+    if (!listElement) return;
+
+    // 1. Garantia de que o ID é uma String limpa
+    const targetId = String(id).trim();
+    const targetType = String(type).trim();
+
+    console.group(`🔍 [BUSCA PROFUNDA] Tópico: ${targetId} (${targetType})`);
+    listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A organizar citações...</span></div>';
 
     try {
-        const q = query(
-            collection(db, 'pastas'), 
-            where('estado', '==', 'ativa'),
-            where('userId', '==', auth.currentUser.uid)
-        );
+        const { collection, query, where, getDocs, doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // BUSCAR FAVORITOS
+        const colName = getCollectionFromType(targetType);
+        const entitySnap = await getDoc(doc(db, colName, targetId));
+        const favoriteMap = entitySnap.exists() ? (entitySnap.data().favorites || {}) : {};
+        console.log("📍 Mapa de Favoritos:", favoriteMap);
+
+        // BUSCAR NOTAS
+        const q = query(collection(db, 'pastas'), where('estado', '==', 'ativa'), where('userId', '==', auth.currentUser.uid));
         const snapshot = await getDocs(q);
         
-        // Reset da lista global de resultados
-        allCitationsResults = []; 
+        window.topicNoteResults = [];
+        window.topicBoxResults = [];
+        const parser = new DOMParser();
 
-        snapshot.forEach(docSnapshot => {
-            const data = docSnapshot.data();
-            if (!data.topicosSelecionados) return;
+        snapshot.forEach(docSnap => {
+            const data = docSnap.data();
+            const noteId = docSnap.id;
+            const content = data.conteudo || "";
+            const isStarred = !!favoriteMap[noteId];
 
-            let match = false;
-            // Se for Tópico Pai
-            if (type === 'topico') {
-                if (data.topicosSelecionados.hasOwnProperty(id)) match = true;
-            } 
-            // Se for Subtópico
-            else {
-                const allSubtopics = Object.values(data.topicosSelecionados).flat();
-                if (allSubtopics.map(String).includes(String(id))) match = true;
+            // --- FILTRO NOTAS (🏷️) ---
+            let matchInNote = false;
+            if (data.topicosSelecionados) {
+                // Verificação robusta para Tópico Pai
+                if (targetType === 'topico' && data.topicosSelecionados[targetId]) {
+                    matchInNote = true;
+                } 
+                // Verificação robusta para Subtópico
+                else if (targetType === 'subtopico') {
+                    const allSubs = Object.values(data.topicosSelecionados).flat().map(String);
+                    if (allSubs.includes(targetId)) matchInNote = true;
+                }
             }
 
-            if (match) {
-                // Filtro de privacidade
-                let isProtected = (data.passe && data.passe.trim() !== "");
-                if (isProtected && !appSettings.searchTopicsInProtected) return;
-
-                allCitationsResults.push({ 
-                    id: docSnapshot.id, 
-                    name: data.nome,
-                    isProtected: isProtected,
-                    snippet: "Tópico atribuído a esta nota.",
-                    ultimaedicao: data.ultimaedicao?.toMillis() || data.createdAt?.toMillis() || 0
+            if (matchInNote) {
+                window.topicNoteResults.push({
+                    id: noteId, name: data.nome, isStarred,
+                    snippet: `<p style="color:var(--accent-color); font-weight:bold;">📄 Tópico anexado à nota principal.</p>`,
+                    ultimaedicao: data.ultimaedicao?.toMillis() || 0
                 });
             }
+
+            // --- FILTRO CAIXAS (📋) ---
+            const docHTML = parser.parseFromString(content, 'text/html');
+            const boxes = docHTML.querySelectorAll('.mini-note-wrapper, .redator-wrapper');
+            
+            boxes.forEach(box => {
+                const boxTopicsRaw = box.getAttribute('data-topics');
+                if (boxTopicsRaw) {
+                    try {
+                        const boxTopics = JSON.parse(boxTopicsRaw);
+                        let matchInBox = false;
+
+                        if (targetType === 'topico' && boxTopics[targetId]) matchInBox = true;
+                        else if (targetType === 'subtopico') {
+                            const allBoxSubs = Object.values(boxTopics).flat().map(String);
+                            if (allBoxSubs.includes(targetId)) matchInBox = true;
+                        }
+
+                        if (matchInBox) {
+                            // Tenta pegar o título real da caixa
+                            const titleInput = box.querySelector('.mini-note-title-input, .redator-input');
+                            const contentDiv = box.querySelector('.mini-note-content, .redator-content');
+                            let boxTitle = titleInput ? (titleInput.value || titleInput.textContent).trim() : "";
+                            let rawText = contentDiv ? contentDiv.innerText.replace(/\s+/g, ' ').trim() : "";
+
+                            if (!boxTitle) {
+                                const words = rawText.split(' ');
+                                boxTitle = words.slice(0, 15).join(' ') + (words.length > 15 ? "..." : "");
+                            }
+
+                            window.topicBoxResults.push({
+                                id: noteId, boxId: box.id, isStarred,
+                                name: `CAIXA - ${boxTitle || "Sem título"}`,
+                                snippet: `<div style="padding:5px 0;"><p style="color:var(--text-muted-color); font-size:0.8em; margin-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:5px;">Local: 📄 ${data.nome}</p><div style="font-size:0.9em; line-height:1.5; color:var(--text-color); font-style: italic; opacity:0.8;">"${rawText.substring(0, 200)}..."</div></div>`,
+                                ultimaedicao: data.ultimaedicao?.toMillis() || 0
+                            });
+                        }
+                    } catch(e) {}
+                }
+            });
         });
 
-        // ORDENAR: Mais recente primeiro
-        allCitationsResults.sort((a, b) => b.ultimaedicao - a.ultimaedicao);
+        console.log(`✅ Notas encontradas: ${window.topicNoteResults.length}`);
+        console.log(`✅ Caixas encontradas: ${window.topicBoxResults.length}`);
 
-        // Renderiza a lista paginada
-        window.renderCitationsPage(false);
+        // Ordenar: Favoritos (Estrelas) primeiro
+        const sortFunc = (list) => list.sort((a, b) => (a.isStarred === b.isStarred) ? (b.ultimaedicao - a.ultimaedicao) : a.isStarred ? -1 : 1);
+        window.topicNoteResults = sortFunc(window.topicNoteResults);
+        window.topicBoxResults = sortFunc(window.topicBoxResults);
+
+        // Atualizar visual dos botões de aba
+        const bNotes = document.getElementById('btn-subtab-notes');
+        const bBoxes = document.getElementById('btn-subtab-boxes');
+        if (bNotes) bNotes.textContent = `📄 Notas (${window.topicNoteResults.length})`;
+        if (bBoxes) bBoxes.textContent = `📦 Caixas (${window.topicBoxResults.length})`;
+
+        // Determinar qual aba mostrar agora
+        let activeTab = 'notes';
+        // Se a aba de caixas estiver pintada de azul, mantém lá
+        if (bBoxes && bBoxes.classList.contains('primary-active')) activeTab = 'boxes';
+        // Se não, vai para a que tem conteúdo
+        else if (window.topicBoxResults.length > 0 && window.topicNoteResults.length === 0) activeTab = 'boxes';
+
+        window.switchTopicSubTab(activeTab);
 
     } catch (e) {
-        console.error("Erro ao listar referências do tópico:", e);
-        listElement.innerHTML = '<li>Erro ao carregar lista.</li>';
+        console.error("❌ Erro fatal na busca:", e);
+        listElement.innerHTML = '<li style="padding:20px; color:red;">Erro ao processar dados.</li>';
     }
+    console.groupEnd();
 }
 
 // ====================================================================
@@ -35517,14 +35659,23 @@ async function renderUniversalTextSearch(name) {
     listElement.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar notas...</span></div>';
 
     try {
+        const { collection, query, where, getDocs, doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const myUid = auth.currentUser.uid;
+
+        // 1. BUSCAR O MAPA DE FAVORITOS DA ENTIDADE ATUAL
+        const colName = getCollectionFromType(activeReferenceEntity.type);
+        const entitySnap = await getDoc(doc(db, colName, activeReferenceEntity.id));
+        const favoriteMap = entitySnap.exists() ? (entitySnap.data().favorites || {}) : {};
+
+        // 2. BUSCAR TODAS AS NOTAS
         const q = query(
             collection(db, 'pastas'), 
             where('tipo', '==', 'nota'),
             where('estado', '==', 'ativa'),
-            where('userId', '==', auth.currentUser.uid)
+            where('userId', '==', myUid)
         );
         const snapshot = await getDocs(q);
-        allCitationsResults = []; // Limpa resultados anteriores
+        allCitationsResults = []; 
 
         const wholeWordRegex = new RegExp(`\\b(${escapeRegExp(name)})\\b`, 'i');
         const parser = new DOMParser();
@@ -35535,33 +35686,29 @@ async function renderUniversalTextSearch(name) {
             let isProtected = (data.passe && data.passe.trim() !== "");
             if (isProtected && !appSettings.searchAnchorsInProtected) return;
 
-            // 1. Verificamos se o nome aparece no texto bruto (para performance)
-            // Se não aparecer no texto mas estiver numa categoria, o passo 2 apanha.
-            
-            // 2. Analisar o HTML para encontrar as caixas
+            // Verifica se esta nota específica está nos favoritos
+            const isStarred = !!favoriteMap[docSnap.id];
+
             const docHTML = parser.parseFromString(content, 'text/html');
             const boxes = docHTML.querySelectorAll('.mini-note-wrapper, details.toggle-section, .redator-wrapper, .journal-sign-wrapper, .journal-id-card');
             
             boxes.forEach(box => {
                 let match = false;
-                let matchType = ""; // Para debug, se necessário
+                let matchType = "";
 
                 if (box.classList.contains('statue-card-wrapper')) return; 
 
-                // A. Verifica Texto dentro da caixa
                 if (wholeWordRegex.test(box.textContent)) {
                     match = true;
                     matchType = "text";
                 }
 
-                // B. Verifica Vínculo de Categoria (⚡)
                 if (!match) {
                     const boxLinksRaw = box.getAttribute('data-box-links');
                     if (boxLinksRaw) {
                         try {
                             const boxData = JSON.parse(boxLinksRaw);
                             if (boxData.categories && Array.isArray(boxData.categories)) {
-                                // Verifica match por ID ou por Nome
                                 const catMatch = boxData.categories.some(cat => 
                                     (cat.id && cat.id === activeReferenceEntity.id) || 
                                     (cat.name && cat.name.toLowerCase().trim() === name.toLowerCase().trim())
@@ -35575,29 +35722,15 @@ async function renderUniversalTextSearch(name) {
                     }
                 }
 
-                // Se encontrou (seja por texto ou categoria), adiciona aos resultados
                 if (match) {
-                    
-                    // --- GERAÇÃO DO CONTEÚDO VISUAL (CORRIGIDO) ---
-                    // Independentemente de como foi encontrado, mostramos sempre o conteúdo real.
-                    
                     let finalSnippet = "";
-                    
-                    // Se for match de texto direto, podemos usar o highlight inteligente
                     if (matchType === "text") {
                         finalSnippet = generateReferenceContext(box.outerHTML, name);
-                    } 
-                    // Se for match de categoria, mostramos o conteúdo da caixa
-                    else {
-                        // Tenta extrair texto limpo da caixa
+                    } else {
                         const contentDiv = box.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content');
                         let rawText = contentDiv ? contentDiv.innerText : box.innerText;
-                        
-                        // Limpa espaços e limita tamanho
                         rawText = rawText.replace(/\s+/g, ' ').trim();
                         if (rawText.length > 200) rawText = rawText.substring(0, 200) + "...";
-                        
-                        // Envolve num parágrafo para consistência visual
                         finalSnippet = `<p>${rawText || '<em style="color:gray">Caixa sem texto.</em>'}</p>`;
                     }
 
@@ -35606,6 +35739,7 @@ async function renderUniversalTextSearch(name) {
                         boxId: box.id,  
                         name: data.nome,
                         isProtected: isProtected,
+                        isStarred: isStarred, // <--- GUARDAMOS O ESTADO DA ESTRELA
                         snippet: finalSnippet,
                         ultimaedicao: data.ultimaedicao?.toMillis() || data.createdAt?.toMillis() || 0
                     });
@@ -35613,7 +35747,16 @@ async function renderUniversalTextSearch(name) {
             });
         });
 
-        allCitationsResults.sort((a, b) => b.ultimaedicao - a.ultimaedicao);
+        // 3. ORDENAÇÃO POR PRIORIDADE (Estrela primeiro, depois Data)
+        allCitationsResults.sort((a, b) => {
+            // Se um é estrela e o outro não, a estrela ganha (-1)
+            if (a.isStarred && !b.isStarred) return -1;
+            if (!a.isStarred && b.isStarred) return 1;
+            
+            // Se ambos são iguais (ambos estrelas ou ambos normais), ordena por data
+            return b.ultimaedicao - a.ultimaedicao;
+        });
+
         window.renderCitationsPage(false);
 
     } catch (e) {
@@ -35627,72 +35770,93 @@ window.renderCitationsPage = function(append = false) {
     const listElement = document.getElementById('references-list');
     if (!listElement) return;
 
-    // 1. Se não for um "Carregar Mais", limpa a lista e reseta o índice
+    // 1. Se não for um "ver mais" (append), limpa a lista e reseta o índice da página
     if (!append) {
         listElement.innerHTML = '';
         currentCitationsPageIndex = 0;
     }
 
-    // 2. Remove o botão "Mostrar mais" antigo se ele existir para não ficar duplicado
+    // Remove o botão "carregar mais" antigo se existir
     const oldBtn = document.getElementById('load-more-citations-btn');
     if (oldBtn) oldBtn.remove();
 
-    // 3. Caso não existam resultados
+    // 2. Verificação de lista vazia
     if (allCitationsResults.length === 0) {
-        listElement.innerHTML = '<li style="padding:40px; color:#888; text-align:center; font-style:italic;">Nenhuma citação encontrada neste contexto.</li>';
+        listElement.innerHTML = '<li style="padding:40px; color:#888; text-align:center; list-style:none;">Nenhuma citação encontrada.</li>';
         return;
     }
 
-    // 4. Configuração de Paginação
-    const perPage = 10; // Mostra 10 de cada vez
+    // 3. Configuração de Paginação (10 por página)
+    const perPage = 10;
     const start = currentCitationsPageIndex * perPage;
     const end = start + perPage;
     const pageItems = allCitationsResults.slice(start, end);
 
-    // 5. Gerar os itens no DOM
+    // 4. Renderização dos Itens
     pageItems.forEach(item => {
         const details = document.createElement('details');
         details.className = 'reference-item';
         
-        // Proteção contra caracteres especiais para os atributos de clique
+        // Lógica da Estrela
+        const isStarred = item.isStarred === true;
+        const starIcon = isStarred ? '★' : '☆';
+        const starColor = isStarred ? '#f1c40f' : 'var(--text-muted-color)';
+
+        // Metadados para o botão "+" (Add to Puzzle)
         const safeName = encodeURIComponent(item.name);
         const safeSnippet = encodeURIComponent(item.snippet);
 
-        // O cabeçalho (Summary) contém os botões e o título
         details.innerHTML = `
             <summary>
-                <div class="ref-item-header">
-                    <!-- BOTÃO + (Adicionar ao Puzzle) -->
+                <div class="ref-item-header" style="display: flex; align-items: center; gap: 8px; width: 100%;">
+                    
+                    <!-- BOTÃO ADICIONAR AO PUZZLE [+] -->
                     <button class="add-to-puzzle-btn" title="Adicionar ao Quadro" 
-                            onclick="event.preventDefault(); event.stopPropagation(); window.addItemToPuzzle('${item.id}', decodeURIComponent('${safeName}'), decodeURIComponent('${safeSnippet}'))">+</button>
+                            onclick="event.preventDefault(); event.stopPropagation(); window.addItemToPuzzle('${item.id}', decodeURIComponent('${safeName}'), decodeURIComponent('${safeSnippet}'))">
+                        +
+                    </button>
                     
+                    <!-- BOTÃO ESTRELA (FIXAR NO TOPO) -->
+                    <button class="star-btn" title="${isStarred ? 'Remover do topo' : 'Fixar no topo'}" 
+                            onclick="event.preventDefault(); event.stopPropagation(); window.toggleNoteStar('${item.id}', ${isStarred})"
+                            style="background:none; border:1px solid var(--border-color); color:${starColor}; width:28px; height:28px; border-radius:4px; cursor:pointer; font-size:18px; display:flex; align-items:center; justify-content:center; transition: all 0.2s;">
+                        ${starIcon}
+                    </button>
+
                     <!-- TÍTULO DA NOTA -->
-                    <span class="ref-item-title">${item.isProtected ? '🔒' : '📄'} ${item.name}</span>
+                    <span class="ref-item-title" style="flex-grow: 1; margin-left: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-color); font-weight: 500;">
+                        ${item.isProtected ? '🔒 ' : '📄 '}${item.name}
+                    </span>
                     
-                    <!-- BOTÃO ➔ (Ir para a Nota com Highlight) -->
+                    <!-- BOTÃO IR PARA NOTA [➔] -->
                     <button class="go-to-note-btn" 
-                            onclick="event.preventDefault(); event.stopPropagation(); window.handleGoToNote('${item.id}')" 
-                            title="Ir para esta nota">➔</button>
+                            onclick="event.preventDefault(); event.stopPropagation(); window.handleGoToNote('${item.id}', '${item.boxId || ''}')" 
+                            title="Ir para a nota"
+                            style="background:none; border:none; color:var(--accent-color); font-size:20px; cursor:pointer; padding:0 5px;">
+                        ➔
+                    </button>
                 </div>
             </summary>
-            <!-- CONTEÚDO (Texto ao redor da palavra encontrada) -->
-            <div class="reference-context">${item.snippet}</div>
+            <div class="reference-context">
+                ${item.snippet}
+            </div>
         `;
         listElement.appendChild(details);
     });
 
-    // 6. Criar botão "Mostrar mais" se ainda sobrarem resultados no array global
+    // 5. Botão "Carregar Mais"
     if (end < allCitationsResults.length) {
         currentCitationsPageIndex++;
+        const remaining = allCitationsResults.length - end;
         const loadMoreBtn = document.createElement('button');
         loadMoreBtn.id = 'load-more-citations-btn';
-        loadMoreBtn.style.cssText = "width: 100%; margin: 15px 0; padding: 12px; border: 1px dashed var(--accent-color); color: var(--accent-color); background: none; cursor: pointer; font-weight: bold; border-radius: 6px; font-size: 0.9em;";
-        loadMoreBtn.textContent = `+ ver mais (${allCitationsResults.length - end} restantes)`;
-        
+        loadMoreBtn.style.cssText = "width:100%; padding:12px; margin-top:10px; background:none; border:1px dashed var(--border-color); color:var(--text-muted-color); cursor:pointer; font-size:0.9em; border-radius:6px;";
+        loadMoreBtn.textContent = `+ ver mais ${remaining} resultados`;
         loadMoreBtn.onclick = () => window.renderCitationsPage(true);
         listElement.appendChild(loadMoreBtn);
     }
 };
+
 
 // --- FUNÇÃO DE APOIO PARA O SALTO INTELIGENTE ---
  // --- FUNÇÃO DE APOIO PARA O SALTO INTELIGENTE ---
@@ -55344,29 +55508,33 @@ window.showReferencesPanel = async function(id, name, type) {
     const titleEl = document.getElementById('references-panel-title');
     if (titleEl) titleEl.textContent = `Referências: ${name}`;
 
-    // --- FILTRO DE BOTÕES POR TIPO ---
+    // --- FILTRO DE BOTÕES ---
     const editBtn = document.getElementById('references-edit-btn');
     const anchorBtn = document.getElementById('references-anchor-btn');
     const bookmarkBtn = document.getElementById('references-bookmark-btn');
     const wolBtn = document.getElementById('references-wol-btn');
 
-    // A. Personagens, Locais, Datas, Cosmos e Tópicos
     if (['personagem', 'local', 'data', 'cosmos', 'subcosmos', 'topico'].includes(type)) {
-        if (editBtn) editBtn.style.display = 'block'; // ✏️ Ativo
-        if (anchorBtn) anchorBtn.style.display = 'block'; // ⚓ Ativo
-    }
-    
-    // B. Textos Bíblicos (SEM Lápis)
-    else if (type === 'textobiblico') {
-        if (bookmarkBtn) bookmarkBtn.style.display = 'block'; // 🔖 Ativo
-        if (wolBtn) wolBtn.style.display = 'block';           // 📖 Ativo
-        // O editBtn (✏️) permanece com display: none (herdado do reset)
+        if (editBtn) editBtn.style.display = 'block';
+        if (anchorBtn) anchorBtn.style.display = 'block';
+    } else if (type === 'textobiblico') {
+        if (bookmarkBtn) bookmarkBtn.style.display = 'block';
+        if (wolBtn) wolBtn.style.display = 'block';
     }
 
-    // Carregar dados
+    // 1. Carrega apenas o Puzzle (que é a aba padrão ativa)
     loadPuzzleData(activeReferenceEntity.id, type);
     renderPanelLinks();
-    renderUniversalTextSearch(name);
+
+    // 2. LIMPA A LISTA DE CITAÇÕES E PREPARA O PLACEHOLDER
+    // Removido: renderUniversalTextSearch(name); 
+    const listElement = document.getElementById('references-list');
+    if (listElement) {
+        listElement.innerHTML = `
+            <div style="padding:40px 20px; text-align:center; color:var(--text-muted-color);">
+                <p>Clique na aba ❝ para carregar as citações de <strong>${name}</strong>.</p>
+            </div>`;
+    }
 
     if (window.innerWidth <= 768) {
         const refPanel = document.getElementById('references-panel');
@@ -55770,6 +55938,58 @@ function ensureFirstLineIsText() {
         editor.prepend(p);
     }
 }
+
+window.switchTopicSubTab = function(tab) {
+    const btnNotes = document.getElementById('btn-subtab-notes');
+    const btnBoxes = document.getElementById('btn-subtab-boxes');
+
+    // Se os botões sumiram do DOM, abortamos a pintura mas deixamos os dados passarem
+    if (btnNotes && btnBoxes) {
+        btnNotes.className = 'modal-btn secondary';
+        btnBoxes.className = 'modal-btn secondary';
+        if (tab === 'notes') btnNotes.className = 'modal-btn primary-active';
+        else btnBoxes.className = 'modal-btn primary-active';
+    }
+
+    // CARREGA DADOS PARA A VARIÁVEL GLOBAL DE RENDERIZAÇÃO
+    window.allCitationsResults = (tab === 'notes') ? [...window.topicNoteResults] : [...window.topicBoxResults];
+
+    // RENDERIZA A LISTA FINAL
+    if (typeof window.renderCitationsPage === 'function') {
+        window.renderCitationsPage(false);
+    }
+};
+
+window.toggleNoteStar = async function(noteId, currentlyStarred) {
+    if (!activeReferenceEntity || !activeReferenceEntity.id) return;
+
+    try {
+        const { doc, updateDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const colName = getCollectionFromType(activeReferenceEntity.type);
+        const docRef = doc(db, colName, activeReferenceEntity.id);
+
+        if (currentlyStarred) {
+            // DESLIGAR: Remove o campo do mapa de favoritos no Firebase
+            await updateDoc(docRef, {
+                [`favorites.${noteId}`]: deleteField()
+            });
+            console.log("⭐ Estrela removida.");
+        } else {
+            // LIGAR: Adiciona ao mapa de favoritos
+            await updateDoc(docRef, {
+                [`favorites.${noteId}`]: true
+            });
+            console.log("⭐ Item fixado no topo.");
+        }
+
+        // RE-RENDERIZAÇÃO: Chama a pesquisa novamente para aplicar a nova ordem
+        // O nome da entidade está guardado na variável global do painel
+        renderUniversalTextSearch(activeReferenceEntity.name);
+
+    } catch (e) {
+        console.error("Erro ao alternar estrela:", e);
+    }
+};
 
 // Aplicar com prioridade máxima (useCapture: true)
 // Usamos touchstart para Mobile e mousedown para garantir que não falha no simulador
