@@ -4629,37 +4629,26 @@ import { BIBLE_DATA } from './js/bible-data.js';
 window.linkifyBibleReferences = function(text) {
     if (!text) return "";
 
+    // 1. Lista de livros para detecção
     const allBookPatterns = [...BIBLE_DATA.map(b => b.nome), ...Object.keys(BIBLE_ABBREVIATIONS)];
     const sortedPatterns = allBookPatterns.sort((a, b) => b.length - a.length);
     const patternString = sortedPatterns.map(p => p.replace(/\./g, '\\.')).join('|');
-    const bookRegex = new RegExp(`^(${patternString})\\.?\\s*`, 'i');
 
-    // Regex para capturar o grupo inteiro
-    const groupRegex = new RegExp(`\\b((?:${patternString})\\.?\\s+\\d+[:.]\\d+(?:\\s*[\\-–,;]\\s*(?:(?:${patternString})\\.?\\s*)?\\d*[:.]?\\d+)*)`, 'gi');
+    /* 
+       ESTA É A REGEX "MÁGICA":
+       - Procura o nome do livro
+       - Procura Capítulo:Versículo
+       - Continua a capturar enquanto encontrar espaços, números, vírgulas, traços ou ponto e vírgula
+    */
+    const groupRegex = new RegExp(`\\b(?:${patternString})\\.?\\s+\\d+[:.]\\d+(?:\\s*[\\-–,;]\\s*\\d*[:.]?\\d+)*`, 'gi');
 
     return text.replace(groupRegex, (match) => {
-        const segments = match.split(';');
-        let lastBook = "";
-        let result = [];
-
-        segments.forEach((seg) => {
-            let s = seg.trim();
-            const bookMatch = s.match(bookRegex);
-            
-            if (bookMatch) {
-                lastBook = bookMatch[1].trim();
-            }
-
-            let entityName = s;
-            if (!bookMatch && lastBook) {
-                entityName = `${lastBook} ${s}`;
-            }
-
-            const cleanEntityName = entityName.replace(/[()]+$/, '').replace(/[.,;]+$/, '').trim();
-            result.push(`<span class="bible-ref-ghost" data-entity-type="textobiblico" data-entity-name="${cleanEntityName}">${seg}</span>`);
-        });
-
-        return result.join(';');
+        // Limpeza básica para evitar capturar pontuação final do parágrafo
+        const cleanMatch = match.trim().replace(/[.,;]+$/, '');
+        
+        // Se houver ponto e vírgula, vamos dividir e processar para garantir que o "ghost" saiba o contexto
+        // mas para o utilizador, o link será um bloco único e contínuo.
+        return `<span class="bible-ref-ghost" data-entity-type="textobiblico" data-entity-name="${cleanMatch}">${match}</span>`;
     });
 };
 
@@ -4970,10 +4959,10 @@ function scanContentXRay(secoes, pubTitle, sigla, matches, terms, sourcePNum, fo
     secoes.forEach((sec, sIdx) => {
         if (!sec) return;
 
-        // Impedir que o X-Ray encontre o próprio parágrafo
-        if (sigla === currentPubId && (sIdx === currentChapterIdx)) return;
+        // 1. Impede que o X-Ray encontre o próprio capítulo/artigo de onde a pesquisa partiu
+        if (sigla === currentPubId && sIdx === currentChapterIdx) return;
 
-        // Captura a referência (w25 março...) e o título (Não adie o batismo)
+        // Captura metadados da secção
         const artRef = sec.referencia || (sec.capitulo ? `Cap. ${sec.capitulo}` : "");
         const artTitle = sec.titulo || "Sem Título";
 
@@ -4981,20 +4970,28 @@ function scanContentXRay(secoes, pubTitle, sigla, matches, terms, sourcePNum, fo
             sec.conteudo.forEach(block => {
                 if (!block || !block.texto) return;
                 
-                const lowText = block.texto.toLowerCase();
+                // 2. Pesquisa cada termo (versículo) dentro do texto do bloco
                 terms.forEach(t => {
-                    if (lowText.includes(t.toLowerCase())) {
+                    // --- CORREÇÃO DE PRECISÃO ---
+                    // Escapamos o termo para evitar erros com caracteres especiais (ex: ".")
+                    const escapedTerm = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    
+                    // Criamos uma Regex com "Negative Lookahead" (?!\d)
+                    // Isto garante que se pesquisarmos "Atos 8:1", ele NÃO valide "Atos 8:12"
+                    // porque verifica que após o "1" não existe outro dígito numérico.
+                    const regex = new RegExp(escapedTerm + "(?!\\d)", "i");
+
+                    if (regex.test(block.texto)) {
                         matches.push({
-                            // Guardamos os dados estruturados
                             pubTitle: pubTitle, 
-                            capTitle: artTitle, // Título do Artigo
-                            artRef: artRef,     // Referência da Publicação
+                            capTitle: artTitle, 
+                            artRef: artRef,     
                             text: block.texto, 
                             sigla: sigla, 
                             capIdx: sIdx,
                             pNum: block.numero_ref,
                             folder: folder, 
-                            refFound: t,
+                            refFound: t, // O versículo exato que gerou a correspondência
                             ano: ano, 
                             mes: mes
                         });
@@ -5059,7 +5056,7 @@ window.renderXrayResults = (results, verses) => {
 
      return filtered.map(res => {
     const escapedTerm = res.refFound.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(${escapedTerm})`, 'gi');
+    const regex = new RegExp(`(${escapedTerm})(?!\\d)`, 'gi');
     const highlightedSnippet = (res.text || "").replace(regex, '<strong style="color:#fff; border-bottom:1px solid #3498db;">$1</strong>');
 
     // FORMATAÇÃO SOLICITADA: "Referência — Título" em itálico
