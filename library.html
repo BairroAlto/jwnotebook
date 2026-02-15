@@ -1319,12 +1319,27 @@ input:checked + .slider:before {
 
 /* Estilo para referências bíblicas clicáveis mas invisíveis no texto */
 .bible-ref-ghost {
-    color: inherit !important;
-    text-decoration: none !important;
+    user-select: text !important;
+    -webkit-user-select: text !important;
     cursor: pointer;
-    border: none !important;
-    background: none !important;
-    outline: none;
+    display: inline; /* Garante que se comporta como texto */
+}
+
+/* 2. Garante que os destaques (picotados ou sólidos) permitem seleção */
+.highlight-picotado, .direct-highlight {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+}
+body {
+    user-select: auto; 
+}
+
+/* Bloqueie a seleção apenas na UI (Interface), não no texto */
+header, aside, .sidebar-tabs, button, .nav-arrow, .ref-num {
+    user-select: none !important;
+    -webkit-user-select: none !important;
 }
 
 .bible-ref-ghost:hover {
@@ -1601,9 +1616,9 @@ input:checked + .slider:before {
     <button class="tab-btn active" data-ref-tab="puzzle" title="Quadro">🧩</button>
     <button class="tab-btn" data-ref-tab="links" title="Links">⚡</button>
     <button class="tab-btn" data-ref-tab="dossie" title="Micas">📼</button>
-    <!-- Aba de Enxertos (escondida por padrão) -->
-    <button class="tab-btn" data-ref-tab="enxertos" id="tab-enxertos-btn" style="display:none;" title="Enxertos Selecionados">❛❛❞</button>
+    <!-- Aba de Segmentos (escondida por padrão) -->
     <button class="tab-btn" data-ref-tab="para-xray" title="X-Ray Parágrafo" id="tab-xray-btn" style="display: none;">📟</button>
+        <button class="tab-btn" data-ref-tab="enxertos" id="tab-enxertos-btn" style="display:none;" title="Segmentos Selecionados">❛❛❞</button>
     <button class="tab-btn" data-ref-tab="bibletext" title="Bíblia" id="tab-bible-btn" style="display:none;">📜</button> 
 </div>
 
@@ -1904,7 +1919,11 @@ let userCustomHighlights = {};
 let activeXrayVerseFilters = new Set();
 let currentXrayVersesList = [];
  let currentChapterIdx = null;
-
+let cacheXrayHTML = null;   // Armazena o HTML da pesquisa X-Ray
+let cacheSegmentoHTML = null; // Armazena o HTML do artigo aberto via X-Ray
+let activeParaNum = null;   
+let enxertoScrollPos = 0; // Nova variável para guardar o scroll
+let libraryDataCache = {};
 
 
 const container = document.getElementById('content-container');
@@ -2601,26 +2620,64 @@ window.openSidePanel = async (pNum) => {
     const panel = document.getElementById('side-panel');
     const tabs = document.getElementById('library-ref-tabs');
     const titleContainer = document.getElementById('side-title-container');
+    const content = document.getElementById('side-content');
     
-    // --- ADICIONE ESTA LINHA PARA RESETAR A ABA ---
-    document.getElementById('tab-xray-btn').style.display = 'none';
-    // ----------------------------------------------
+    // 1. GESTÃO DE CACHE E ESTADO
+    // Se o utilizador abrir um parágrafo diferente do que estava aberto antes:
+    if (activeParaNum !== pNum) {
+        // Limpamos os caches das pesquisas e enxertos do parágrafo anterior
+        cacheXrayHTML = null;
+        cacheSegmentoHTML = null;
+          enxertoScrollPos = 0;
+        activeParaNum = pNum;
+        
+        // Escondemos os botões das abas dinâmicas (X-Ray e Segmentos)
+        // Eles só reaparecerão se o utilizador disparar o Scanner ou abrir um resultado
+        const xrayBtn = document.getElementById('tab-xray-btn');
+        const enxertoBtn = document.getElementById('tab-enxertos-btn');
+        const bibleBtn = document.getElementById('tab-bible-btn');
+        
+        if (xrayBtn) xrayBtn.style.display = 'none';
+        if (enxertoBtn) enxertoBtn.style.display = 'none';
+        if (bibleBtn) bibleBtn.style.display = 'none';
 
+        // Garantir que o estilo de visualização do X-Ray é removido
+        content.classList.remove('xray-active');
+    }
+
+    // 2. ABRIR O PAINEL E EXIBIR BARRA DE ABAS
     panel.classList.add('open');
     tabs.style.display = 'flex'; 
-    panel.dataset.pNum = pNum;
 
+    // 3. DEFINIR CONTEXTO DE REFERÊNCIA
+    // Guardamos o número do parágrafo e a referência completa (ex: "w24 05:10") no próprio elemento
+    panel.dataset.pNum = pNum;
+    const fullRef = `${currentPubId} ${currentChapter}:${pNum}`;
+    panel.dataset.currentRef = fullRef;
+
+    // 4. ATUALIZAR CABEÇALHO DO PAINEL
+    // Injetamos o título do parágrafo e os botões de ação rápida
     titleContainer.innerHTML = `
         <div style="display:flex; flex-direction:column;">
             <span style="color: var(--accent-color); font-weight: bold;">Parágrafo ${pNum}</span>
         </div>
-        <div style="display:flex; gap:8px; margin-left:10px;">
+        <div style="display:flex; gap:8px; margin-left:12px;">
+            <!-- Botão para Criar Nova Nota Flash -->
             <button class="btn-header-create" onclick="window.prepareNoteFromPanel('${pNum}')" title="Nova Nota">+ 📝</button>
-            <button class="btn-header-create" style="background:#e67e22;" onclick="window.runParaXRay('${pNum}')" title="X-Ray Scanner">+ 📟</button>
+            
+            <!-- Botão para Iniciar o Scanner X-Ray (Laranja) -->
+            <button class="btn-header-create" style="background:#e67e22; animation: pulse-glow-orange 2s infinite;" 
+                    onclick="window.runParaXRay('${pNum}')" title="X-Ray Scanner">+ 📟</button>
         </div>
     `;
-    
-    // Abrir a aba padrão "Quadro"
+
+    // 5. ATIVAR ABA PADRÃO (Puzzle/Quadro 🧩)
+    // Removemos a classe 'active' de todas as abas e pomos na primeira
+    document.querySelectorAll('#library-ref-tabs .tab-btn').forEach(b => b.classList.remove('active'));
+    const puzzleTab = document.querySelector('[data-ref-tab="puzzle"]');
+    if (puzzleTab) puzzleTab.classList.add('active');
+
+    // Carregar o conteúdo da aba Quadro
     window.renderLibraryRefTab('puzzle');
 };
 
@@ -3176,54 +3233,90 @@ document.getElementById('library-ref-tabs').addEventListener('click', (e) => {
 });
 
 window.renderLibraryRefTab = async function(tab) {
-    const tabs = document.getElementById('library-ref-tabs');
     const panel = document.getElementById('side-panel');
     const content = document.getElementById('side-content');
-     content.classList.remove('xray-active');
+    const tabs = document.getElementById('library-ref-tabs');
     
-    // Pega na referência guardada no painel
+    // 1. OBTER REFERÊNCIA ATUAL (Correção do ReferenceError)
     const refName = panel.dataset.currentRef;
 
-    // --- PROTEÇÃO CONTRA O ERRO ---
-    if (!refName || refName === "undefined") {
-        content.innerHTML = '<p style="text-align:center; padding:20px; opacity:0.5;">Nenhuma referência selecionada.</p>';
+    // 2. SALVAR ESTADO DA ABA ANTERIOR (Scroll do Segmento)
+    // Se estávamos na aba de enxertos e vamos mudar para outra, guardamos o scroll
+    if (content.dataset.currentTab === 'enxertos') {
+        enxertoScrollPos = content.scrollTop;
+    }
+    // Atualizamos o marcador de aba atual no dataset
+    content.dataset.currentTab = tab;
+
+    // 3. GESTÃO DE ESTILO (Fundo preto para X-Ray)
+    if (tab === 'para-xray' || tab === 'enxertos') {
+        content.classList.add('xray-active');
+    } else {
+        content.classList.remove('xray-active');
+    }
+
+    // 4. PERSISTÊNCIA: ABA X-RAY (📟)
+    if (tab === 'para-xray' && cacheXrayHTML) {
+        content.innerHTML = cacheXrayHTML;
         return;
     }
-    // ------------------------------
 
-    content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
+    // 5. PERSISTÊNCIA: ABA ENXERTOS (❛❛❞)
+    if (tab === 'enxertos' && cacheSegmentoHTML) {
+        content.innerHTML = cacheSegmentoHTML;
+        // Restaurar a posição exata do scroll com um pequeno delay para renderização
+        setTimeout(() => {
+            content.scrollTop = enxertoScrollPos;
+        }, 10);
+        return;
+    }
+
+    // 6. ABA BÍBLIA (📜)
+    if (tab === 'bibletext') {
+        if (refName && refName !== "undefined") {
+            window.renderBibleTextInPanel(refName);
+        } else {
+            content.innerHTML = '<div class="xray-empty-msg">Selecione uma referência bíblica no texto.</div>';
+        }
+        return;
+    }
+
+    // 7. CARREGAMENTO DE DADOS DO FIREBASE (Puzzle 🧩, Links ⚡, Dossiê 📼)
+    if (!refName || refName === "undefined") {
+        content.innerHTML = '<p style="text-align:center; padding:40px; opacity:0.5;">Selecione um parágrafo.</p>';
+        return;
+    }
+
+    // Mostrar Spinner durante o carregamento do Firestore
+    content.innerHTML = '<div style="padding:50px; text-align:center;"><div class="global-spinner"></div></div>';
 
     try {
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        // Agora a query está protegida porque sabemos que refName existe
-        const q = query(collection(db, 'livros'), where('nome', '==', refName), where('userId', '==', auth.currentUser.uid));
+        const q = query(collection(db, 'livros'), 
+                        where('nome', '==', refName), 
+                        where('userId', '==', auth.currentUser.uid));
+        
         const snap = await getDocs(q);
 
         if (snap.empty) {
-            content.innerHTML = '<p style="text-align:center; padding:20px; opacity:0.5;">Sem dados vinculados.</p>';
+            content.innerHTML = '<div class="xray-empty-msg">Sem notas vinculadas a este parágrafo.</div>';
             return;
         }
 
         const data = snap.docs[0].data();
-        content.innerHTML = ''; 
+        content.innerHTML = ''; // Limpar spinner
 
+        // --- SUB-ABA: QUADRO / PUZZLE (🧩) ---
         if (tab === 'puzzle') {
             const board = data.puzzleBoard || [];
             if (board.length === 0) {
-                content.innerHTML = '<p style="text-align:center; padding:20px; opacity:0.5;">Quadro vazio.</p>';
+                content.innerHTML = '<div class="xray-empty-msg">O quadro está vazio.</div>';
                 return;
             }
 
             board.forEach((item, index) => {
-                const cleanText = cleanMicaContent(item.snippet);
                 const color = item.noteColor || "#3498db";
-                const sources = window.extractSources(item.snippet);
-
-                // Botão de fontes condicional
-                const btnSources = sources ? 
-                    `<button onclick="window.viewSources('${encodeURIComponent(JSON.stringify(sources))}')">📎 Fontes</button>` : '';
-
                 const card = document.createElement('div');
                 card.className = 'detail-card';
                 card.style.borderLeftColor = color;
@@ -3231,25 +3324,78 @@ window.renderLibraryRefTab = async function(tab) {
                     <div class="card-menu-container">
                         <div class="card-menu-btn" onclick="window.toggleCardMenu(event)">••</div>
                         <div class="card-dropdown">
-                            <button onclick="window.openEditCard('${pNum}', ${index})">✏️ Editar</button>
-                            ${btnSources}
-                            <button class="btn-remove-card" onclick="window.deletePuzzleItem('${pNum}', ${index})">🗑️ Remover</button>
+                            <button onclick="window.openEditCard('${panel.dataset.pNum}', ${index})">✏️ Editar</button>
+                            <button class="btn-remove-card" onclick="window.deletePuzzleItem('${panel.dataset.pNum}', ${index})">🗑️ Remover</button>
                         </div>
                     </div>
                     <span class="card-note-title" onclick="window.openNoteFromBoard('${item.noteId}')" style="color:${color}">
                         ${item.noteName || 'Sem Título'}
                     </span>
-                    <div class="card-snippet">${cleanText}</div>
+                    <div class="card-snippet">${cleanMicaContent(item.snippet)}</div>
                 `;
                 content.appendChild(card);
             });
         }
-        // ... (as outras abas links e dossie podem continuar como estão)
+
+        // --- SUB-ABA: LINKS (⚡) ---
+        else if (tab === 'links') {
+            const links = data.panelLinks || [];
+            if (links.length === 0) {
+                content.innerHTML = '<div class="xray-empty-msg">Nenhum link salvo.</div>';
+                return;
+            }
+            links.forEach(link => {
+                content.innerHTML += `
+                    <div class="flash-url-row" style="margin: 10px 15px;">
+                        <span style="font-size:1.2rem;">🔗</span>
+                        <a href="${link.url}" target="_blank" style="color:white; text-decoration:none;">${link.url}</a>
+                    </div>`;
+            });
+        }
+
+        // --- SUB-ABA: DOSSIÊ (📼) ---
+        else if (tab === 'dossie') {
+            const dossie = data.dossie || [];
+            if (dossie.length === 0) {
+                content.innerHTML = '<div class="xray-empty-msg">Nenhum dossiê vinculado.</div>';
+                return;
+            }
+            dossie.forEach((mica) => {
+                const micaColor = mica.color || '#e74c3c';
+                const micaDiv = document.createElement('div');
+                micaDiv.className = 'mica-folder';
+                micaDiv.style.borderLeft = `4px solid ${micaColor}`;
+                
+                let itemsList = "";
+                if(mica.items) {
+                    mica.items.forEach(mi => {
+                        itemsList += `
+                            <div style="padding:10px; border-bottom:1px solid #222;" onclick="window.openNoteFromBoard('${mi.noteId}')">
+                                <div style="color:#eee; font-weight:bold; font-size:0.85rem;">${mi.noteName}</div>
+                                <div style="color:#666; font-size:0.75rem;">${cleanMicaContent(mi.snippet).substring(0,60)}...</div>
+                            </div>`;
+                    });
+                }
+
+                micaDiv.innerHTML = `
+                    <div class="mica-header" onclick="this.nextElementSibling.classList.toggle('hidden')">
+                        <span style="color:${micaColor}">📂 ${mica.name.toUpperCase()}</span>
+                        <span>▼</span>
+                    </div>
+                    <div class="mica-content hidden">${itemsList}</div>
+                `;
+                content.appendChild(micaDiv);
+            });
+        }
+
     } catch (e) {
-        console.error(e);
-        content.innerHTML = '<p style="color:red; text-align:center;">Erro ao carregar.</p>';
+        console.error("Erro ao carregar aba lateral:", e);
+        content.innerHTML = '<p style="color:red; text-align:center; padding:20px;">Erro ao carregar dados.</p>';
     }
 };
+
+      
+
 
 
 window.openQuestionEditor = async (qNum, qText) => {
@@ -4749,104 +4895,106 @@ window.runParaXRay = async (pNum) => {
 async function deepSearchInLibrary(searchTerms, sourcePNum) {
     let matches = [];
     const startYear = 1950;
-    const endYear = 2027;
+    const agora = new Date();
+    const anoAtual = agora.getFullYear();
+    const mesAtual = agora.getMonth() + 1;
 
-    // 1. PESQUISA EM LIVROS (Onde os arquivos costumam ser maiores e únicos)
-    const livrosSiglas = Object.keys(SIGLAS_PUBLICACOES).filter(s => 
-        !['w', 'g', 'wp', 'km', 'mwb'].includes(s)
-    );
-    
+    // Marcamos o tempo de início para ver a performance
+    const startTime = performance.now();
+    const cacheInicial = Object.keys(libraryDataCache).length;
+
+    console.log(`%c[X-RAY 📟] Pesquisa Iniciada para: ${searchTerms.join(", ")}`, "background: #222; color: #3498db; padding: 5px; border-radius: 4px;");
+
+    // --- PARTE A: LIVROS ---
+    const livrosSiglas = Object.keys(SIGLAS_PUBLICACOES).filter(s => !['w', 'g', 'wp', 'km', 'mwb'].includes(s));
     for (const sigla of livrosSiglas) {
-        try {
-            const resp = await fetch(`./js/books/${sigla}.json`);
-            if (resp.ok) {
-                const data = await resp.json();
-                scanContentXRay(data.capitulos, data.titulo, sigla, matches, searchTerms, sourcePNum, 'books');
-            }
-        } catch(e) {}
-    }
-
-    // 2. PESQUISA EM REVISTAS (Sentinelas e Despertais)
-    const revistasParaPesquisar = [
-        { id: 'w', folder: 'sentinelas', nome: 'A Sentinela' },
-        { id: 'g', folder: 'despertai', nome: 'Despertai!' }
-    ];
-
-    // Para acelerar, vamos processar cada ano
-    for (let ano = startYear; ano <= endYear; ano++) {
-        for (const revista of revistasParaPesquisar) {
-            
-            // Processamos os 12 meses em paralelo para ganhar velocidade
-            const monthPromises = [];
-            for (let mes = 1; mes <= 12; mes++) {
-                const mStr = mes.toString().padStart(2, '0');
-                const path = `./js/publicacoes/${revista.folder}/${ano}/${mStr}.json`;
-                
-                monthPromises.push(
-                    fetch(path)
-                        .then(r => r.ok ? r.json() : null)
-                        .catch(() => null)
-                );
-            }
-
-            // Aguarda os 12 meses do ano atual para esta revista
-            const monthsData = await Promise.all(monthPromises);
-
-            monthsData.forEach((data, idx) => {
-                if (data && data.artigos) {
-                    const mesStr = (idx + 1).toString().padStart(2, '0');
-                    // Identificador ex: W50 (Sentinela 1950) ou G24 (Despertai 2024)
-                     const siglaRes = `${revista.id.toUpperCase()}${ano.toString().slice(-2)}_${mesStr}`;
-                    
-                   scanContentXRay(data.artigos, data.titulo, siglaRes, matches, searchTerms, sourcePNum, 'publicacoes', ano, mesStr);
-    }
-});
+        const data = await fetchWithCache(`./js/books/${sigla}.json`);
+        if (data && data.capitulos) {
+            scanContentXRay(data.capitulos, data.titulo, sigla, matches, searchTerms, sourcePNum, 'books');
         }
     }
+
+    // --- PARTE B: REVISTAS ---
+    const revistas = [{ id: 'w', folder: 'sentinelas' }, { id: 'g', folder: 'despertai' }];
+    for (let ano = startYear; ano <= anoAtual; ano++) {
+        for (const rev of revistas) {
+            const limiteMes = (ano === anoAtual) ? mesAtual : 12;
+            const monthPromises = [];
+            for (let mes = 1; mes <= limiteMes; mes++) {
+                monthPromises.push(fetchWithCache(`./js/publicacoes/${rev.folder}/${ano}/${mes.toString().padStart(2, '0')}.json`));
+            }
+            const monthsData = await Promise.all(monthPromises);
+            monthsData.forEach((data, idx) => {
+                if (data && data.artigos) {
+                    const siglaRes = `${rev.id.toUpperCase()}${ano.toString().slice(-2)}_${(idx+1).toString().padStart(2, '0')}`;
+                    scanContentXRay(data.artigos, data.titulo, siglaRes, matches, searchTerms, sourcePNum, 'publicacoes', ano, (idx+1).toString().padStart(2, '0'));
+                }
+            });
+        }
+    }
+
+    const endTime = performance.now();
+    const cacheFinal = Object.keys(libraryDataCache).length;
+    const novosFicheiros = cacheFinal - cacheInicial;
     
     return matches;
 }
 
-function scanContentXRay(secoes, pubTitle, sigla, matches, terms, sourcePNum, folder, ano, mes) {
-    secoes.forEach((sec, sIdx) => {
-        const artRef = sec.referencia || "";
-        sec.conteudo.forEach(block => {
-            if (!block.texto) return;
 
-            // Bloqueia o próprio parágrafo se estivermos no mesmo artigo/livro
-            if (sigla === currentPubId && block.numero_ref === sourcePNum) return;
-            
-            terms.forEach(t => {
-                if (block.texto.includes(t)) {
-                    matches.push({
-                        pubTitle, 
-                        capTitle: sec.titulo, 
-                        artRef,
-                        text: block.texto, 
-                        sigla, 
-                        capIdx: sIdx,
-                        folder, 
-                        refFound: t,
-                        ano, 
-                        mes
-                    });
-                }
+
+function scanContentXRay(secoes, pubTitle, sigla, matches, terms, sourcePNum, folder, ano, mes) {
+    // 1. Verifica se 'secoes' existe e é uma lista
+    if (!secoes || !Array.isArray(secoes)) return;
+
+    secoes.forEach((sec, sIdx) => {
+        // 2. Proteção contra capítulos vazios ou nulos
+        if (!sec) return;
+
+        const isSamePub = (sigla === currentPubId);
+        const isSameChapter = (sIdx === currentChapterIdx);
+
+        if (isSamePub && isSameChapter) return; 
+
+        const artRef = sec.referencia || "";
+
+        // 3. VERIFICAÇÃO CRUCIAL: Só tenta rodar o forEach se 'conteudo' existir
+        if (sec.conteudo && Array.isArray(sec.conteudo)) {
+            sec.conteudo.forEach(block => {
+                // Verifica se o bloco e o texto existem
+                if (!block || !block.texto) return;
+                
+                const lowText = block.texto.toLowerCase();
+
+                terms.forEach(t => {
+                    // Pesquisa sem sensibilidade a maiúsculas para maior precisão
+                    if (lowText.includes(t.toLowerCase())) {
+                        matches.push({
+                            pubTitle, 
+                            capTitle: sec.titulo || "Sem Título", 
+                            artRef,
+                            text: block.texto, 
+                            sigla, 
+                            capIdx: sIdx,
+                            pNum: block.numero_ref,
+                            folder, 
+                            refFound: t,
+                            ano, 
+                            mes
+                        });
+                    }
+                });
             });
-        });
+        }
     });
 }
 
 function scanContent(secoes, pubTitle, sigla, matches, verses, sourcePNum, folder, ano=null, mes=null) {
     secoes.forEach((sec, sIdx) => {
         const artRef = sec.referencia || ""; 
-        
         sec.conteudo.forEach((block, bIdx) => {
             if (!block.texto) return;
-
-            // Bloqueia o próprio parágrafo de origem
             if (sigla === currentPubId && block.numero_ref === sourcePNum) return;
 
-            // Verifica cada um dos termos (originais e expandidos)
             verses.forEach(v => {
                 if (block.texto.includes(v)) {
                     matches.push({
@@ -4856,8 +5004,9 @@ function scanContent(secoes, pubTitle, sigla, matches, verses, sourcePNum, folde
                         text: block.texto,
                         sigla: sigla,
                         capIdx: sIdx,
+                        pNum: block.numero_ref, // <--- ADICIONA ESTA LINHA AQUI
                         folder: folder,
-                        refFound: v, // Identifica qual dos termos expandidos foi encontrado
+                        refFound: v,
                         ano, mes
                     });
                 }
@@ -4870,87 +5019,107 @@ window.renderXrayResults = (results, verses) => {
     const content = document.getElementById('side-content');
     if (!content) return;
 
+    // Ativar modo visual de scanner (fundo preto e sem padding padrão)
     content.classList.add('xray-active');
 
-    const getFilteredContentHTML = (type) => {
-        let filtered = results.filter(r => r.folder === type && activeXrayVerseFilters.has(r.refFound));
+    // --- FUNÇÃO INTERNA: GERAR LISTA DE RESULTADOS FILTRADOS ---
+  const getFilteredContentHTML = (type) => {
+    let filtered = results.filter(r => 
+        r.folder === type && 
+        activeXrayVerseFilters.has(r.refFound)
+    );
 
-        if (type === 'publicacoes') {
-            filtered.sort((a, b) => {
-                if (parseInt(b.ano) !== parseInt(a.ano)) return parseInt(b.ano) - parseInt(a.ano);
-                return parseInt(b.mes) - parseInt(a.mes);
-            });
-        }
+    if (type === 'publicacoes') {
+        filtered.sort((a, b) => {
+            if (parseInt(b.ano) !== parseInt(a.ano)) return parseInt(b.ano) - parseInt(a.ano);
+            return parseInt(b.mes) - parseInt(a.mes);
+        });
+    }
 
-        if (filtered.length === 0) {
-            return `<div class="xray-empty-msg">Nenhum resultado encontrado.</div>`;
-        }
+    if (filtered.length === 0) {
+        return `<div class="xray-empty-msg">Nenhum resultado para os filtros selecionados.</div>`;
+    }
 
-        return filtered.map(res => {
-            const topLabel = res.refFound; 
-            const subLabel = type === 'publicacoes' 
-                ? `<i>${res.artRef} — ${res.capTitle}</i>` 
-                : `<i>${res.pubTitle} — ${res.capTitle}</i>`;
+    return filtered.map(res => {
+        const escapedTerm = res.refFound.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`(${escapedTerm})`, 'gi');
+        const highlightedSnippet = res.text.replace(regex, '<strong style="color:#fff; border-bottom:1px solid #3498db;">$1</strong>');
 
-            // --- LÓGICA DE NEGRITO NO TEXTO ---
-            // Criamos uma versão do texto onde a referência encontrada fica em negrito
-            const escapedTerm = res.refFound.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(`(${escapedTerm})`, 'gi');
-            const boldText = res.text.replace(regex, '<strong>$1</strong>');
+        // Formatação conforme o seu pedido:
+        // Linha 1: Versículo em Azul (ex: ROMANOS 7:21)
+        // Linha 2: Referência da Sentinela - Título (Itálico e menor)
+    return `
+    <div class="xray-res-card" 
+         style="margin: 12px 15px; background:rgba(255,255,255,0.03); padding:15px; border-radius:8px; border-left:4px solid #3498db; cursor:pointer;"
+         onclick="window.openSegmentoInSidebar(${JSON.stringify(res).replace(/"/g, '&quot;')})">
+        
+        <!-- Título do Versículo (Filtrado) -->
+        <div style="font-size:0.85rem; color:#3498db; font-weight:800; text-transform:uppercase; margin-bottom:2px; font-family: inherit;">
+            ${res.refFound}
+        </div>
 
-            return `
-                <div class="xray-res-card" 
-                     style="margin: 12px 15px; background:rgba(255,255,255,0.02); padding:15px; border-radius:8px; border-left:3px solid #3498db; cursor:pointer;"
-                     onclick="window.openEnxertoInSidebar(${JSON.stringify(res).replace(/"/g, '&quot;')})">
-                    
-                    <div style="font-size:0.7rem; color:#3498db; font-weight:bold; text-transform:uppercase; margin-bottom:4px;">
-                        ${topLabel}
-                    </div>
-                    
-                    <div style="font-size:0.7rem; color:#888; margin-bottom:10px; line-height:1.2;">
-                        ${subLabel}
-                    </div>
-                    
-                    <!-- Removemos o -webkit-line-clamp para mostrar o parágrafo TODO -->
-                    <div style="font-size:0.9rem; color:#ccc; line-height:1.5;">
-                        ${boldText}
-                    </div>
-                </div>`;
-        }).join('');
-    };
+        <!-- Referência + Título do Artigo -->
+        <div style="font-size:0.75rem; color:#888; margin-bottom:12px; font-style: italic; line-height:1.3; font-family: inherit;">
+            ${res.artRef} — ${res.capTitle}
+        </div>
 
-    // Montagem do Header e Chips (Permanece igual)
-    content.innerHTML = `
-        <div style="background:#000; position:sticky; top:0; z-index:100;">
+        <!-- Parágrafo (ESTILO ATUALIZADO) -->
+        <div style="font-size:0.92rem; color:#cecece; line-height:1.6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; letter-spacing: -0.01em;">
+            ${highlightedSnippet}
+        </div>
+    </div>`;
+    }).join('');
+};
+
+
+    // --- CONSTRUÇÃO DO HTML PRINCIPAL ---
+    const headerHTML = `
+        <div style="background:#000; position:sticky; top:0; z-index:100; border-bottom:1px solid #222;">
+            <!-- SUB-ABAS (Livros vs Publicações) -->
             <div class="xray-sub-tabs-annex">
-                <div class="xray-sub-group">
-                    <button class="xray-sub-btn ${currentXrayTab !== 'publicacoes' ? 'active' : ''}" 
-                            onclick="window.switchXraySubTab(this, 'xray-books')">Livros</button>
-                    <button class="xray-sub-btn ${currentXrayTab === 'publicacoes' ? 'active' : ''}" 
-                            onclick="window.switchXraySubTab(this, 'xray-pubs')">Publicações</button>
+                <div class="xray-sub-group" style="display:flex; width:100%;">
+                    <button class="xray-sub-btn ${window.currentXrayTab !== 'publicacoes' ? 'active' : ''}" 
+                            style="flex:1;" onclick="window.switchXraySubTab(this, 'xray-books')">Livros</button>
+                    <button class="xray-sub-btn ${window.currentXrayTab === 'publicacoes' ? 'active' : ''}" 
+                            style="flex:1;" onclick="window.switchXraySubTab(this, 'xray-pubs')">Publicações</button>
                 </div>
             </div>
             
-            <div class="filter-nav-container">
-                <button class="nav-arrow-xray" onclick="document.getElementById('xray-bar').scrollBy({left: -100, behavior: 'smooth'})">❮</button>
-                <div id="xray-bar" style="display:flex; gap:8px; overflow-x:auto; scrollbar-width:none; padding:0 5px;">
+            <!-- BARRA DE PICCARDS (Filtros de Versículos) -->
+            <div class="filter-nav-container" style="display:flex; align-items:center; padding:10px 5px; background:#0b0b0b;">
+                <button class="nav-arrow-xray" onclick="document.getElementById('xray-bar').scrollBy({left: -120, behavior: 'smooth'})">❮</button>
+                <div id="xray-bar" style="display:flex; gap:8px; overflow-x:auto; scrollbar-width:none; flex:1; padding:0 5px;">
                     ${verses.map(v => `
-                        <div class="verse-chip ${activeXrayVerseFilters.has(v) ? '' : 'inactive'}" 
-                             onclick="window.toggleXrayVerse('${v}')">${v}</div>
+                        <div class="verse-chip ${activeXrayVerseFilters.has(v) ? 'active' : 'inactive'}" 
+                             onclick="window.toggleXrayVerse('${v}')">
+                            ${v}
+                        </div>
                     `).join('')}
                 </div>
-                <button class="nav-arrow-xray" onclick="document.getElementById('xray-bar').scrollBy({left: 100, behavior: 'smooth'})">❯</button>
+                <button class="nav-arrow-xray" onclick="document.getElementById('xray-bar').scrollBy({left: 120, behavior: 'smooth'})">❯</button>
             </div>
         </div>
+    `;
 
-        <div id="xray-books" class="xray-pane" style="display:${currentXrayTab !== 'publicacoes' ? 'block' : 'none'};">
+    const panesHTML = `
+        <div id="xray-books" class="xray-pane" style="display:${window.currentXrayTab !== 'publicacoes' ? 'block' : 'none'};">
             ${getFilteredContentHTML('books')}
         </div>
-        <div id="xray-pubs" class="xray-pane" style="display:${currentXrayTab === 'publicacoes' ? 'block' : 'none'};">
+        <div id="xray-pubs" class="xray-pane" style="display:${window.currentXrayTab === 'publicacoes' ? 'block' : 'none'};">
             ${getFilteredContentHTML('publicacoes')}
         </div>
     `;
+
+    // Injetar no DOM
+    content.innerHTML = headerHTML + panesHTML;
+
+    // --- LINHA CRUCIAL PARA PERSISTÊNCIA ---
+    // Guardar o HTML exato no cache global para que ao voltar das abas 🧩 ou 📼, 
+    // o resultado apareça instantaneamente sem nova pesquisa.
+    cacheXrayHTML = content.innerHTML;
 };
+
+  
 
    
    
@@ -4984,14 +5153,17 @@ window.toggleXrayVerse = (verse) => {
     } else {
         activeXrayVerseFilters.add(verse);
     }
-    // Re-renderiza sem perder a lista original de Piccards
+    // Ao re-renderizar, a renderXrayResults vai atualizar o cacheXrayHTML automaticamente
     window.renderXrayResults(currentXrayData, currentXrayVersesList);
 };
 
 window.switchXraySubTab = (btn, paneId) => {
-    currentXrayTab = (paneId === 'xray-pubs') ? 'publicacoes' : 'books';
+    // Atualiza a variável global de estado da sub-aba
+    window.currentXrayTab = (paneId === 'xray-pubs') ? 'publicacoes' : 'books';
+    // Re-renderiza para aplicar a mudança e salvar no cache
     window.renderXrayResults(currentXrayData, currentXrayVersesList);
 };
+
 
 // 1. Variável de estado para as definições
 let userSettings = {
@@ -5036,98 +5208,131 @@ function expandBibleRange(ref) {
 }
 
 
-window.openEnxertoInSidebar = async (res) => {
+window.openSegmentoInSidebar = async (res) => {
+    console.log("%c[X-RAY] 1. Início do processo de abertura de segmento", "color: #3498db; font-weight: bold;");
+    console.log("Alvo:", { pub: res.sigla, capIdx: res.capIdx, pNum: res.pNum });
+
     const content = document.getElementById('side-content');
     const enxertoBtn = document.getElementById('tab-enxertos-btn');
     
-    // 1. Mostrar e ativar a aba Enxertos (❛❛❞)
+    // 1. Mudança de Aba
     if (enxertoBtn) {
         enxertoBtn.style.display = 'inline-block';
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         enxertoBtn.classList.add('active');
+        console.log("[X-RAY] 2. Aba 'Enxertos' ativada.");
     }
     
-    content.innerHTML = `<div style="padding:40px;text-align:center;"><div class="global-spinner"></div><p style="color:#888; font-size:0.8rem; margin-top:10px;">A carregar artigo completo...</p></div>`;
+    content.dataset.currentTab = 'enxertos';
+    content.classList.add('xray-active');
+    content.innerHTML = `<div style="padding:50px; text-align:center;"><div class="global-spinner"></div></div>`;
 
     try {
-        // 2. Determinar o caminho do arquivo corretamente
+        // 2. Determinação do Path
         let path = "";
         if (res.folder === 'publicacoes') {
-            // Extrai a sigla (ex: de 'W24_05' tira o 'w')
-            const sigla = res.sigla.substring(0,1).toLowerCase(); 
+            const sigla = res.sigla.substring(0, 1).toLowerCase(); 
             const subFolder = MAGAZINE_FOLDERS[sigla] || 'sentinelas';
             path = `./js/publicacoes/${subFolder}/${res.ano}/${res.mes}.json`;
         } else {
             path = `./js/books/${res.sigla}.json`;
         }
-
-        console.log("A tentar carregar enxerto de:", path); // Debug
+        console.log("[X-RAY] 3. A carregar ficheiro:", path);
 
         const response = await fetch(path);
-        if (!response.ok) throw new Error("Ficheiro não encontrado");
-        
         const data = await response.json();
+        const lista = data.artigos || data.capitulos;
+        const artigo = lista[res.capIdx];
+        console.log("[X-RAY] 4. Dados carregados. Artigo:", artigo.titulo);
 
-        // 3. CORREÇÃO DO ERRO: Detetar se é 'artigos' (revista) ou 'capitulos' (livro)
-        const listaCapitulos = data.artigos || data.capitulos;
-        
-        if (!listaCapitulos || !listaCapitulos[res.capIdx]) {
-            throw new Error(`Índice ${res.capIdx} não encontrado no ficheiro.`);
-        }
-
-        const artigo = listaCapitulos[res.capIdx];
-
-        // 4. Renderizar o conteúdo
+        // 3. Construção do HTML
         let html = `
             <div style="padding:15px; background:#1a1a1d; border-bottom:1px solid #333; position:sticky; top:0; z-index:10; display:flex; justify-content:space-between; align-items:center;">
-                <span style="color:var(--accent-color); font-weight:bold; font-size:0.75rem; letter-spacing:1px;">ENXERTO SELECIONADO</span>
+                <span style="color:var(--accent-color); font-weight:bold; font-size:0.75rem;">ENXERTO SELECIONADO</span>
                 <button onclick="window.loadPublication('${res.folder}', '${res.sigla}').then(() => window.renderReading(${res.capIdx}, '${res.folder}', '${res.sigla}'))" 
-                        style="background:var(--accent-color); color:white; border:none; padding:6px 12px; border-radius:20px; font-size:0.7rem; cursor:pointer; font-weight:bold;">
+                        style="background:var(--accent-color); color:white; border:none; padding:6px 14px; border-radius:20px; font-size:0.7rem; cursor:pointer; font-weight:bold;">
                     ABRIR TELA CHEIA
                 </button>
             </div>
-            <div id="enxerto-full-body" style="padding:20px; font-size:0.95rem; line-height:1.7; color:#ccc;">
-                <div style="font-size:0.7rem; color:#888; margin-bottom:5px; font-weight:bold;">${res.pubTitle.toUpperCase()}</div>
-                <h2 style="color:#eee; font-size:1.3rem; margin-bottom:25px; line-height:1.2;">${artigo.titulo}</h2>
+            <div style="padding:20px; font-size:1rem; line-height:1.7; color:#ccc;">
+                <h2 style="color:#eee; font-size:1.4rem; margin-bottom:25px;">${artigo.titulo}</h2>
         `;
 
         artigo.conteudo.forEach(block => {
-            const isTarget = String(block.numero_ref) === String(res.pNum);
-            const highlightStyle = isTarget ? 'background:rgba(52, 152, 219, 0.12); border-left:4px solid #3498db; padding: 10px; border-radius: 0 8px 8px 0; color: #fff;' : '';
-            const blockId = block.numero_ref ? `id="side-p-${block.numero_ref}"` : '';
+            const pNum = block.numero_ref;
+            const isTarget = String(pNum) === String(res.pNum);
+            const blockId = pNum ? `id="enxerto-p-${pNum}"` : '';
+            const highlightStyle = isTarget ? 'background:rgba(52, 152, 219, 0.12); border-left:4px solid #3498db; padding:12px; border-radius:4px; margin-left:-12px; margin-right:-12px;' : 'padding:12px 0;';
 
-            if (block.tipo === 'subtema') {
-                html += `<div style="color:var(--accent-color); font-weight:bold; margin: 25px 0 10px 0; font-size:1.1rem;">${block.texto}</div>`;
-            } else if (block.tipo === 'pergunta') {
-                html += `<div style="color:#e67e22; font-style:italic; margin-bottom:15px; font-size:0.9rem;">${block.texto}</div>`;
-            } else {
-                html += `<div ${blockId} style="margin-bottom:18px; ${highlightStyle}">
-                    ${block.numero_ref ? `<b style="color:#555; font-size:0.7rem; margin-right:8px; vertical-align:middle;">${block.numero_ref}</b>` : ''}
-                    ${block.texto}
+            html += `
+                <div ${blockId} class="enxerto-block" style="margin-bottom:10px; ${highlightStyle}">
+                    ${pNum ? `<b style="color:#555; font-size:0.75rem; margin-right:10px;">${pNum}</b>` : ''}
+                    ${window.linkifyBibleReferences(block.texto || "")}
                 </div>`;
-            }
         });
 
-        html += `<div style="height:50px;"></div></div>`;
+        html += `</div><div style="height:150px;"></div>`;
+        
         content.innerHTML = html;
+        cacheSegmentoHTML = html;
+        console.log("[X-RAY] 5. HTML renderizado no painel lateral.");
 
-        // 5. Scroll suave até o parágrafo alvo
-        setTimeout(() => {
-            const target = document.getElementById(`side-p-${res.pNum}`);
-            if (target) {
-                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // 4. Lógica de Scroll com Debug
+        const targetId = `enxerto-p-${res.pNum}`;
+        console.log("[X-RAY] 6. A procurar elemento para scroll:", targetId);
+
+       setTimeout(() => {
+            const targetId = `enxerto-p-${res.pNum}`;
+            const targetEl = document.getElementById(targetId);
+            const header = content.querySelector('div[style*="position:sticky"]'); // Pega o cabeçalho azul
+            
+            if (targetEl && content) {
+                // Calculamos a altura real do cabeçalho (geralmente cerca de 55-60px)
+                const headerHeight = header ? header.offsetHeight : 60;
+                
+                // Calculamos a posição do parágrafo
+                const offsetTop = targetEl.offsetTop;
+
+                console.log(`[SCROLL] Alinhando ao topo. Header: ${headerHeight}px, Parágrafo: ${offsetTop}px`);
+
+                content.scrollTo({
+                    top: offsetTop - headerHeight, // Subtrai exatamente a altura do cabeçalho
+                    behavior: 'smooth'
+                });
             }
-        }, 400);
+        }, 500);
 
     } catch (e) {
-        console.error("Erro no Enxerto:", e);
-        content.innerHTML = `<div style="padding:40px; text-align:center; color:#e74c3c;">
-            <p>Erro ao carregar o artigo completo.</p>
-            <small style="color:#555;">${e.message}</small>
-        </div>`;
+        console.error("[X-RAY ERRO CRÍTICO]", e);
+        content.innerHTML = `<div style="padding:40px; text-align:center; color:#888;">Erro: ${e.message}</div>`;
     }
 };
 
+
+async function fetchWithCache(path) {
+    // Se o ficheiro já está no objeto global libraryDataCache
+    if (libraryDataCache[path]) {
+        console.log(`%c[CACHE 📁] Lendo da RAM: ${path}`, "color: #9b59b6; font-size: 0.7rem;");
+        return libraryDataCache[path];
+    }
+
+    // Se não está, vamos descarregar
+    try {
+        console.log(`%c[REDE 🌐] Descarregando: ${path}`, "color: #e67e22; font-weight: bold;");
+        const response = await fetch(path);
+        
+        if (!response.ok) {
+            // Se o arquivo não existir (404), não guardamos nada
+            return null;
+        }
+        
+        const data = await response.json();
+        libraryDataCache[path] = data; // Guarda no Cache Global
+        return data;
+    } catch (e) {
+        return null;
+    }
+}
 
 
 
