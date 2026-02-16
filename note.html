@@ -28595,50 +28595,72 @@ noteContentEditor.addEventListener('input', (e) => {
     // 1. GESTÃO DE ESTADO DA NOTA (Save & Timestamp)
     lastContentEditTime = Date.now(); 
     updateSaveStatus('unsaved');
-    saveNote(); // Dispara o timer de 2 min
+    saveNote(); // Dispara o timer de gravação automática (2 min)
 
-    // 2. ATUALIZAÇÃO DO ÍNDICE (Vista 2)
-    // Se mudou título ou conteúdo de qualquer caixa
-    if (target.classList.contains('mini-note-title-input') || 
-        target.classList.contains('mini-note-content') ||
-        target.classList.contains('redator-input')) {
-        
-        generateNoteIndex();
-        detectActiveScrollElement(); 
+    // 2. AUTO-RESIZE PARA TÍTULOS (VITAL PARA IPAD/IPHONE)
+    // Se a opção de títulos completos estiver ativa, ajusta a altura do textarea enquanto digita
+    if (target.classList.contains('mini-note-title-input') && target.tagName === 'TEXTAREA') {
+        if (typeof autoResizeTitle === 'function') {
+            autoResizeTitle(target);
+        }
     }
 
-    // 3. SINCRONIZAÇÃO DO QUADRO (4ª Coluna - Puzzle)
+    // 3. ATUALIZAÇÃO DO ÍNDICE (Vista 2 - Lateral)
+    // Se mudou o título ou o conteúdo de qualquer caixa, redesenha o índice lateral
+    if (target.classList.contains('mini-note-title-input') || 
+        target.classList.contains('mini-note-content') ||
+        target.classList.contains('redator-input') ||
+        target.classList.contains('sign-title-input')) {
+        
+        if (typeof generateNoteIndex === 'function') generateNoteIndex();
+        if (typeof detectActiveScrollElement === 'function') detectActiveScrollElement(); 
+    }
+
+    // 4. SINCRONIZAÇÃO DO QUADRO (4ª Coluna - Puzzle)
+    // Se estiver a escrever dentro de uma caixa vinculada ao quadro, propaga as mudanças
     const box = target.closest('.mini-note-wrapper, .redator-wrapper, details.toggle-section');
     if (box) {
         clearTimeout(window.puzzleSyncTimer);
         window.puzzleSyncTimer = setTimeout(async () => {
-            await syncPuzzleRealTime(); 
-            window.syncBoxChangesEverywhere(box);
+            if (typeof syncPuzzleRealTime === 'function') await syncPuzzleRealTime(); 
+            if (typeof window.syncBoxChangesEverywhere === 'function') window.syncBoxChangesEverywhere(box);
         }, 1500); 
     }
 
-    // 4. >>> O QUE FALTAVA: LIVE SEARCH DO CONSULTOR 📕 <<<
-    // Verifica se estamos a escrever dentro de um Consultor
+    // 5. LIVE SEARCH DO CONSULTOR 📕
+    // Se estiver a escrever no corpo de um Consultor, dispara a pesquisa semântica
     const consultorWrapper = target.closest('.mini-note-wrapper.consultor-mode');
-    
     if (consultorWrapper) {
-        // Verifica se o painel de resultados está visível (se estiver fechado/hidden, não vale a pena pesquisar)
         const resState = consultorWrapper.getAttribute('data-results-state');
-        
         if (resState !== 'hidden') {
-            // Chama a função "Debounced" (que espera 1s após parar de escrever)
-            // Esta função lê o texto direto do ecrã, extrai as palavras e atualiza os Pickcards
             if (typeof window.debouncedConsultorSearch === 'function') {
                 window.debouncedConsultorSearch(consultorWrapper.id);
             }
         }
     }
     
-    // 5. RESTAURO DE CAIXAS VAZIAS (Segurança)
+    // 6. MANUTENÇÃO DE ESTRUTURA (SOLUÇÃO PARA APAGAR NO IOS)
+    // Se o utilizador apagar tudo dentro da caixa, o iOS tende a destruir o <p>. 
+    // Isto restaura o parágrafo básico para que a Toolbar não desapareça.
     if (target.classList.contains('mini-note-content') || target.classList.contains('redator-content')) {
         if (target.innerHTML.trim() === "" || target.innerHTML === "<br>") {
             target.innerHTML = "<p><br></p>";
+            // Reposiciona o cursor no parágrafo novo de forma segura
+            const range = document.createRange();
+            const sel = window.getSelection();
+            if (target.firstChild) {
+                range.selectNodeContents(target.firstChild);
+                range.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
         }
+    }
+
+    // 7. ATUALIZAÇÃO DO GPS DE CURSOR
+    // Importante para que o sistema saiba onde está o cursor se houver um refresh ou troca de aba
+    if (typeof trackCursorPosition === 'function') {
+        trackCursorPosition(e);
     }
 });
 
@@ -33427,10 +33449,13 @@ function autoResizeTitle(el) {
     if (!el) return;
     
     if (appSettings && appSettings.showFullTitles === true) {
-        // O segredo está aqui: resetamos para 0 e depois pegamos o scrollHeight
-        el.style.height = '0px'; 
+        // No Safari, mudar para 0px e logo para scrollHeight pode bugar o Backspace
+        // Usamos 'auto' em vez de '0px' para ser mais suave
+        el.style.height = 'auto'; 
         const newHeight = el.scrollHeight;
-        el.style.height = newHeight + 'px';
+        if (newHeight > 0) {
+            el.style.height = newHeight + 'px';
+        }
     } else {
         el.style.height = ""; 
     }
@@ -55102,6 +55127,13 @@ window.launchMultiplePopups = function(noteId, noteName, boxIds, fullHTML) {
 // ============================================================
 
 const preventBoxMerge = (e) => {
+    // --- O FIX PARA IPAD/MAC ESTÁ AQUI ---
+    // Se o alvo for um INPUT ou TEXTAREA real (como o título da subnota), 
+    // paramos a função imediatamente. Estes elementos já têm proteção nativa.
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        return; 
+    }
+
     // Só nos interessa o delete para trás (Backspace)
     if (e.inputType !== 'deleteContentBackward' && e.key !== 'Backspace') return;
 
@@ -55109,32 +55141,29 @@ const preventBoxMerge = (e) => {
     if (!selection.rangeCount || !selection.isCollapsed) return;
 
     const range = selection.getRangeAt(0);
-    const node = selection.anchorNode;
+    const node = range.startContainer;
     
-    // Identifica se o cursor está dentro de uma área de conteúdo de uma caixa
-    const contentDiv = node.nodeType === 3 ? node.parentElement.closest('.mini-note-content, .redator-content, .sign-content, .card-desc-content, .cube-content') : node.closest('.mini-note-content, .redator-content, .sign-content, .card-desc-content, .cube-content');
+    // Identifica se o cursor está dentro de uma área de conteúdo (div editável)
+    const contentDiv = node.nodeType === 3 
+        ? node.parentElement.closest('.mini-note-content, .redator-content, .sign-content, .card-desc-content, .cube-content, .toggle-content') 
+        : node.closest('.mini-note-content, .redator-content, .sign-content, .card-desc-content, .cube-content, .toggle-content');
 
     if (contentDiv) {
         // --- TESTE DE POSIÇÃO ---
-        // Criamos um rasto do início da caixa até ao cursor
         const preRange = document.createRange();
         preRange.setStart(contentDiv, 0);
         preRange.setEnd(range.startContainer, range.startOffset);
 
-        // Se não houver texto nem elementos (imagens/br) antes do cursor, estamos no TOPO ABSOLUTO
         const isAtAbsoluteStart = preRange.toString().length === 0 && preRange.cloneContents().childNodes.length === 0;
 
         if (isAtAbsoluteStart) {
-            console.warn("🛡️ Barreira ativada: Impedindo destruição do título.");
+            console.warn("🛡️ Barreira ativada: Protegendo a estrutura da caixa.");
             
-            // Bloqueia o evento de apagar
             e.preventDefault();
             e.stopPropagation();
 
-            // Reforço visual: se a caixa estiver vazia, garante que tem um parágrafo limpo
             if (contentDiv.innerHTML.trim() === "" || contentDiv.innerHTML === "<br>") {
                 contentDiv.innerHTML = "<p><br></p>";
-                // Reposiciona o cursor no parágrafo novo
                 const newRange = document.createRange();
                 newRange.selectNodeContents(contentDiv.firstChild);
                 newRange.collapse(true);
