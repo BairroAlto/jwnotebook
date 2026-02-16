@@ -14031,6 +14031,34 @@ html, body {
     </ul>
 </div>
 
+<!-- MODAL SELETOR DE CODEX (LIVRO -> CAPITULO -> PARAGRAFO) -->
+<div id="codex-selector-modal" class="modal-overlay" style="z-index: 22000000;">
+    <div class="modal-content" style="max-width: 500px; height: 80vh; display: flex; flex-direction: column;">
+        
+        <!-- Cabeçalho com Breadcrumbs -->
+        <div style="border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-bottom: 10px;">
+            <h3 id="codex-sel-title" style="margin: 0; color: var(--accent-color);">Biblioteca Codex</h3>
+            <div id="codex-sel-breadcrumbs" style="font-size: 0.85em; color: var(--text-muted-color); margin-top: 5px;">
+                <span onclick="window.loadCodexBooks()" style="cursor:pointer; text-decoration:underline;">Livros</span>
+            </div>
+        </div>
+
+        <!-- Área de Lista -->
+        <div id="codex-sel-list" style="flex-grow: 1; overflow-y: auto;">
+            <!-- O conteúdo é injetado aqui -->
+        </div>
+
+        <!-- Rodapé de Confirmação -->
+        <div class="modal-actions" style="border-top: 1px solid var(--border-color); padding-top: 15px; margin-top: 10px; justify-content: space-between; align-items: center;">
+            <span id="codex-sel-count" style="font-size: 0.8em; color: var(--accent-color);"></span>
+            <div style="display:flex; gap:10px;">
+                <button class="modal-btn secondary" onclick="document.getElementById('codex-selector-modal').style.display='none'">Cancelar</button>
+                <button class="modal-btn primary" id="codex-sel-confirm-btn" style="display:none;">Confirmar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 </body>
 
 
@@ -14459,6 +14487,14 @@ let currentHighlightTab = 'destaques';
 let activeHighlightTab = 'destaques';
 let boxTabMemory = new Map();
 let currentNoteAssociations = [];
+let activeCodexRow = null;       // Qual linha do Codex abriu o modal
+let codexCurrentSelection = {    // O que o user escolheu
+    bookId: null,
+    bookName: null,
+    chapter: null,
+    paragraphs: []
+};
+
 
 
 window.currentNoteHybridMode = false;
@@ -21499,26 +21535,27 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
     const isEditMode = puzzleContainer && puzzleContainer.classList.contains('edit-mode-active');
     let innerHTML = '';
 
-    // 1. TEXTO MANUAL
+    // --- TIPO A: TEXTO MANUAL (+Txt) ---
     if (type === 'text') {
         const contentHtml = data.content || '';
-        const initialStyle = "width:100%; min-height:40px; outline:none; white-space:pre-wrap; word-break:break-word; color:var(--text-color); border:1px solid transparent; background-color:transparent; padding:2px 5px; transition:all 0.2s ease;";
-        innerHTML = `<div class="board-text-content" spellcheck="false" style="${initialStyle}" ${isEditMode ? 'contenteditable="true"' : 'contenteditable="false"'}>${contentHtml}</div>`;
-        card.style.borderLeft = "3px solid #4a90e2"; 
-        card.dataset.snippet = encodeURIComponent(contentHtml);
+        // Define se o bloco nasce com bordas de input ou limpo
+        const initialStyle = isEditMode 
+            ? "width:100%; min-height:40px; outline:none; white-space:pre-wrap; word-break:break-word; color:var(--text-color); border:1px solid var(--border-color); background-color:var(--bg-color); padding:8px; border-radius:4px; cursor:text;"
+            : "width:100%; min-height:40px; outline:none; white-space:pre-wrap; word-break:break-word; color:var(--text-color); border:1px solid transparent; background-color:transparent; padding:2px 5px; cursor:default;";
+            
+        innerHTML = `<div class="board-text-content" spellcheck="false" style="${initialStyle}" contenteditable="${isEditMode ? 'true' : 'false'}">${contentHtml}</div>`;
+        card.style.borderLeft = "4px solid #4a90e2"; // Azul
     }
 
-    // 2. REFERÊNCIA (CORES AJUSTADAS PARA SEREM MAIS CLARAS)
+    // --- TIPO B: REFERÊNCIA (+Ref ou Arrastado) ---
     else if (type === 'ref') {
         card.dataset.noteId = data.noteId;
         card.dataset.noteName = data.noteName || "Nota";
 
         let rawSnippet = data.snippet || '';
         try {
-            if (rawSnippet.includes('%3C') || rawSnippet.includes('%20')) {
-                rawSnippet = decodeURIComponent(rawSnippet);
-            }
-        } catch (e) { }
+            if (rawSnippet.includes('%')) rawSnippet = decodeURIComponent(rawSnippet);
+        } catch (e) { console.warn("Erro ao decodificar snippet", e); }
         
         card.dataset.snippet = encodeURIComponent(rawSnippet);
 
@@ -21526,91 +21563,85 @@ function createBoardItem(type, data = {}, shouldScroll = false) {
         tempDiv.innerHTML = rawSnippet;
         const wrapper = tempDiv.firstElementChild;
 
-        // --- PALETA DE CORES MAIS CLARAS / VIBRANTES ---
-        let icon = "📄"; 
-        let color = "#bdc3c7"; // Cinza claro
-        let baseType = "subnote";
-        let label = "Ref";
+        // Lógica de Cores e Ícones baseada na Categoria
+        let icon = "📄"; let color = "#bdc3c7"; let baseType = "subnote"; let label = "Ref";
 
-        if (rawSnippet.includes('consultor-mode')) { 
-            icon = "📕"; color = "#e74c3c"; baseType = "consultor"; label = "Consultor"; // Vermelho mais claro
-        }
-        else if (rawSnippet.includes('question-mode')) { 
-            icon = "📗"; color = "#2ecc71"; baseType = "question"; label = "Questão"; // Verde vibrante (FIX)
-        }
-        else if (rawSnippet.includes('free-mode')) { 
-            icon = "📙"; color = "#f39c12"; baseType = "free"; label = "Contentor"; // Laranja mais aberto
-        }
-        else if (rawSnippet.includes('toggle-section')) { 
-            icon = "☂"; color = "#af7ac5"; baseType = "toggle"; label = "Secção"; // Roxo mais claro
-        }
-        else if (rawSnippet.includes('mini-note-wrapper')) { 
-            icon = "📘"; color = "#5dade2"; baseType = "subnote"; label = "SubNota"; // Azul mais claro
-        }
+        if (rawSnippet.includes('consultor-mode')) { icon = "📕"; color = "#e74c3c"; baseType = "consultor"; label = "Consultor"; }
+        else if (rawSnippet.includes('question-mode')) { icon = "📗"; color = "#2ecc71"; baseType = "question"; label = "Questão"; }
+        else if (rawSnippet.includes('free-mode')) { icon = "📙"; color = "#f39c12"; baseType = "free"; label = "Contentor"; }
+        else if (rawSnippet.includes('toggle-section')) { icon = "☂"; color = "#af7ac5"; baseType = "toggle"; label = "Secção"; }
+        else if (rawSnippet.includes('mini-note-wrapper')) { icon = "📘"; color = "#5dade2"; baseType = "subnote"; label = "SubNota"; }
 
-        // --- BUSCA DO NOME DO FOCO (DILEMA, RESUMO, ETC) ---
+        // Nome do Foco (Resumo, Dilema, etc)
         if (wrapper && wrapper.hasAttribute('data-focus')) {
             const focusId = wrapper.getAttribute('data-focus');
             const modeData = FOCUS_MODES_CONFIG[baseType]?.find(m => m.id === focusId);
-            if (modeData) {
-                label = modeData.name.replace(' (Original)', '');
-            }
+            if (modeData) label = modeData.name.replace(' (Original)', '');
         }
 
         card.style.borderLeft = `4px solid ${color}`;
 
-        // Extração de Título Principal
+        // Título e Conteúdo
         const titleEl = tempDiv.querySelector('.mini-note-title-input, h2, .redator-input, .sign-title-input');
-        let extractedTitle = titleEl ? (titleEl.value || titleEl.textContent || "") : "";
-        let finalDisplayTitle = extractedTitle.trim() || data.noteName || "Sem Título";
-
-        // Extração de Corpo
+        let titleText = titleEl ? (titleEl.value || titleEl.textContent || "").trim() : (data.noteName || "Sem Título");
+        
         const contentDiv = tempDiv.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content');
         let bodyText = contentDiv ? contentDiv.innerText.replace(/\s+/g, ' ').trim() : "";
         bodyText = bodyText.replace(/🔐|🔺|🔻|⚡|🧬|🎨|📋|🗑️/g, ''); 
         if (bodyText.length > 250) bodyText = bodyText.substring(0, 250) + "...";
 
-        const headerHtml = `
-            <div style="padding-left: 5px; margin-bottom: 2px;">
-                <div style="font-size:0.75em; font-weight:800; color:${color}; text-transform:uppercase; margin-bottom:2px; letter-spacing:0.8px;">
-                    ${icon} ${label}
+        innerHTML = `
+            <div class="ref-card-content">
+                <div style="padding-left: 5px; margin-bottom: 2px;">
+                    <div style="font-size:0.75em; font-weight:800; color:${color}; text-transform:uppercase; margin-bottom:2px; letter-spacing:0.8px;">${icon} ${label}</div>
+                    <div class="ref-title-text" style="font-weight:bold; font-size:0.95em; color:var(--text-color); cursor:pointer;" 
+                         onclick="window.openNoteFromBoard('${data.noteId}', '${encodeURIComponent(titleText)}')">
+                        ${titleText}
+                    </div>
                 </div>
-                <div style="font-weight:bold; font-size:0.95em; cursor:pointer; color:var(--text-color); display: flex; align-items: center; gap: 8px;" 
-                     onclick="window.openNoteFromBoard('${data.noteId}', '${encodeURIComponent(finalDisplayTitle)}')"
-                     onmouseover="this.style.textDecoration='underline'" 
-                     onmouseout="this.style.textDecoration='none'">
-                    ${finalDisplayTitle}
-                </div>
+                <div style="font-size:0.9em; color:var(--text-muted-color); padding-left: 8px; line-height:1.4; margin-top:5px;">${bodyText}</div>
             </div>`;
-            
-        const displayHtml = `<div style="font-size:0.9em; color:var(--text-muted-color); padding-left: 8px; line-height:1.4; margin-top:5px;">${bodyText}</div>`;
-        innerHTML = `<div class="ref-card-content">${headerHtml}${displayHtml}</div>`;
     }
 
-    // Botões de interface
-    const popupIconHTML = `<button class="card-popup-btn" onclick="event.preventDefault(); event.stopPropagation(); window.openCardPopup(this)" title="Abrir em Janela" style="position: absolute; top: 4px; right: 4px; background: none; border: none; color: var(--text-muted-color); cursor: pointer; font-size: 11px; opacity: 0.6; padding: 2px; z-index: 15;">⇱</button>`;
-    const controlsHTML = `<div class="card-controls">${type === 'text' ? '<button class="add-board-link" title="Gerir Links" style="margin-right: auto;">🌐</button>' : ''}<button class="move-up" title="Mover para Cima">🔺</button><button class="move-down" title="Mover para Baixo">🔻</button><button class="delete" title="Remover" style="color:#e74c3c; border-color:#e74c3c;">🗑️</button></div>`;
+    // Botão de Popup (⇱) e Controlos (Setas/Lixo)
+    const popupIconHTML = `<button class="card-popup-btn" onclick="window.openCardPopup(this)" title="Abrir em Janela" style="position: absolute; top: 4px; right: 4px; background: none; border: none; color: var(--text-muted-color); cursor: pointer; font-size: 11px; opacity: 0.6; z-index: 15;">⇱</button>`;
+    const controlsHTML = `<div class="card-controls" style="display:${isEditMode ? 'flex' : 'none'}; border-top:1px solid var(--border-color); padding-top:5px; margin-top:5px; justify-content:flex-end; gap:5px;">
+        <button onclick="window.moveCard(this, -1)">🔺</button>
+        <button onclick="window.moveCard(this, 1)">🔻</button>
+        <button onclick="window.deleteCard(this)" style="color:#e74c3c">🗑️</button>
+    </div>`;
 
     card.innerHTML = innerHTML + popupIconHTML + controlsHTML;
 
-    // Listeners (Delete/Move)
-    card.querySelector('.delete').onclick = async () => {
-        if (await showConfirmation("Remover Item", "Deseja remover este item do quadro?")) { 
-            card.remove(); 
-            if(container.querySelectorAll('.board-card').length === 0 && emptyMsg) emptyMsg.style.display = 'block';
-            if(isEditMode) savePuzzleData(); 
-        }
-    };
-    card.querySelector('.move-up').onclick = () => { const p = card.previousElementSibling; if (p && p.classList.contains('board-card')) container.insertBefore(card, p); };
-    card.querySelector('.move-down').onclick = () => { const n = card.nextElementSibling; if (n && n.classList.contains('board-card')) container.insertBefore(n, card); };
-
+    // Inserção no DOM
     if (shouldScroll) {
         container.prepend(card);
-        setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } else {
         container.appendChild(card);
     }
+
+    // --- AUTO-SAVE ---
+    // Sempre que um item entra no quadro, agenda a gravação automática
+    clearTimeout(window.puzzleAutoSaveTimer);
+    window.puzzleAutoSaveTimer = setTimeout(() => savePuzzleData(), 1500);
 }
+
+// Funções de apoio para os botões do cartão
+window.moveCard = (btn, dir) => {
+    const card = btn.closest('.board-card');
+    if (dir === -1 && card.previousElementSibling) card.parentNode.insertBefore(card, card.previousElementSibling);
+    else if (dir === 1 && card.nextElementSibling) card.parentNode.insertBefore(card.nextElementSibling, card);
+    savePuzzleData();
+};
+
+window.deleteCard = async (btn) => {
+    const card = btn.closest('.board-card');
+    if (await showConfirmation("Remover?", "Deseja retirar este item do quadro?")) {
+        card.remove();
+        savePuzzleData();
+    }
+};
 
 
 
@@ -21651,7 +21682,7 @@ async function openReferenceSelectionPopup() {
         return;
     }
 
-    // 1. CONFIGURAÇÃO VISUAL E Z-INDEX
+    // 1. CONFIGURAÇÃO VISUAL
     document.body.appendChild(modal);
     modal.style.cssText = `
         display: flex !important;
@@ -21670,6 +21701,13 @@ async function openReferenceSelectionPopup() {
 
     const { id, type, name } = activeReferenceEntity;
     const isHighlightSearch = (type === 'destaque');
+    
+    // --- DADOS PARA COMPARAÇÃO BÍBLICA/LIVRO ---
+    const isBookRef = (type === 'livro_ref');
+    const targetBookId = isBookRef ? (activeReferenceEntity.bookId || "").toLowerCase().trim() : null;
+    const targetChapter = isBookRef ? String(activeReferenceEntity.chapter).trim() : null;
+    const targetParagraph = isBookRef ? String(activeReferenceEntity.paragraph).trim() : null;
+
     const searchTerm = name.toLowerCase().trim();
     const hexToFind = isHighlightSearch ? id.toUpperCase() : null;
 
@@ -21682,7 +21720,7 @@ async function openReferenceSelectionPopup() {
     };
 
     try {
-        // 2. DETETAR O QUE JÁ EXISTE (COM PROTEÇÃO URI)
+        // 2. DETETAR O QUE JÁ EXISTE NO QUADRO (Para evitar duplicados)
         const activeTabBtn = document.querySelector('#ref-tabs button.active');
         const activeTab = activeTabBtn ? activeTabBtn.dataset.refTab : 'puzzle';
         
@@ -21690,34 +21728,35 @@ async function openReferenceSelectionPopup() {
         const col = getCollectionFromType(type);
         const { doc, getDoc, collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        const docSnap = await getDoc(doc(db, col, id));
-        if (docSnap.exists()) {
-            if (activeTab === 'dossie' && window.activeMicaId) {
-                const dossie = docSnap.data().dossie || [];
-                const mica = dossie.find(m => m.id === window.activeMicaId);
-                if (mica && mica.items) currentBoardItems = mica.items;
-            } else {
-                currentBoardItems = docSnap.data().puzzleBoard || [];
+        // Verifica se a coleção existe (pode não existir para livros novos)
+        if (col) {
+            const docSnap = await getDoc(doc(db, col, id));
+            if (docSnap.exists()) {
+                if (activeTab === 'dossie' && window.activeMicaId) {
+                    const dossie = docSnap.data().dossie || [];
+                    const mica = dossie.find(m => m.id === window.activeMicaId);
+                    if (mica && mica.items) currentBoardItems = mica.items;
+                } else {
+                    currentBoardItems = docSnap.data().puzzleBoard || [];
+                }
             }
         }
 
-       const existingIDs = new Set();
-currentBoardItems.forEach(item => {
-    if (item.snippet) {
-        try {
-            // Tenta descodificar com segurança
-            const decoded = item.snippet.includes('%') ? decodeURIComponent(item.snippet) : item.snippet;
-            const match = decoded.match(/id="([^"]+)"/);
-            if (match) existingIDs.add(match[1]);
-        } catch (e) {
-            // Fallback: se der malformed, procura o ID no texto codificado
-            const match = item.snippet.match(/id="([^"]+)"/);
-            if (match) existingIDs.add(match[1]);
-        }
-    }
-});
+        const existingIDs = new Set();
+        currentBoardItems.forEach(item => {
+            if (item.snippet) {
+                try {
+                    const decoded = item.snippet.includes('%') ? decodeURIComponent(item.snippet) : item.snippet;
+                    const match = decoded.match(/id="([^"]+)"/);
+                    if (match) existingIDs.add(match[1]);
+                } catch (e) {
+                    const match = item.snippet.match(/id="([^"]+)"/);
+                    if (match) existingIDs.add(match[1]);
+                }
+            }
+        });
 
-        // 3. PESQUISA GLOBAL
+        // 3. PESQUISA GLOBAL NAS NOTAS
         let q = query(collection(db, 'pastas'), 
             where('estado', '==', 'ativa'), 
             where('userId', '==', auth.currentUser.uid),
@@ -21749,11 +21788,15 @@ currentBoardItems.forEach(item => {
                 
                 allWrappers.forEach((w) => {
                     let match = false;
+                    let matchReason = ""; // Para saber porque encontrou
+
+                    // A. BUSCA POR COR (DESTAQUES)
                     if (isHighlightSearch) {
                         const elColor = w.getAttribute('data-highlight');
                         if (elColor && elColor.toUpperCase() === hexToFind) match = true;
                     } 
                     
+                    // B. BUSCA POR TEXTO
                     const titleInput = w.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
                     const subtitleInput = w.querySelector('.consultor-subtitle-input');
                     const contentDiv = w.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content, .cube-content');
@@ -21761,11 +21804,46 @@ currentBoardItems.forEach(item => {
                     
                     if (!match && boxFullText.toLowerCase().includes(searchTerm)) match = true;
 
+                    // C. BUSCA POR METADADOS (CATEGORIAS E CODEX)
                     const boxLinksRaw = w.getAttribute('data-box-links');
                     if (!match && boxLinksRaw && boxLinksRaw !== '{}') {
                         try {
                             const boxData = JSON.parse(boxLinksRaw);
-                            if (boxData.categories && boxData.categories.some(cat => cat.id === id || cat.name.toLowerCase() === searchTerm)) match = true;
+                            
+                            // 1. Categorias (Tópicos, Personagens...)
+                            if (boxData.categories && boxData.categories.some(cat => cat.id === id || cat.name.toLowerCase() === searchTerm)) {
+                                match = true;
+                            }
+
+                            // 2. CODEX (A LÓGICA QUE PEDIU) 📚
+                            if (!match && isBookRef && boxData.codex && Array.isArray(boxData.codex)) {
+                                const codexMatch = boxData.codex.some(c => {
+                                    // Normaliza a série para comparação (remove espaços e lowercase)
+                                    const serieEntry = (c.serie || "").toLowerCase().trim();
+                                    const capEntry = String(c.capitulo || "").trim();
+                                    
+                                    // Verifica Série
+                                    if (serieEntry !== targetBookId) return false;
+                                    
+                                    // Verifica Capítulo (se o target tiver capítulo)
+                                    if (targetChapter && capEntry !== targetChapter) return false;
+                                    
+                                    // Verifica Parágrafos (se o target tiver parágrafo)
+                                    if (targetParagraph && c.paragrafos && Array.isArray(c.paragrafos)) {
+                                        // O Codex guarda como array ["12", "13"]. Verifica se inclui o nosso.
+                                        return c.paragrafos.includes(targetParagraph);
+                                    }
+                                    
+                                    // Se chegou aqui e não havia parágrafo alvo, é match de capítulo/livro
+                                    return true;
+                                });
+
+                                if (codexMatch) {
+                                    match = true;
+                                    matchReason = `<span style="color:#e67e22; font-weight:bold; font-size:0.8em;">📚 Vínculo Codex: ${activeReferenceEntity.name}</span>`;
+                                }
+                            }
+
                         } catch (e) {}
                     }
 
@@ -21774,17 +21852,12 @@ currentBoardItems.forEach(item => {
                         let boxIcon = "📘";
                         let labelColor = baseColors.subnote;
 
-                        if (w.tagName === 'DETAILS') { 
-                            baseType = "toggle"; boxIcon = "☂️"; labelColor = "#c0392b"; 
-                        } else if (w.classList.contains('consultor-mode')) { 
-                            baseType = "consultor"; boxIcon = "📕"; labelColor = baseColors.consultor; 
-                        } else if (w.classList.contains('question-mode')) { 
-                            baseType = "question"; boxIcon = "📗"; labelColor = baseColors.question; 
-                        } else if (w.classList.contains('free-mode')) { 
-                            baseType = "free"; boxIcon = "📙"; labelColor = baseColors.free; 
-                        } else if (w.classList.contains('redator-wrapper')) { 
-                            baseType = "redator"; boxIcon = "📓"; labelColor = baseColors.redator; 
-                        }
+                        // Determina tipo e cor
+                        if (w.tagName === 'DETAILS') { baseType = "toggle"; boxIcon = "☂️"; labelColor = "#c0392b"; } 
+                        else if (w.classList.contains('consultor-mode')) { baseType = "consultor"; boxIcon = "📕"; labelColor = baseColors.consultor; } 
+                        else if (w.classList.contains('question-mode')) { baseType = "question"; boxIcon = "📗"; labelColor = baseColors.question; } 
+                        else if (w.classList.contains('free-mode')) { baseType = "free"; boxIcon = "📙"; labelColor = baseColors.free; } 
+                        else if (w.classList.contains('redator-wrapper')) { baseType = "redator"; boxIcon = "📓"; labelColor = baseColors.redator; }
 
                         const focusId = w.getAttribute('data-focus');
                         let focusName = "";
@@ -21807,6 +21880,11 @@ currentBoardItems.forEach(item => {
                         if (!displayTitle) {
                             const rawContent = contentDiv ? contentDiv.innerText.trim() : "";
                             displayTitle = getFirstSentencePreview(rawContent, 15) || `(${focusName} vazio)`;
+                        }
+
+                        // Se encontrámos via Codex, adicionamos o motivo ao título visualmente
+                        if (matchReason) {
+                            displayTitle = `${displayTitle} <br>${matchReason}`;
                         }
 
                         allFoundReferenceBoxes.push({
@@ -21941,13 +22019,15 @@ function renderReferenceBoxesPage() {
     // --- MODO QUADRO ---
             else {
                 if (typeof createBoardItem === 'function') {
-                    createBoardItem('ref', {
-                        noteId: item.id,
-                        noteName: item.name,
-                        snippet: item.snippet,
-                        isClone: true
-                    }, true);
+        createBoardItem('ref', {
+            noteId: item.id,
+            noteName: item.name,
+            snippet: item.snippet,
+            isClone: true
+        }, true);
 
+
+        
                     const puzzleContainer = document.getElementById('ref-content-puzzle');
                     if (puzzleContainer && puzzleContainer.classList.contains('edit-mode-active')) {
                         savePuzzleData();
@@ -22128,71 +22208,80 @@ async function forceSaveAndClosePuzzleMode() {
 
 async function savePuzzleData() {
     // 1. Verificações de segurança
-    if (!activeReferenceEntity || !activeReferenceEntity.id) {
-        console.warn("⚠️ Nenhuma entidade ativa para salvar o Quadro.");
-        return;
-    }
+    if (!activeReferenceEntity || !activeReferenceEntity.name) return;
 
-    const { id, type, name } = activeReferenceEntity;
+    const { type, name } = activeReferenceEntity;
     const collectionName = getCollectionFromType(type);
     if (!collectionName) return;
 
-    // Feedback visual no botão se ele estiver visível
     const saveBtn = document.getElementById('toggle-puzzle-edit-btn');
     const originalText = saveBtn ? saveBtn.textContent : "";
-    if (saveBtn && !window.puzzleAutoSaveTimer) saveBtn.textContent = "A gravar...";
+    if (saveBtn) saveBtn.textContent = "A gravar...";
 
     try {
+        const { collection, query, where, getDocs, doc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // 2. Coletar os cartões atuais do Quadro
         const itemsToSave = [];
-        const refsMap = {}; // Mapa para atualizar os vínculos de referências (o carimbo 📄)
+        const refsMap = {}; 
         const cards = document.querySelectorAll('#puzzle-board-container .board-card');
 
-        // 2. Percorrer todos os cartões presentes no Quadro
         cards.forEach(card => {
             if (card.classList.contains('type-text')) {
-                // Caso A: Bloco de texto manual
                 const contentDiv = card.querySelector('.board-text-content');
-                if (contentDiv) {
-                    itemsToSave.push({ 
-                        type: 'text', 
-                        content: contentDiv.innerHTML 
-                    });
-                }
-            } 
-            else if (card.classList.contains('type-ref')) {
-                // Caso B: Referência a uma caixa da nota (Clone)
+                itemsToSave.push({ 
+                    type: 'text', 
+                    content: contentDiv ? contentDiv.innerHTML : "" 
+                });
+            } else if (card.classList.contains('type-ref')) {
                 const nId = card.dataset.noteId;
-                if (nId) refsMap[nId] = true; // Mantém o vínculo com a nota de origem
-
+                if (nId) refsMap[nId] = true;
                 itemsToSave.push({ 
                     type: 'ref', 
                     noteId: nId,
                     noteName: card.dataset.noteName,
-                    // O snippet já deve ter sido atualizado pela função syncPuzzleRealTime
                     snippet: card.dataset.snippet 
                 });
             }
         });
 
-        // 3. Gravação no Firestore
-        const { doc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        const docRef = doc(db, collectionName, id);
+        // 3. Garantir que temos um ID real (Cria o documento se for novo)
+        let targetId = activeReferenceEntity.id;
+        
+        if (!targetId || targetId === name) {
+            const q = query(collection(db, collectionName), where("nome", "==", name), where("userId", "==", auth.currentUser.uid));
+            const qSnap = await getDocs(q);
+            
+            if (!qSnap.empty) {
+                targetId = qSnap.docs[0].id;
+                activeReferenceEntity.id = targetId;
+            } else {
+                // Cria o documento base para o versículo/tag/tema
+                const newDocRef = doc(collection(db, collectionName));
+                targetId = newDocRef.id;
+                activeReferenceEntity.id = targetId;
+                await setDoc(newDocRef, {
+                    nome: name,
+                    userId: auth.currentUser.uid,
+                    createdAt: serverTimestamp()
+                });
+            }
+        }
 
-        // Usamos setDoc com { merge: true } para não apagar o campo 'dossie' (Micas)
+        // 4. Gravar o Quadro propriamente dito
+        const docRef = doc(db, collectionName, targetId);
         await setDoc(docRef, {
-            nome: name,
             puzzleBoard: itemsToSave,
             referencias: refsMap,
             updatedAt: serverTimestamp()
         }, { merge: true });
 
-        console.log(`✅ [FIREBASE] Quadro de "${name}" atualizado com sucesso.`);
-
+        console.log("✅ Quadro sincronizado com o Firebase.");
         if (saveBtn) saveBtn.textContent = originalText;
 
     } catch (e) {
-        console.error("❌ Erro crítico ao gravar Quadro:", e);
-        if (saveBtn) saveBtn.textContent = "Erro ao gravar";
+        console.error("❌ Erro ao gravar Quadro:", e);
+        if (saveBtn) saveBtn.textContent = "Erro!";
     }
 }
 
@@ -29837,49 +29926,86 @@ document.getElementById('toggle-puzzle-edit-btn').addEventListener('click', asyn
     const btn = document.getElementById('toggle-puzzle-edit-btn');
     const addButtons = document.getElementById('puzzle-add-buttons');
 
-    // MODO: ENTRAR EM EDIÇÃO (Atualmente está em modo visualização)
+    // --- MODO: ENTRAR EM EDIÇÃO ---
     if (!container.classList.contains('edit-mode-active')) {
         container.classList.add('edit-mode-active');
         
-        // 1. Ajuste Visual do Botão (Usa a classe is-active para ficar azul)
+        // 1. Ajuste Visual do Botão (Fica azul)
         btn.textContent = "Salvar";
-        btn.classList.add('is-active'); 
+        btn.classList.add('is-active');
+        btn.style.backgroundColor = "rgba(74, 144, 226, 0.2)";
+        btn.style.borderColor = "var(--accent-color)";
+        btn.style.color = "var(--accent-color)";
         
         // 2. Mostrar os botões de adicionar (+ Txt, + Ref, 📡)
-        if(addButtons) addButtons.style.display = 'flex';
+        if (addButtons) {
+            addButtons.style.display = 'flex';
+        }
 
-        // 3. Ativar a edição nos blocos de texto do quadro
+        // 3. Ativar a edição nos blocos de texto manuais
         document.querySelectorAll('.board-card.type-text .board-text-content').forEach(div => {
             div.setAttribute('contenteditable', 'true');
+            // Estilo visual de "campo de entrada" para o utilizador saber que pode escrever
             div.style.border = "1px solid var(--border-color)";
             div.style.padding = "8px";
             div.style.borderRadius = "4px";
             div.style.backgroundColor = "var(--bg-color)";
+            div.style.cursor = "text";
+        });
+
+        // 4. Mostrar os controlos de cada cartão (Lixo e Setas)
+        document.querySelectorAll('.board-card .card-controls').forEach(controls => {
+            controls.style.display = 'flex';
         });
     } 
-    // MODO: SALVAR E SAIR (Atualmente está em modo edição)
+    // --- MODO: SALVAR E SAIR ---
     else {
-        // 1. Feedback de gravação e execução do Save no Firebase
+        // 1. Feedback de gravação e bloqueio temporário
+        const originalText = btn.textContent;
         btn.textContent = "A gravar...";
         btn.disabled = true;
-        await savePuzzleData();
-        btn.disabled = false;
 
-        // 2. Reverter Visual do Botão (Volta ao cinza normal)
-        container.classList.remove('edit-mode-active');
-        btn.textContent = "Editar";
-        btn.classList.remove('is-active'); 
-        
-        // 3. Esconder os botões de adicionar
-        if(addButtons) addButtons.style.display = 'none';
+        try {
+            // 2. Executar a gravação real no Firebase
+            // O await é fundamental para garantir que os dados chegam ao servidor
+            if (typeof savePuzzleData === 'function') {
+                await savePuzzleData();
+            }
 
-        // 4. Bloquear a edição visualmente (Limpa bordas e fundos de input)
-        document.querySelectorAll('.board-card.type-text .board-text-content').forEach(div => {
-            div.setAttribute('contenteditable', 'false');
-            div.style.border = "none";
-            div.style.padding = "0";
-            div.style.backgroundColor = "transparent";
-        });
+            // 3. Reset do estado do container e do botão
+            container.classList.remove('edit-mode-active');
+            btn.textContent = "Editar";
+            btn.classList.remove('is-active');
+            btn.style.backgroundColor = "";
+            btn.style.borderColor = "";
+            btn.style.color = "";
+            
+            // 4. Esconder os botões de adicionar
+            if (addButtons) {
+                addButtons.style.display = 'none';
+            }
+
+            // 5. Bloquear a edição e limpar o visual de "input"
+            document.querySelectorAll('.board-card.type-text .board-text-content').forEach(div => {
+                div.setAttribute('contenteditable', 'false');
+                div.style.border = "1px solid transparent"; 
+                div.style.padding = "2px 5px";
+                div.style.backgroundColor = "transparent";
+                div.style.cursor = "default";
+            });
+
+            // 6. Esconder os controlos dos cartões
+            document.querySelectorAll('.board-card .card-controls').forEach(controls => {
+                controls.style.display = 'none';
+            });
+
+        } catch (error) {
+            console.error("Erro ao salvar o puzzle:", error);
+            alert("Erro ao gravar. Verifique a sua ligação.");
+            btn.textContent = "Tentar Novamente";
+        } finally {
+            btn.disabled = false;
+        }
     }
 });
 
@@ -30169,7 +30295,6 @@ window.createCodexRow = function(data = null) {
     const row = document.createElement('div');
     row.className = 'codex-row';
     
-    // Se estiver editando um item existente, guardamos o ID do Firestore
     if (data && data.id) row.setAttribute('data-firestore-id', data.id);
 
     row.innerHTML = `
@@ -30177,17 +30302,20 @@ window.createCodexRow = function(data = null) {
         <div class="codex-header-grid">
             <div class="serie-wrapper">
                 <label class="codex-label">SÉRIE / PUBLICAÇÃO</label>
-                <input type="text" class="codex-input-modern serie-main" placeholder="Ex: w24 05" value="${data ? data.serie : ''}">
-                <!-- Onde aparecerá o nome completo da publicação -->
+                <div style="display:flex; gap:5px;">
+                    <input type="text" class="codex-input-modern serie-main" placeholder="Ex: w24 05" value="${data ? data.serie : ''}" style="flex:1;">
+                    <!-- NOVO BOTÃO BIBLIOTECA -->
+                    <button class="btn-control-small" onclick="window.openCodexSelector(this)" title="Abrir Biblioteca" style="background:var(--hover-color); color:var(--accent-color); border-color:var(--accent-color);">⛃</button>
+                </div>
                 <div class="serie-fullname" style="font-size: 11px; color: var(--accent-color); margin-top: 4px; height: 14px; font-weight: 500; font-style: italic;"></div>
             </div>
             <div class="manual-controls">
                 <label class="codex-label">OPÇÕES</label>
                 <div style="display:flex; gap:4px;">
-                    <button class="btn-control-small" onclick="window.toggleManual(this, 'A')" title="Ano Manual">A</button>
-                    <button class="btn-control-small" onclick="window.toggleManual(this, 'M')" title="Mês Manual">M</button>
-                    <button class="btn-control-small" onclick="window.toggleManual(this, 'T')" title="Tempo (H:M:S)">T</button>
-                    <button class="btn-control-small" onclick="window.toggleManual(this, 'C')" title="Capítulo Manual">C</button>
+                    <button class="btn-control-small" onclick="window.toggleManual(this, 'A')" title="Ano">A</button>
+                    <button class="btn-control-small" onclick="window.toggleManual(this, 'M')" title="Mês">M</button>
+                    <button class="btn-control-small" onclick="window.toggleManual(this, 'C')" title="Capítulo">C</button>
+                    <button class="btn-control-small" onclick="window.toggleManual(this, 'T')" title="Tempo">T</button>
                 </div>
             </div>
         </div>
@@ -30208,62 +30336,39 @@ window.createCodexRow = function(data = null) {
         </div>
     `;
 
-    // --- LÓGICA DE IDENTIFICAÇÃO DA SIGLA ---
+    // Lógica de atualização do nome completo (mantida)
     const inputSerie = row.querySelector('.serie-main');
     const displayFullName = row.querySelector('.serie-fullname');
-
     const updateFullName = (val) => {
-        if (!val) {
-            displayFullName.textContent = "";
-            return;
-        }
-        const valorBaixo = val.toLowerCase().trim();
-        let sigla = "";
-        const match = valorBaixo.match(/^[a-z]+(?:-[0-9])?/);
-        if (match) sigla = match[0];
-
-        const nomeCompleto = (typeof SIGLAS_PUBLICACOES !== 'undefined') ? SIGLAS_PUBLICACOES[sigla] : null;
-
-        if (nomeCompleto) {
-            displayFullName.textContent = `📚 ${nomeCompleto}`;
-        } else {
-            displayFullName.textContent = "";
-        }
+        if (!val) { displayFullName.textContent = ""; return; }
+        const sigla = val.toLowerCase().trim().split(' ')[0];
+        const nome = (typeof SIGLAS_PUBLICACOES !== 'undefined') ? SIGLAS_PUBLICACOES[sigla] : null;
+        if (nome) displayFullName.textContent = `📚 ${nome}`;
     };
-
     inputSerie.addEventListener('input', (e) => updateFullName(e.target.value));
     container.appendChild(row);
 
-    // ============================================================
-    // AQUI ESTÁ A CORREÇÃO: RESTAURAR DADOS AO ABRIR
-    // ============================================================
+    // Restaurar dados
     if (data) {
-        // 1. Atualiza nome da sigla
         updateFullName(data.serie);
-        
-        // 2. Restaura Páginas e Parágrafos
         const pContainer = row.querySelector('.pages-container');
         const pgContainer = row.querySelector('.paragraphs-container');
         if (data.paginas) data.paginas.forEach(p => window.addCodexUnit(pContainer, 'Pág', p));
         if (data.paragrafos) data.paragrafos.forEach(p => window.addCodexUnit(pgContainer, 'Par', p));
-
-        // 3. >>> CORREÇÃO CRÍTICA <<< Restaura os Campos Manuais (A, M, T, C)
-        // Usamos setTimeout pequeno para garantir que o DOM está pronto antes de simular o clique
+        
         setTimeout(() => {
             if (data.manualYear) window.toggleManual(row.querySelector("button[onclick*=\"'A'\"]"), 'A', data.manualYear);
             if (data.manualMonth) window.toggleManual(row.querySelector("button[onclick*=\"'M'\"]"), 'M', data.manualMonth);
-            if (data.tempo) window.toggleManual(row.querySelector("button[onclick*=\"'T'\"]"), 'T', data.tempo);
-            
-            // RESTAURA O CAPÍTULO (C)
             if (data.capitulo) window.toggleManual(row.querySelector("button[onclick*=\"'C'\"]"), 'C', data.capitulo);
+            if (data.tempo) window.toggleManual(row.querySelector("button[onclick*=\"'T'\"]"), 'T', data.tempo);
         }, 10);
-
     } else {
-        // Se for novo, adiciona chips vazios por conveniência
         window.addCodexUnit(row.querySelector('.pages-container'), 'Pág');
         window.addCodexUnit(row.querySelector('.paragraphs-container'), 'Par');
     }
 };
+
+  
 
 // 1. Função Auxiliar: Atualizar Estado Visual do Botão
 function updateBoxLinkButtonState(wrapper) {
@@ -56834,6 +56939,422 @@ window.createDirectPostIt = function() {
     }, 100);
 
     if (typeof saveNote === 'function') saveNote();
+};
+
+
+// 1. ABRIR O SELETOR
+window.openCodexSelector = function(btn) {
+    // 1. Identificar a linha que estamos a editar
+    const row = btn.closest('.codex-row');
+    
+    // Marca a linha com ID temporário para não a perder (Lógica que já tínhamos)
+    const tempEditId = 'editing_' + Date.now();
+    row.setAttribute('data-editing-id', tempEditId);
+    window.currentEditingRowId = tempEditId;
+    
+    const modal = document.getElementById('codex-selector-modal');
+    
+    // 2. Reset da seleção
+    codexCurrentSelection = { 
+        type: null, bookId: null, bookName: null, 
+        chapter: null, year: null, month: null, 
+        articleIndex: null, paragraphs: [], fullReference: null
+    };
+    
+    // ============================================================
+    // 3. CORREÇÃO DE SOBREPOSIÇÃO (Z-INDEX)
+    // ============================================================
+    
+    // A. Move o modal para o final do corpo do site (Último elemento ganha prioridade)
+    document.body.appendChild(modal); 
+    
+    // B. Detecta o Z-Index do modal de baixo ("Gestão de Conexões")
+    const linkModal = document.getElementById('link-modal');
+    let baseZ = 2147483647; // Valor máximo padrão
+
+    if (linkModal && window.getComputedStyle(linkModal).display !== 'none') {
+        // Se o outro modal estiver aberto, subimos +10 acima dele
+        const style = window.getComputedStyle(linkModal);
+        const currentZ = parseInt(style.zIndex);
+        if (!isNaN(currentZ)) {
+            baseZ = currentZ + 100;
+        }
+    }
+
+    // C. Aplica o Z-Index calculado
+    modal.style.setProperty('z-index', baseZ.toString(), 'important');
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.setProperty('visibility', 'visible', 'important');
+    modal.style.setProperty('opacity', '1', 'important');
+    
+    // Carrega o conteúdo
+    window.loadCodexRoot();
+};
+
+// 2. NÍVEL 1: LISTAR LIVROS
+window.loadCodexBooks = function() {
+    const list = document.getElementById('codex-sel-list');
+    const bread = document.getElementById('codex-sel-breadcrumbs');
+    const confirmBtn = document.getElementById('codex-sel-confirm-btn');
+    
+    bread.innerHTML = `<span style="font-weight:bold; color:var(--text-color);">Livros</span>`;
+    confirmBtn.style.display = 'none';
+    list.innerHTML = '';
+
+    // Filtra livros do catálogo (exclui revistas se quiseres)
+    const books = JW_BOOKS_CATALOG; // Assumindo que esta var global existe
+
+    books.forEach(book => {
+        const div = document.createElement('div');
+        div.style.cssText = "padding: 10px; border-bottom: 1px solid var(--border-color); cursor: pointer; hover: background: var(--hover-color);";
+        div.innerHTML = `<strong>${book.name}</strong> <span style="color:var(--text-muted-color); font-size:0.8em;">(${book.id})</span>`;
+        
+        div.onclick = () => {
+            codexCurrentSelection.bookId = book.id;
+            codexCurrentSelection.bookName = book.name;
+            window.loadCodexChapters(book.id, book.name);
+        };
+        list.appendChild(div);
+    });
+};
+
+// 3. NÍVEL 2: LISTAR CAPÍTULOS
+window.loadCodexChapters = async function(bookId, bookName) {
+    const list = document.getElementById('codex-sel-list');
+    const bread = document.getElementById('codex-sel-breadcrumbs');
+    
+    bread.innerHTML = `<span onclick="window.loadCodexBooks()" style="cursor:pointer; text-decoration:underline;">Livros</span> > <span style="font-weight:bold; color:var(--text-color);">${bookName}</span>`;
+    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div></div>';
+
+    try {
+        const response = await fetch(`./js/books/${bookId}.json`);
+        if (!response.ok) throw new Error("Livro não encontrado");
+        const data = await response.json();
+
+        list.innerHTML = '';
+        
+        // Grelha de Capítulos
+        const grid = document.createElement('div');
+        grid.style.cssText = "display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; padding: 10px;";
+
+        data.capitulos.forEach(cap => {
+            const btn = document.createElement('button');
+            btn.textContent = cap.capitulo;
+            btn.style.cssText = "padding: 8px; background: var(--panel-color); border: 1px solid var(--border-color); color: var(--text-color); border-radius: 4px; cursor: pointer;";
+            
+            btn.onclick = () => {
+                codexCurrentSelection.chapter = cap.capitulo;
+                window.loadCodexParagraphs(bookId, bookName, cap.capitulo, cap.conteudo);
+            };
+            grid.appendChild(btn);
+        });
+        list.appendChild(grid);
+
+    } catch (e) {
+        list.innerHTML = '<p style="color:red; padding:20px;">Livro ainda não disponível na biblioteca.</p>';
+    }
+};
+
+// 4. NÍVEL 3: LISTAR PARÁGRAFOS (Checkboxes)
+window.loadCodexParagraphs = function(sourceId, title, chapterNum, contentArray) {
+    const list = document.getElementById('codex-sel-list');
+    const bread = document.getElementById('codex-sel-breadcrumbs');
+    const confirmBtn = document.getElementById('codex-sel-confirm-btn');
+    const countLabel = document.getElementById('codex-sel-count');
+
+    // Breadcrumb adaptativo
+    if (codexCurrentSelection.type === 'magazine') {
+        bread.innerHTML = `... > <span style="font-weight:bold;">${title.substring(0, 20)}...</span>`;
+    } else {
+        bread.innerHTML = `... > Cap. ${chapterNum}`;
+    }
+    
+    list.innerHTML = '';
+    confirmBtn.style.display = 'block';
+    confirmBtn.textContent = "Confirmar (Documento Inteiro)";
+    codexCurrentSelection.paragraphs = []; // Reset parágrafos
+
+    // --- FILTRAGEM ---
+    // Removemos itens onde o numero_ref é nulo OU o tipo é 'pergunta'
+    const paragraphs = contentArray.filter(block => 
+        block.numero_ref && block.tipo !== 'pergunta'
+    );
+
+    if (paragraphs.length === 0) {
+        list.innerHTML = '<p style="padding:20px; text-align:center; color:#888;">Nenhum parágrafo selecionável encontrado.</p>';
+        return;
+    }
+
+    paragraphs.forEach(block => {
+        const div = document.createElement('div');
+        div.style.cssText = "padding: 10px; border-bottom: 1px solid var(--border-color); display: flex; gap: 10px; cursor: pointer; align-items: center;";
+        
+        const isSelected = codexCurrentSelection.paragraphs.includes(String(block.numero_ref));
+
+        // --- LÓGICA DE CORES ---
+        let numColor = '#4a90e2'; // Azul (Padrão/Parágrafo)
+        
+        switch (block.tipo) {
+            case 'paragrafo':
+                numColor = '#4a90e2'; // Azul
+                break;
+            case 'subtema':
+                numColor = '#9b59b6'; // Roxo
+                break;
+            case 'resumo':
+                numColor = '#27ae60'; // Verde Escuro (Ajustado para legibilidade)
+                break;
+            case 'rodape':
+                numColor = '#95a5a6'; // Cinzento
+                break;
+        }
+
+        div.innerHTML = `
+            <div style="padding-top: 2px;">
+                <input type="checkbox" class="codex-par-check" value="${block.numero_ref}" ${isSelected ? 'checked' : ''} style="width: 18px; height: 18px; cursor: pointer;">
+            </div>
+            <div>
+                <strong style="color: ${numColor}; font-size: 1.1em;">[${block.numero_ref}]</strong>
+                <span style="color:var(--text-muted-color); font-size: 0.9em; margin-left: 5px;">${block.texto.substring(0, 90)}...</span>
+            </div>
+        `;
+
+        div.onclick = (e) => {
+            if (e.target.type !== 'checkbox') {
+                const cb = div.querySelector('input');
+                cb.checked = !cb.checked;
+            }
+            updateSelectionState();
+        };
+
+        list.appendChild(div);
+    });
+
+    function updateSelectionState() {
+        const checked = Array.from(list.querySelectorAll('.codex-par-check:checked')).map(cb => cb.value);
+        codexCurrentSelection.paragraphs = checked;
+        
+        if (checked.length > 0) {
+            confirmBtn.textContent = `Confirmar (${checked.length} parágrafos)`;
+            countLabel.textContent = `Selecionados: ${checked.join(', ')}`;
+        } else {
+            confirmBtn.textContent = "Confirmar (Documento Inteiro)";
+            countLabel.textContent = "";
+        }
+    }
+};
+
+
+// 5. AÇÃO FINAL: PREENCHER O CODEX
+document.getElementById('codex-sel-confirm-btn').addEventListener('click', (e) => {
+    e.preventDefault();
+
+    // 1. REENCONTRAR A LINHA VIVA NO DOM
+    if (!window.currentEditingRowId) return;
+    
+    const activeRow = document.querySelector(`.codex-row[data-editing-id="${window.currentEditingRowId}"]`);
+    
+    if (!activeRow) {
+        console.error("❌ Erro: A linha original foi perdida (re-renderização detetada).");
+        alert("A linha foi atualizada em segundo plano. Por favor, tente novamente.");
+        document.getElementById('codex-selector-modal').style.display = 'none';
+        return;
+    }
+
+    console.log("✅ Linha encontrada. Injetando dados:", codexCurrentSelection);
+
+    // 2. LIMPEZA DOS PARÁGRAFOS ANTIGOS
+    const pContainer = activeRow.querySelector('.paragraphs-container');
+    if (pContainer) {
+        const oldUnits = pContainer.querySelectorAll('.codex-unit-chip');
+        oldUnits.forEach(u => u.remove());
+    }
+
+    // --- CENÁRIO A: LIVRO ---
+    if (codexCurrentSelection.type === 'book') {
+        const serieInput = activeRow.querySelector('.serie-main');
+        if (serieInput) {
+            serieInput.value = codexCurrentSelection.bookId; 
+            serieInput.dispatchEvent(new Event('input'));
+        }
+        
+        if (codexCurrentSelection.chapter) {
+            const cBtn = activeRow.querySelector("button[onclick*=\"'C'\"]");
+            const manualArea = activeRow.querySelector('.manual-inputs-area');
+            
+            if (cBtn && !cBtn.classList.contains('active')) {
+                 if (typeof window.toggleManual === 'function') window.toggleManual(cBtn, 'C', codexCurrentSelection.chapter);
+            } else if (manualArea) {
+                 const cInput = manualArea.querySelector('.manual-chapter');
+                 if (cInput) cInput.value = codexCurrentSelection.chapter;
+            }
+        }
+    } 
+    
+    // --- CENÁRIO B: REVISTA (A CORREÇÃO) ---
+    else if (codexCurrentSelection.type === 'magazine') {
+        const serieInput = activeRow.querySelector('.serie-main');
+        
+        // Usa a referência completa guardada OU constrói uma nova
+        let refText = codexCurrentSelection.fullReference;
+        
+        if (!refText) {
+             const yy = String(codexCurrentSelection.year).slice(-2);
+             const mm = String(codexCurrentSelection.month).padStart(2, '0');
+             refText = `w${yy} ${mm}`; 
+        }
+
+        if (serieInput) {
+            console.log("📝 Escrevendo no input:", refText);
+            serieInput.value = refText;
+            // Força o navegador a reconhecer a mudança
+            serieInput.dispatchEvent(new Event('input', { bubbles: true }));
+            serieInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        // Limpa botões manuais ativos (pois a referência já traz tudo)
+        const manualButtons = activeRow.querySelectorAll('.manual-controls button.active');
+        manualButtons.forEach(btn => btn.click());
+    }
+
+    // --- PARÁGRAFOS ---
+    if (codexCurrentSelection.paragraphs && codexCurrentSelection.paragraphs.length > 0) {
+        codexCurrentSelection.paragraphs.sort((a, b) => parseInt(a) - parseInt(b));
+        if (pContainer && typeof window.addCodexUnit === 'function') {
+            codexCurrentSelection.paragraphs.forEach(num => {
+                window.addCodexUnit(pContainer, 'Par', num);
+            });
+        }
+    }
+
+    // Limpeza Final
+    activeRow.removeAttribute('data-editing-id');
+    window.currentEditingRowId = null;
+    document.getElementById('codex-selector-modal').style.display = 'none';
+});
+
+
+
+window.loadCodexRoot = function() {
+    const list = document.getElementById('codex-sel-list');
+    const bread = document.getElementById('codex-sel-breadcrumbs');
+    const confirmBtn = document.getElementById('codex-sel-confirm-btn');
+    
+    bread.innerHTML = `<span style="font-weight:bold; color:var(--text-color);">Biblioteca</span>`;
+    confirmBtn.style.display = 'none';
+    list.innerHTML = '';
+
+    // 1. ITEM ESPECIAL: A SENTINELA
+    const divSentinela = document.createElement('div');
+    divSentinela.style.cssText = "padding: 12px; border-bottom: 1px solid var(--border-color); cursor: pointer; display: flex; align-items: center; background: rgba(74, 144, 226, 0.05);";
+    divSentinela.innerHTML = `<span style="font-size:1.2em; margin-right:10px;">📅</span> <strong>A Sentinela (Anos)</strong>`;
+    divSentinela.onclick = () => window.loadCodexYears();
+    list.appendChild(divSentinela);
+
+    // 2. LISTA DE LIVROS NORMAIS
+    JW_BOOKS_CATALOG.forEach(book => {
+        const div = document.createElement('div');
+        div.style.cssText = "padding: 10px; border-bottom: 1px solid var(--border-color); cursor: pointer;";
+        div.innerHTML = `<strong>${book.name}</strong> <span style="color:var(--text-muted-color); font-size:0.8em;">(${book.id})</span>`;
+        
+        div.onclick = () => {
+            codexCurrentSelection.type = 'book';
+            codexCurrentSelection.bookId = book.id;
+            codexCurrentSelection.bookName = book.name;
+            window.loadCodexChapters(book.id, book.name);
+        };
+        list.appendChild(div);
+    });
+};
+
+// NÍVEL 2: ANOS
+window.loadCodexYears = function() {
+    const list = document.getElementById('codex-sel-list');
+    const bread = document.getElementById('codex-sel-breadcrumbs');
+    
+    bread.innerHTML = `<span onclick="window.loadCodexRoot()" style="cursor:pointer; text-decoration:underline;">Biblioteca</span> > <span>Anos</span>`;
+    list.innerHTML = '';
+
+    const anoAtual = new Date().getFullYear();
+    for (let i = anoAtual + 1; i >= 1950; i--) {
+        const div = document.createElement('div');
+        div.style.cssText = "padding: 10px; border-bottom: 1px solid var(--border-color); cursor: pointer;";
+        div.textContent = `📂 Ano ${i}`;
+        div.onclick = () => window.loadCodexMonths(i);
+        list.appendChild(div);
+    }
+};
+
+// NÍVEL 3: MESES
+window.loadCodexMonths = function(year) {
+    const list = document.getElementById('codex-sel-list');
+    const bread = document.getElementById('codex-sel-breadcrumbs');
+    
+    bread.innerHTML = `<span onclick="window.loadCodexRoot()" style="cursor:pointer; text-decoration:underline;">Biblioteca</span> > <span onclick="window.loadCodexYears()" style="cursor:pointer; text-decoration:underline;">${year}</span> > <span>Meses</span>`;
+    list.innerHTML = '';
+
+    const meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+    
+    meses.forEach((mes, index) => {
+        const mesNum = (index + 1).toString().padStart(2, '0');
+        const div = document.createElement('div');
+        div.style.cssText = "padding: 10px; border-bottom: 1px solid var(--border-color); cursor: pointer;";
+        div.innerHTML = `🗓️ ${mes}`;
+        div.onclick = () => window.loadCodexArticles(year, mesNum, mes);
+        list.appendChild(div);
+    });
+};
+
+// NÍVEL 4: ARTIGOS (Lê do JSON)
+window.loadCodexArticles = async function(year, mesNum, mesName) {
+    const list = document.getElementById('codex-sel-list');
+    const bread = document.getElementById('codex-sel-breadcrumbs');
+    
+    bread.innerHTML = `... > <span onclick="window.loadCodexMonths(${year})" style="cursor:pointer; text-decoration:underline;">${mesName}</span> > <span>Artigos</span>`;
+    list.innerHTML = '<div class="spinner-container"><div class="spinner"></div></div>';
+
+    try {
+        const response = await fetch(`./js/publicacoes/sentinelas/${year}/${mesNum}.json`);
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        
+        list.innerHTML = '';
+        const artigos = data.artigos ? data.artigos : [data];
+
+        artigos.forEach((artigo, idx) => {
+            const div = document.createElement('div');
+            div.style.cssText = "padding: 12px; border-bottom: 1px solid var(--border-color); cursor: pointer;";
+            
+            // Debug visual para garantir que a referência existe
+            const refText = artigo.referencia || `w${String(year).slice(-2)} ${mesNum}`;
+
+            div.innerHTML = `
+                <div style="font-size:0.8em; color:var(--accent-color); font-weight:bold;">${refText}</div>
+                <div style="font-weight:500;">${artigo.titulo}</div>
+            `;
+            
+            div.onclick = () => {
+                // --- ATUALIZAÇÃO DOS DADOS GLOBAIS ---
+                codexCurrentSelection.type = 'magazine';
+                codexCurrentSelection.year = year;
+                codexCurrentSelection.month = mesNum;
+                codexCurrentSelection.articleIndex = idx;
+                
+                // CRÍTICO: Guardamos a referência aqui. Se não existir no JSON, criamos uma artificial.
+                codexCurrentSelection.fullReference = artigo.referencia || `w${String(year).slice(-2)} ${mesNum}`; 
+
+                console.log("📌 Artigo Selecionado. Referência guardada:", codexCurrentSelection.fullReference);
+
+                // Passa o conteúdo para a próxima fase
+                window.loadCodexParagraphs('w', artigo.titulo, null, artigo.conteudo);
+            };
+            list.appendChild(div);
+        });
+
+    } catch (e) {
+        console.error(e);
+        list.innerHTML = '<p style="color:#e74c3c; padding:20px;">Revista não encontrada.</p>';
+    }
 };
 
 
