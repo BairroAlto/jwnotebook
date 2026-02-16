@@ -27382,102 +27382,118 @@ document.getElementById('confirm-item-addition').addEventListener('click', async
         }
 
         // --- AÇÃO: OCULTAR/MOVER PARA LIXEIRA (🗑️) ---
-   else if (action === 'hide') {
-            const myUid = auth.currentUser.uid;
-            
-            // Verifica se és o criador original (Dono) comparando o teu ID com o userId da nota
-            const isOwner = (itemContext.userId === myUid);
-            // Verifica se o campo 'oque' no Firebase é 'flash'
-            const isFlash = (itemContext.oque === 'flash');
-            const isSharedFile = (itemContext.type === 'partilhado' || itemContext.type === 'arquivo');
-            
-            console.group(`🎯 [RASTREIO OCULTAR] Item: ${itemContext.name}`);
-            console.log("ID da Nota:", itemContext.id);
-            console.log("Teu UID:", myUid);
-            console.log("userId da Nota:", itemContext.userId);
-            console.log("É o Dono?", isOwner ? "SIM ✅" : "NÃO ❌");
-            console.log("É Nota Flash?", isFlash ? "SIM ✅" : "NÃO ❌");
+else if (action === 'hide') {
+    const myUid = auth.currentUser.uid;
+    
+    // Identifica estados especiais do item
+    const isOwner = (itemContext.userId === myUid);
+    const isFlash = (itemContext.oque === 'flash');
+    const isBag = (itemContext.oque === 'back'); // Identifica se pertence à Bag
+    const isSharedFile = (itemContext.type === 'partilhado' || itemContext.type === 'arquivo');
+    
+    console.group(`🎯 [OCULTAR ITEM] Iniciando processo para: ${itemContext.name}`);
+    console.log("ID:", itemContext.id, "| Tipo:", itemContext.type, "| Bag:", isBag);
 
-            let confirmTitle = isOwner ? 'Ocultar Item?' : 'Sair da Partilha?';
-            let confirmMsg = isOwner 
-                ? `Deseja mover "${itemContext.name}" para a lixeira?`
-                : `Deseja deixar de colaborar em "${itemContext.name}"? O teu acesso será removido.`;
+    // 1. DEFINIR MENSAGENS DO POPUP
+    let confirmTitle = isOwner ? 'Ocultar Item?' : 'Sair da Partilha?';
+    let confirmMsg = isOwner 
+        ? `Deseja mover "${itemContext.name}" para a lixeira?`
+        : `Deseja deixar de colaborar em "${itemContext.name}"? O teu acesso será removido.`;
 
-            // Adiciona avisos automáticos se fores o dono
-            if (isOwner) {
-                const typesWithRefs = ['nota', 'jornal', 'aquario'];
-                if (!isSharedFile && typesWithRefs.includes(itemContext.type)) {
-                    confirmMsg += `\n\n⚠️ Atenção: Ao ocultar, as referências desta nota no 🧩 (Quadro), 📼 (Micas), 🦉 (Biblioteca), e 📖 (BíbliaBook) serão removidas automaticamente para evitar links quebrados.`;
-                }
-                if (isFlash) {
-                    confirmMsg += `\n\n⚡ Esta nota sairá da tua lista Flash.`;
-                }
-            }
-
-            // Se for arquivo partilhado e for dono
-            if (isSharedFile && isOwner) {
-                confirmMsg = `Como é o Dono, ao ocultar este Arquivo:\n\n1. O arquivo irá para os seus "Itens Ocultos".\n2. A lista de colaboradores será apagada.\n\nDeseja continuar?`;
-            }
-
-            const confirmed = await showConfirmation(confirmTitle, confirmMsg);
-            
-            if (confirmed) {
-                console.log("🚀 Ação confirmada. Comunicando com o Firebase...");
-                const collectionName = (itemContext.type === 'cosmos-parent') ? 'cosmos' : 'pastas';
-                const docRef = doc(db, collectionName, itemContext.id);
-
-                try {
-                    if (isOwner) {
-                        // SÓ O DONO pode desativar a nota mudando o estado
-                        await updateDoc(docRef, { 
-                            estado: 'desativa', 
-                            ultimaedicao: serverTimestamp()
-                        });
-                        console.log("☁️ Firebase: Estado alterado para 'desativa'.");
-                        
-                        if (collectionName === 'pastas') {
-                            console.log("🧹 Iniciando limpeza automática de referências na 4ª coluna...");
-                            if(typeof cleanUpHiddenNoteReferences === 'function') {
-                                cleanUpHiddenNoteReferences(itemContext.id);
-                            }
-                        }
-                    } 
-                    else {
-                        // COLABORADOR apenas remove o seu acesso no mapa de colaboradores
-                        await updateDoc(docRef, {
-                            [`colaboradores.${myUid}`]: deleteField()
-                        });
-                        console.log("👋 Firebase: Removido da lista de colaboradores.");
-                    }
-
-                    // Remover da lista visual com animação
-                    const domItem = document.querySelector(`.list-item[data-id="${itemContext.id}"]`);
-                    if (domItem) {
-                        domItem.style.transition = "opacity 0.3s, transform 0.3s";
-                        domItem.style.opacity = "0";
-                        domItem.style.transform = "translateX(-20px)";
-                        setTimeout(() => domItem.remove(), 300);
-                    }
-
-                    // Se a nota que ocultaste for a que estava aberta, fecha o editor
-                    if (selectedNoteId === itemContext.id) resetEditor();
-
-                    // Sincroniza as listas após a mudança
-                    setTimeout(() => {
-                        if (currentViewMode === 'flash') loadFlashListLeftPanel();
-                        else if (currentViewMode === 'shared') loadSharedFilesRoot(); 
-                        else updateNavigationView(true);
-                    }, 500);
-
-                } catch (error) {
-                    console.error("❌ Erro ao processar no Firebase:", error);
-                    alert("Erro ao ocultar item.");
-                }
-            } else {
-                console.log("🚫 Ocultação cancelada pelo utilizador.");
-            }
-            console.groupEnd();
+    if (isOwner) {
+        // Alerta sobre links quebrados na 4ª coluna (apenas para notas/jornais/aquários)
+        const typesWithRefs = ['nota', 'jornal', 'aquario'];
+        if (!isSharedFile && typesWithRefs.includes(itemContext.type)) {
+            confirmMsg += `\n\n⚠️ Atenção: Ao ocultar, as referências desta nota no 🧩 (Quadro), 📼 (Micas) e 📜 (Textos) serão removidas automaticamente para evitar links quebrados.`;
         }
+        
+        if (isFlash) {
+            confirmMsg += `\n\n⚡ Esta nota sairá da tua lista Flash.`;
+        }
+
+        // --- NOVO: AVISO ESPECÍFICO PARA A BAG ---
+        if (isBag) {
+            confirmMsg += `\n\n🧳 Esta nota sairá da tua Bag.`;
+        }
+    }
+
+    // Caso especial para Donos de Arquivos Partilhados
+    if (isSharedFile && isOwner) {
+        confirmMsg = `Como é o Dono, ao ocultar este Arquivo:\n\n1. O arquivo irá para os seus "Itens Ocultos".\n2. A lista de colaboradores será apagada.\n\nDeseja continuar?`;
+    }
+
+    // 2. MOSTRAR CONFIRMAÇÃO
+    const confirmed = await showConfirmation(confirmTitle, confirmMsg);
+    
+    if (confirmed) {
+        console.log("🚀 Ação confirmada. Comunicando com o Firebase...");
+        
+        const collectionName = (itemContext.type === 'cosmos-parent') ? 'cosmos' : 'pastas';
+        const docRef = doc(db, collectionName, itemContext.id);
+
+        try {
+            if (isOwner) {
+                // SÓ O DONO pode desativar a nota (Muda o estado para 'desativa')
+                await updateDoc(docRef, { 
+                    estado: 'desativa', 
+                    ultimaedicao: serverTimestamp()
+                });
+                
+                // LIMPEZA DE REFERÊNCIAS (Evita lixo na 4ª coluna)
+                if (collectionName === 'pastas') {
+                    console.log("🧹 Limpando referências globais...");
+                    if(typeof cleanUpHiddenNoteReferences === 'function') {
+                        await cleanUpHiddenNoteReferences(itemContext.id);
+                    }
+                }
+            } 
+            else {
+                // COLABORADOR apenas remove o seu acesso no mapa
+                await updateDoc(docRef, {
+                    [`colaboradores.${myUid}`]: deleteField()
+                });
+            }
+
+            // 3. ANIMAÇÃO VISUAL (Remover da lista no ecrã)
+            const domItem = document.querySelector(`.list-item[data-id="${itemContext.id}"]`);
+            if (domItem) {
+                domItem.style.transition = "opacity 0.3s, transform 0.3s";
+                domItem.style.opacity = "0";
+                domItem.style.transform = "translateX(-20px)";
+                setTimeout(() => domItem.remove(), 300);
+            }
+
+            // 4. FECHAR EDITOR (Se a nota ocultada for a que está aberta)
+            if (selectedNoteId === itemContext.id) {
+                resetEditor();
+            }
+
+            // 5. ATUALIZAR A LISTA CORRETA (SINCRONIZAÇÃO)
+            setTimeout(() => {
+                if (isBag) {
+                    console.log("♻️ Atualizando vista da Bag...");
+                    if (typeof window.loadBagView === 'function') window.loadBagView();
+                } else if (currentViewMode === 'flash') {
+                    console.log("⚡ Atualizando vista Flash...");
+                    loadFlashListLeftPanel();
+                } else if (currentViewMode === 'shared') {
+                    console.log("🤝 Atualizando vista Share...");
+                    loadSharedFilesRoot(); 
+                } else {
+                    console.log("📂 Atualizando navegação de pastas...");
+                    updateNavigationView(true);
+                }
+            }, 500);
+
+        } catch (error) {
+            console.error("❌ Erro ao ocultar item:", error);
+            alert("Erro ao ocultar item. Verifique a sua ligação.");
+        }
+    } else {
+        console.log("🚫 Ocultação cancelada.");
+    }
+    console.groupEnd();
+}
 
     } catch (error) {
         console.error(`❌ Erro crítico na ação ${action}:`, error);
@@ -55668,30 +55684,13 @@ window.loadBagView = async function(page = 1) {
     const myUid = auth.currentUser.uid;
     const itemsPerPage = 20;
     
-    // 1. Define o título com o modo "Back" ativado
     setLeftPanelTitle('🧳 Bag', true);
 
-    listElement.innerHTML = `
-        <div class="panel-loader">
-            <div class="spinner"></div>
-            <span>A carregar página ${page}...</span>
-        </div>`;
+    listElement.innerHTML = `<div class="panel-loader"><div class="spinner"></div><span>A carregar...</span></div>`;
 
     try {
-        const { collection, query, where, getDocs, orderBy, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { collection, query, where, getDocs, orderBy } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        // 2. Busca total para paginação
-        const countQuery = query(
-            collection(db, 'pastas'),
-            where('userId', '==', myUid),
-            where('oque', '==', 'back'),
-            where('estado', '==', 'ativa')
-        );
-        const totalSnap = await getDocs(countQuery);
-        const totalItems = totalSnap.size;
-        const totalPages = Math.ceil(totalItems / itemsPerPage);
-
-        // 3. Busca itens (Simulando paginação via slice para simplicidade no cliente)
         let q = query(
             collection(db, 'pastas'),
             where('userId', '==', myUid),
@@ -55718,12 +55717,19 @@ window.loadBagView = async function(page = 1) {
             li.className = 'list-item';
             li.style.borderLeft = "4px solid #a569bd"; 
             
+            // --- ESTA É A PARTE CRÍTICA QUE ESTAVA EM FALTA ---
+            li.setAttribute('data-id', item.id);
+            li.setAttribute('data-name', item.nome);
+            li.setAttribute('data-type', item.tipo);
+            li.setAttribute('data-userid', item.userId); // Sem isto, aparece "Sair da Partilha"
+            li.setAttribute('data-oque', item.oque || "back"); // Sem isto, não reconhece a Bag
+            // ------------------------------------------------
+
             let icon = item.tipo === 'jornal' ? '📰' : '📄';
             li.innerHTML = `<span>${icon} ${item.nome}</span><button class="item-menu-btn">…</button>`;
             
             li.onclick = (e) => {
                 if (e.target.closest('.item-menu-btn')) return;
-                // No mobile, ao abrir uma nota da Bag, vai para o editor
                 if (window.innerWidth <= 768) {
                     document.body.classList.add('mobile-view-editor');
                 }
@@ -55732,7 +55738,9 @@ window.loadBagView = async function(page = 1) {
             listElement.appendChild(li);
         });
 
-        if (totalPages > 1) {
+        // Paginação (se existir a função)
+        const totalPages = Math.ceil(allDocs.length / itemsPerPage);
+        if (totalPages > 1 && typeof renderBagPagination === 'function') {
             renderBagPagination(listElement, page, totalPages);
         }
 
