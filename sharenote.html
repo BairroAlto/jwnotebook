@@ -359,6 +359,77 @@
         }
         .redator-content { padding: 20px; color: rgba(255, 255, 255, 0.85); }
 
+        /* --- ESTILOS WIKIPEDIA (REFERÊNCIAS) --- */
+.wiki-ref-trigger {
+    font-size: 0.75em;
+    color: var(--accent-color);
+    cursor: pointer;
+    vertical-align: super;
+    margin: 0 2px;
+    font-weight: bold;
+    user-select: none;
+}
+
+.wiki-text-highlight {
+    transition: background-color 0.2s ease;
+    border-radius: 2px;
+}
+
+.wiki-text-highlight.active {
+    background-color: rgba(74, 144, 226, 0.25);
+}
+
+.wiki-ref-popup {
+    position: fixed;
+    z-index: 10000;
+    background-color: var(--panel-color);
+    border: 1px solid var(--accent-color);
+    border-radius: 8px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+    width: 300px;
+    max-height: 350px;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    animation: wikiPop 0.2s ease-out;
+}
+
+@keyframes wikiPop {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.wiki-popup-header-label {
+    font-size: 0.65em;
+    color: var(--text-muted);
+    font-weight: bold;
+    text-transform: uppercase;
+    padding: 10px 12px 0 12px;
+}
+
+.wiki-popup-main-title {
+    padding: 5px 12px 10px 12px;
+    font-weight: bold;
+    color: var(--accent-color);
+    font-size: 0.95em;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.wiki-ref-item-row {
+    display: flex;
+    padding: 8px 12px;
+    text-decoration: none;
+    color: var(--text-color);
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.wiki-ref-item-row:hover {
+    background-color: var(--hover-color);
+}
+
+.ref-bullet { margin-right: 10px; color: var(--accent-color); font-weight: bold; }
+.ref-url-text { font-size: 0.85em; word-break: break-all; line-height: 1.4; }
+
   </style>
 
 
@@ -444,6 +515,10 @@
     let currentUser = null;
     let navigationStack = [];
     let currentFolderId = null;
+let currentWikiPopup = null;
+let wikiPopupTimer = null;
+
+
 
     // =========================================================
     // FUNÇÃO PRINCIPAL: INICIALIZAÇÃO
@@ -858,95 +933,83 @@ document.getElementById('import-back-btn').addEventListener('click', () => {
 
     // Limpeza de Conteúdo (HTML -> Visual)
 function processContentForReading(htmlContent, forceShowAll = true) {
-   if (!htmlContent) return '<p><em>Nota vazia.</em></p>';
-   
-   const parser = new DOMParser();
-   const docDOM = parser.parseFromString(htmlContent, 'text/html');
+    if (!htmlContent) return '<p><em>Nota vazia.</em></p>';
+    
+    const parser = new DOMParser();
+    const docDOM = parser.parseFromString(htmlContent, 'text/html');
+    let refCounter = 1;
 
-   // 1. LIMPEZA GERAL DE INTERFACE DE EDIÇÃO
-   const selectorToRemove = [
-       '.post-it-drag-handle', 
-       '.post-it-cut-btn', 
-       '.toggle-delete-btn', 
-       '.toggle-color-btn', 
-       '.toggle-move-btn', 
-       '.drag-handle-icon',
-       '.mini-note-toolbar',   
-       '.card-toolbar',        
-       '.cols-toolbar',        
-       '.redator-dock',        
-       '.redator-top-tools',   
-       '.redator-reopen-btn'
-   ];
-   
-   selectorToRemove.forEach(sel => {
-       docDOM.querySelectorAll(sel).forEach(el => el.remove());
-   });
+    // 1. LIMPEZA GERAL
+    const selectorToRemove = [
+        '.post-it-drag-handle', '.post-it-cut-btn', '.toggle-delete-btn', 
+        '.toggle-color-btn', '.toggle-move-btn', '.drag-handle-icon',
+        '.mini-note-toolbar', '.card-toolbar', '.cols-toolbar',        
+        '.redator-dock', '.redator-top-tools', '.redator-reopen-btn'
+    ];
+    selectorToRemove.forEach(sel => docDOM.querySelectorAll(sel).forEach(el => el.remove()));
 
-   // ============================================================
-   // 2. PROCESSAR SUBNOTAS, QUESTÕES E CONTENTORES
-   // ============================================================
-   docDOM.querySelectorAll('.mini-note-wrapper, .redator-wrapper').forEach(wrapper => {
-       
-       // --- A. VERIFICAÇÃO DE PRIVACIDADE (LÓGICA NOVA) ---
-       const isIndividuallyShared = wrapper.getAttribute('data-shared') === 'true';
-       
-       // Se o "All Unlock" (forceShowAll) estiver DESLIGADO...
-       // E a caixa individual também estiver como PRIVADA...
-       // ENTÃO: Esconde e mostra placeholder.
-       if (!forceShowAll && !isIndividuallyShared) {
-           const placeholder = document.createElement('div');
-           placeholder.className = 'private-box-placeholder';
-           placeholder.innerHTML = '<span>🔒 Conteúdo Privado</span><small>(Esta secção foi ocultada pelo autor)</small>';
-           wrapper.replaceWith(placeholder);
-           return; // Pára o processamento desta caixa
-       }
-       
-       // (Se for Redator, sai aqui depois de verificar a privacidade, pois o resto do loop é para mini-notes)
-       if (wrapper.classList.contains('redator-wrapper')) return;
+    // 2. PROCESSAR LINKS DE TEXTO (WIKI STYLE)
+    // Procuramos os links antes de converter as caixas
+    docDOM.querySelectorAll('a[data-anexo-id], a.silent-link').forEach(link => {
+        const originalText = link.textContent;
+        const uid = link.getAttribute('data-uid');
+        
+        // Vamos buscar os dados ao registro que veio do Firebase
+        const registry = sharedNoteData.textLinksRegistry || {};
+        const linkData = registry[uid] || null;
 
-       // --- RESTO DO PROCESSAMENTO VISUAL (Mini-Notes) ---
-       
-       // B. Extrair Título
-       const titleEl = wrapper.querySelector('.mini-note-title-input');
-       let titleText = "";
-       
-       if (titleEl) {
-           titleText = titleEl.getAttribute('value') || titleEl.value || titleEl.textContent || titleEl.innerHTML || "";
-           titleText = titleText.replace(/<br>/g, "").trim();
-       }
+        const textSpan = document.createElement('span');
+        textSpan.className = 'wiki-text-highlight';
+        textSpan.id = `wiki-text-${refCounter}`;
+        textSpan.textContent = originalText;
 
-       // C. Extrair Conteúdo
-       const contentDiv = wrapper.querySelector('.mini-note-content');
-       const innerHTML = contentDiv ? contentDiv.innerHTML : '';
-       const highlightHex = wrapper.getAttribute('data-highlight');
+        const refTrigger = document.createElement('span');
+        refTrigger.className = 'wiki-ref-trigger';
+        refTrigger.textContent = `[${refCounter}]`;
+        refTrigger.dataset.refId = refCounter;
+        
+        // Passamos o dado codificado para o atributo
+        if (linkData) {
+            refTrigger.setAttribute('data-json', encodeURIComponent(JSON.stringify(linkData)));
+        }
 
-       // D. Construir a Nova Caixa de Leitura
-       const newContainer = document.createElement('div');
-       newContainer.className = 'processed-mini-note';
-       
-       if (wrapper.classList.contains('question-mode')) newContainer.classList.add('question-mode');
-       else if (wrapper.classList.contains('free-mode')) newContainer.classList.add('free-mode');
+        const fragment = document.createDocumentFragment();
+        fragment.appendChild(textSpan);
+        fragment.appendChild(refTrigger);
+        link.replaceWith(fragment);
+        refCounter++;
+    });
 
-       if (highlightHex) { 
-           newContainer.style.backgroundColor = highlightHex; 
-           newContainer.style.color = "#222"; 
-           newContainer.style.borderColor = "rgba(0,0,0,0.1)";
-       }
+    // 3. PROCESSAR CAIXAS (Subnotas, Questões, etc)
+    docDOM.querySelectorAll('.mini-note-wrapper, .redator-wrapper').forEach(wrapper => {
+        const isIndividuallyShared = wrapper.getAttribute('data-shared') === 'true';
+        if (!forceShowAll && !isIndividuallyShared) {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'private-box-placeholder';
+            placeholder.innerHTML = '<span>🔒 Conteúdo Privado</span>';
+            wrapper.replaceWith(placeholder);
+            return;
+        }
 
-       if (titleText) { 
-           const h3 = document.createElement('h3'); 
-           h3.textContent = titleText; 
-           if (highlightHex) h3.style.color = "#000";
-           newContainer.appendChild(h3); 
-       }
-       
-       const bodyDiv = document.createElement('div');
-       bodyDiv.innerHTML = innerHTML;
-       newContainer.appendChild(bodyDiv);
-       
-       wrapper.replaceWith(newContainer);
-   });
+        const titleEl = wrapper.querySelector('.mini-note-title-input, .redator-input');
+        const titleText = titleEl ? (titleEl.getAttribute('value') || titleEl.value || "") : "";
+        const contentDiv = wrapper.querySelector('.mini-note-content, .redator-content');
+        
+        const newContainer = document.createElement('div');
+        newContainer.className = 'processed-mini-note';
+        if (wrapper.classList.contains('question-mode')) newContainer.classList.add('question-mode');
+        
+        if (titleText) {
+            const h3 = document.createElement('h3');
+            h3.textContent = titleText;
+            newContainer.appendChild(h3);
+        }
+        
+        const bodyDiv = document.createElement('div');
+        bodyDiv.innerHTML = contentDiv ? contentDiv.innerHTML : "";
+        newContainer.appendChild(bodyDiv);
+        wrapper.replaceWith(newContainer);
+    });
 
    // 3. LIMPEZA ADICIONAL PARA REDATORES VISÍVEIS
  // 3. PROCESSAR REDATORES (📓)
@@ -1264,6 +1327,82 @@ function processContentForReading(htmlContent, forceShowAll = true) {
     };
 
 
+    // Ouvinte para o corpo da nota
+document.getElementById('note-content').addEventListener('mouseover', (e) => {
+    const trigger = e.target.closest('.wiki-ref-trigger');
+    if (trigger) {
+        if (wikiPopupTimer) clearTimeout(wikiPopupTimer);
+        
+        const refId = trigger.dataset.refId;
+        const textEl = document.getElementById(`wiki-text-${refId}`);
+        const rawJson = trigger.getAttribute('data-json');
+
+        if (textEl) textEl.classList.add('active');
+        showWikiPopup(trigger, rawJson);
+    }
+});
+
+document.getElementById('note-content').addEventListener('mouseout', (e) => {
+    const trigger = e.target.closest('.wiki-ref-trigger');
+    if (trigger) {
+        const refId = trigger.dataset.refId;
+        const textEl = document.getElementById(`wiki-text-${refId}`);
+        
+        wikiPopupTimer = setTimeout(() => {
+            if (textEl) textEl.classList.remove('active');
+            if (currentWikiPopup && currentWikiPopup.dataset.hovered !== "true") {
+                currentWikiPopup.remove();
+                currentWikiPopup = null;
+            }
+        }, 300);
+    }
+});
+
+function showWikiPopup(trigger, rawJson) {
+    if (currentWikiPopup) currentWikiPopup.remove();
+    if (!rawJson) return;
+
+    let data;
+    try {
+        data = JSON.parse(decodeURIComponent(rawJson));
+    } catch (err) { return; }
+
+    const popup = document.createElement('div');
+    popup.className = 'wiki-ref-popup';
+    
+    const urlsArray = data.urls ? (Array.isArray(data.urls) ? data.urls : Object.values(data.urls)) : [];
+
+    popup.innerHTML = `
+        <div class="wiki-popup-header-label">REFERÊNCIA</div>
+        <div class="wiki-popup-main-title">${data.title || "Sem título"}</div>
+        <div class="wiki-popup-links-list">
+            ${urlsArray.map(url => `
+                <a href="${url}" target="_blank" class="wiki-ref-item-row">
+                    <span class="ref-bullet">•</span>
+                    <span class="ref-url-text">${url}</span>
+                </a>
+            `).join('')}
+        </div>
+    `;
+
+    document.body.appendChild(popup);
+    currentWikiPopup = popup;
+
+    popup.onmouseenter = () => { popup.dataset.hovered = "true"; };
+    popup.onmouseleave = () => { 
+        popup.remove(); 
+        currentWikiPopup = null; 
+        document.querySelectorAll('.wiki-text-highlight').forEach(el => el.classList.remove('active'));
+    };
+
+    const rect = trigger.getBoundingClientRect();
+    popup.style.display = 'flex';
+    popup.style.top = (rect.bottom + window.scrollY + 5) + "px";
+    
+    let left = rect.left + (rect.width / 2) - 150;
+    if (left < 10) left = 10;
+    popup.style.left = left + "px";
+}
 
 
 </script>
