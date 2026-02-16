@@ -1787,16 +1787,28 @@ z-index: 2147483647 !important;
             <h3>Definições</h3>
             <button onclick="document.getElementById('settings-modal').style.display='none'" style="background:none;border:none;color:#888;font-size:24px;cursor:pointer;">×</button>
         </div>
-        <div style="padding: 20px;">
-            <h4 style="color: var(--accent-color); font-size: 0.8rem; text-transform: uppercase; margin-bottom: 15px;">📟 X-Ray Scanner</h4>
+        <div style="padding: 20px; display: flex; flex-direction: column; gap: 20px;">
             
+            <!-- X-RAY SETTING -->
             <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); padding: 15px; border-radius: 8px;">
                 <div>
-                    <div style="color: white; font-size: 0.9rem; font-weight: bold;">Pesquisa Versículos Individualmente</div>
-                    <div style="color: #666; font-size: 0.75rem; margin-top: 4px;">Ao encontrar "Rom 7:21-24", pesquisa também cada versículo isolado.</div>
+                    <div style="color: white; font-size: 0.9rem; font-weight: bold;">📟 X-Ray Profundo</div>
+                    <div style="color: #666; font-size: 0.75rem; margin-top: 4px;">Pesquisa versículos isolados.</div>
                 </div>
                 <label class="setting-switch">
                     <input type="checkbox" id="xray-deep-search" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <!-- SHARED ANSWERS SETTING (NOVO) -->
+            <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(52, 152, 219, 0.05); border: 1px solid rgba(52, 152, 219, 0.2); padding: 15px; border-radius: 8px;">
+                <div>
+                    <div style="color: white; font-size: 0.9rem; font-weight: bold;">💬 Respostas Compartilhadas</div>
+                    <div style="color: #666; font-size: 0.75rem; margin-top: 4px;">Ver e compartilhar respostas com a comunidade.</div>
+                </div>
+                <label class="setting-switch">
+                    <input type="checkbox" id="shared-answers-toggle">
                     <span class="slider"></span>
                 </label>
             </div>
@@ -2138,7 +2150,10 @@ let activeParaNum = null;
 let enxertoScrollPos = 0; // Nova variável para guardar o scroll
 let libraryDataCache = {};
 let globalEnxertoScroll = 0;
-
+let userSettings = {
+    xrayDeepSearch: true,
+    sharedAnswers: localStorage.getItem('sharedAnswersActive') === 'true'
+};
 
 const container = document.getElementById('content-container');
 
@@ -2530,23 +2545,20 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
     btn.disabled = true;
 
     try {
-        const { collection, addDoc, doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { collection, addDoc, doc, updateDoc, serverTimestamp, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
         const qId = window.activeQuestionId;
-        // LIMPEZA: Remove espaços em branco no início e fim do HTML
         const content = editor.innerHTML.trim(); 
-        const color = window.selectedColorHex || '#2ecc71';
+        const selectedColor = window.selectedColorHex || '#2ecc71';
         
-        // --- MONTAGEM DO HTML COM O ATRIBUTO DE DESTAQUE ---
+        // Obter nome do utilizador para exibição pública
+        const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
+        const userName = userSnap.exists() ? (userSnap.data().nome || "Utilizador") : "Anónimo";
+
         const boxHtml = `
             <div class="mini-note-wrapper question-mode" id="box_${Date.now()}" 
-                 data-topics='{}' data-shared="false" data-box-links='{}' 
-                 data-highlight="${color}" contenteditable="false">
+                 data-highlight="${selectedColor}" contenteditable="false">
                 <textarea class="mini-note-title-input">${qText}</textarea>
-                <div class="mini-note-toolbar" contenteditable="false">
-                    <button>🔐</button><div class="toolbar-btn-group"><button>🔺</button><button>🔻</button></div>
-                    <button class="has-links">⚡</button><button>🧬</button><button>🎨</button><button>📋</button><button>🗑️</button>
-                </div>
                 <div class="mini-note-content" contenteditable="true">${content}</div>
             </div><p><br></p>
         `;
@@ -2558,11 +2570,14 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
             oque: 'back',
             qId: qId,
             userId: auth.currentUser.uid,
+            userName: userName, // Salva o nome para os outros verem
+            isPublic: userSettings.sharedAnswers, // <--- Aqui ativa o compartilhamento
             estado: 'ativa',
+            coresUsadas: [selectedColor.toUpperCase()],
             ultimaedicao: serverTimestamp()
         };
 
-        if (docId && docId !== "null" && docId !== "undefined") {
+        if (docId && docId !== "null") {
             await updateDoc(doc(db, 'pastas', docId), noteData);
         } else {
             noteData.createdAt = serverTimestamp();
@@ -2570,9 +2585,12 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
         }
 
         btn.textContent = "✅ GUARDADO";
-        setTimeout(() => { btn.disabled = false; btn.textContent = "ATUALIZAR RESPOSTA"; }, 2000);
-        
-        loadLibraryDataForChapter(currentPubId, currentChapter);
+        await loadLibraryDataForChapter(currentPubId, currentChapter);
+
+        setTimeout(() => { 
+            btn.disabled = false; 
+            btn.textContent = "ATUALIZAR RESPOSTA"; 
+        }, 2000);
 
     } catch (e) {
         console.error(e);
@@ -2885,59 +2903,66 @@ window.openSidePanel = async (pNum) => {
     const titleContainer = document.getElementById('side-title-container');
     const content = document.getElementById('side-content');
     
-    // --- 1. SELEÇÃO DOS BOTÕES DE ABAS ---
-    const xrayBtn = document.getElementById('tab-xray-btn');
-    const enxertoBtn = document.getElementById('tab-enxertos-btn');
-    const bibleBtn = document.getElementById('tab-bible-btn'); // O botão da Bíblia
-
-    // --- 2. LÓGICA DE LIMPEZA (OCULTAR ABAS DINÂMICAS) ---
-    // Sempre que abrimos um parágrafo novo, "limpamos" o estado das abas especiais
-    if (activeParaNum !== pNum) {
-        cacheXrayHTML = null;
-        cacheSegmentoHTML = null;
-        enxertoScrollPos = 0;
-        activeParaNum = pNum;
-        
-        // Escondemos os botões que não pertencem ao contexto base do parágrafo
-        if (xrayBtn) xrayBtn.style.display = 'none';
-        if (enxertoBtn) enxertoBtn.style.display = 'none';
-        
-        // AQUI ESTÁ A TUA SOLICITAÇÃO:
-        if (bibleBtn) bibleBtn.style.display = 'none'; 
-
-        content.classList.remove('xray-active');
-    }
-
-    // 3. ABRIR O PAINEL E EXIBIR BARRA DE ABAS BASE
     panel.classList.add('open');
     tabs.style.display = 'flex'; 
+    activeParaNum = pNum;
 
-    // 4. ATUALIZAR CONTEXTO
-    panel.dataset.pNum = pNum;
+    // Gerar IDs de contexto
     const fullRef = `${currentPubId} ${currentChapter}:${pNum}`;
+    const qId = `${currentPubId}_Q${pNum}`; // ID da pergunta anexa
     panel.dataset.currentRef = fullRef;
 
-    // 5. ATUALIZAR CABEÇALHO (TÍTULO E BOTÕES +📝 +📟)
+    // Título do Painel
     titleContainer.innerHTML = `
-        <div style="display:flex; flex-direction:column;">
-            <span style="color: var(--accent-color); font-weight: bold;">Parágrafo ${pNum}</span>
-        </div>
-        <div style="display:flex; gap:8px; margin-left:12px;">
-            <button class="btn-header-create" onclick="window.prepareNoteFromPanel('${pNum}')" title="Nova Nota">+ 📝</button>
-            <button class="btn-header-create" style="background:#e67e22;" 
-                    onclick="window.runParaXRay('${pNum}')" title="X-Ray Scanner">+ 📟</button>
-        </div>
+        <span style="color: var(--accent-color); font-weight: bold;">Parágrafo ${pNum}</span>
+        <button class="btn-header-create" onclick="window.prepareNoteFromPanel('${pNum}')">+ 📝</button>
     `;
 
-    // 6. FORÇAR A VOLTA PARA A ABA QUADRO (🧩)
-    // Se o utilizador estava na Bíblia e clicou num parágrafo, não queremos que o painel tente mostrar a Bíblia do parágrafo
-    document.querySelectorAll('#library-ref-tabs .tab-btn').forEach(b => b.classList.remove('active'));
-    const puzzleTab = document.querySelector('[data-ref-tab="puzzle"]');
-    if (puzzleTab) puzzleTab.classList.add('active');
+    // Lógica da Aba Compartilhada (💬)
+    const sharedTabBtn = document.getElementById('tab-shared-btn') || createSharedTabBtn();
+    sharedTabBtn.style.display = 'none'; // Escondida por padrão
 
-    // Carregar o conteúdo da aba Quadro (Notas do parágrafo)
+    if (userSettings.sharedAnswers) {
+        const { collection, query, where, getDocs, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // Procurar se existe pelo menos uma resposta pública que não seja a minha
+        const q = query(
+            collection(db, 'pastas'),
+            where('qId', '==', qId),
+            where('isPublic', '==', true),
+            where('userId', '!=', auth.currentUser.uid),
+            limit(1)
+        );
+        
+        const sharedSnap = await getDocs(q);
+        if (!sharedSnap.empty) {
+            sharedTabBtn.style.display = 'inline-block'; // Só aparece se houver dados
+        }
+    }
+
+    // Abrir por defeito na aba 🧩
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector('[data-ref-tab="puzzle"]').classList.add('active');
     window.renderLibraryRefTab('puzzle');
 };
+
+// Função auxiliar para criar o botão da aba caso não exista no HTML
+function createSharedTabBtn() {
+    const tabsContainer = document.getElementById('library-ref-tabs');
+    const btn = document.createElement('button');
+    btn.className = 'tab-btn';
+    btn.id = 'tab-shared-btn';
+    btn.dataset.refTab = 'shared';
+    btn.title = 'Respostas da Comunidade';
+    btn.innerHTML = '💬';
+    btn.onclick = () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        window.renderLibraryRefTab('shared');
+    };
+    tabsContainer.appendChild(btn);
+    return btn;
+}
 
 
 
@@ -3493,21 +3518,22 @@ document.getElementById('library-ref-tabs').addEventListener('click', (e) => {
 window.renderLibraryRefTab = async function(tab) {
     const panel = document.getElementById('side-panel');
     const content = document.getElementById('side-content');
+    const myUid = auth.currentUser.uid;
     
-    // Gestão de Scroll para a aba de artigos
+    // 1. GESTÃO DE ESTADO E SCROLL
     if (content.dataset.currentTab === 'enxertos') {
         globalEnxertoScroll = content.scrollTop;
     }
     content.dataset.currentTab = tab;
 
-    // Estilos de fundo para abas de leitura
-    if (tab === 'para-xray' || tab === 'enxertos' || tab === 'bibletext') {
+    // Estilos de fundo para abas de leitura/profunda
+    if (['para-xray', 'enxertos', 'bibletext', 'shared'].includes(tab)) {
         content.classList.add('xray-active');
     } else {
         content.classList.remove('xray-active');
     }
 
-    // --- LOGICA DAS ABAS ESPECIAIS ---
+    // --- ABAS DE CACHE (X-RAY E ENXERTOS) ---
     if (tab === 'enxertos') {
         content.innerHTML = cacheSegmentoHTML || '<div class="xray-empty-msg">Nenhum artigo aberto.</div>';
         setTimeout(() => { content.scrollTop = globalEnxertoScroll; }, 50);
@@ -3517,11 +3543,60 @@ window.renderLibraryRefTab = async function(tab) {
         content.innerHTML = cacheXrayHTML || '<div class="xray-empty-msg">Scanner vazio.</div>';
         return;
     }
- if (tab === 'bibletext') {
-    const ref = panel.dataset.currentRef;
-    window.renderBibleTextInPanel(ref);
-    return;
-}
+
+    // --- ABA BÍBLIA ---
+    if (tab === 'bibletext') {
+        const ref = panel.dataset.currentRef;
+        window.renderBibleTextInPanel(ref);
+        return;
+    }
+
+    // --- ABA RESPOSTAS COMPARTILHADAS (NOVO 💬) ---
+    if (tab === 'shared') {
+        content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
+        const qId = `${currentPubId}_Q${activeParaNum}`;
+
+        try {
+            const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+            
+            // Procura respostas públicas de outros usuários para esta pergunta
+            const q = query(
+                collection(db, 'pastas'),
+                where('qId', '==', qId),
+                where('isPublic', '==', true),
+                where('userId', '!=', myUid)
+            );
+
+            const snap = await getDocs(q);
+            content.innerHTML = '<h4 style="color:#888; font-size:0.7rem; text-transform:uppercase; margin: 10px 0 15px 15px; letter-spacing:1px;">Estudo da Comunidade</h4>';
+
+            if (snap.empty) {
+                content.innerHTML += '<div class="xray-empty-msg">Ainda não há respostas compartilhadas para esta pergunta.</div>';
+                return;
+            }
+
+            snap.forEach(docSnap => {
+                const data = docSnap.data();
+                const card = document.createElement('div');
+                card.className = 'detail-card';
+                card.style.borderLeftColor = '#9b59b6'; // Cor Roxa para diferenciar do usuário
+                
+                card.innerHTML = `
+                    <div style="font-size:0.65rem; color:#9b59b6; font-weight:800; margin-bottom:6px; display:flex; align-items:center; gap:5px;">
+                        <span>👤</span> ${data.userName || "Utilizador"}
+                    </div>
+                    <div class="card-snippet" style="color:#cecece; font-style:italic; line-height:1.5;">
+                        "${cleanMicaContent(data.conteudo)}"
+                    </div>
+                `;
+                content.appendChild(card);
+            });
+        } catch (e) {
+            console.error("Erro Shared:", e);
+            content.innerHTML = '<div class="xray-empty-msg">Erro ao carregar respostas compartilhadas.</div>';
+        }
+        return;
+    }
 
     // --- CARREGAMENTO DE DADOS PESSOAIS (🧩 ⚡ 📼) ---
     const refName = panel.dataset.currentRef;
@@ -3679,7 +3754,9 @@ if (rawHtml.includes("question-mode")) {
     }
 };
 
-      
+
+
+
 
 
 // Vigilante de Scroll: Atualiza a posição em tempo real
@@ -5471,10 +5548,6 @@ window.switchXraySubTab = (btn, paneId) => {
 };
 
 
-// 1. Variável de estado para as definições
-let userSettings = {
-    xrayDeepSearch: true
-};
 
 // 2. Função para abrir o modal
 document.getElementById('settings-btn').onclick = () => {
@@ -5780,6 +5853,51 @@ if (btnBusca && modalBusca) {
         }
     }, 1000);
 })();
+
+// Lógica para os botões do Modal de Definições
+document.addEventListener('DOMContentLoaded', () => {
+    const sharedToggle = document.getElementById('shared-answers-toggle');
+    const xrayToggle = document.getElementById('xray-deep-search');
+
+    if(sharedToggle) {
+        sharedToggle.checked = userSettings.sharedAnswers;
+        
+        sharedToggle.onchange = (e) => {
+            const isNowActive = e.target.checked;
+            userSettings.sharedAnswers = isNowActive;
+            localStorage.setItem('sharedAnswersActive', isNowActive);
+
+            // --- LÓGICA LIVE: OCULTAR ABA IMEDIATAMENTE ---
+            const sharedTabBtn = document.getElementById('tab-shared-btn');
+            
+            if (!isNowActive && sharedTabBtn) {
+                // 1. Esconde o botão da aba
+                sharedTabBtn.style.display = 'none';
+
+                // 2. Se o utilizador estiver nesse exato momento a ver a aba shared, 
+                // forçamos o regresso à aba "Quadro (puzzle)"
+                if (sharedTabBtn.classList.contains('active')) {
+                    const puzzleTab = document.querySelector('[data-ref-tab="puzzle"]');
+                    if (puzzleTab) {
+                        puzzleTab.click(); // Simula o clique para trocar o conteúdo
+                    }
+                }
+            } 
+            else if (isNowActive) {
+                // Caso ele ative e já tenhamos um parágrafo aberto, 
+                // podemos disparar a verificação para ver se a aba deve aparecer
+                if (typeof activeParaNum !== 'undefined' && activeParaNum !== null) {
+                    window.openSidePanel(activeParaNum); 
+                }
+            }
+        };
+    }
+    
+    if(xrayToggle) {
+        xrayToggle.checked = userSettings.xrayDeepSearch;
+        xrayToggle.onchange = (e) => userSettings.xrayDeepSearch = e.target.checked;
+    }
+});
 
 
 
