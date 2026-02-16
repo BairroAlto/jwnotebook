@@ -2679,29 +2679,32 @@ window.currentQuestionsCache = {};
 
 async function loadLibraryDataForChapter(pubId, chapter) {
     const capituloId = `${pubId}_${chapter}`;
-    const prefix = `${pubId} ${chapter}:`;
+    // Prefixos para busca
     const qPrefix = `${pubId}_Q`; 
     
-    // Reset caches
     currentChapterHighlights = {}; 
     window.currentQuestionsCache = {}; 
 
     try {
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
+        // 1. BUSCA TUDO DE UMA VEZ
         const [snapCores, snapNotas, snapPerguntas] = await Promise.all([
             getDocs(query(collection(db, 'trechosbiblicos'), 
                 where('userId', '==', auth.currentUser.uid),
                 where('capituloId', '==', capituloId))),
+            
+            // Busca na coleção livros (Quadro e Dossiê)
             getDocs(query(collection(db, 'livros'), 
-                where('userId', '==', auth.currentUser.uid),
-                where('nome', '>=', prefix), where('nome', '<=', prefix + '\uf8ff'))),
+                where('userId', '==', auth.currentUser.uid))),
+                
             getDocs(query(collection(db, 'pastas'), 
                 where('userId', '==', auth.currentUser.uid),
                 where('qId', '>=', qPrefix),
                 where('qId', '<=', qPrefix + '\uf8ff'),
                 where('estado', '==', 'ativa')))
         ]);
+
 
         // --- PROCESSAMENTO PERGUNTAS (ATUALIZADO) ---
         snapPerguntas.forEach(doc => {
@@ -2751,32 +2754,41 @@ async function loadLibraryDataForChapter(pubId, chapter) {
         });
 
         // --- Processamento Notas (Mantém igual) ---
-        snapNotas.forEach(docSnap => {
+      snapNotas.forEach(docSnap => {
             const data = docSnap.data();
-            const refParts = data.nome.split(':');
-            if(refParts.length > 1) {
-                const pNum = refParts.pop();
-                const pId = `p-${pNum}`;
-                if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
-                if (data.puzzleBoard && data.puzzleBoard.length > 0) {
-                    currentChapterHighlights[pId].hasNoteData = true;
-                    data.puzzleBoard.forEach(item => {
-                        if (item.highlightRef) {
-                            currentChapterHighlights[pId].push({
-                                texto: item.highlightRef,
-                                cor: item.noteColor || '#3498db',
-                                temNota: true
-                            });
-                        }
-                    });
+            const refName = data.nome; // Ex: "w25 dezembro pp. 2-7 - Parágrafo 1"
+
+            // 1. Verificar se este documento pertence à publicação/capitulo atual
+            // Para revistas: verifica se o nome contém a referência técnica
+            // Para livros: verifica se começa com a sigla e capítulo
+            const isMatch = refName.includes(currentBookData.capitulos[currentChapterIdx].referencia) || 
+                          refName.startsWith(`${currentPubId} ${currentChapter}:`);
+
+            if (isMatch) {
+                // 2. Extrair o número do parágrafo do fim da string
+                const match = refName.match(/(?:Parágrafo |:)(\d+)$/);
+                if (match) {
+                    const pNum = match[1];
+                    const pId = `p-${pNum}`;
+
+                    if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
+
+                    // 3. SEGREDO: Se tiver algo no Puzzle OU no Dossiê, marca como Data
+                    const hasPuzzle = data.puzzleBoard && data.puzzleBoard.length > 0;
+                    const hasDossie = data.dossie && data.dossie.length > 0;
+
+                    if (hasPuzzle || hasDossie) {
+                        currentChapterHighlights[pId].hasNoteData = true;
+                    }
                 }
             }
         });
 
+        // RE-PINTAR A INTERFACE
         window.refreshVisualHighlights();
         window.paintQuestionDots();
 
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("Erro ao carregar dados da página:", e); }
 }
 
 
@@ -3546,46 +3558,70 @@ window.refreshVisualHighlights = () => {
     const reader = document.getElementById('reader-area');
     if (!reader) return;
 
+    // Itera sobre o cache de destaques do capítulo atual
     for (const [pId, highlights] of Object.entries(currentChapterHighlights)) {
         const paragraphEl = document.getElementById(pId);
         if (!paragraphEl) continue;
 
         const pNum = paragraphEl.getAttribute('data-pnum');
+
+        // ============================================================
+        // 1. RESET DO PARÁGRAFO (LIMPEZA PARA EVITAR "NINHOS" DE TAGS)
+        // ============================================================
+        // Guardamos o HTML do número e limpamos o resto para texto puro antes de repintar
+        const refNumHTML = `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>`;
+        let pureText = paragraphEl.innerText;
+
+        // Remove o número que o innerText costuma trazer no início para não duplicar no HTML
+        if (pureText.startsWith(pNum)) {
+            pureText = pureText.replace(pNum, "").trim();
+        }
         
-        // 1. Obter o texto limpo (sem tags anteriores)
-        // Usamos um método para pegar o texto ignorando o número do parágrafo
-        let pureText = paragraphEl.innerText.replace(pNum, '').trim();
+        // Restaura o parágrafo ao estado básico (Número + Texto Limpo)
+        paragraphEl.innerHTML = `${refNumHTML} ${pureText}`;
 
-        // 2. Aplicar os destaques (Cores ou Picotados) sobre a string de texto
-        let processedHTML = pureText;
-        
-        // Ordenamos os destaques pelo tamanho do texto (maiores primeiro) para evitar quebras de HTML
-        const sortedHighlights = [...highlights].sort((a, b) => (b.texto?.length || 0) - (a.texto?.length || 0));
+        // ============================================================
+        // 2. PINTAR O NÚMERO (ESTADO AZUL: HAS-DATA)
+        // ============================================================
+        // Verifica se o cache indica que este parágrafo tem Notas ou Dossiê
+        const numEl = paragraphEl.querySelector('.ref-num');
+        if (numEl) {
+            if (highlights.hasNoteData === true) {
+                numEl.classList.add('has-data');
+            } else {
+                numEl.classList.remove('has-data');
+            }
+        }
 
-        sortedHighlights.forEach(h => {
-            if (!h.texto) return;
-            
-            const escapedText = h.texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            // Regex que evita substituir texto que já está dentro de uma tag HTML
-            const regex = new RegExp(`(${escapedText})(?![^<]*>|[^<>]*<\/span>)`, 'gi');
+        // ============================================================
+        // 3. APLICAR DESTAQUES (TEXTO COLORIDO)
+        // ============================================================
+        if (Array.isArray(highlights)) {
+            highlights.forEach(h => {
+                if (!h.texto) return;
+                
+                let currentHTML = paragraphEl.innerHTML;
+                // Escapa caracteres especiais para a Regex não dar erro
+                const escapedText = h.texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                
+                // Regex "Inteligente": Só substitui texto que não esteja já dentro de uma tag HTML
+                const regex = new RegExp(`(${escapedText})(?![^<]*>|[^<>]*<\/span>)`, 'gi');
 
-            let className = h.temNota ? 'highlight-picotado' : 'direct-highlight';
-            let style = h.temNota 
-                ? `background-image: linear-gradient(to right, ${h.cor} 50%, transparent 50%)`
-                : `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
+                if (regex.test(currentHTML)) {
+                    // Define se o visual é Picotado (Nota Flash) ou Sólido (Destaque de Cor)
+                    let className = h.temNota ? 'highlight-picotado' : 'direct-highlight';
+                    
+                    let style = h.temNota 
+                        ? `background-image: linear-gradient(to right, ${h.cor} 50%, transparent 50%)`
+                        : `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
 
-            processedHTML = processedHTML.replace(regex, 
-                `<span class="${className}" style="${style}" onclick="window.openSidePanel('${pNum}')">$1</span>`
-            );
-        });
-
-        // 3. RE-APLICAR LINKS BÍBLICOS (Esta é a correção principal)
-        // Chamamos o linkify sobre o HTML já com as cores aplicadas
-        const finalContent = window.linkifyBibleReferences(processedHTML);
-
-        // 4. Montar o número do parágrafo e injetar o conteúdo final
-        const hasNotesClass = highlights.hasNoteData ? 'has-data' : '';
-        paragraphEl.innerHTML = `<span class="ref-num ${hasNotesClass}" onclick="window.openSidePanel('${pNum}')">${pNum}</span> ${finalContent}`;
+                    // Aplica a nova versão do HTML com o span de destaque
+                    paragraphEl.innerHTML = currentHTML.replace(regex, 
+                        `<span class="${className}" style="${style}" onclick="window.openSidePanel('${pNum}')">$1</span>`
+                    );
+                }
+            });
+        }
     }
 };
     
@@ -3792,10 +3828,9 @@ if (rawHtml.includes("question-mode")) {
 
                 // 2. Construir o HTML interno (Sem onclick no título)
               card.innerHTML = `
-    <div class="card-menu-container">
+ <div class="card-menu-container">
         <div class="card-menu-btn" onclick="window.toggleCardMenu(event)">••</div>
         <div class="card-dropdown">
-            <!-- SÓ MOSTRA EDITAR SE FOR NOTA CRIADA NA LIB -->
             ${isLibraryNote ? `<button onclick="window.openEditCard('${refName}', ${index})">🖋️ Editar</button>` : ''}
             
             <button class="btn-remove-card" onclick="window.deleteLibraryCard(${index})">🗑️ Remover</button>
@@ -4367,7 +4402,7 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
     clickedBtn.textContent = "A gravar...";
 
     try {
-        const { collection, addDoc, doc, updateDoc, arrayUnion, serverTimestamp, query, where, getDocs, setDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { collection, addDoc, doc, updateDoc, arrayUnion, serverTimestamp, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
         const titleInput = document.getElementById('flash-title');
         const editor = document.getElementById('flash-editor');
@@ -4387,9 +4422,9 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
         }
 
         // ============================================================
-        // 1. CONSTRUIR O NOME IDENTICO AO NOTEBOOK (fullName)
+        // 1. CONSTRUIR O NOME IDÊNTICO AO NOTEBOOK (UNIFICAÇÃO)
         // ============================================================
-     const isMagazine = (currentSectionId === 'publicacoes');
+        const isMagazine = (currentSectionId === 'publicacoes');
         const cap = currentBookData.capitulos[currentChapterIdx];
         const pNum = activeParaNum; 
 
@@ -4398,7 +4433,7 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
             : `${currentPubId} ${currentChapter}:${pNum}`;
 
         // ============================================================
-        // 2. GERAR ESTRUTURA DE CODEX TÉCNICA (Lógica condicional)
+        // 2. GERAR ESTRUTURA DE CODEX TÉCNICA (Lógica Condicional)
         // ============================================================
         if (!window.currentFlashLinks) window.currentFlashLinks = {};
         
@@ -4432,12 +4467,14 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
             </div><p><br></p>
         `;
 
+        // ============================================================
         // 3. GRAVAR NOTA NA MOCHILA (PASTAS)
+        // ============================================================
         const noteRef = await addDoc(collection(db, 'pastas'), {
             nome: title,
             conteudo: subNoteHtml,
             tipo: 'nota',
-            oque: 'back',
+            oque: 'back', // Vai para a Bag
             userId: auth.currentUser.uid,
             estado: 'ativa',
             boxIds: [boxUniqueId],
@@ -4446,19 +4483,20 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
             ultimaedicao: serverTimestamp()
         });
 
+        // ============================================================
         // 4. VINCULAR AO PARÁGRAFO (LIVROS / TEXTOSBIBLICOS)
-        // Correção aqui: usamos fullName para decidir a coleção
-        const targetCollection = (fullName.includes(':') && !fullName.includes('pp.')) ? 'textosbiblicos' : 'livros';
+        // ============================================================
+        const targetCollection = (fullName.includes(':') && !fullName.includes('pp.')) ? 'textobiblico' : 'livros';
         
-const puzzleItem = {
-    type: 'ref',
-    noteId: noteRef.id,
-    noteName: title,
-    snippet: encodeURIComponent(subNoteHtml),
-    noteColor: color,
-    isLibraryNote: true, // <--- ADICIONA ESTA LINHA
-    addedAt: Date.now()
-};
+        const puzzleItem = {
+            type: 'ref',
+            noteId: noteRef.id,
+            noteName: title,
+            snippet: encodeURIComponent(subNoteHtml),
+            noteColor: color,
+            isLibraryNote: true, // Habilita o botão "🖋️ Editar"
+            addedAt: Date.now()
+        };
 
         const q = query(collection(db, targetCollection), 
                         where('nome', '==', fullName), 
@@ -4482,14 +4520,28 @@ const puzzleItem = {
             });
         }
 
+        // ============================================================
+        // 5. ATUALIZAÇÃO LIVE: MUDAR COR DO NÚMERO IMEDIATAMENTE
+        // ============================================================
+        const numEl = document.querySelector(`.block-paragrafo[data-pnum="${pNum}"] .ref-num`);
+        if (numEl) {
+            numEl.classList.add('has-data');
+        }
+
+        // Atualiza cache local para persistir a cor ao navegar
+        const pId = `p-${pNum}`;
+        if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
+        currentChapterHighlights[pId].hasNoteData = true;
+
+        // Finalização
         clickedBtn.textContent = "✅ GUARDADO";
         setTimeout(() => {
             window.closeSidePanel();
-            window.renderLibraryRefTab('puzzle');
+            window.renderLibraryRefTab('puzzle'); // Refresh da aba para mostrar o novo card
         }, 1000);
 
     } catch (e) {
-        console.error("Erro ao gravar nota flash:", e);
+        console.error("Erro ao gravar nota da biblioteca:", e);
         alert("Erro ao gravar nota.");
         clickedBtn.disabled = false;
         clickedBtn.textContent = originalText;
@@ -4774,30 +4826,44 @@ window.openEditCard = async (refName, index) => {
 window.deleteLibraryCard = async (index) => {
     const panel = document.getElementById('side-panel');
     const refName = panel.dataset.currentRef;
+    const pNum = activeParaNum; // Pega o parágrafo atual
 
     if (!confirm("Remover? Deseja retirar esta nota deste parágrafo?")) return;
 
     try {
         const { doc, getDoc, updateDoc, query, collection, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-
         const isBible = refName.includes(':') && !refName.includes('pp.');
         const targetColl = isBible ? 'textosbiblicos' : 'livros';
 
-        const q = query(collection(db, targetColl), 
-                        where('nome', '==', refName), 
-                        where('userId', '==', auth.currentUser.uid));
+        const q = query(collection(db, targetColl), where('nome', '==', refName), where('userId', '==', auth.currentUser.uid));
         const snap = await getDocs(q);
 
         if (!snap.empty) {
             const docSnapshot = snap.docs[0];
-            let board = docSnapshot.data().puzzleBoard || [];
+            const data = docSnapshot.data();
+            let board = data.puzzleBoard || [];
+            let dossie = data.dossie || [];
 
-            // Remove o item
+            // 1. Remove do array local
             board.splice(index, 1);
 
+            // 2. Grava no Firebase
             await updateDoc(doc(db, targetColl, docSnapshot.id), { puzzleBoard: board });
+
+            // 3. ATUALIZAÇÃO LIVE: Verificar se ainda restou algo (no Quadro ou Dossiê)
+            const isNowEmpty = (board.length === 0 && dossie.length === 0);
             
-            // Refresh na aba
+            if (isNowEmpty) {
+                const numEl = document.querySelector(`.block-paragrafo[data-pnum="${pNum}"] .ref-num`);
+                if (numEl) numEl.classList.remove('has-data');
+                
+                // Limpa do cache para evitar que o motor de pintura o pinte de novo
+                if (currentChapterHighlights[`p-${pNum}`]) {
+                    currentChapterHighlights[`p-${pNum}`].hasNoteData = false;
+                }
+            }
+
+            // 4. Refresh da aba atual
             window.renderLibraryRefTab('puzzle');
         }
     } catch (e) { console.error(e); }
@@ -4853,7 +4919,7 @@ window.saveEditLibraryNote = async (docLibraryId, index, noteId) => {
             board[index].noteName = newTitle;
             board[index].snippet = encodeURIComponent(updatedHtml);
             board[index].noteColor = color;
-            
+            board[index].isLibraryNote = true; 
             await updateDoc(libRef, { puzzleBoard: board });
         }
 
