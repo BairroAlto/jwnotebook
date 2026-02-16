@@ -2535,13 +2535,18 @@ window.openFlashModal = () => {
     const modal = document.getElementById('flash-note-modal');
     modal.style.display = 'flex';
     document.getElementById('flash-title').value = '';
-    document.getElementById('flash-editor').innerHTML = '';
     
-    let codexStr = `${currentPubId} ${currentChapter}`;
-    if (currentSelectedParagraphs.length > 0) codexStr += `:${currentSelectedParagraphs.join('-')}`;
-    document.getElementById('flash-codex-info').textContent = codexStr;
+    // LÓGICA DE UNIFICAÇÃO (IGUAL AO OPEN_SIDE_PANEL)
+    const isMagazine = (currentSectionId === 'publicacoes');
+    const cap = currentBookData.capitulos[currentChapterIdx];
+    const pNum = currentSelectedParagraphs[0];
 
-    // DIFERENÇA 2: Aqui as cores devem aparecer (para o picotado)
+    const fullName = isMagazine 
+        ? `${cap.referencia} - Parágrafo ${pNum}` 
+        : `${currentPubId} ${currentChapter}:${pNum}`;
+
+    document.getElementById('flash-codex-info').textContent = fullName;
+
     const picker = document.getElementById('color-picker');
     if (picker) {
         picker.style.display = 'flex';
@@ -2973,13 +2978,13 @@ async function showArticles(sigla, year, mesNum, mesNome) {
         const list = container.querySelector('.chapter-list');
 
         // 2. Prepara os dados globais da publicação
-        currentBookData = {
-          titulo: `${SIGLAS_PUBLICACOES[sigla]} - ${mesNome}/${year}`,
+       currentBookData = {
+    titulo: `${SIGLAS_PUBLICACOES[sigla]} - ${mesNome}/${year}`,
     capitulos: artigos.map(a => ({
-        capitulo: a.referencia.split(' ').pop(),
+        capitulo: a.referencia.split(' ').pop(), // Ex: "2-7"
         titulo: a.titulo,
         conteudo: a.conteudo,
-        referencia: a.referencia // <--- ADICIONA ESTA LINHA AQUI
+        referencia: a.referencia // <--- GARANTE QUE ESTA LINHA EXISTE
     }))
 };
 
@@ -3037,29 +3042,26 @@ function updateHeader(title, backAction) {
 // --- 3. ATUALIZAÇÃO DA FUNÇÃO OPEN SIDE PANEL (COM FILTRO) ---
 window.openSidePanel = async (pNum) => {
     const panel = document.getElementById('side-panel');
-    const tabs = document.getElementById('library-ref-tabs');
     const titleContainer = document.getElementById('side-title-container');
-    const content = document.getElementById('side-content');
     
     panel.classList.add('open');
-    tabs.style.display = 'flex'; 
+    document.getElementById('library-ref-tabs').style.display = 'flex'; 
     activeParaNum = pNum;
 
-    // --- LÓGICA DE UNIFICAÇÃO (CORREÇÃO) ---
+    // --- LÓGICA DE UNIFICAÇÃO TOTAL ---
     const isMagazine = (currentSectionId === 'publicacoes');
-    
-    // Vamos buscar os dados do capítulo/artigo atual
     const cap = currentBookData.capitulos[currentChapterIdx];
-    
-    // Se for revista, usamos a referencia (w25...) em vez do titulo (A Sentinela...)
+
+    // Se for revista: "w25 dezembro pp. 2-7 - Parágrafo 1"
+    // Se for livro: "cl 2:1"
     const fullName = isMagazine 
         ? `${cap.referencia} - Parágrafo ${pNum}` 
         : `${currentPubId} ${currentChapter}:${pNum}`;
 
-    // Esta é a chave que liga ao Firebase
+    // Guarda este nome para as abas Puzzle/Links/Dossiê usarem na query
     panel.dataset.currentRef = fullName;
 
-    // Atualiza o título visual no topo do painel
+    // Título no topo do painel lateral
     titleContainer.innerHTML = `
         <span style="color: var(--accent-color); font-weight: bold;">🎯 ${fullName}</span>
         <div style="display:flex; align-items:center;">
@@ -3068,13 +3070,8 @@ window.openSidePanel = async (pNum) => {
         </div>
     `;
 
-    // Abrir por defeito na aba 🧩 (Quadro/Puzzle)
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    const puzzleTab = document.querySelector('[data-ref-tab="puzzle"]');
-    if (puzzleTab) {
-        puzzleTab.classList.add('active');
-        window.renderLibraryRefTab('puzzle');
-    }
+    // Carrega a aba padrão
+    window.renderLibraryRefTab('puzzle');
 };
 
 // Função auxiliar para criar o botão da aba caso não exista no HTML
@@ -3109,38 +3106,33 @@ currentSelectedParagraphs.forEach(pNum => {
 
 // --- NOVO: Função para preparar a nota vinda do painel lateral ---
 window.prepareNoteFromPanel = (pNum) => {
-    const tabs = document.getElementById('library-ref-tabs');
+    const panel = document.getElementById('side-panel');
     const content = document.getElementById('side-content');
     const titleContainer = document.getElementById('side-title-container');
+    
+    // Obtém o nome que foi gerado no openSidePanel
+    const fullName = panel.dataset.currentRef; 
 
-    // 1. Esconde as abas (Quadro, Links, Micas)
-    tabs.style.display = 'none';
-
-    // 2. LIMPA O CONTAINER E DEIXA APENAS O TÍTULO 
-    // (Isso faz o botão +📝 desaparecer automaticamente)
-    titleContainer.innerHTML = `
-        <span id="side-title" style="color: var(--accent-color); font-weight: bold;">Nova Nota</span>
-    `;
+    document.getElementById('library-ref-tabs').style.display = 'none';
+    titleContainer.innerHTML = `<span id="side-title" style="color: var(--accent-color); font-weight: bold;">Nova Nota</span>`;
 
     currentSelectedParagraphs = [pNum];
     currentSelectionText = ""; 
 
-    // 3. Injeta o formulário
-    content.innerHTML = window.getFlashNoteFormHTML(pNum);
+    // Envia o fullName para a função acima
+    content.innerHTML = window.getFlashNoteFormHTML(fullName);
 
-    // 4. Lógica de cores (esconde se for apenas clique no número)
     const picker = document.getElementById('inline-color-picker');
-    if (picker) picker.style.display = 'none';
+    if (picker) {
+        picker.style.display = 'flex';
+        renderColorPicker('inline-color-picker');
+    }
 };
 
 
-
-window.getFlashNoteFormHTML = (pNum) => {
-    const codexStr = `${currentPubId} ${currentChapter}:${pNum}`;
-    
+window.getFlashNoteFormHTML = (fullName) => {
     return `
         <div class="note-creation-form" style="padding: 5px;">
-            <!-- Título idêntico ao Bible.html -->
             <input type="text" id="flash-title" class="flash-input-title" placeholder="Título da Nota...">
             
             <div class="flash-toolbar">
@@ -3157,12 +3149,10 @@ window.getFlashNoteFormHTML = (pNum) => {
             </div>
 
             <div id="flash-editor" class="flash-editor" contenteditable="true" placeholder="Escreva aqui..."></div>
-            
-            <!-- As cores aparecem aqui -->
             <div class="color-picker-container" id="inline-color-picker"></div>
 
             <div style="margin-top: 15px; font-size: 0.8rem; color: #888;">
-                🔗 Anexado a: <span style="color: #3498db; font-weight:bold;">${codexStr}</span>
+                🔗 Anexado a: <span style="color: #3498db; font-weight:bold;">${fullName}</span>
             </div>
 
             <button id="btn-save-flash" onclick="window.saveLibraryFlashNote(this)" 
@@ -3797,14 +3787,17 @@ if (rawHtml.includes("question-mode")) {
                 const card = document.createElement('div');
                 card.className = 'detail-card';
                 card.style.borderLeftColor = accentColor;
-                
+                const isLibraryNote = item.isLibraryNote === true;
+
                 // 2. Construir o HTML interno (Sem onclick no título)
               card.innerHTML = `
     <div class="card-menu-container">
         <div class="card-menu-btn" onclick="window.toggleCardMenu(event)">••</div>
         <div class="card-dropdown">
-            <!-- NOVA OPÇÃO DE REMOVER -->
-            <button class="btn-remove-card" onclick="window.deleteLibraryCard(${index})">🗑️ Remover Nota</button>
+            <!-- SÓ MOSTRA EDITAR SE FOR NOTA CRIADA NA LIB -->
+            ${isLibraryNote ? `<button onclick="window.openEditCard('${refName}', ${index})">🖋️ Editar</button>` : ''}
+            
+            <button class="btn-remove-card" onclick="window.deleteLibraryCard(${index})">🗑️ Remover</button>
         </div>
     </div>
     
@@ -4373,7 +4366,7 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
     clickedBtn.textContent = "A gravar...";
 
     try {
-        const { collection, addDoc, doc, updateDoc, arrayUnion, serverTimestamp, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { collection, addDoc, doc, updateDoc, arrayUnion, serverTimestamp, query, where, getDocs, setDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
         const titleInput = document.getElementById('flash-title');
         const editor = document.getElementById('flash-editor');
@@ -4393,54 +4386,37 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
         }
 
         // ============================================================
-        // 🛠️ LÓGICA DE CODEX AUTOMÁTICO
+        // 1. CONSTRUIR O NOME IDENTICO AO NOTEBOOK (fullName)
         // ============================================================
-        // 1. Garantir que a estrutura de links existe
-        if (!currentFlashLinks) currentFlashLinks = {};
-        if (!currentFlashLinks.codex) currentFlashLinks.codex = [];
+     const isMagazine = (currentSectionId === 'publicacoes');
+        const cap = currentBookData.capitulos[currentChapterIdx];
+        const pNum = activeParaNum; 
 
-        // 2. Criar a referência automática do livro/capítulo/parágrafo
+        const fullName = isMagazine 
+            ? `${cap.referencia} - Parágrafo ${pNum}` 
+            : `${currentPubId} ${currentChapter}:${pNum}`;
+
+        // ============================================================
+        // 2. GERAR ESTRUTURA DE CODEX TÉCNICA (Lógica condicional)
+        // ============================================================
+        if (!window.currentFlashLinks) window.currentFlashLinks = {};
+        
         const autoCodex = {
-            serie: currentPubId,
-            capitulo: String(currentChapter),
-            paragrafos: currentSelectedParagraphs.map(String),
-            total: `${currentPubId.toUpperCase()} Cap. ${currentChapter}`,
+            serie: isMagazine ? cap.referencia : currentPubId,
+            // SÓ GRAVA CAPÍTULO SE NÃO FOR REVISTA
+            capitulo: isMagazine ? "" : String(currentChapter), 
+            paragrafos: [String(pNum)],
+            codiceshow: fullName,
             type: 'codex'
         };
 
-        // 3. Evitar duplicados: se já existir uma entrada para este livro, atualiza-a
-        const existingIdx = currentFlashLinks.codex.findIndex(c => c.serie === currentPubId);
-        if (existingIdx > -1) {
-            currentFlashLinks.codex[existingIdx] = autoCodex;
-        } else {
-            currentFlashLinks.codex.push(autoCodex);
-        }
-        // ============================================================
+        window.currentFlashLinks.codex = [autoCodex];
+        window.currentFlashLinks.categories = [{ id: "temp", name: fullName, type: "livro_ref" }];
 
-        const safeTopics = JSON.stringify(currentFlashTopics || {}).replace(/"/g, '&quot;');
-        
-        // Garantir que a referência bíblica/livro também está nas categorias para busca
-        if (!currentFlashLinks.categories) currentFlashLinks.categories = [];
-        const refName = `${currentPubId} ${currentChapter}:${currentSelectedParagraphs[0]}`;
-        if (!currentFlashLinks.categories.some(c => c.name === refName)) {
-            currentFlashLinks.categories.push({ id: "temp", name: refName, type: "livro_ref" });
-        }
+        const safeTopics = JSON.stringify(window.currentFlashTopics || {}).replace(/"/g, '&quot;');
+        const safeBoxLinks = JSON.stringify(window.currentFlashLinks).replace(/"/g, '&quot;');
 
-        const safeBoxLinks = JSON.stringify(currentFlashLinks).replace(/"/g, '&quot;');
-
-        const commonToolbarHTML = `
-            <div class="mini-note-toolbar" contenteditable="false">
-                <button type="button" data-action="sharing-settings">🔐</button>
-                <div class="toolbar-btn-group">
-                    <button type="button" data-action="move-up">🔺</button>
-                    <button type="button" data-action="move-down">🔻</button>
-                </div>
-                <button type="button" data-action="manage-box-links">⚡</button>
-                <button type="button" data-action="append-mini-note">🧬</button>
-                <button type="button" data-action="highlight-color">🎨</button>
-                <button type="button" data-action="manage-mini-note-topics">📋</button>
-                <button type="button" data-action="delete-mini-note">🗑️</button>
-            </div>`;
+        const commonToolbarHTML = `<div class="mini-note-toolbar" contenteditable="false"><button type="button" data-action="sharing-settings">🔐</button><div class="toolbar-btn-group"><button type="button" data-action="move-up">🔺</button><button type="button" data-action="move-down">🔻</button></div><button type="button" data-action="manage-box-links">⚡</button><button type="button" data-action="append-mini-note">🧬</button><button type="button" data-action="highlight-color">🎨</button><button type="button" data-action="manage-mini-note-topics">📋</button><button type="button" data-action="delete-mini-note">🗑️</button></div>`;
 
         let wrapperClass = "mini-note-wrapper";
         if (noteType === 'question') wrapperClass += " question-mode";
@@ -4448,14 +4424,14 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
         const subNoteHtml = `
             <div class="${wrapperClass}" id="${boxUniqueId}" 
                  data-topics='${safeTopics}' data-shared="false" data-box-links='${safeBoxLinks}' 
-                 contenteditable="false">
+                 data-highlight="${color}" contenteditable="false">
                 <textarea class="mini-note-title-input" rows="1">${title}</textarea>
                 ${commonToolbarHTML}
                 <div class="mini-note-content" contenteditable="true">${content}</div>
             </div><p><br></p>
         `;
 
-        // GRAVAR EM 'PASTAS'
+        // 3. GRAVAR NOTA NA MOCHILA (PASTAS)
         const noteRef = await addDoc(collection(db, 'pastas'), {
             nome: title,
             conteudo: subNoteHtml,
@@ -4469,40 +4445,51 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
             ultimaedicao: serverTimestamp()
         });
 
-        // VINCULAR AOS LIVROS (PuzzleBoard)
-        const puzzleItem = {
-            type: 'ref',
-            noteId: noteRef.id,
-            noteName: title,
-            snippet: encodeURIComponent(subNoteHtml),
-            noteColor: color,
-            addedAt: Date.now()
-        };
+        // 4. VINCULAR AO PARÁGRAFO (LIVROS / TEXTOSBIBLICOS)
+        // Correção aqui: usamos fullName para decidir a coleção
+        const targetCollection = (fullName.includes(':') && !fullName.includes('pp.')) ? 'textosbiblicos' : 'livros';
+        
+const puzzleItem = {
+    type: 'ref',
+    noteId: noteRef.id,
+    noteName: title,
+    snippet: encodeURIComponent(subNoteHtml),
+    noteColor: color,
+    isLibraryNote: true, // <--- ADICIONA ESTA LINHA
+    addedAt: Date.now()
+};
 
-        for (const pNum of currentSelectedParagraphs) {
-            const fullName = `${currentPubId} ${currentChapter}:${pNum}`;
-            const q = query(collection(db, 'livros'), where('nome', '==', fullName), where('userId', '==', auth.currentUser.uid));
-            const snap = await getDocs(q);
+        const q = query(collection(db, targetCollection), 
+                        where('nome', '==', fullName), 
+                        where('userId', '==', auth.currentUser.uid));
+        const snap = await getDocs(q);
 
-            if (!snap.empty) {
-                await updateDoc(doc(db, 'livros', snap.docs[0].id), { puzzleBoard: arrayUnion(puzzleItem) });
-            } else {
-                await addDoc(collection(db, 'livros'), {
-                    nome: fullName, userId: auth.currentUser.uid, puzzleBoard: [puzzleItem], 
-                    dossie: [], panelLinks: [], createdAt: serverTimestamp()
-                });
-            }
+        if (!snap.empty) {
+            await updateDoc(doc(db, targetCollection, snap.docs[0].id), { 
+                puzzleBoard: arrayUnion(puzzleItem),
+                [`referencias.${noteRef.id}`]: true 
+            });
+        } else {
+            await addDoc(collection(db, targetCollection), {
+                nome: fullName,
+                userId: auth.currentUser.uid,
+                puzzleBoard: [puzzleItem],
+                referencias: { [noteRef.id]: true },
+                dossie: [],
+                panelLinks: [],
+                createdAt: serverTimestamp()
+            });
         }
 
         clickedBtn.textContent = "✅ GUARDADO";
         setTimeout(() => {
             window.closeSidePanel();
-            loadLibraryDataForChapter(currentPubId, currentChapter);
+            window.renderLibraryRefTab('puzzle');
         }, 1000);
 
     } catch (e) {
-        console.error(e);
-        alert("Erro ao gravar.");
+        console.error("Erro ao gravar nota flash:", e);
+        alert("Erro ao gravar nota.");
         clickedBtn.disabled = false;
         clickedBtn.textContent = originalText;
     }
@@ -4593,6 +4580,8 @@ function buildVerseHTML(data, num) {
 
 function cleanMicaContent(snippet) {
     if (!snippet) return "";
+    
+    // 1. Descodifica o conteúdo (trata casos de codificação URI)
     let decoded = "";
     try {
         decoded = decodeURIComponent(snippet);
@@ -4600,16 +4589,47 @@ function cleanMicaContent(snippet) {
         decoded = snippet;
     }
 
+    // 2. Cria um elemento temporário para manipular o HTML via DOM
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = decoded;
 
-    // Remove elementos de lixo do editor
-    const toRemove = ['.mini-note-toolbar', '.mini-note-title-input', 'button', 'textarea', 'script', 'style'];
-    toRemove.forEach(s => tempDiv.querySelectorAll(s).forEach(el => el.remove()));
+    // 3. REMOÇÃO DE ELEMENTOS DE INTERFACE:
+    // Remove barras de ferramentas, botões, campos de título e scripts
+    const elementsToRemove = [
+        '.mini-note-toolbar', 
+        '.mini-note-title-input', 
+        'button', 
+        'textarea',
+        'script',
+        'style'
+    ];
 
-    let text = tempDiv.innerText;
-    // Limpa emojis de sistema e espaços excessivos
-    return text.replace(/[🔐🔺🔻⚡🧬🎨📋🗑️]/gu, '').replace(/\s+/g, ' ').trim();
+    elementsToRemove.forEach(selector => {
+        tempDiv.querySelectorAll(selector).forEach(el => el.remove());
+    });
+
+    // 4. EXTRAÇÃO DO CONTEÚDO REAL:
+    // Tentamos primeiro o div específico do conteúdo, se não houver, pegamos no texto geral
+    const contentDiv = tempDiv.querySelector('.mini-note-content');
+    let text = contentDiv ? contentDiv.innerText : tempDiv.innerText;
+
+    // 5. LIMPEZA PROFUNDA DE TEXTO:
+    // - Remove emojis de controle internos do sistema
+    // - Substitui múltiplas quebras de linha ou espaços por um único espaço
+    // - Corta espaços em branco no início e no fim
+    const systemIconsRegex = /[🔐🔺🔻⚡🧬🎨📋🗑️]/gu;
+    
+    text = text.replace(systemIconsRegex, '')
+               .replace(/\s+/g, ' ') // A chave para compactar o card: remove espaços extras
+               .trim();
+
+    // 6. TRATAMENTO DE CONTEÚDO VAZIO:
+    // Se após a limpeza não sobrar nada relevante
+    if (!text || text === " " || text.length === 0) {
+        return ""; 
+    }
+
+    return text;
 }
 
 window.switchLibraryTab = (btn, tabName) => {
@@ -4709,21 +4729,16 @@ window.viewSources = (encodedData) => {
 
 
 // --- ABRIR MODAL DE EDIÇÃO ---
-window.openEditCard = async (pNum, index) => {
-    console.log("%c[1/6] Iniciando openEditCard", "color: orange; font-weight: bold;");
-    
-    const panel = document.getElementById('side-panel');
-    const refName = panel.dataset.currentRef; 
-
-    if (!refName) {
-        alert("Erro: Referência não encontrada.");
-        return;
-    }
-
+window.openEditCard = async (refName, index) => {
     try {
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        const q = query(collection(db, 'livros'), where('nome', '==', refName), where('userId', '==', auth.currentUser.uid));
+        const isBible = refName.includes(':') && !refName.includes('pp.');
+        const targetColl = isBible ? 'textosbiblicos' : 'livros';
+
+        const q = query(collection(db, targetColl), 
+                        where('nome', '==', refName), 
+                        where('userId', '==', auth.currentUser.uid));
         const snap = await getDocs(q);
 
         if (snap.empty) return;
@@ -4731,82 +4746,121 @@ window.openEditCard = async (pNum, index) => {
         const docSnapshot = snap.docs[0];
         const item = docSnapshot.data().puzzleBoard[index];
 
+        const content = document.getElementById('side-content');
+        const titleContainer = document.getElementById('side-title-container');
+        document.getElementById('library-ref-tabs').style.display = 'none';
+
+        titleContainer.innerHTML = `<span style="color:var(--accent-color); font-weight:bold;">Editar Nota</span>`;
+        
+        // Passa o refName (que já é o nome completo) para o formulário
+        content.innerHTML = window.getFlashNoteFormHTML(refName);
+
         const decoded = decodeURIComponent(item.snippet);
         const parser = new DOMParser();
         const docHTML = parser.parseFromString(decoded, 'text/html');
         
-        const wrapper = docHTML.querySelector('.mini-note-wrapper');
-        if (wrapper) {
-            window.currentFlashTopics = JSON.parse(wrapper.getAttribute('data-topics') || '{}');
-            window.currentFlashLinks = JSON.parse(wrapper.getAttribute('data-box-links') || '{}');
+        document.getElementById('flash-title').value = item.noteName;
+        document.getElementById('flash-editor').innerHTML = docHTML.querySelector('.mini-note-content').innerHTML;
+
+        const saveBtn = document.getElementById('btn-save-flash');
+        saveBtn.textContent = "GRAVAR ALTERAÇÕES";
+        saveBtn.onclick = () => window.saveEditLibraryNote(docSnapshot.id, index, item.noteId);
+
+    } catch (e) { console.error(e); }
+};
+
+
+window.deleteLibraryCard = async (index) => {
+    const panel = document.getElementById('side-panel');
+    const refName = panel.dataset.currentRef;
+
+    if (!confirm("Remover? Deseja retirar esta nota deste parágrafo?")) return;
+
+    try {
+        const { doc, getDoc, updateDoc, query, collection, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+
+        const isBible = refName.includes(':') && !refName.includes('pp.');
+        const targetColl = isBible ? 'textosbiblicos' : 'livros';
+
+        const q = query(collection(db, targetColl), 
+                        where('nome', '==', refName), 
+                        where('userId', '==', auth.currentUser.uid));
+        const snap = await getDocs(q);
+
+        if (!snap.empty) {
+            const docSnapshot = snap.docs[0];
+            let board = docSnapshot.data().puzzleBoard || [];
+
+            // Remove o item
+            board.splice(index, 1);
+
+            await updateDoc(doc(db, targetColl, docSnapshot.id), { puzzleBoard: board });
+            
+            // Refresh na aba
+            window.renderLibraryRefTab('puzzle');
         }
-
-        const titleInput = document.getElementById('edit-card-title');
-        const editorDiv = document.getElementById('edit-card-editor');
-        const modal = document.getElementById('edit-card-modal');
-
-        // PREENCHIMENTO
-        titleInput.value = item.noteName || "";
-        const contentDiv = docHTML.querySelector('.mini-note-content');
-        editorDiv.innerHTML = contentDiv ? contentDiv.innerHTML : docHTML.body.innerHTML;
-
-        // FORÇAR VISIBILIDADE (A correção está aqui)
-        modal.style.setProperty('display', 'flex', 'important');
-        modal.style.zIndex = '100000'; // Maior que o global-auth-shield (99999)
-        
-        // Esconder o loader por segurança se ele ainda estiver lá
-        const shield = document.getElementById('global-auth-shield');
-        if (shield) shield.style.display = 'none';
-
-        console.log("%cSUCESSO: Modal deve estar visível agora.", "color: green; font-weight: bold;");
-
-        document.getElementById('btn-confirm-edit').onclick = () => {
-            window.saveEditLibraryNote(docSnapshot.id, index, item.noteId);
-        };
-
-    } catch (e) {
-        console.error("Erro ao abrir modal:", e);
-    }
+    } catch (e) { console.error(e); }
 };
 
 
 // --- GRAVAR ALTERAÇÕES ---
 window.saveEditLibraryNote = async (docLibraryId, index, noteId) => {
-    const btn = document.getElementById('btn-confirm-edit');
+    const btn = document.getElementById('btn-save-flash');
     if(btn.disabled) return;
     btn.disabled = true;
 
     try {
-        const newTitle = document.getElementById('edit-card-title').value;
-        const newContent = document.getElementById('edit-card-editor').innerHTML;
+        const { doc, updateDoc, serverTimestamp, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+
+        const newTitle = document.getElementById('flash-title').value.trim();
+        const newContent = document.getElementById('flash-editor').innerHTML;
         
+        // Recupera os metadados (Tópicos e Links) que foram definidos nos modais
         const safeTopics = JSON.stringify(window.currentFlashTopics || {}).replace(/"/g, '&quot;');
         const safeLinks = JSON.stringify(window.currentFlashLinks || {}).replace(/"/g, '&quot;');
-        
+        const color = window.selectedColorHex || '#3498db';
+
+        // Reconstroi o HTML da caixa (Subnota ou Questão)
+        const isQuestion = document.getElementById('flash-type-select')?.value === 'question';
+        const wrapperClass = isQuestion ? "mini-note-wrapper question-mode" : "mini-note-wrapper";
+
+        const commonToolbarHTML = `<div class="mini-note-toolbar" contenteditable="false"><button type="button" data-action="sharing-settings">🔐</button><div class="toolbar-btn-group"><button type="button" data-action="move-up">🔺</button><button type="button" data-action="move-down">🔻</button></div><button type="button" data-action="manage-box-links">⚡</button><button type="button" data-action="append-mini-note">🧬</button><button type="button" data-action="highlight-color">🎨</button><button type="button" data-action="manage-mini-note-topics">📋</button><button type="button" data-action="delete-mini-note">🗑️</button></div>`;
+
         const updatedHtml = `
-            <div class="mini-note-wrapper" data-topics='${safeTopics}' data-box-links='${safeLinks}' contenteditable="false">
+            <div class="${wrapperClass}" data-topics='${safeTopics}' data-box-links='${safeLinks}' data-highlight="${color}" contenteditable="false">
                 <textarea class="mini-note-title-input">${newTitle}</textarea>
+                ${commonToolbarHTML}
                 <div class="mini-note-content" contenteditable="true">${newContent}</div>
             </div>`;
 
-        // Atualiza nota principal
+        // --- 1. ATUALIZA A NOTA REAL (A que está na Bag/Pastas) ---
         await updateDoc(doc(db, 'pastas', noteId), {
             nome: newTitle,
             conteudo: updatedHtml,
             ultimaedicao: serverTimestamp()
         });
 
-        // Atualiza a cópia no parágrafo
+        // --- 2. ATUALIZA O CARD NO PARÁGRAFO (O que aparece na 4ª coluna) ---
+        const isBible = docLibraryId.includes(':') && !docLibraryId.includes('pp.'); // Se for texto bíblico o id é o nome
+        const targetColl = (docLibraryId.length > 25) ? 'livros' : 'livros'; // Fallback seguro
+        
         const libRef = doc(db, 'livros', docLibraryId);
         const libSnap = await getDoc(libRef);
-        const board = libSnap.data().puzzleBoard;
-        board[index].noteName = newTitle;
-        board[index].snippet = encodeURIComponent(updatedHtml);
         
-        await updateDoc(libRef, { puzzleBoard: board });
+        if (libSnap.exists()) {
+            const board = libSnap.data().puzzleBoard;
+            board[index].noteName = newTitle;
+            board[index].snippet = encodeURIComponent(updatedHtml);
+            board[index].noteColor = color;
+            
+            await updateDoc(libRef, { puzzleBoard: board });
+        }
 
+        // Finalização
         document.getElementById('edit-card-modal').style.display = 'none';
-        window.renderLibraryRefTab('puzzle'); 
+        window.renderLibraryRefTab('puzzle'); // Refresh visual
+        alert("Alterações gravadas!");
+
     } catch (e) {
         console.error(e);
         alert("Erro ao salvar.");
@@ -6091,51 +6145,6 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
-
-window.deleteLibraryCard = async (index) => {
-    const panel = document.getElementById('side-panel');
-    const refName = panel.dataset.currentRef; // Ex: "w25 dezembro pp. 2-7 - Parágrafo 1"
-
-    // 1. Confirmação
-    if (!confirm("Remover? Deseja retirar esta nota deste parágrafo?")) return;
-
-    try {
-        const { doc, getDoc, updateDoc, query, collection, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-
-        // 2. Identificar a coleção correta
-        const isBible = refName.includes(':') && !refName.includes('pp.');
-        const targetColl = isBible ? 'textosbiblicos' : 'livros';
-
-        // 3. Procurar o documento do parágrafo no Firebase
-        const q = query(
-            collection(db, targetColl), 
-            where('nome', '==', refName), 
-            where('userId', '==', auth.currentUser.uid)
-        );
-        const snap = await getDocs(q);
-
-        if (!snap.empty) {
-            const docSnapshot = snap.docs[0];
-            const data = docSnapshot.data();
-            let board = data.puzzleBoard || [];
-
-            // 4. Remover o item do array pelo índice
-            board.splice(index, 1);
-
-            // 5. Atualizar o Firebase
-            await updateDoc(doc(db, targetColl, docSnapshot.id), {
-                puzzleBoard: board
-            });
-
-            // 6. Feedback visual: Recarregar a aba atual
-            window.renderLibraryRefTab('puzzle');
-            console.log("✅ Referência removida com sucesso.");
-        }
-    } catch (e) {
-        console.error("❌ Erro ao remover cartão da biblioteca:", e);
-        alert("Erro ao remover a nota.");
-    }
-};
 
 
 function escapeRegExp(string) { return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
