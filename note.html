@@ -40772,36 +40772,22 @@ function generateNoteSources() {
             }
 
             // 2. CODEX (AQUI ESTÁ A CORREÇÃO)
-            if (hasCodex) {
-                data.codex.forEach(c => {
-                    // Se já tivermos o campo 'codiceshow' formatado (nome completo), usamos como tooltip.
-                    // Para a lista curta, construímos a sigla técnica.
-                    
-                    let shortLabel = c.serie || "Ref.";
-                    
-                    // Adiciona Capítulo
-                    if (c.capitulo) shortLabel += `, cap ${c.capitulo}`;
-                    
-                    // Adiciona Páginas (pg)
-                    if (c.paginas && c.paginas.length > 0) {
-                        shortLabel += `, pg ${c.paginas.join(',')}`;
-                    }
-                    
-                    // Adiciona Parágrafos (pr)
-                    if (c.paragrafos && c.paragrafos.length > 0) {
-                        shortLabel += `, pr ${c.paragrafos.join(',')}`;
-                    }
+           if (hasCodex) {
+    data.codex.forEach(c => {
+        let shortLabel = c.serie || "Ref.";
+        if (c.capitulo) shortLabel += `, cap ${c.capitulo}`;
+        if (c.paragrafos && c.paragrafos.length > 0) shortLabel += `, pr ${c.paragrafos.join(',')}`;
 
-                    // Adiciona Tempo
-                    if (c.tempo) shortLabel += ` [${c.tempo}]`;
+        // Correção: Garantir que capitulo e serie nunca sejam literais "undefined"
+        const serieSafe = c.serie || '';
+        const capSafe = c.capitulo || ''; // Se estiver vazio, não faz mal
+        const parSafe = c.paragrafos ? c.paragrafos.join(',') : '';
 
-                    itemsHTML += `
+        itemsHTML += `
             <div class="source-codex-item" 
                  title="${c.codiceshow || ''}" 
-                 style="cursor: pointer; transition: color 0.2s;"
-                 onmouseover="this.style.color='var(--accent-color)'"
-                 onmouseout="this.style.color='#e67e22'"
-                 onclick="window.handleCodexSourceClick('${c.serie}', '${c.capitulo}', '${c.paragrafos ? c.paragrafos.join(',') : ''}')"
+                 style="cursor: pointer; color: #e67e22; padding: 5px 0; font-size: 0.9em;"
+                 onclick="window.handleCodexSourceClick('${serieSafe}', '${capSafe}', '${parSafe}')">
                 <span>📚</span> ${shortLabel}
             </div>`;
     });
@@ -52780,103 +52766,94 @@ document.getElementById('references-target-btn').addEventListener('click', () =>
 });
 
  window.handleCodexSourceClick = async function(bookId, chapter, paragraph) {
-    if (!bookId || !chapter || !paragraph) return;
+    // 1. Validar apenas o bookId (Série)
+    if (!bookId) {
+        console.error("❌ Erro: Série/Publicação não identificada.");
+        return;
+    }
 
-    updateSaveStatus('saving');
-    saveStatusIndicator.textContent = "Localizar...";
+    console.group(`📚 [CODEX] Processando: ${bookId}`);
+    
+    // Feedback visual
+    if (typeof updateSaveStatus === 'function') {
+        updateSaveStatus('saving');
+        saveStatusIndicator.textContent = "A abrir biblioteca...";
+    }
 
     try {
         let bookData = null;
         let finalBookName = "";
-        let magazineFullRef = null;
+        let magazineFullRef = bookId;
+        
+        // Se o capítulo vier vazio, tentamos extrair do próprio bookId (ex: "w25 12" -> cap 12)
+        let finalChapter = chapter;
+        if (!finalChapter || finalChapter === 'undefined') {
+            const matchNum = bookId.match(/\s(\d{1,2})$/);
+            finalChapter = matchNum ? matchNum[1] : "";
+        }
 
-        // 1. Identificar se é Sentinela ou Despertai (começa por w ou g)
-        const isMagazine = /^[wg]\d{2}/i.test(bookId) || bookId.toLowerCase().startsWith('sentinela') || bookId.toLowerCase().startsWith('despertai');
+        const isMagazine = /^[wg]\d{2}/i.test(bookId) || bookId.toLowerCase().includes('sentinela');
 
         if (isMagazine) {
-            // Extrai o ano (ex: w25 -> 2025)
+            // A. Extrair Ano
             const yearMatch = bookId.match(/[wg](\d{2})/i);
             const year = yearMatch ? "20" + yearMatch[1] : new Date().getFullYear().toString();
             
-            // Determina o número do mês
-            let monthNum = String(chapter).padStart(2, '0');
-            const mesesPT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
-            const monthMatch = bookId.toLowerCase().match(/(janeiro|fevereiro|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)/);
-            if (monthMatch) {
-                const idx = mesesPT.indexOf(monthMatch[0]);
-                if (idx !== -1) monthNum = (idx + 1).toString().padStart(2, '0');
+            // B. Extrair Mês (Capítulo)
+            let monthNum = String(finalChapter).padStart(2, '0');
+            const meses = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+            const foundMonth = meses.find(m => bookId.toLowerCase().includes(m));
+            if (foundMonth && monthNum === "00") {
+                monthNum = String(meses.indexOf(foundMonth) + 1).padStart(2, '0');
             }
+            
+            finalChapter = monthNum;
+            finalBookName = "A Sentinela";
 
-            // Tenta carregar o artigo
-            const response = await fetch(`./js/publicacoes/sentinelas/${year}/${monthNum}.json`);
-            if (response.ok) {
-                const sentinelaData = await response.json();
-                const listaArtigos = sentinelaData.artigos || [sentinelaData];
-                
-                // Busca o artigo que contenha a sigla (ex: w25)
-                const sigla = bookId.split(' ')[0].toLowerCase();
-                let artigoEncontrado = listaArtigos.find(art => art.referencia.toLowerCase().includes(sigla));
-                
-                if (!artigoEncontrado) artigoEncontrado = listaArtigos[0];
+            // C. Tentar carregar JSON
+            try {
+                const response = await fetch(`./js/publicacoes/sentinelas/${year}/${monthNum}.json`);
+                if (response.ok) {
+                    const data = await response.json();
+                    const art = data.artigos ? data.artigos[0] : data;
+                    bookData = { titulo: art.titulo, capitulos: [{ capitulo: monthNum, conteudo: art.conteudo }] };
+                    finalBookName = art.titulo;
+                    magazineFullRef = art.referencia;
+                }
+            } catch (e) { console.warn("Ficheiro da revista não encontrado."); }
 
-                bookData = {
-                    titulo: artigoEncontrado.titulo,
-                    capitulos: [{ capitulo: monthNum, conteudo: artigoEncontrado.conteudo }]
-                };
-                finalBookName = artigoEncontrado.titulo;
-                magazineFullRef = artigoEncontrado.referencia; // Guarda "w25 dezembro pp. 2-7"
-                chapter = monthNum;
-            } else {
-                // Fallback se não houver JSON: usa o que temos no Codex
-                magazineFullRef = bookId; 
-            }
         } else {
-            // Lógica normal de Livros
+            // Livros (cl, rr, etc)
             bookData = await fetchLocalBook(bookId);
-            finalBookName = JW_BOOKS_CATALOG.find(b => b.id === bookId)?.name || (bookData ? bookData.titulo : "Livro");
+            finalBookName = JW_BOOKS_CATALOG.find(b => b.id === bookId)?.name || (bookData ? bookData.titulo : bookId);
         }
 
-        // 2. Extração dos blocos de parágrafo (lógica de intervalos)
-        let requestedNumbers = [];
-        String(paragraph).split(',').forEach(p => {
-            if (p.includes('-')) {
-                const [s, e] = p.split('-').map(Number);
-                for (let i = s; i <= e; i++) requestedNumbers.push(String(i));
-            } else requestedNumbers.push(p.trim());
-        });
-
-        // Simulação de conteúdo se não houver JSON (apenas para abrir o painel)
-        let finalHTML = `<p style="opacity:0.5; font-style:italic;">Conteúdo original não disponível para pré-visualização direta.</p>`;
+        // 3. Montar HTML dos parágrafos
+        let finalHTML = `<p style="opacity:0.5; font-style:italic;">Conteúdo original não disponível para este parágrafo.</p>`;
         
-        if (bookData) {
-            const chapterData = bookData.capitulos.find(c => String(c.capitulo) === String(chapter));
+        if (bookData && finalChapter) {
+            const chapterData = bookData.capitulos.find(c => String(c.capitulo) === String(finalChapter));
             if (chapterData) {
-                const matchingBlocks = chapterData.conteudo.filter(block => {
-                    if (!block.numero_ref) return false;
-                    let blockRefs = String(block.numero_ref).split(/[,\-–]/).map(r => r.trim());
-                    return requestedNumbers.some(num => blockRefs.includes(num));
-                });
-
-                if (matchingBlocks.length > 0) {
-                    finalHTML = matchingBlocks.map(block => {
-                        const isQuestion = block.tipo === 'pergunta';
-                        return `<div style="margin-bottom:15px; line-height:1.6; color:${isQuestion ? '#e67e22':'#f0f0f0'}; font-weight:${isQuestion ? 'bold':'normal'};">
-                            <span style="float:right; font-size:0.75em; opacity:0.5; border:1px solid #444; padding:1px 4px; border-radius:3px;">pr ${block.numero_ref}</span>
-                            ${isQuestion ? '❓ ':''}${block.texto}
-                        </div>`;
-                    }).join('<hr style="border:0; border-top:1px solid rgba(255,255,255,0.05); margin:15px 0;">');
+                const requested = String(paragraph).split(/[,\-]/).map(p => p.trim());
+                const blocks = chapterData.conteudo.filter(b => b.numero_ref && requested.includes(String(b.numero_ref)));
+                if (blocks.length > 0) {
+                    finalHTML = blocks.map(b => `<div style="margin-bottom:15px; color:#f0f0f0;">
+                        <span style="float:right; font-size:0.7em; opacity:0.5; border:1px solid #444; padding:1px 3px;">pr ${b.numero_ref}</span>
+                        ${b.tipo === 'pergunta' ? '❓ ' : ''}${b.texto}
+                    </div>`).join('<hr style="border:0; border-top:1px solid #333; margin:10px 0;">');
                 }
             }
         }
 
-        // 3. ENVIAR PARA A 4ª COLUNA
-        await openBookParagraphPanel(bookId, finalBookName, chapter, paragraph, finalHTML, true, magazineFullRef);
+        // 4. Abrir 4ª Coluna
+        await openBookParagraphPanel(bookId, finalBookName, finalChapter, paragraph, finalHTML, true, magazineFullRef);
         updateSaveStatus('saved');
 
     } catch (err) {
-        console.error("Erro no salto:", err);
+        console.error("❌ Erro ao saltar para Codex:", err);
         updateSaveStatus('error');
     }
+    console.groupEnd();
 };
 
      
