@@ -3558,69 +3558,51 @@ window.refreshVisualHighlights = () => {
     const reader = document.getElementById('reader-area');
     if (!reader) return;
 
-    // Itera sobre o cache de destaques do capítulo atual
     for (const [pId, highlights] of Object.entries(currentChapterHighlights)) {
         const paragraphEl = document.getElementById(pId);
         if (!paragraphEl) continue;
-
         const pNum = paragraphEl.getAttribute('data-pnum');
 
-        // ============================================================
-        // 1. RESET DO PARÁGRAFO (LIMPEZA PARA EVITAR "NINHOS" DE TAGS)
-        // ============================================================
-        // Guardamos o HTML do número e limpamos o resto para texto puro antes de repintar
-        const refNumHTML = `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>`;
-        let pureText = paragraphEl.innerText;
-
-        // Remove o número que o innerText costuma trazer no início para não duplicar no HTML
-        if (pureText.startsWith(pNum)) {
-            pureText = pureText.replace(pNum, "").trim();
+        // 1. OBTENÇÃO DO TEXTO PURO
+        let textToProcess = paragraphEl.innerText;
+        if (textToProcess.startsWith(pNum)) {
+            textToProcess = textToProcess.replace(pNum, "").trim();
         }
-        
-        // Restaura o parágrafo ao estado básico (Número + Texto Limpo)
-        paragraphEl.innerHTML = `${refNumHTML} ${pureText}`;
 
-        // ============================================================
-        // 2. PINTAR O NÚMERO (ESTADO AZUL: HAS-DATA)
-        // ============================================================
-        // Verifica se o cache indica que este parágrafo tem Notas ou Dossiê
+        // 2. APLICAR DESTAQUES (CORES) NO TEXTO PURO
+        if (Array.isArray(highlights)) {
+            const sortedHighlights = [...highlights].sort((a, b) => b.texto.length - a.texto.length);
+            sortedHighlights.forEach(h => {
+                if (!h.texto) return;
+                const escapedText = h.texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`(${escapedText})`, 'gi');
+
+                let className = h.temNota ? 'highlight-picotado' : 'direct-highlight';
+                let style = h.temNota 
+                    ? `background-image: linear-gradient(to right, ${h.cor} 50%, transparent 50%)`
+                    : `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
+
+                // Aplicamos apenas a classe e o estilo, SEM onclick
+                textToProcess = textToProcess.replace(regex, 
+                    `<span class="${className}" style="${style}" data-is-highlight="true">$1</span>`
+                );
+            });
+        }
+
+        // 3. RE-GERAR LINKS BÍBLICOS (SOBRE O HTML DAS CORES)
+        if (typeof window.linkifyBibleReferences === 'function') {
+            textToProcess = window.linkifyBibleReferences(textToProcess);
+        }
+
+        // 4. RECONSTRUIR O DOM
+        const refNumHTML = `<span class="ref-num" data-action="open-p">${pNum}</span>`;
+        paragraphEl.innerHTML = `${refNumHTML} ${textToProcess}`;
+
+        // 5. ATUALIZAR COR DO NÚMERO (HAS-DATA)
         const numEl = paragraphEl.querySelector('.ref-num');
         if (numEl) {
-            if (highlights.hasNoteData === true) {
-                numEl.classList.add('has-data');
-            } else {
-                numEl.classList.remove('has-data');
-            }
-        }
-
-        // ============================================================
-        // 3. APLICAR DESTAQUES (TEXTO COLORIDO)
-        // ============================================================
-        if (Array.isArray(highlights)) {
-            highlights.forEach(h => {
-                if (!h.texto) return;
-                
-                let currentHTML = paragraphEl.innerHTML;
-                // Escapa caracteres especiais para a Regex não dar erro
-                const escapedText = h.texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                
-                // Regex "Inteligente": Só substitui texto que não esteja já dentro de uma tag HTML
-                const regex = new RegExp(`(${escapedText})(?![^<]*>|[^<>]*<\/span>)`, 'gi');
-
-                if (regex.test(currentHTML)) {
-                    // Define se o visual é Picotado (Nota Flash) ou Sólido (Destaque de Cor)
-                    let className = h.temNota ? 'highlight-picotado' : 'direct-highlight';
-                    
-                    let style = h.temNota 
-                        ? `background-image: linear-gradient(to right, ${h.cor} 50%, transparent 50%)`
-                        : `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
-
-                    // Aplica a nova versão do HTML com o span de destaque
-                    paragraphEl.innerHTML = currentHTML.replace(regex, 
-                        `<span class="${className}" style="${style}" onclick="window.openSidePanel('${pNum}')">$1</span>`
-                    );
-                }
-            });
+            if (highlights.hasNoteData) numEl.classList.add('has-data');
+            else numEl.classList.remove('has-data');
         }
     }
 };
@@ -5498,37 +5480,42 @@ document.addEventListener('click', async (e) => {
 
 // Detetar clique em referências bíblicas dentro do texto
 document.addEventListener('click', (e) => {
+    // --- PRIORIDADE 1: TEXTO BÍBLICO ---
     const bibleLink = e.target.closest('.bible-ref-ghost');
-    
     if (bibleLink) {
         e.preventDefault();
-        e.stopPropagation();
-
-        const refName = bibleLink.dataset.entityName; 
+        e.stopPropagation(); // Mata o evento aqui, não deixa chegar ao parágrafo
+        
+        const refName = bibleLink.dataset.entityName;
         const panel = document.getElementById('side-panel');
         const tabs = document.getElementById('library-ref-tabs');
         const bibleTabBtn = document.getElementById('tab-bible-btn');
 
-        // 1. Guardar a referência no painel
-        panel.dataset.currentRef = refName;
-        
-        // 2. Abrir o painel e mostrar a barra de abas
         panel.classList.add('open');
         tabs.style.display = 'flex';
+        bibleTabBtn.style.display = 'inline-block';
         
-        // 3. Garantir que o botão da Bíblia está visível
-        if (bibleTabBtn) {
-            bibleTabBtn.style.display = 'inline-block';
-            
-            // 4. PREDEFINIÇÃO: Forçar a aba Bíblia como ativa visualmente
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            bibleTabBtn.classList.add('active');
-        }
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        bibleTabBtn.classList.add('active');
 
-        // 5. CARREGAR CONTEÚDO: Chamar a renderização diretamente para a Bíblia
-        window.renderLibraryRefTab('bibletext');
+        window.renderBibleTextInPanel(refName);
+        return; // SAI DA FUNÇÃO
     }
-});
+
+    // --- PRIORIDADE 2: NOTA DO PARÁGRAFO ---
+    // Se clicou num destaque de cor ou em qualquer parte do parágrafo que não seja Bíblia
+    const highlight = e.target.closest('[data-is-highlight="true"]');
+    const refNum = e.target.closest('.ref-num');
+    const paragraph = e.target.closest('.block-paragrafo');
+
+    if (highlight || refNum || paragraph) {
+        const targetPara = (highlight || refNum || paragraph).closest('.block-paragrafo');
+        if (targetPara) {
+            const pNum = targetPara.getAttribute('data-pnum');
+            window.openSidePanel(pNum);
+        }
+    }
+}, true); // O 'true' garante que capturamos o clique antes de qualquer outra interferência
 
 function updateLibraryURL(params = {}) {
     const url = new URL(window.location);
