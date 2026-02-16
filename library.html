@@ -1793,6 +1793,69 @@ z-index: 2147483647 !important;
     flex: 1;
 }
 
+/* --- JANELAS POPUP BÍBLIA --- */
+
+
+.bible-popup-header {
+    padding: 10px 15px;
+    background: #252528;
+    cursor: move; /* Indica que é arrastável */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+    user-select: none;
+}
+
+.bible-popup-title {
+    font-size: 0.85rem;
+    font-weight: bold;
+    color: var(--accent-color);
+}
+
+.bible-popup-close {
+    background: none;
+    border: none;
+    color: #e74c3c;
+    font-size: 20px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.bible-popup-content {
+    padding: 15px;
+    overflow-y: auto;
+    color: #eee;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    user-select: text !important;
+}
+
+@media (max-width: 768px) {
+    .bible-popup { width: 85vw; }
+}
+
+
+.bible-popup {
+    position: fixed;
+    width: 320px;
+    max-height: 400px;
+    background: #1f1f22;
+    border: 2px solid #3498db; /* Borda azul para destacar */
+    border-radius: 12px;
+    z-index: 2147483647 !important; /* Valor máximo possível */
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+    overflow: hidden;
+    animation: popupAppear 0.2s ease-out;
+}
+
+@keyframes popupAppear {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+}
+
 </style>
 
 
@@ -2188,7 +2251,8 @@ let userSettings = {
     sharedAnswers: localStorage.getItem('sharedAnswersActive') === 'true'
 };
 let currentQuestionsCache = {}; 
-
+let isCurrentlyEditing = false; // Controla se o usuário está a escrever
+let popupZIndex = 2147483640;
 
 
 const container = document.getElementById('content-container');
@@ -2297,6 +2361,7 @@ async function loadPublication(sectionId, pubId) {
 
 // --- 3. RENDERIZAÇÃO DA LEITURA ---
 function renderReading(chapterIdx, sectionId, pubId) {
+    document.querySelectorAll('.bible-popup').forEach(p => p.remove());
     hideSelectionToolbar();
     const navPanel = document.getElementById('chapter-nav-panel');
     if (navPanel) { 
@@ -3118,6 +3183,7 @@ currentSelectedParagraphs.forEach(pNum => {
 
 // --- NOVO: Função para preparar a nota vinda do painel lateral ---
 window.prepareNoteFromPanel = (pNum) => {
+    isCurrentlyEditing = true;
     const panel = document.getElementById('side-panel');
     const content = document.getElementById('side-content');
     const titleContainer = document.getElementById('side-title-container');
@@ -3912,6 +3978,7 @@ document.getElementById('side-content').addEventListener('scroll', (e) => {
 
 
 window.openQuestionEditor = async (qNum, qText) => {
+    isCurrentlyEditing = true;
     const panel = document.getElementById('side-panel');
     const content = document.getElementById('side-content');
     const titleContainer = document.getElementById('side-title-container');
@@ -5480,42 +5547,51 @@ document.addEventListener('click', async (e) => {
 
 // Detetar clique em referências bíblicas dentro do texto
 document.addEventListener('click', (e) => {
-    // --- PRIORIDADE 1: TEXTO BÍBLICO ---
     const bibleLink = e.target.closest('.bible-ref-ghost');
+    
+    // SE CLICOU NUMA REFERÊNCIA BÍBLICA
     if (bibleLink) {
         e.preventDefault();
-        e.stopPropagation(); // Mata o evento aqui, não deixa chegar ao parágrafo
+        e.stopPropagation();
         
         const refName = bibleLink.dataset.entityName;
-        const panel = document.getElementById('side-panel');
-        const tabs = document.getElementById('library-ref-tabs');
-        const bibleTabBtn = document.getElementById('tab-bible-btn');
 
-        panel.classList.add('open');
-        tabs.style.display = 'flex';
-        bibleTabBtn.style.display = 'inline-block';
-        
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        bibleTabBtn.classList.add('active');
-
-        window.renderBibleTextInPanel(refName);
-        return; // SAI DA FUNÇÃO
+        // REGRA: Se o editor estiver aberto, abre POPUP. Se não, abre PAINEL LATERAL.
+        if (isCurrentlyEditing) {
+            console.log("Modo edição ativo: Abrindo Popup para", refName);
+            window.openBiblePopup(refName);
+        } else {
+            console.log("Modo leitura: Abrindo Painel Lateral para", refName);
+            const panel = document.getElementById('side-panel');
+            const tabs = document.getElementById('library-ref-tabs');
+            const bibleTabBtn = document.getElementById('tab-bible-btn');
+            
+            panel.classList.add('open');
+            tabs.style.display = 'flex';
+            bibleTabBtn.style.display = 'inline-block';
+            
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            bibleTabBtn.classList.add('active');
+            window.renderBibleTextInPanel(refName);
+        }
+        return;
     }
 
-    // --- PRIORIDADE 2: NOTA DO PARÁGRAFO ---
-    // Se clicou num destaque de cor ou em qualquer parte do parágrafo que não seja Bíblia
+    // SE CLICOU NUM PARÁGRAFO OU DESTAQUE (Apenas se não for Bíblia)
     const highlight = e.target.closest('[data-is-highlight="true"]');
     const refNum = e.target.closest('.ref-num');
     const paragraph = e.target.closest('.block-paragrafo');
 
     if (highlight || refNum || paragraph) {
+        // Se estivermos editando uma nota, talvez você não queira mudar o parágrafo do painel
+        // Se quiser que mude mesmo assim, mantenha o código abaixo:
         const targetPara = (highlight || refNum || paragraph).closest('.block-paragrafo');
         if (targetPara) {
             const pNum = targetPara.getAttribute('data-pnum');
             window.openSidePanel(pNum);
         }
     }
-}, true); // O 'true' garante que capturamos o clique antes de qualquer outra interferência
+}, true);
 
 function updateLibraryURL(params = {}) {
     const url = new URL(window.location);
@@ -6199,6 +6275,95 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
+window.openBiblePopup = async function(refName) {
+    const popupId = `popup-${Date.now()}`;
+    const popup = document.createElement('div');
+    popup.className = 'bible-popup';
+    popup.id = popupId;
+    
+    // Posição inicial (Cascata leve)
+    const offset = document.querySelectorAll('.bible-popup').length * 20;
+    popup.style.top = (100 + offset) + "px";
+    popup.style.left = (50 + offset) + "px";
+
+    popup.innerHTML = `
+        <div class="bible-popup-header" onmousedown="window.makeElementDraggable(this.parentElement)">
+            <span class="bible-popup-title">📖 ${refName}</span>
+            <button class="bible-popup-close" onclick="this.parentElement.parentElement.remove()">×</button>
+        </div>
+        <div class="bible-popup-content">A carregar...</div>
+    `;
+
+    document.body.appendChild(popup);
+    
+    // Carregar o texto bíblico para dentro do popup
+    const contentDiv = popup.querySelector('.bible-popup-content');
+    const verseList = window.expandVerseReference(refName);
+    
+    try {
+        const texts = await Promise.all(verseList.map(v => fetchPublicBibleText(v)));
+        contentDiv.innerHTML = texts.map((t, i) => t ? `<p><b style="color:var(--accent-color); font-size:0.8em; margin-right:8px;">${verseList[i].split(':').pop()}</b>${t}</p>` : '').join('');
+    } catch (e) {
+        contentDiv.innerHTML = "Erro ao carregar texto.";
+    }
+
+    // Trazer para a frente ao clicar
+    popup.addEventListener('mousedown', () => {
+        popup.style.zIndex = ++popupZIndex;
+    });
+};
+
+// Motor de Arrasto com Limites de Tela
+window.makeElementDraggable = function(el) {
+    let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+    const header = el.querySelector('.bible-popup-header');
+    
+    header.onmousedown = dragMouseDown;
+    header.ontouchstart = dragMouseDown;
+
+    function dragMouseDown(e) {
+        e = e || window.event;
+        // Posição inicial do mouse/toque
+        pos3 = e.clientX || e.touches[0].clientX;
+        pos4 = e.clientY || e.touches[0].clientY;
+        document.onmouseup = closeDragElement;
+        document.onmousemove = elementDrag;
+        document.ontouchend = closeDragElement;
+        document.ontouchmove = elementDrag;
+    }
+
+    function elementDrag(e) {
+        e = e || window.event;
+        const clientX = e.clientX || e.touches[0].clientX;
+        const clientY = e.clientY || e.touches[0].clientY;
+        
+        pos1 = pos3 - clientX;
+        pos2 = pos4 - clientY;
+        pos3 = clientX;
+        pos4 = clientY;
+
+        let newTop = el.offsetTop - pos2;
+        let newLeft = el.offsetLeft - pos1;
+
+        // --- LIMITES DA TELA ---
+        const padding = 10;
+        if (newTop < 0) newTop = 0;
+        if (newLeft < padding) newLeft = padding;
+        if (newLeft + el.offsetWidth > window.innerWidth - padding) newLeft = window.innerWidth - el.offsetWidth - padding;
+        if (newTop + el.offsetHeight > window.innerHeight - padding) newTop = window.innerHeight - el.offsetHeight - padding;
+
+        el.style.top = newTop + "px";
+        el.style.left = newLeft + "px";
+    }
+
+    function closeDragElement() {
+        document.onmouseup = null;
+        document.onmousemove = null;
+        document.ontouchend = null;
+        document.ontouchmove = null;
+    }
+};
+
 
 
 function escapeRegExp(string) { return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -6215,7 +6380,10 @@ window.openNoteFromBoard = (noteId) => {
 // Funções de Tópicos e Links (Simplificadas para o exemplo, mantendo as chamadas nos modais)
 window.openTopicsModal = () => { document.getElementById('flash-topics-modal').style.display = 'flex'; };
 window.openFlashLinkManager = () => { document.getElementById('flash-links-modal').style.display = 'flex'; };
-window.closeSidePanel = () => { document.getElementById('side-panel').classList.remove('open'); };
+window.closeSidePanel = () => { 
+    document.getElementById('side-panel').classList.remove('open'); 
+    isCurrentlyEditing = false; // Reset do estado
+};
 window.showRoot = showRoot;
 window.showList = showList;
 window.showYears = showYears;
