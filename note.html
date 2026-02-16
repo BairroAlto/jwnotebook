@@ -52568,91 +52568,6 @@ function getBibleFilename(bookName) {
 }
 
 
-    // No conteúdo do parágrafo, adicionamos o ID do parágrafo para conferência
-async function openBookParagraphPanel(bookId, bookName, chapterNum, paragraphNum, htmlContent, openDirectToTarget = false) {
-    const fullName = `${bookId} ${chapterNum}:${paragraphNum}`;
-    
-    activeReferenceEntity = {
-        id: fullName,
-        type: 'livro_ref',
-        name: fullName,
-        bookId: bookId,
-        chapter: chapterNum,
-        paragraph: paragraphNum,
-        htmlOriginal: htmlContent 
-    };
-
-    // --- NOVO: GUARDAR NA MEMÓRIA DE PERSISTÊNCIA ---
-    booksStateMemory.activeRef = { ...activeReferenceEntity };
-    booksStateMemory.activeTab = openDirectToTarget ? 'target' : 'puzzle';
-
-    const { doc, getDoc, collection, query, where, getDocs, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-    
-    // Verifica se este parágrafo já tem um registo no Firebase (para o Puzzle/Dossié)
-    const q = query(collection(db, 'livros'), where('nome', '==', fullName), where('userId', '==', auth.currentUser.uid));
-    const snap = await getDocs(q);
-    
-    if (snap.empty) {
-        const newDoc = await addDoc(collection(db, 'livros'), {
-            nome: fullName, livro: bookName, bookId: bookId, capitulo: chapterNum, paragrafo: paragraphNum,
-            userId: auth.currentUser.uid, createdAt: serverTimestamp(),
-            puzzleBoard: [], panelLinks: [], dossie: []
-        });
-        activeReferenceEntity.id = newDoc.id;
-    } else {
-        activeReferenceEntity.id = snap.docs[0].id;
-    }
-
-    // 2. Ajustes de UI da 4ª Coluna
-    notebookContainer.classList.add('references-panel-visible');
-    
-    // --- LÓGICA DO ÍCONE CAMALEÓNICO (CORUJA) ---
-    const editBtn = document.getElementById('references-edit-btn');
-    if (editBtn) {
-        editBtn.textContent = '🦉'; 
-        editBtn.title = 'Ir para a Biblioteca';
-        editBtn.style.display = 'block'; 
-    }
-
-    // Gerir botões Alvo e Marcador
-    const targetBtn = document.getElementById('references-target-btn');
-    const bookmarkBtn = document.getElementById('references-bookmark-btn');
-    if (targetBtn) targetBtn.style.display = 'block';
-    if (bookmarkBtn) bookmarkBtn.style.display = 'none'; 
-
-    const titleEl = document.getElementById('references-panel-title');
-    if (titleEl) titleEl.innerHTML = `🎯 ${fullName}`;
-    
-    document.getElementById('references-panel-description').style.display = 'none';
-
-    // 3. Injeta o conteúdo no contentor de texto
-    const bookTextContainer = document.getElementById('ref-content-book-text');
-    if (bookTextContainer) {
-        bookTextContainer.innerHTML = `
-            <div class="book-text-box">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">
-                    <small style="color: var(--accent-color); font-weight: bold; text-transform: uppercase;">Fonte:</small>
-                    <small style="color: var(--text-muted-color); font-size: 0.8em;">${bookName}</small>
-                </div>
-                <div style="font-style: normal;">${htmlContent}</div>
-            </div>
-        `;
-    }
-
-    // 4. Carregar dados das abas
-    loadPuzzleData(activeReferenceEntity.id, 'livro_ref');
-    renderBookCodexCitations(bookId, chapterNum, paragraphNum);
-    
-    // 5. Decidir qual aba abrir
-    if (openDirectToTarget) {
-        window.showParagraphContentMode(); 
-    } else {
-        if (bookTextContainer) bookTextContainer.style.display = 'none';
-        switchRefTab('puzzle');
-    }
-}
-
-
 
 async function renderBookCodexCitations(bookId, chapter, paragraph) {
     const listElement = document.getElementById('references-list');
@@ -52824,10 +52739,7 @@ document.getElementById('references-target-btn').addEventListener('click', () =>
 });
 
  window.handleCodexSourceClick = async function(bookId, chapter, paragraph) {
-    if (!bookId || !chapter || !paragraph) {
-        console.warn("Codex incompleto para salto.");
-        return;
-    }
+    if (!bookId || !chapter || !paragraph) return;
 
     updateSaveStatus('saving');
     saveStatusIndicator.textContent = "Localizar...";
@@ -52835,107 +52747,98 @@ document.getElementById('references-target-btn').addEventListener('click', () =>
     try {
         let bookData = null;
         let finalBookName = "";
+        let magazineFullRef = null;
 
-        // 1. Identificar se é Sentinela ou Livro
-        const isSentinela = /^w\d{2}/i.test(bookId);
+        // 1. Identificar se é Sentinela ou Despertai (começa por w ou g)
+        const isMagazine = /^[wg]\d{2}/i.test(bookId) || bookId.toLowerCase().startsWith('sentinela') || bookId.toLowerCase().startsWith('despertai');
 
-        if (isSentinela) {
-            const yearMatch = bookId.match(/w(\d{2})/i);
+        if (isMagazine) {
+            // Extrai o ano (ex: w25 -> 2025)
+            const yearMatch = bookId.match(/[wg](\d{2})/i);
             const year = yearMatch ? "20" + yearMatch[1] : new Date().getFullYear().toString();
+            
+            // Determina o número do mês
+            let monthNum = String(chapter).padStart(2, '0');
             const mesesPT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
             const monthMatch = bookId.toLowerCase().match(/(janeiro|fevereiro|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)/);
-            
-            let monthNum = chapter; 
             if (monthMatch) {
                 const idx = mesesPT.indexOf(monthMatch[0]);
                 if (idx !== -1) monthNum = (idx + 1).toString().padStart(2, '0');
             }
 
+            // Tenta carregar o artigo
             const response = await fetch(`./js/publicacoes/sentinelas/${year}/${monthNum}.json`);
-            if (!response.ok) throw new Error("Ficheiro não encontrado.");
-            
-            const sentinelaData = await response.json();
-            const listaArtigos = sentinelaData.artigos || [sentinelaData];
+            if (response.ok) {
+                const sentinelaData = await response.json();
+                const listaArtigos = sentinelaData.artigos || [sentinelaData];
+                
+                // Busca o artigo que contenha a sigla (ex: w25)
+                const sigla = bookId.split(' ')[0].toLowerCase();
+                let artigoEncontrado = listaArtigos.find(art => art.referencia.toLowerCase().includes(sigla));
+                
+                if (!artigoEncontrado) artigoEncontrado = listaArtigos[0];
 
-            // Procurar o artigo correto (comparação flexível)
-            let artigoEncontrado = listaArtigos.find(art => 
-                normalizeStr(art.referencia).includes(normalizeStr(bookId)) || 
-                normalizeStr(bookId).includes(normalizeStr(art.referencia))
-            );
-
-            if (!artigoEncontrado) artigoEncontrado = listaArtigos[0];
-
-            bookData = {
-                titulo: artigoEncontrado.titulo,
-                capitulos: [{ capitulo: monthNum, conteudo: artigoEncontrado.conteudo }]
-            };
-            finalBookName = artigoEncontrado.titulo;
-            chapter = monthNum;
-        } else {
-            bookData = await fetchLocalBook(bookId);
-            if (!bookData) throw new Error("Livro não encontrado.");
-            finalBookName = JW_BOOKS_CATALOG.find(b => b.id === bookId)?.name || bookData.titulo;
-        }
-
-        const chapterData = bookData.capitulos.find(c => String(c.capitulo) === String(chapter));
-        if (!chapterData) throw new Error("Capítulo não encontrado no JSON.");
-
-        // --- LÓGICA DE EXPANSÃO DE INTERVALOS (FIX) ---
-        
-        // 1. Expandir o que o utilizador pediu (ex: "7-8" vira ["7", "8"])
-        let requestedParts = String(paragraph).split(',').map(p => p.trim());
-        let requestedNumbers = [];
-        
-        requestedParts.forEach(part => {
-            if (part.includes('-')) {
-                const [start, end] = part.split('-').map(Number);
-                for (let i = start; i <= end; i++) requestedNumbers.push(String(i));
+                bookData = {
+                    titulo: artigoEncontrado.titulo,
+                    capitulos: [{ capitulo: monthNum, conteudo: artigoEncontrado.conteudo }]
+                };
+                finalBookName = artigoEncontrado.titulo;
+                magazineFullRef = artigoEncontrado.referencia; // Guarda "w25 dezembro pp. 2-7"
+                chapter = monthNum;
             } else {
-                requestedNumbers.push(part);
+                // Fallback se não houver JSON: usa o que temos no Codex
+                magazineFullRef = bookId; 
             }
-        });
-
-        // 2. Filtrar blocos comparando os números expandidos
-        const matchingBlocks = chapterData.conteudo.filter(block => {
-            if (!block.numero_ref) return false;
-            
-            // Expandir os números do bloco no JSON (ex: "7-8" vira ["7", "8"])
-            let blockRefs = [];
-            String(block.numero_ref).split(/[,\-–]/).forEach(r => {
-                blockRefs.push(r.trim());
-            });
-
-            // Verifica se há alguma intersecção entre o pedido e o que existe
-            return requestedNumbers.some(num => blockRefs.includes(num));
-        });
-
-        if (matchingBlocks.length > 0) {
-            const finalHTML = matchingBlocks.map(block => {
-                if (block.tipo === 'pergunta') {
-                    return `<div style="color: #e67e22; font-weight: bold; margin-bottom: 12px; font-size: 0.95em; border-left: 3px solid #e67e22; padding-left: 10px;">❓ ${block.texto}</div>`;
-                } else if (block.tipo === 'subtema') {
-                    return `<div style="color: #4a90e2; font-weight: bold; margin: 15px 0 5px 0; text-transform: uppercase; font-size: 0.85em;">${block.texto}</div>`;
-                } else {
-                    return `<div style="margin-bottom: 15px; line-height: 1.6; position: relative; color: #f0f0f0;">
-                                <span style="float:right; font-size:0.75em; opacity:0.5; border:1px solid #444; padding:1px 4px; border-radius:3px; margin-left:8px; font-family: monospace;">pr ${block.numero_ref}</span>
-                                ${block.texto}
-                            </div>`;
-                }
-            }).join('<hr style="border:0; border-top:1px solid rgba(255,255,255,0.05); margin: 15px 0;">');
-
-             await openBookParagraphPanel(bookId, finalBookName, chapter, paragraph, finalHTML, true, artigoEncontrado.referencia);
-    updateSaveStatus('saved');
         } else {
-            throw new Error("Parágrafos " + paragraph + " não encontrados.");
+            // Lógica normal de Livros
+            bookData = await fetchLocalBook(bookId);
+            finalBookName = JW_BOOKS_CATALOG.find(b => b.id === bookId)?.name || (bookData ? bookData.titulo : "Livro");
         }
+
+        // 2. Extração dos blocos de parágrafo (lógica de intervalos)
+        let requestedNumbers = [];
+        String(paragraph).split(',').forEach(p => {
+            if (p.includes('-')) {
+                const [s, e] = p.split('-').map(Number);
+                for (let i = s; i <= e; i++) requestedNumbers.push(String(i));
+            } else requestedNumbers.push(p.trim());
+        });
+
+        // Simulação de conteúdo se não houver JSON (apenas para abrir o painel)
+        let finalHTML = `<p style="opacity:0.5; font-style:italic;">Conteúdo original não disponível para pré-visualização direta.</p>`;
+        
+        if (bookData) {
+            const chapterData = bookData.capitulos.find(c => String(c.capitulo) === String(chapter));
+            if (chapterData) {
+                const matchingBlocks = chapterData.conteudo.filter(block => {
+                    if (!block.numero_ref) return false;
+                    let blockRefs = String(block.numero_ref).split(/[,\-–]/).map(r => r.trim());
+                    return requestedNumbers.some(num => blockRefs.includes(num));
+                });
+
+                if (matchingBlocks.length > 0) {
+                    finalHTML = matchingBlocks.map(block => {
+                        const isQuestion = block.tipo === 'pergunta';
+                        return `<div style="margin-bottom:15px; line-height:1.6; color:${isQuestion ? '#e67e22':'#f0f0f0'}; font-weight:${isQuestion ? 'bold':'normal'};">
+                            <span style="float:right; font-size:0.75em; opacity:0.5; border:1px solid #444; padding:1px 4px; border-radius:3px;">pr ${block.numero_ref}</span>
+                            ${isQuestion ? '❓ ':''}${block.texto}
+                        </div>`;
+                    }).join('<hr style="border:0; border-top:1px solid rgba(255,255,255,0.05); margin:15px 0;">');
+                }
+            }
+        }
+
+        // 3. ENVIAR PARA A 4ª COLUNA
+        await openBookParagraphPanel(bookId, finalBookName, chapter, paragraph, finalHTML, true, magazineFullRef);
+        updateSaveStatus('saved');
 
     } catch (err) {
-        console.error("❌ Erro no salto Codex:", err);
-        alert("Erro: " + err.message);
+        console.error("Erro no salto:", err);
         updateSaveStatus('error');
     }
 };
 
+     
 
 // Esta função gere a visualização do parágrafo original
 window.showParagraphContentMode = async function() {
