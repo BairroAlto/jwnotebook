@@ -1760,6 +1760,39 @@ z-index: 2147483647 !important;
     align-items: center;
 }
 
+/* --- ESTILO DO PONTINHO DA PERGUNTA --- */
+.question-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 10px;
+    background-color: transparent;
+    
+    /* ALTERAÇÃO AQUI: De #444 para transparent */
+    border: 1px solid transparent; 
+    
+    flex-shrink: 0;
+    transition: background-color 0.3s, border-color 0.3s, box-shadow 0.3s;
+}
+
+/* Estado: Tem resposta, mas sem cor de destaque (Cinzento Escuro) */
+.question-dot.has-answer-gray {
+    background-color: #555;
+    border-color: #555;
+    box-shadow: 0 0 5px rgba(255, 255, 255, 0.1);
+}
+
+/* Ajuste flex para alinhar o ponto com o texto */
+.block-pergunta {
+    display: flex; 
+    align-items: center; /* Alinha verticalmente */
+    text-align: left;
+}
+.pergunta-texto {
+    flex: 1;
+}
+
 </style>
 
 
@@ -2154,6 +2187,9 @@ let userSettings = {
     xrayDeepSearch: true,
     sharedAnswers: localStorage.getItem('sharedAnswersActive') === 'true'
 };
+let currentQuestionsCache = {}; 
+
+
 
 const container = document.getElementById('content-container');
 
@@ -2306,15 +2342,16 @@ function renderReading(chapterIdx, sectionId, pubId) {
         if (block.tipo === 'subtema') {
             html += `<div class="block-subtema">${textoFinal}</div>`;
         } 
-        else if (block.tipo === 'pergunta') {
+else if (block.tipo === 'pergunta') {
     const safeText = encodeURIComponent(block.texto);
+    // ADICIONADO: O span .question-dot antes do texto
     html += `
         <div class="block-pergunta" 
              id="q-block-${pNum}" 
              data-pnum="${pNum}" 
              style="cursor:pointer;" 
              onclick="window.openQuestionEditor('${pNum || ''}', decodeURIComponent('${safeText}'))">
-            <span class="question-dot"></span>
+            <span class="question-dot" id="dot-${pNum}"></span>
             <div class="pergunta-texto">${textoFinal}</div>
         </div>`;
 }
@@ -2547,21 +2584,48 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
     try {
         const { collection, addDoc, doc, updateDoc, serverTimestamp, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
-        const qId = window.activeQuestionId;
-        const content = editor.innerHTML.trim(); 
-        const selectedColor = window.selectedColorHex || '#2ecc71';
+        const qId = window.activeQuestionId; 
+        const pNum = qId.split('_Q').pop(); 
         
-        // Obter nome do utilizador para exibição pública
+        // 1. LIMPEZA PROFUNDA DE TEXTO
+        // O innerText pega no texto visível. Se não houver texto visível, consideramos vazio.
+        const contentText = editor.innerText.trim(); 
+        
+        // O innerHTML pode ter espaços. Fazemos trim().
+        let contentHtml = editor.innerHTML.trim();
+
+        // Se o utilizador apagou tudo, mas ficou um <br>, limpamos.
+        if (contentText.length === 0) {
+            contentHtml = ""; 
+        }
+        
+        // 2. Determinar a COR VISUAL
+        let visualColor = 'none'; 
+        let coresArray = [];
+
+        // CASO A: Está em branco (remove ponto)
+        if (contentHtml === "") {
+            visualColor = 'none';
+            coresArray = []; 
+        } 
+        // CASO B: Tem texto, mas sem destaque (ponto cinzento)
+        else if (!window.selectedColorHex) {
+            visualColor = '#555';
+            coresArray = [];
+        } 
+        // CASO C: Tem texto e tem destaque (ponto colorido)
+        else {
+            visualColor = window.selectedColorHex;
+            coresArray = [window.selectedColorHex.toUpperCase()];
+        }
+
+        // Recuperar user name
         const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
         const userName = userSnap.exists() ? (userSnap.data().nome || "Utilizador") : "Anónimo";
 
-        const boxHtml = `
-            <div class="mini-note-wrapper question-mode" id="box_${Date.now()}" 
-                 data-highlight="${selectedColor}" contenteditable="false">
-                <textarea class="mini-note-title-input">${qText}</textarea>
-                <div class="mini-note-content" contenteditable="true">${content}</div>
-            </div><p><br></p>
-        `;
+        // Preparar HTML do wrapper (SEM QUEBRAS DE LINHA NA STRING)
+        // Nota: Removi os espaços entre as tags para evitar o bug do " \n "
+        const boxHtml = `<div class="mini-note-wrapper question-mode" id="box_${Date.now()}" data-highlight="${window.selectedColorHex || ''}" contenteditable="false"><textarea class="mini-note-title-input">${qText}</textarea><div class="mini-note-content" contenteditable="true">${contentHtml}</div></div>`;
 
         const noteData = {
             nome: qText,
@@ -2570,57 +2634,103 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
             oque: 'back',
             qId: qId,
             userId: auth.currentUser.uid,
-            userName: userName, // Salva o nome para os outros verem
-            isPublic: userSettings.sharedAnswers, // <--- Aqui ativa o compartilhamento
+            userName: userName,
+            isPublic: userSettings.sharedAnswers,
             estado: 'ativa',
-            coresUsadas: [selectedColor.toUpperCase()],
+            coresUsadas: coresArray, 
             ultimaedicao: serverTimestamp()
         };
 
+        // 3. GRAVAR NA BASE DE DADOS
         if (docId && docId !== "null") {
             await updateDoc(doc(db, 'pastas', docId), noteData);
-        } else {
+        } else if (contentHtml.length > 0) { 
+            // Só cria novo documento se tiver conteúdo REAL
             noteData.createdAt = serverTimestamp();
             await addDoc(collection(db, 'pastas'), noteData);
         }
 
-        btn.textContent = "✅ GUARDADO";
-        await loadLibraryDataForChapter(currentPubId, currentChapter);
+        // 4. ATUALIZAÇÃO VISUAL IMEDIATA
+        window.currentQuestionsCache[pNum] = visualColor;
+        window.paintQuestionDots();
 
+        btn.textContent = "✅ GUARDADO";
+        
         setTimeout(() => { 
             btn.disabled = false; 
-            btn.textContent = "ATUALIZAR RESPOSTA"; 
+            btn.textContent = docId !== "null" ? "ATUALIZAR RESPOSTA" : "GRAVAR RESPOSTA"; 
         }, 2000);
 
     } catch (e) {
         console.error(e);
         btn.disabled = false;
+        alert("Erro ao gravar resposta.");
     }
 };
 
 // --- 6. GESTÃO DE DADOS DO UTILIZADOR (HIGHLIGHTS) ---
 
+window.currentQuestionsCache = {}; 
+
 async function loadLibraryDataForChapter(pubId, chapter) {
     const capituloId = `${pubId}_${chapter}`;
     const prefix = `${pubId} ${chapter}:`;
+    const qPrefix = `${pubId}_Q`; 
     
-    // Reset local
+    // Reset caches
     currentChapterHighlights = {}; 
+    window.currentQuestionsCache = {}; 
 
     try {
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        // 1. Buscar Destaques (Cores sólidas) e Notas (Picotados) em paralelo para ser mais rápido
-        const [snapCores, snapNotas] = await Promise.all([
+        const [snapCores, snapNotas, snapPerguntas] = await Promise.all([
             getDocs(query(collection(db, 'trechosbiblicos'), 
                 where('userId', '==', auth.currentUser.uid),
                 where('capituloId', '==', capituloId))),
             getDocs(query(collection(db, 'livros'), 
                 where('userId', '==', auth.currentUser.uid),
-                where('nome', '>=', prefix), where('nome', '<=', prefix + '\uf8ff')))
+                where('nome', '>=', prefix), where('nome', '<=', prefix + '\uf8ff'))),
+            getDocs(query(collection(db, 'pastas'), 
+                where('userId', '==', auth.currentUser.uid),
+                where('qId', '>=', qPrefix),
+                where('qId', '<=', qPrefix + '\uf8ff'),
+                where('estado', '==', 'ativa')))
         ]);
 
-        // Processar cores sólidas
+        // --- PROCESSAMENTO PERGUNTAS (ATUALIZADO) ---
+        snapPerguntas.forEach(doc => {
+            const data = doc.data();
+            const parts = data.qId.split('_Q');
+            
+            if (parts.length > 1) {
+                const pNum = parts.pop();
+                
+                // 1. Verificar se tem conteúdo real (não apenas tags HTML vazias)
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = data.conteudo || "";
+                // Removemos o título da pergunta do wrapper para verificar apenas a resposta
+                const titleInput = tempDiv.querySelector('.mini-note-title-input');
+                if (titleInput) titleInput.remove();
+
+                const textContent = tempDiv.innerText.trim();
+
+                let dotColor = 'none'; // Default: Invisível
+
+                if (textContent.length > 0) {
+                    // Tem texto: Decide entre Cor ou Cinzento
+                    if (data.coresUsadas && data.coresUsadas.length > 0) {
+                        dotColor = data.coresUsadas[0]; // Cor do Destaque
+                    } else {
+                        dotColor = '#555'; // Cinzento Escuro
+                    }
+                }
+                
+                window.currentQuestionsCache[pNum] = dotColor;
+            }
+        });
+
+        // --- Processamento Highlights (Mantém igual) ---
         snapCores.forEach(docSnap => {
             const data = docSnap.data();
             data.textosbiblicos.forEach(ref => {
@@ -2635,38 +2745,65 @@ async function loadLibraryDataForChapter(pubId, chapter) {
             });
         });
 
-        // Processar Notas (Flash Notes)
+        // --- Processamento Notas (Mantém igual) ---
         snapNotas.forEach(docSnap => {
             const data = docSnap.data();
-            const pNum = data.paragrafo;
-            const pId = `p-${pNum}`;
-            
-            if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
-            
-            // Se tem puzzleBoard, este parágrafo tem dados (Número fica Azul)
-            if (data.puzzleBoard && data.puzzleBoard.length > 0) {
-                // Marcamos que este parágrafo específico tem dados para o número ficar azul
-                currentChapterHighlights[pId].hasNoteData = true;
-
-                data.puzzleBoard.forEach(item => {
-                    if (item.highlightRef) {
-                        currentChapterHighlights[pId].push({
-                            texto: item.highlightRef,
-                            cor: item.noteColor || '#3498db',
-                            temNota: true
-                        });
-                    }
-                });
+            const refParts = data.nome.split(':');
+            if(refParts.length > 1) {
+                const pNum = refParts.pop();
+                const pId = `p-${pNum}`;
+                if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
+                if (data.puzzleBoard && data.puzzleBoard.length > 0) {
+                    currentChapterHighlights[pId].hasNoteData = true;
+                    data.puzzleBoard.forEach(item => {
+                        if (item.highlightRef) {
+                            currentChapterHighlights[pId].push({
+                                texto: item.highlightRef,
+                                cor: item.noteColor || '#3498db',
+                                temNota: true
+                            });
+                        }
+                    });
+                }
             }
         });
 
-        // CHAVE DO SUCESSO: Chama a pintura visual
         window.refreshVisualHighlights();
+        window.paintQuestionDots();
 
-    } catch (e) { 
-        console.error("Erro ao carregar dados:", e); 
-    }
+    } catch (e) { console.error(e); }
 }
+
+
+// NOVA FUNÇÃO para pintar os pontinhos baseado no cache
+window.paintQuestionDots = () => {
+    Object.keys(window.currentQuestionsCache).forEach(pNum => {
+        const dot = document.getElementById(`dot-${pNum}`);
+        const color = window.currentQuestionsCache[pNum];
+        
+        if (dot) {
+            // Caso 1: Vazio ou None -> Esconde o pontinho
+            if (!color || color === 'none') {
+                dot.style.backgroundColor = 'transparent';
+                dot.style.borderColor = 'transparent'; // Fica invisível, ou border #444 se quiseres ver a bolinha vazia
+                dot.style.boxShadow = 'none';
+            } 
+            // Caso 2: Cinzento (Tem texto, sem destaque)
+            else if (color === '#555' || color === 'gray') {
+                dot.style.backgroundColor = '#555';
+                dot.style.borderColor = '#555';
+                dot.style.boxShadow = 'none';
+            } 
+            // Caso 3: Colorido (Tem texto e destaque)
+            else {
+                dot.style.backgroundColor = color;
+                dot.style.borderColor = color;
+                dot.style.boxShadow = `0 0 6px ${color}`;
+            }
+        }
+    });
+};
+
 
 window.applyHighlightToUI = (text, color, refId) => {
     const reader = document.getElementById('reader-area');
@@ -2915,7 +3052,20 @@ window.openSidePanel = async (pNum) => {
     // Título do Painel
     titleContainer.innerHTML = `
         <span style="color: var(--accent-color); font-weight: bold;">Parágrafo ${pNum}</span>
-        <button class="btn-header-create" onclick="window.prepareNoteFromPanel('${pNum}')">+ 📝</button>
+        
+        <div style="display:flex; align-items:center;">
+            <!-- Botão Nova Nota -->
+            <button class="btn-header-create" onclick="window.prepareNoteFromPanel('${pNum}')" 
+                    title="Nova Nota">
+                + 📝
+            </button>
+                        <!-- Botão X-Ray -->
+            <button class="btn-header-create" onclick="window.runParaXRay('${pNum}')" 
+                    style="background: linear-gradient(135deg, #8e44ad, #9b59b6); margin-right:5px;" 
+                    title="X-Ray Profundo">
+                + 📟
+            </button>
+        </div>
     `;
 
     // Lógica da Aba Compartilhada (💬)
@@ -3773,20 +3923,26 @@ window.openQuestionEditor = async (qNum, qText) => {
     const content = document.getElementById('side-content');
     const titleContainer = document.getElementById('side-title-container');
 
-    // 1. Definir o ID único da pergunta
+    // 1. Definir IDs e Variáveis Globais
     const qId = `${currentPubId}_Q${qNum}`;
     window.activeQuestionId = qId; 
     
+    // Reset da cor selecionada (null = pontinho cinzento)
+    window.selectedColorHex = null; 
+
+    // UI: Abrir Painel
     panel.classList.add('open');
     document.getElementById('library-ref-tabs').style.display = 'none';
     
-    // Mostrar um carregamento enquanto procura
+    // Loader
     content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
 
-    // 2. Procurar se já existe uma resposta no Firestore
+    // 2. Procurar resposta existente no Firebase
     let existingDocId = "null";
     let existingContent = "";
-    let savedColor = '#2ecc71'; // Cor padrão verde
+    
+    // Cor visual para a borda do editor (se null, usa um laranja padrão de pergunta ou cinza)
+    let editorBorderColor = '#444'; 
 
     try {
         const { collection, query, where, getDocs, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
@@ -3801,60 +3957,146 @@ window.openQuestionEditor = async (qNum, qText) => {
         
         const snap = await getDocs(q);
 
-        if (!snap.empty) {
+       if (!snap.empty) {
             const docData = snap.docs[0].data();
             existingDocId = snap.docs[0].id;
             
-            // Extrair o conteúdo da nota (limpando o HTML do wrapper se necessário)
+            // A. Extrair Conteúdo Limpo
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = docData.conteudo;
             const contentDiv = tempDiv.querySelector('.mini-note-content');
-            existingContent = contentDiv ? contentDiv.innerHTML : docData.conteudo;
             
-            // Tentar recuperar a cor salva no atributo data-highlight ou no array de cores
-            const wrapper = tempDiv.querySelector('.mini-note-wrapper');
-            if (wrapper && wrapper.dataset.highlight) {
-                savedColor = wrapper.dataset.highlight;
-            } else if (docData.coresUsadas && docData.coresUsadas.length > 0) {
-                savedColor = docData.coresUsadas[0];
+          if (contentDiv) {
+                // FORÇAR O TRIM AQUI
+                existingContent = contentDiv.innerHTML.trim(); 
+            } else {
+                // E AQUI TAMBÉM
+                existingContent = docData.conteudo ? docData.conteudo.trim() : "";
             }
+            
+            // B. Extrair Cor
+            if (docData.coresUsadas && docData.coresUsadas.length > 0) {
+                // Tem cor definida -> Pontinho Colorido
+                window.selectedColorHex = docData.coresUsadas[0];
+                editorBorderColor = window.selectedColorHex;
+            } else {
+                // Array vazio -> Pontinho Cinzento
+                window.selectedColorHex = null;
+                editorBorderColor = '#555'; 
+            }
+        } else {
+            // Nova resposta: Padrão sem cor (Cinzento)
+            window.selectedColorHex = null;
+            editorBorderColor = '#555'; // Cinza para indicar "sem destaque"
         }
+
     } catch (e) {
         console.error("Erro ao carregar resposta existente:", e);
     }
 
-    window.selectedColorHex = savedColor;
+    // Carregar nomes personalizados das cores (se existirem)
     await loadUserColorNames();
 
-    // 3. Renderizar o interface com os dados carregados
-    titleContainer.innerHTML = `<span style="color:#2ecc71; font-weight:bold;">Pergunta ${qNum}</span>`;
+    // 3. Renderizar Interface
+    titleContainer.innerHTML = `<span style="color:#e67e22; font-weight:bold;">Pergunta ${qNum}</span>`;
 
     content.innerHTML = `
         <div class="note-creation-form" style="padding: 10px;">
-            <h2 style="font-size:1.1em; color:white; margin-bottom:15px; line-height:1.4;">${qText}</h2>
+            <h2 style="font-size:1.1em; color:#ddd; margin-bottom:15px; line-height:1.4; border-bottom:1px solid #333; padding-bottom:10px;">${qText}</h2>
             
+            <!-- TOOLBAR -->
             <div class="flash-toolbar">
-                <button onclick="document.execCommand('bold')"><b>B</b></button>
-                <button onclick="document.execCommand('italic')"><i>I</i></button>
-                <button onclick="window.toggleQuestionColorGrid()" title="Cores Destaque">🎨</button>
+                <button onclick="document.execCommand('bold')" title="Negrito"><b>B</b></button>
+                <button onclick="document.execCommand('italic')" title="Itálico"><i>I</i></button>
+                <div style="width:1px; height:20px; background:#444; margin:0 5px;"></div>
+                
+                <button onclick="window.toggleQuestionColorGrid()" title="Escolher Cor de Destaque">🎨</button>
+                
+                <!-- Botão para remover a cor (Voltar ao Cinzento) -->
+                <button onclick="window.removeQuestionColor()" title="Sem Destaque (Pontinho Cinzento)" style="font-size:0.8rem;">⚪</button>
+                
+                <div style="width:1px; height:20px; background:#444; margin:0 5px;"></div>
                 <button onclick="window.openFlashLinkManager()" title="Links">⚡</button>
             </div>
 
-            <div id="q-color-grid" style="display:none; grid-template-columns: repeat(3, 1fr); gap: 10px; background: #252528; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #444;">
+            <!-- GRELHA DE CORES (Escondida por defeito) -->
+            <div id="q-color-grid" style="display:none; grid-template-columns: repeat(5, 1fr); gap: 10px; background: #252528; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #444;">
                 ${window.generateQuestionColorGridHTML()}
             </div>
 
-            <div id="flash-editor" class="flash-editor" contenteditable="true" 
+            <!-- EDITOR DE TEXTO -->
+            <!-- A borda esquerda reflete o estado atual (Cor ou Cinza) -->
+         <div id="flash-editor" class="flash-editor" contenteditable="true" 
                  placeholder="Escreva a sua resposta aqui..."
-                 style="border-left: 4px solid ${window.selectedColorHex}; min-height:250px; padding:15px; outline:none;">${existingContent}</div>
+                 style="border-left: 4px solid ${editorBorderColor}; min-height:250px; padding:15px; outline:none; background:rgba(0,0,0,0.2);">${existingContent}</div>
+
 
             <button id="btn-save-question" onclick="window.saveQuestionAnswer('${existingDocId}', '${encodeURIComponent(qText)}')" 
-                    style="width:100%; margin-top:20px; padding:15px; background:#2ecc71; color:white; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
+                    style="width:100%; margin-top:20px; padding:15px; background:var(--accent-color); color:white; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
                 ${existingDocId !== "null" ? "ATUALIZAR RESPOSTA" : "GRAVAR RESPOSTA"}
             </button>
         </div>
     `;
 };
+
+// --- FUNÇÕES AUXILIARES NECESSÁRIAS ---
+
+// 1. Remover a cor (Voltar ao Cinzento)
+window.removeQuestionColor = () => {
+    window.selectedColorHex = null; // Null = Cinzento
+    
+    // Atualiza visualmente o editor para cinza
+    const editor = document.getElementById('flash-editor');
+    if (editor) {
+        editor.style.borderLeftColor = '#555';
+    }
+    
+    // Atualiza o grid para remover seleção branca das bolas
+    const grid = document.getElementById('q-color-grid');
+    if (grid) {
+        grid.innerHTML = window.generateQuestionColorGridHTML();
+        grid.style.display = 'none'; // Fecha o grid se estiver aberto
+    }
+};
+
+// 2. Gerar HTML da Grelha de Cores
+window.generateQuestionColorGridHTML = () => {
+    return DEFAULT_HIGHLIGHTS.map(c => {
+        // Verifica se esta é a cor selecionada para desenhar a borda branca
+        const isSelected = window.selectedColorHex === c.code;
+        return `
+            <div onclick="window.selectQuestionColor('${c.code}')" style="display:flex; flex-direction:column; align-items:center; cursor:pointer; gap:5px;">
+                <div style="width:24px; height:24px; border-radius:50%; background:${c.code}; border:2px solid ${isSelected ? 'white' : 'transparent'}; box-shadow: ${isSelected ? '0 0 8px white' : 'none'};"></div>
+            </div>
+        `;
+    }).join('');
+};
+
+// 3. Selecionar uma cor da grelha
+window.selectQuestionColor = (hex) => {
+    window.selectedColorHex = hex;
+    
+    // Atualiza a borda do editor imediatamente
+    const editor = document.getElementById('flash-editor');
+    if (editor) {
+        editor.style.borderLeftColor = hex;
+    }
+
+    // Fecha o grid
+    window.toggleQuestionColorGrid();
+};
+
+// 4. Toggle da Grelha
+window.toggleQuestionColorGrid = () => {
+    const grid = document.getElementById('q-color-grid');
+    if (grid) {
+        // Regenera o HTML para atualizar a seleção visual (borda branca) antes de mostrar
+        grid.innerHTML = window.generateQuestionColorGridHTML();
+        grid.style.display = grid.style.display === 'none' ? 'grid' : 'none';
+    }
+};
+
+   
 
 // Gera o HTML do 3x3 com nomes sincronizados
 window.generateQuestionColorGridHTML = () => {
