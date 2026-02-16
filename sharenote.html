@@ -936,241 +936,209 @@ function processContentForReading(htmlContent, forceShowAll = true) {
     if (!htmlContent) return '<p><em>Nota vazia.</em></p>';
     
     const parser = new DOMParser();
-    const docDOM = parser.parseFromString(htmlContent, 'text/html');
+    
+    // 1. DESCODIFICAÇÃO DE SEGURANÇA
+    let decoded = htmlContent;
+    try {
+        if (htmlContent.includes('%')) decoded = decodeURIComponent(htmlContent);
+    } catch(e) { 
+        decoded = htmlContent; 
+    }
+
+    const docDOM = parser.parseFromString(decoded, 'text/html');
     let refCounter = 1;
 
-    // 1. LIMPEZA GERAL
+    // 2. REMOÇÃO DE TODA A INTERFACE DE EDIÇÃO (Lixo visual da imagem)
     const selectorToRemove = [
-        '.post-it-drag-handle', '.post-it-cut-btn', '.toggle-delete-btn', 
-        '.toggle-color-btn', '.toggle-move-btn', '.drag-handle-icon',
-        '.mini-note-toolbar', '.card-toolbar', '.cols-toolbar',        
-        '.redator-dock', '.redator-top-tools', '.redator-reopen-btn'
+        '.mini-note-toolbar', 
+        '.redator-dock', 
+        '.redator-top-tools', 
+        '.redator-reopen-btn', 
+        '.redator-collapsed-menu-btn', 
+        '.redator-slide-menu',
+        '.ghost-actions', 
+        '.ghost-side-controls', 
+        '.ghost-add-between-btn', 
+        '.post-it-drag-handle', 
+        '.post-it-cut-btn',
+        '.card-toolbar', 
+        '.sign-toolbar', 
+        '.cube-toolbar',
+        '.cols-toolbar',
+        '.toolbar-btn-group',
+        'button' // Remove qualquer botão HTML residual
     ];
-    selectorToRemove.forEach(sel => docDOM.querySelectorAll(sel).forEach(el => el.remove()));
-
-    // 2. PROCESSAR LINKS DE TEXTO (WIKI STYLE)
-    // Procuramos os links antes de converter as caixas
-    docDOM.querySelectorAll('a[data-anexo-id], a.silent-link').forEach(link => {
-        const originalText = link.textContent;
-        const uid = link.getAttribute('data-uid');
-        
-        // Vamos buscar os dados ao registro que veio do Firebase
-        const registry = sharedNoteData.textLinksRegistry || {};
-        const linkData = registry[uid] || null;
-
-        const textSpan = document.createElement('span');
-        textSpan.className = 'wiki-text-highlight';
-        textSpan.id = `wiki-text-${refCounter}`;
-        textSpan.textContent = originalText;
-
-        const refTrigger = document.createElement('span');
-        refTrigger.className = 'wiki-ref-trigger';
-        refTrigger.textContent = `[${refCounter}]`;
-        refTrigger.dataset.refId = refCounter;
-        
-        // Passamos o dado codificado para o atributo
-        if (linkData) {
-            refTrigger.setAttribute('data-json', encodeURIComponent(JSON.stringify(linkData)));
-        }
-
-        const fragment = document.createDocumentFragment();
-        fragment.appendChild(textSpan);
-        fragment.appendChild(refTrigger);
-        link.replaceWith(fragment);
-        refCounter++;
+    
+    selectorToRemove.forEach(sel => {
+        docDOM.querySelectorAll(sel).forEach(el => el.remove());
     });
 
-    // 3. PROCESSAR CAIXAS (Subnotas, Questões, etc)
-    docDOM.querySelectorAll('.mini-note-wrapper, .redator-wrapper').forEach(wrapper => {
+    // 3. SISTEMA WIKIPEDIA (Links de Texto)
+    docDOM.querySelectorAll('a[data-anexo-id], a.silent-link').forEach(link => {
+        const uid = link.getAttribute('data-uid');
+        // Acessa o registro que veio do Firebase (global sharedNoteData)
+        const registry = (typeof sharedNoteData !== 'undefined' && sharedNoteData.textLinksRegistry) ? sharedNoteData.textLinksRegistry : {};
+        const linkData = registry[uid];
+
+        if (linkData) {
+            const textSpan = document.createElement('span');
+            textSpan.className = 'wiki-text-highlight';
+            textSpan.id = `wiki-text-${refCounter}`;
+            textSpan.textContent = link.textContent;
+
+            const refTrigger = document.createElement('span');
+            refTrigger.className = 'wiki-ref-trigger';
+            refTrigger.textContent = `[${refCounter}]`;
+            refTrigger.dataset.refId = refCounter;
+            refTrigger.setAttribute('data-json', encodeURIComponent(JSON.stringify(linkData)));
+
+            const fragment = document.createDocumentFragment();
+            fragment.appendChild(textSpan);
+            fragment.appendChild(refTrigger);
+            link.replaceWith(fragment);
+            refCounter++;
+        } else {
+            // Se for um link comum sem registro, limpa para texto simples ou mantém link limpo
+            const text = document.createTextNode(link.textContent);
+            link.replaceWith(text);
+        }
+    });
+
+    // 4. PROCESSAR GHOST BLOCKS (Modo Aquário)
+    docDOM.querySelectorAll('.ghost-block').forEach(block => {
+        const semantic = block.dataset.semantic || 'p';
+        const tag = (semantic === 'h1' || semantic === 'h2') ? semantic : (semantic === 'note' ? 'blockquote' : 'p');
+        const p = document.createElement(tag);
+        p.className = 'aquarium-read-block';
+        p.innerHTML = block.innerHTML;
+        
+        // Só mantém se houver texto real
+        if (p.textContent.trim().length > 0) {
+            block.replaceWith(p);
+        } else {
+            block.remove();
+        }
+    });
+
+    // 5. PROCESSAR MINI-NOTAS, QUESTÕES E CONTENTORES
+    docDOM.querySelectorAll('.mini-note-wrapper').forEach(wrapper => {
+        // Verifica privacidade
         const isIndividuallyShared = wrapper.getAttribute('data-shared') === 'true';
         if (!forceShowAll && !isIndividuallyShared) {
-            const placeholder = document.createElement('div');
-            placeholder.className = 'private-box-placeholder';
-            placeholder.innerHTML = '<span>🔒 Conteúdo Privado</span>';
-            wrapper.replaceWith(placeholder);
+            wrapper.remove();
             return;
         }
 
-        const titleEl = wrapper.querySelector('.mini-note-title-input, .redator-input');
-        const titleText = titleEl ? (titleEl.getAttribute('value') || titleEl.value || "") : "";
-        const contentDiv = wrapper.querySelector('.mini-note-content, .redator-content');
-        
-        const newContainer = document.createElement('div');
-        newContainer.className = 'processed-mini-note';
-        if (wrapper.classList.contains('question-mode')) newContainer.classList.add('question-mode');
-        
-        if (titleText) {
+        const titleInp = wrapper.querySelector('.mini-note-title-input');
+        const titleText = titleInp ? (titleInp.getAttribute('value') || titleInp.value || "") : "";
+        const contentDiv = wrapper.querySelector('.mini-note-content');
+        const highlightHex = wrapper.getAttribute('data-highlight');
+
+        const newDiv = document.createElement('div');
+        newDiv.className = 'processed-mini-note';
+        if (wrapper.classList.contains('question-mode')) newDiv.classList.add('question-mode');
+        if (wrapper.classList.contains('free-mode')) newDiv.classList.add('free-mode');
+
+        if (highlightHex) {
+            newDiv.style.backgroundColor = highlightHex;
+            newDiv.style.color = "#1a1a1d";
+            newDiv.style.border = "none";
+        }
+
+        if (titleText.trim()) {
             const h3 = document.createElement('h3');
             h3.textContent = titleText;
-            newContainer.appendChild(h3);
+            newDiv.appendChild(h3);
         }
-        
+
         const bodyDiv = document.createElement('div');
+        bodyDiv.className = 'mini-note-body';
         bodyDiv.innerHTML = contentDiv ? contentDiv.innerHTML : "";
-        newContainer.appendChild(bodyDiv);
-        wrapper.replaceWith(newContainer);
+        newDiv.appendChild(bodyDiv);
+
+        wrapper.replaceWith(newDiv);
     });
 
-   // 3. LIMPEZA ADICIONAL PARA REDATORES VISÍVEIS
- // 3. PROCESSAR REDATORES (📓)
-   docDOM.querySelectorAll('.redator-wrapper').forEach(redator => {
-       const titleInput = redator.querySelector('.redator-input');
-       // Tenta ler value ou atributo value
-       const titleText = titleInput ? (titleInput.value || titleInput.getAttribute('value') || "Redator") : "Redator";
-       
-       // Cria um cabeçalho estático
-       const newHeader = document.createElement('div');
-       newHeader.className = 'redator-header';
-       newHeader.innerHTML = `<span>📓</span> ${titleText}`;
-       
-       // Substitui o cabeçalho antigo (que tinha inputs e botões)
-       const oldHeader = redator.querySelector('.redator-header');
-       if (oldHeader) oldHeader.replaceWith(newHeader);
-       else redator.prepend(newHeader);
+    // 6. PROCESSAR REDATORES (📓)
+    docDOM.querySelectorAll('.redator-wrapper').forEach(redator => {
+        const titleInp = redator.querySelector('.redator-input');
+        const titleText = titleInp ? (titleInp.getAttribute('value') || titleInp.value || "Redator") : "Redator";
+        const content = redator.querySelector('.redator-content');
 
-       // Limpa o conteúdo
-       const content = redator.querySelector('.redator-content');
-       if (content) content.removeAttribute('contenteditable');
-       
-       // Remove botões flutuantes
-       redator.querySelectorAll('.redator-dock, .redator-reopen-btn, .redator-collapsed-menu-btn, .redator-slide-menu').forEach(el => el.remove());
-   });
+        const redatorDiv = document.createElement('div');
+        redatorDiv.className = 'redator-read-block';
+        redatorDiv.innerHTML = `
+            <div class="redator-header">📓 ${titleText}</div>
+            <div class="redator-content">${content ? content.innerHTML : ""}</div>
+        `;
+        redator.replaceWith(redatorDiv);
+    });
 
-   // 4. PROCESSAR WIDGETS DO JORNAL (NOVOS)
-   
-   // A. RACIOCÍNIO (🪧)
-   docDOM.querySelectorAll('.journal-sign-wrapper').forEach(sign => {
-       // Remove a toolbar de cima
-       const toolbar = sign.querySelector('.sign-toolbar');
-       if(toolbar) toolbar.remove();
+    // 7. PROCESSAR WIDGETS DE JORNAL (🪧, 🪪, 🧊)
+    
+    // Raciocínio (Sign)
+    docDOM.querySelectorAll('.journal-sign-wrapper').forEach(sign => {
+        const titleInp = sign.querySelector('.sign-title-input');
+        const titleText = titleInp ? (titleInp.getAttribute('value') || titleInp.value || "Raciocínio") : "Raciocínio";
+        const content = sign.querySelector('.sign-content');
+        const attachments = sign.querySelector('.sign-attachments-area');
 
-       // Converte Título Input -> Texto
-       const titleInput = sign.querySelector('.sign-title-input');
-       const titleVal = titleInput ? (titleInput.getAttribute('value') || titleInput.value) : "";
-       if (titleVal) {
-           const h3 = document.createElement('div');
-           h3.className = 'sign-read-title';
-           h3.textContent = "🪧 " + titleVal;
-           // Substitui o header que contém o input
-           const headerDiv = sign.querySelector('.sign-header');
-           if(headerDiv) headerDiv.replaceWith(h3);
-       } else {
-           // Se não tiver título, remove o header vazio
-           const headerDiv = sign.querySelector('.sign-header');
-           if(headerDiv) headerDiv.remove();
-       }
+        const signDiv = document.createElement('div');
+        signDiv.className = 'journal-read-sign';
+        signDiv.innerHTML = `
+            <strong>🪧 ${titleText}</strong>
+            <div>${content ? content.innerHTML : ""}</div>
+            <div class="sign-links">${attachments ? attachments.innerHTML : ""}</div>
+        `;
+        sign.replaceWith(signDiv);
+    });
 
-       // Conteúdo não editável
-       const content = sign.querySelector('.sign-content');
-       if(content) content.removeAttribute('contenteditable');
+    // ID Card
+    docDOM.querySelectorAll('.journal-id-card').forEach(card => {
+        const titleInp = card.querySelector('.card-title-input');
+        const titleText = titleInp ? (titleInp.getAttribute('value') || titleInp.value || "Cartão") : "Cartão";
+        const desc = card.querySelector('.card-desc-content');
+        const img = card.querySelector('.card-image-area img');
 
-       // Limpar Anexos (Remover botões de lixo/editar)
-       const attachArea = sign.querySelector('.sign-attachments-area');
-       if(attachArea) {
-           attachArea.querySelectorAll('.sign-attachment-row').forEach(row => {
-               // Remove botões
-               row.querySelectorAll('button').forEach(b => b.remove());
-               // Garante que o link está visível
-               const link = row.querySelector('a');
-               if(link) {
-                   row.innerHTML = ''; 
-                   row.appendChild(link);
-               }
-           });
-       }
-       // Remove botão de adicionar
-       const addArea = sign.querySelector('.sign-add-btn-area');
-       if(addArea) addArea.remove();
-   });
+        const cardDiv = document.createElement('div');
+        cardDiv.className = 'journal-read-card';
+        cardDiv.innerHTML = `
+            <div class="card-img">${img ? img.outerHTML : "👤"}</div>
+            <div class="card-info">
+                <strong>${titleText}</strong>
+                <p>${desc ? desc.innerHTML : ""}</p>
+            </div>
+        `;
+        card.replaceWith(cardDiv);
+    });
 
-   // B. CARTÃO TEMÁTICO (🪪)
-   docDOM.querySelectorAll('.journal-id-card').forEach(card => {
-       // Remove toolbar
-       const toolbar = card.querySelector('.card-toolbar');
-       if(toolbar) toolbar.remove();
+    // Grua de Referências (Depot)
+    docDOM.querySelectorAll('.ref-depot-wrapper').forEach(depot => {
+        const titleInp = depot.querySelector('.depot-title');
+        const titleText = titleInp ? (titleInp.getAttribute('value') || "GRUA") : "GRUA";
+        
+        // Limpa inputs dentro do depot
+        depot.querySelectorAll('input').forEach(inp => {
+            const span = document.createElement('span');
+            span.textContent = inp.getAttribute('value') || inp.value;
+            inp.replaceWith(span);
+        });
 
-       // Título Input -> Texto
-       const titleInput = card.querySelector('.card-title-input');
-       const titleVal = titleInput ? (titleInput.getAttribute('value') || titleInput.value) : "Cartão";
-       
-       const titleDiv = document.createElement('div');
-       titleDiv.className = 'card-read-title';
-       titleDiv.textContent = titleVal;
-       
-       if(titleInput) titleInput.replaceWith(titleDiv);
+        const header = depot.querySelector('.depot-header');
+        if (header) header.innerHTML = `<span>🏗️ ${titleText}</span>`;
+        
+        depot.querySelectorAll('.depot-link-card').forEach(linkCard => {
+            linkCard.className = 'depot-link-card-read';
+        });
+    });
 
-       // Imagem Placeholder -> Remove se vazio, mantém se img
-       const imgArea = card.querySelector('.card-image-area');
-       const placeholder = imgArea ? imgArea.querySelector('.card-img-placeholder') : null;
-       const realImg = imgArea ? imgArea.querySelector('img') : null;
+    // 8. LIMPEZA DE PARÁGRAFOS VAZIOS E RESIDUAIS
+    let result = docDOM.body.innerHTML;
+    // Remove parágrafos vazios que apenas criam buracos no layout
+    result = result.replace(/<p><br><\/p>/g, "");
+    result = result.replace(/<p><\/p>/g, "");
 
-       if (realImg) {
-           // Se tem imagem, remove onclick
-           realImg.removeAttribute('onclick');
-           realImg.style.cursor = 'default';
-       } else if (placeholder) {
-           // Se não tem imagem, esconde a área ou mostra ícone padrão
-           imgArea.innerHTML = '<div style="width:100%; height:100%; background:rgba(0,0,0,0.1); border-radius:8px; display:flex; align-items:center; justify-content:center;">👤</div>';
-       }
-
-       // Conteúdo
-       const content = card.querySelector('.card-desc-content');
-       if(content) content.removeAttribute('contenteditable');
-   });
-
-   // C. CUBO (🧊)
-   docDOM.querySelectorAll('.journal-cube-wrapper').forEach(cube => {
-       // Remove a toolbar flutuante
-       const toolbar = cube.querySelector('.cube-toolbar');
-       if(toolbar) toolbar.remove();
-       
-       // Conteúdo estático
-       const content = cube.querySelector('.cube-content');
-       if(content) content.removeAttribute('contenteditable');
-       
-       // Garante que o float/rotate se mantém (já está no style inline do HTML)
-   });
-
-   // D. IMAGEM (🖼️)
-   docDOM.querySelectorAll('.journal-img-wrapper').forEach(imgWrapper => {
-       // Remove o placeholder de input se existir (caso tenha gravado a meio da edição)
-       const placeholder = imgWrapper.querySelector('.journal-img-placeholder');
-       if (placeholder) {
-           imgWrapper.remove(); // Remove o wrapper todo se não tiver imagem final
-           return;
-       }
-       
-       // Remove botões de edição e menus
-       imgWrapper.querySelectorAll('button, .journal-img-menu').forEach(el => el.remove());
-   });
-
-   // 4. PROCESSAR TOGGLES
-   docDOM.querySelectorAll('details.toggle-section').forEach(toggle => {
-       toggle.removeAttribute('contenteditable');
-       const content = toggle.querySelector('.toggle-content');
-       if (content) content.removeAttribute('contenteditable');
-   });
-   
-    // 5. PROCESSAR POST-ITS
-   docDOM.querySelectorAll('.post-it-note').forEach(postit => {
-       postit.className = 'reading-postit-absolute';
-       postit.removeAttribute('draggable');
-       postit.setAttribute('contenteditable', 'false');
-       const content = postit.querySelector('.post-it-content');
-       if(content) content.removeAttribute('contenteditable');
-   });
-   
-   // 6. LIMPEZA FINAL DE LINHAS ARRASTÁVEIS
-   docDOM.querySelectorAll('.draggable-line').forEach(line => {
-       const contentArea = line.querySelector('.drag-content-area');
-       const innerHTML = contentArea ? contentArea.innerHTML : line.innerText.replace('ᯓ', '');
-       const cleanBlock = document.createElement('div');
-       cleanBlock.innerHTML = innerHTML;
-       cleanBlock.style.margin = "4px 0"; 
-       line.replaceWith(cleanBlock);
-   });
-
-   return docDOM.body.innerHTML;
+    return result;
 }
 
 // --- FUNÇÃO AUXILIAR: CURAR HTML PARA IMPORTAÇÃO ---
