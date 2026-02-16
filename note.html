@@ -21676,7 +21676,6 @@ async function openReferenceSelectionPopup() {
     const list = document.getElementById('puzzle-ref-selection-list');
     
     if (!activeReferenceEntity || !activeReferenceEntity.id) {
-        console.error("❌ Nenhuma entidade ativa encontrada.");
         console.groupEnd();
         alert("Selecione um tópico, tag ou entidade primeiro.");
         return;
@@ -21684,16 +21683,7 @@ async function openReferenceSelectionPopup() {
 
     // 1. CONFIGURAÇÃO VISUAL
     document.body.appendChild(modal);
-    modal.style.cssText = `
-        display: flex !important;
-        position: fixed !important;
-        top: 0 !important; left: 0 !important; width: 100vw; height: 100vh !important;
-        background-color: rgba(0, 0, 0, 0.85) !important;
-        z-index: 2147483647 !important;
-        justify-content: center !important; align-items: center !important;
-        visibility: visible !important; opacity: 1 !important;
-    `;
-
+    modal.style.display = 'flex';
     list.innerHTML = '<div class="spinner-container"><div class="spinner"></div><span>A analisar arquivo de notas...</span></div>';
 
     allFoundReferenceBoxes = [];
@@ -21701,13 +21691,8 @@ async function openReferenceSelectionPopup() {
 
     const { id, type, name } = activeReferenceEntity;
     const isHighlightSearch = (type === 'destaque');
-    
-    // --- DADOS PARA COMPARAÇÃO BÍBLICA/LIVRO ---
     const isBookRef = (type === 'livro_ref');
-    const targetBookId = isBookRef ? (activeReferenceEntity.bookId || "").toLowerCase().trim() : null;
-    const targetChapter = isBookRef ? String(activeReferenceEntity.chapter).trim() : null;
-    const targetParagraph = isBookRef ? String(activeReferenceEntity.paragraph).trim() : null;
-
+    
     const searchTerm = name.toLowerCase().trim();
     const hexToFind = isHighlightSearch ? id.toUpperCase() : null;
 
@@ -21720,41 +21705,24 @@ async function openReferenceSelectionPopup() {
     };
 
     try {
-        // 2. DETETAR O QUE JÁ EXISTE NO QUADRO (Para evitar duplicados)
-        const activeTabBtn = document.querySelector('#ref-tabs button.active');
-        const activeTab = activeTabBtn ? activeTabBtn.dataset.refTab : 'puzzle';
+        const { collection, query, where, getDocs, doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        let currentBoardItems = []; 
+        // 2. DETETAR O QUE JÁ EXISTE NO QUADRO PARA EVITAR DUPLICADOS
+        const existingIDs = new Set();
         const col = getCollectionFromType(type);
-        const { doc, getDoc, collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        
-        // Verifica se a coleção existe (pode não existir para livros novos)
         if (col) {
             const docSnap = await getDoc(doc(db, col, id));
             if (docSnap.exists()) {
-                if (activeTab === 'dossie' && window.activeMicaId) {
-                    const dossie = docSnap.data().dossie || [];
-                    const mica = dossie.find(m => m.id === window.activeMicaId);
-                    if (mica && mica.items) currentBoardItems = mica.items;
-                } else {
-                    currentBoardItems = docSnap.data().puzzleBoard || [];
-                }
+                const board = docSnap.data().puzzleBoard || [];
+                board.forEach(item => {
+                    if (item.snippet) {
+                        const decoded = item.snippet.includes('%') ? decodeURIComponent(item.snippet) : item.snippet;
+                        const match = decoded.match(/id="([^"]+)"/);
+                        if (match) existingIDs.add(match[1]);
+                    }
+                });
             }
         }
-
-        const existingIDs = new Set();
-        currentBoardItems.forEach(item => {
-            if (item.snippet) {
-                try {
-                    const decoded = item.snippet.includes('%') ? decodeURIComponent(item.snippet) : item.snippet;
-                    const match = decoded.match(/id="([^"]+)"/);
-                    if (match) existingIDs.add(match[1]);
-                } catch (e) {
-                    const match = item.snippet.match(/id="([^"]+)"/);
-                    if (match) existingIDs.add(match[1]);
-                }
-            }
-        });
 
         // 3. PESQUISA GLOBAL NAS NOTAS
         let q = query(collection(db, 'pastas'), 
@@ -21771,8 +21739,6 @@ async function openReferenceSelectionPopup() {
             const noteTitle = data.nome || "Sem Título";
             const updatedTime = data.ultimaedicao?.toMillis() || data.createdAt?.toMillis() || 0;
 
-            if (data.passe && data.passe.trim() !== "" && !appSettings.searchAnchorsInProtected) return;
-
             let contentsToScan = [];
             if (['nota', 'jornal', 'aquario'].includes(data.tipo)) {
                 contentsToScan.push({ html: data.conteudo || "", originName: noteTitle });
@@ -21784,67 +21750,60 @@ async function openReferenceSelectionPopup() {
 
             contentsToScan.forEach(item => {
                 const docHTML = parser.parseFromString(item.html, 'text/html');
-                const allWrappers = docHTML.querySelectorAll('.mini-note-wrapper, .redator-wrapper, details.toggle-section, .journal-sign-wrapper, .journal-id-card, .journal-cube-wrapper');
+                const allWrappers = docHTML.querySelectorAll('.mini-note-wrapper, .redator-wrapper, details.toggle-section, .journal-sign-wrapper, .journal-id-card');
                 
                 allWrappers.forEach((w) => {
                     let match = false;
-                    let matchReason = ""; // Para saber porque encontrou
+                    let matchReason = ""; 
 
-                    // A. BUSCA POR COR (DESTAQUES)
+                    // --- DECLARAÇÃO DE VARIÁVEIS DO BLOCO (FIX DO ERRO) ---
+                    const titleInput = w.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
+                    const contentDiv = w.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content');
+                    const boxFullText = (titleInput ? (titleInput.value || titleInput.textContent) : "") + " " + (contentDiv ? contentDiv.innerText : "");
+
+                    // A. BUSCA POR DESTAQUE (COR)
                     if (isHighlightSearch) {
                         const elColor = w.getAttribute('data-highlight');
                         if (elColor && elColor.toUpperCase() === hexToFind) match = true;
                     } 
                     
-                    // B. BUSCA POR TEXTO
-                    const titleInput = w.querySelector('.mini-note-title-input, .redator-input, .sign-title-input, .card-title-input, h2');
-                    const subtitleInput = w.querySelector('.consultor-subtitle-input');
-                    const contentDiv = w.querySelector('.mini-note-content, .redator-content, .sign-content, .toggle-content, .card-desc-content, .cube-content');
-                    const boxFullText = (titleInput ? (titleInput.value || titleInput.textContent) : "") + " " + (contentDiv ? contentDiv.innerText : "");
-                    
-                    if (!match && boxFullText.toLowerCase().includes(searchTerm)) match = true;
+                    // B. BUSCA POR TEXTO (NOME DA ENTIDADE)
+                    if (!match && boxFullText.toLowerCase().includes(searchTerm)) {
+                        match = true;
+                    }
 
-                    // C. BUSCA POR METADADOS (CATEGORIAS E CODEX)
-                    const boxLinksRaw = w.getAttribute('data-box-links');
-                    if (!match && boxLinksRaw && boxLinksRaw !== '{}') {
-                        try {
-                            const boxData = JSON.parse(boxLinksRaw);
-                            
-                            // 1. Categorias (Tópicos, Personagens...)
-                            if (boxData.categories && boxData.categories.some(cat => cat.id === id || cat.name.toLowerCase() === searchTerm)) {
-                                match = true;
-                            }
+                    // C. BUSCA POR CODEX (VÍNCULO TÉCNICO ⚡)
+                    if (!match && isBookRef) {
+                        const boxLinksRaw = w.getAttribute('data-box-links');
+                        if (boxLinksRaw) {
+                            try {
+                                const boxData = JSON.parse(boxLinksRaw);
+                                if (boxData.codex && Array.isArray(boxData.codex)) {
+                                    const codexMatch = boxData.codex.some(c => {
+                                        const serieMatch = normalizeStr(c.serie) === normalizeStr(activeReferenceEntity.codexSerie);
+                                        const capMatch = !c.capitulo || String(c.capitulo) === String(activeReferenceEntity.chapter);
+                                        
+                                        let parMatch = false;
+                                        if (c.paragrafos && Array.isArray(c.paragrafos)) {
+                                            parMatch = c.paragrafos.some(p => {
+                                                if (p.includes('-')) {
+                                                    const [start, end] = p.split('-').map(Number);
+                                                    const target = Number(activeReferenceEntity.paragraph);
+                                                    return target >= start && target <= end;
+                                                }
+                                                return String(p) === String(activeReferenceEntity.paragraph);
+                                            });
+                                        }
+                                        return serieMatch && capMatch && parMatch;
+                                    });
 
-                            // 2. CODEX (A LÓGICA QUE PEDIU) 📚
-                            if (!match && isBookRef && boxData.codex && Array.isArray(boxData.codex)) {
-                                const codexMatch = boxData.codex.some(c => {
-                                    // Normaliza a série para comparação (remove espaços e lowercase)
-                                    const serieEntry = (c.serie || "").toLowerCase().trim();
-                                    const capEntry = String(c.capitulo || "").trim();
-                                    
-                                    // Verifica Série
-                                    if (serieEntry !== targetBookId) return false;
-                                    
-                                    // Verifica Capítulo (se o target tiver capítulo)
-                                    if (targetChapter && capEntry !== targetChapter) return false;
-                                    
-                                    // Verifica Parágrafos (se o target tiver parágrafo)
-                                    if (targetParagraph && c.paragrafos && Array.isArray(c.paragrafos)) {
-                                        // O Codex guarda como array ["12", "13"]. Verifica se inclui o nosso.
-                                        return c.paragrafos.includes(targetParagraph);
+                                    if (codexMatch) {
+                                        match = true;
+                                        matchReason = `<span style="color:#e67e22; font-weight:bold; font-size:0.8em;">⚡ Codex: ${activeReferenceEntity.name}</span>`;
                                     }
-                                    
-                                    // Se chegou aqui e não havia parágrafo alvo, é match de capítulo/livro
-                                    return true;
-                                });
-
-                                if (codexMatch) {
-                                    match = true;
-                                    matchReason = `<span style="color:#e67e22; font-weight:bold; font-size:0.8em;">📚 Vínculo Codex: ${activeReferenceEntity.name}</span>`;
                                 }
-                            }
-
-                        } catch (e) {}
+                            } catch (e) {}
+                        }
                     }
 
                     if (match) {
@@ -21852,7 +21811,6 @@ async function openReferenceSelectionPopup() {
                         let boxIcon = "📘";
                         let labelColor = baseColors.subnote;
 
-                        // Determina tipo e cor
                         if (w.tagName === 'DETAILS') { baseType = "toggle"; boxIcon = "☂️"; labelColor = "#c0392b"; } 
                         else if (w.classList.contains('consultor-mode')) { baseType = "consultor"; boxIcon = "📕"; labelColor = baseColors.consultor; } 
                         else if (w.classList.contains('question-mode')) { baseType = "question"; boxIcon = "📗"; labelColor = baseColors.question; } 
@@ -21871,21 +21829,16 @@ async function openReferenceSelectionPopup() {
                             }
                         }
 
-                        if (!focusName) {
-                            focusName = baseType === 'consultor' ? 'Consultor' : (baseType === 'question' ? 'Questão' : 'SubNota');
-                        }
+                        if (!focusName) focusName = (baseType === 'question' ? 'Questão' : 'SubNota');
 
                         let displayTitle = (titleInput ? (titleInput.value || titleInput.textContent) : "").trim();
-                        if (!displayTitle && baseType === "consultor" && subtitleInput) displayTitle = subtitleInput.value.trim();
                         if (!displayTitle) {
                             const rawContent = contentDiv ? contentDiv.innerText.trim() : "";
                             displayTitle = getFirstSentencePreview(rawContent, 15) || `(${focusName} vazio)`;
                         }
 
-                        // Se encontrámos via Codex, adicionamos o motivo ao título visualmente
-                        if (matchReason) {
-                            displayTitle = `${displayTitle} <br>${matchReason}`;
-                        }
+                        // Se encontrou via Codex, injeta o motivo no título visual
+                        if (matchReason) displayTitle = `${displayTitle} <br>${matchReason}`;
 
                         allFoundReferenceBoxes.push({
                             id: docSnap.id, 
@@ -22560,28 +22513,36 @@ function resetReferencesPanelUI() {
 
 
 
-
-window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, paragraphNum, htmlContent, openDirectToTarget = false) {
+window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, paragraphNum, htmlContent, openDirectToTarget = false, magazineFullRef = null) {
     const thisRequestId = ++window.currentNavRequest;
-    const fullName = `${bookId} ${chapterNum}:${paragraphNum}`;
     
-    // 1. Configuração do Contexto da Entidade
+    // 1. DEFINIÇÃO DA SÉRIE PARA BUSCA TÉCNICA (CODEX)
+    // Se magazineFullRef existir, a série é a string completa da revista. 
+    // Se não, é o bookId (sigla do livro).
+    const codexSerie = magazineFullRef ? magazineFullRef : bookId;
+
+    // 2. FORMATAÇÃO DO NOME VISUAL (O QUE APARECE NO TOPO)
+    const fullName = magazineFullRef 
+        ? `${magazineFullRef} - Parágrafo ${paragraphNum}` 
+        : `${bookId} ${chapterNum}:${paragraphNum}`;
+    
+    // 3. CONFIGURAÇÃO DO CONTEXTO DA ENTIDADE ATIVA
     activeReferenceEntity = {
-        id: fullName, // ID provisório (será substituído pelo ID do Firebase)
+        id: fullName,         // Usamos o nome único como ID no Firebase para esta coleção
         type: 'livro_ref',
         name: fullName,
-        bookId: bookId,
-        bookName: bookName,
+        bookId: bookId,       // Sigla técnica (ex: sentinela ou cl)
+        codexSerie: codexSerie, // Referência para busca no Codex (AQUI ESTÁ O SEGREDO)
         chapter: chapterNum,
         paragraph: paragraphNum,
         htmlOriginal: htmlContent 
     };
 
-    // 2. Persistência de Memória (Para manter o local ao trocar de abas do NoteBook)
+    // 4. PERSISTÊNCIA DE MEMÓRIA (Para manter o local ao trocar de abas)
     booksStateMemory.activeRef = { ...activeReferenceEntity };
     booksStateMemory.activeTab = openDirectToTarget ? 'target' : 'puzzle';
 
-    // 3. Limpeza Geral da Interface
+    // 5. LIMPEZA DA INTERFACE
     if (typeof resetReferencesPanelUI === 'function') {
         resetReferencesPanelUI();
     }
@@ -22589,7 +22550,7 @@ window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, par
     try {
         const { doc, getDoc, collection, query, where, getDocs, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        // 4. Sincronização Firebase: Verificar se este parágrafo já tem registro privado
+        // 6. SINCRONIZAÇÃO FIREBASE: Verificar se este parágrafo já tem registro privado
         const q = query(
             collection(db, 'livros'), 
             where('nome', '==', fullName), 
@@ -22600,11 +22561,12 @@ window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, par
         if (window.currentNavRequest !== thisRequestId) return;
 
         if (snap.empty) {
-            // Cria entrada para permitir Puzzle, Dossiê e Links neste parágrafo
+            // Cria entrada se for a primeira vez que abres este parágrafo
             const newDoc = await addDoc(collection(db, 'livros'), {
                 nome: fullName,
                 livro: bookName,
                 bookId: bookId,
+                codexSerie: codexSerie,
                 capitulo: chapterNum,
                 paragrafo: paragraphNum,
                 userId: auth.currentUser.uid,
@@ -22618,20 +22580,16 @@ window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, par
             activeReferenceEntity.id = snap.docs[0].id;
         }
 
-        // 5. Configuração Visual da 4ª Coluna
+        // 7. CONFIGURAÇÃO VISUAL DA 4ª COLUNA
         notebookContainer.classList.add('references-panel-visible');
         
         const titleEl = document.getElementById('references-panel-title');
         if (titleEl) titleEl.innerHTML = `🎯 ${fullName}`;
 
-        // --- GESTÃO EXCLUSIVA DA TOOLBAR (LIVROS) ---
+        // Gerir botões da Barra de Ferramentas
         const editBtn = document.getElementById('references-edit-btn');
         const targetBtn = document.getElementById('references-target-btn');
-        const anchorBtn = document.getElementById('references-anchor-btn');
-        const bookmarkBtn = document.getElementById('references-bookmark-btn');
-        const wolBtn = document.getElementById('references-wol-btn');
-
-        // MOSTRAR: Coruja e Mira
+        
         if (editBtn) {
             editBtn.textContent = '🦉'; 
             editBtn.title = 'Ir para a Biblioteca';
@@ -22642,21 +22600,16 @@ window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, par
             targetBtn.title = 'Ver parágrafo original';
         }
 
-        // ESCONDER: Âncora, Marcador e WOL Externo
-        if (anchorBtn) anchorBtn.style.display = 'none'; // <--- Âncora Removida aqui
-        if (bookmarkBtn) bookmarkBtn.style.display = 'none';
-        if (wolBtn) wolBtn.style.display = 'none';
-
         document.getElementById('references-panel-description').style.display = 'none';
         document.getElementById('references-toolbar').style.display = 'flex';
 
-        // 6. Injetar Conteúdo na aba de Texto Original (🎯)
+        // 8. INJETAR CONTEÚDO NA ABA DE TEXTO ORIGINAL (🎯)
         const bookTextContainer = document.getElementById('ref-content-book-text');
         if (bookTextContainer) {
             bookTextContainer.innerHTML = `
                 <div class="book-text-box">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">
-                        <small style="color: var(--accent-color); font-weight: bold; text-transform: uppercase;">Conteúdo da Fonte:</small>
+                        <small style="color: var(--accent-color); font-weight: bold; text-transform: uppercase;">Fonte:</small>
                         <small style="color: var(--text-muted-color); font-size: 0.85em;">${bookName}</small>
                     </div>
                     <div style="font-style: normal; color: #f0f0f0; line-height: 1.6; font-size: 1.05em;">${htmlContent}</div>
@@ -22664,12 +22617,12 @@ window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, par
             `;
         }
 
-        // 7. Carregar dados das sub-abas
+        // 9. CARREGAR DADOS DAS SUB-ABAS
         if (typeof loadPuzzleData === 'function') loadPuzzleData(activeReferenceEntity.id, 'livro_ref');
         if (typeof renderBookCodexCitations === 'function') renderBookCodexCitations(bookId, chapterNum, paragraphNum);
         if (typeof renderPanelLinks === 'function') renderPanelLinks();
 
-        // 8. Seleção da Aba Inicial
+        // 10. SELEÇÃO DA ABA INICIAL
         if (openDirectToTarget) {
             if (typeof window.showParagraphContentMode === 'function') window.showParagraphContentMode();
         } else {
@@ -22677,7 +22630,7 @@ window.openBookParagraphPanel = async function(bookId, bookName, chapterNum, par
             if (typeof switchRefTab === 'function') switchRefTab('puzzle');
         }
 
-        // Mobile
+        // Ajuste Mobile
         if (window.innerWidth <= 768) {
             const refPanel = document.getElementById('references-panel');
             if(refPanel) refPanel.style.height = "60vh";
@@ -33781,15 +33734,15 @@ async function renderListCategoryItems(categoryId, filterText = '') {
             }
 
             // --- NÍVEL 2: ESCOLHER ANO DA SENTINELA ---
-          if (lastNav.type === 'sentinela-years') {
+       if (lastNav.type === 'sentinela-years') {
                 middlePanelTitle.textContent = "Escolha o Ano";
                 listElement.innerHTML = '';
                 
-                // Bloco automático que você colou:
                 const anoInicial = 1950; 
-                const anoAtual = new Date().getFullYear();
+                const anoAtual = new Date().getFullYear(); // 2025
                 const anos = [];
-                for (let i = anoAtual + 1; i >= anoInicial; i--) {
+                // CORREÇÃO: Começa no ano atual, não no próximo
+                for (let i = anoAtual; i >= anoInicial; i--) {
                     anos.push(i);
                 }
 
@@ -33875,74 +33828,60 @@ async function renderListCategoryItems(categoryId, filterText = '') {
             }
 
             // --- NÍVEL 5: VER O CONTEÚDO DO ARTIGO NA COLUNA 2 ---
-       else if (lastNav.type === 'sentinela-content') {
-    middlePanelTitle.textContent = lastNav.name;
-    listElement.innerHTML = '<div class="panel-loader"><div class="spinner"></div></div>';
+ else if (lastNav.type === 'sentinela-content') {
+                middlePanelTitle.textContent = lastNav.name;
+                listElement.innerHTML = '<div class="panel-loader"><div class="spinner"></div></div>';
 
-    try {
-        const response = await fetch(`./js/publicacoes/sentinelas/${lastNav.ano}/${lastNav.mesNum}.json`);
-        const data = await response.json();
-        const lista = data.artigos ? data.artigos : [data];
-        const artigo = lista[lastNav.articleIndex];
+                try {
+                    const response = await fetch(`./js/publicacoes/sentinelas/${lastNav.ano}/${lastNav.mesNum}.json`);
+                    const data = await response.json();
+                    const lista = data.artigos ? data.artigos : [data];
+                    const artigo = lista[lastNav.articleIndex];
 
-        listElement.innerHTML = '';
+                    listElement.innerHTML = '';
+                    const headerDiv = document.createElement('div');
+                    headerDiv.style.cssText = "padding: 15px; border-bottom: 2px solid var(--accent-color); margin-bottom: 10px; background: rgba(255,255,255,0.02);";
+                    headerDiv.innerHTML = `<h2 style="margin:0; font-size:1.1em; color:white;">${artigo.titulo}</h2>`;
+                    listElement.appendChild(headerDiv);
 
-        // Cabeçalho do Artigo
-        const headerDiv = document.createElement('div');
-        headerDiv.style.cssText = "padding: 15px; border-bottom: 2px solid var(--accent-color); margin-bottom: 10px; background: rgba(255,255,255,0.02);";
-        headerDiv.innerHTML = `<h2 style="margin:0; font-size:1.1em; color:white;">${artigo.titulo}</h2>`;
-        listElement.appendChild(headerDiv);
+                    artigo.conteudo.forEach((bloco) => {
+                        const div = document.createElement('div');
+                        div.style.cssText = "padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; transition: background 0.2s;";
+                        
+                        let color = "var(--text-color)";
+                        let weight = "normal";
+                        let prefix = "";
 
-        // Renderizar cada parágrafo/pergunta
-        artigo.conteudo.forEach((bloco) => {
-            const div = document.createElement('div');
-            div.style.cssText = "padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; transition: background 0.2s;";
-            
-            let color = "var(--text-color)";
-            let weight = "normal";
-            let prefix = "";
+                        if (bloco.tipo === 'pergunta') {
+                            color = "#e67e22"; weight = "bold"; prefix = "❓ ";
+                        } else if (bloco.tipo === 'subtema') {
+                            color = "#4a90e2"; weight = "bold"; div.style.marginTop = "10px";
+                        }
 
-            if (bloco.tipo === 'pergunta') {
-                color = "#e67e22"; // Laranja para perguntas
-                weight = "bold";
-                prefix = "❓ ";
-            } else if (bloco.tipo === 'subtema') {
-                color = "#4a90e2"; // Azul para subtemas
-                weight = "bold";
-                div.style.marginTop = "10px";
+                        div.innerHTML = `<div style="color:${color}; font-weight:${weight}; line-height:1.5;">${prefix}${bloco.texto}</div>`;
+
+                        div.onclick = () => {
+                            listElement.querySelectorAll('div').forEach(el => el.style.backgroundColor = "");
+                            div.style.backgroundColor = "rgba(74, 144, 226, 0.15)";
+
+                            // MANDAR PARA A 4ª COLUNA (Com o 7º parâmetro: artigo.referencia)
+                            window.openBookParagraphPanel(
+                                'sentinela', 
+                                artigo.titulo, 
+                                lastNav.mesNum, 
+                                bloco.numero_ref || '0', 
+                                bloco.texto, 
+                                false, 
+                                artigo.referencia 
+                            ); 
+                        };
+                        listElement.appendChild(div);
+                    });
+                } catch (err) {
+                    listElement.innerHTML = '<li style="padding:20px; color:red;">Erro ao carregar conteúdo.</li>';
+                }
+                return;
             }
-
-            // --- ALTERAÇÃO AQUI: Removemos a variável 'num' que injetava o numero_ref no HTML ---
-            div.innerHTML = `<div style="color:${color}; font-weight:${weight}; line-height:1.5;">${prefix}${bloco.texto}</div>`;
-
-            div.onclick = () => {
-                listElement.querySelectorAll('div').forEach(el => el.style.backgroundColor = "");
-                div.style.backgroundColor = "rgba(74, 144, 226, 0.15)";
-
-                // A referência (numero_ref) continua a ser enviada para a 4ª coluna 
-                // apenas para organização interna, mas não aparece no texto da coluna 2.
-                openBookParagraphPanel('sentinela', artigo.titulo, lastNav.mesNum, bloco.numero_ref || '0', bloco.texto, false); 
-            };
-
-            listElement.appendChild(div);
-        });
-
-        // Restaurar scroll se houver memória
-        if (window.shouldRestoreBookScroll) {
-            const scrollContainer = document.getElementById('middle-views-container');
-            if (scrollContainer) {
-                setTimeout(() => {
-                    scrollContainer.scrollTop = booksStateMemory.scrollTop;
-                    window.shouldRestoreBookScroll = false;
-                }, 50);
-            }
-        }
-
-    } catch (err) {
-        listElement.innerHTML = '<li style="padding:20px; color:red;">Erro ao carregar conteúdo do artigo.</li>';
-    }
-    return;
-}
 
             // NÍVEL 2: LISTA DE CAPÍTULOS (Dentro do Livro)
            else if (lastNav.type === 'book-toc') {
@@ -52984,8 +52923,8 @@ document.getElementById('references-target-btn').addEventListener('click', () =>
                 }
             }).join('<hr style="border:0; border-top:1px solid rgba(255,255,255,0.05); margin: 15px 0;">');
 
-            await openBookParagraphPanel(bookId, finalBookName, chapter, paragraph, finalHTML, true);
-            updateSaveStatus('saved');
+             await openBookParagraphPanel(bookId, finalBookName, chapter, paragraph, finalHTML, true, artigoEncontrado.referencia);
+    updateSaveStatus('saved');
         } else {
             throw new Error("Parágrafos " + paragraph + " não encontrados.");
         }
