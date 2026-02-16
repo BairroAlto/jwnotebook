@@ -2974,13 +2974,14 @@ async function showArticles(sigla, year, mesNum, mesNome) {
 
         // 2. Prepara os dados globais da publicação
         currentBookData = {
-            titulo: `${SIGLAS_PUBLICACOES[sigla]} - ${mesNome}/${year}`,
-            capitulos: artigos.map(a => ({
-                capitulo: a.referencia.split(' ').pop(), // Ex: "pp. 2-7"
-                titulo: a.titulo,
-                conteudo: a.conteudo
-            }))
-        };
+          titulo: `${SIGLAS_PUBLICACOES[sigla]} - ${mesNome}/${year}`,
+    capitulos: artigos.map(a => ({
+        capitulo: a.referencia.split(' ').pop(),
+        titulo: a.titulo,
+        conteudo: a.conteudo,
+        referencia: a.referencia // <--- ADICIONA ESTA LINHA AQUI
+    }))
+};
 
         // 3. Gera o ID Complexo para o Firestore (Ex: W24_05)
         const complexId = sigla.toUpperCase() + year.toString().slice(-2) + "_" + mesNum;
@@ -3044,56 +3045,36 @@ window.openSidePanel = async (pNum) => {
     tabs.style.display = 'flex'; 
     activeParaNum = pNum;
 
-    // Gerar IDs de contexto
-    const fullRef = `${currentPubId} ${currentChapter}:${pNum}`;
-    const qId = `${currentPubId}_Q${pNum}`; // ID da pergunta anexa
-    panel.dataset.currentRef = fullRef;
+    // --- LÓGICA DE UNIFICAÇÃO (CORREÇÃO) ---
+    const isMagazine = (currentSectionId === 'publicacoes');
+    
+    // Vamos buscar os dados do capítulo/artigo atual
+    const cap = currentBookData.capitulos[currentChapterIdx];
+    
+    // Se for revista, usamos a referencia (w25...) em vez do titulo (A Sentinela...)
+    const fullName = isMagazine 
+        ? `${cap.referencia} - Parágrafo ${pNum}` 
+        : `${currentPubId} ${currentChapter}:${pNum}`;
 
-    // Título do Painel
+    // Esta é a chave que liga ao Firebase
+    panel.dataset.currentRef = fullName;
+
+    // Atualiza o título visual no topo do painel
     titleContainer.innerHTML = `
-        <span style="color: var(--accent-color); font-weight: bold;">Parágrafo ${pNum}</span>
-        
+        <span style="color: var(--accent-color); font-weight: bold;">🎯 ${fullName}</span>
         <div style="display:flex; align-items:center;">
-            <!-- Botão Nova Nota -->
-            <button class="btn-header-create" onclick="window.prepareNoteFromPanel('${pNum}')" 
-                    title="Nova Nota">
-                + 📝
-            </button>
-                        <!-- Botão X-Ray -->
-            <button class="btn-header-create" onclick="window.runParaXRay('${pNum}')" 
-                    style="background: linear-gradient(135deg, #8e44ad, #9b59b6); margin-right:5px;" 
-                    title="X-Ray Profundo">
-                + 📟
-            </button>
+            <button class="btn-header-create" onclick="window.prepareNoteFromPanel('${pNum}')" title="Nova Nota">+ 📝</button>
+            <button class="btn-header-create" onclick="window.runParaXRay('${pNum}')" style="background: linear-gradient(135deg, #8e44ad, #9b59b6); margin-right:5px;" title="X-Ray Profundo">+ 📟</button>
         </div>
     `;
 
-    // Lógica da Aba Compartilhada (💬)
-    const sharedTabBtn = document.getElementById('tab-shared-btn') || createSharedTabBtn();
-    sharedTabBtn.style.display = 'none'; // Escondida por padrão
-
-    if (userSettings.sharedAnswers) {
-        const { collection, query, where, getDocs, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        
-        // Procurar se existe pelo menos uma resposta pública que não seja a minha
-        const q = query(
-            collection(db, 'pastas'),
-            where('qId', '==', qId),
-            where('isPublic', '==', true),
-            where('userId', '!=', auth.currentUser.uid),
-            limit(1)
-        );
-        
-        const sharedSnap = await getDocs(q);
-        if (!sharedSnap.empty) {
-            sharedTabBtn.style.display = 'inline-block'; // Só aparece se houver dados
-        }
-    }
-
-    // Abrir por defeito na aba 🧩
+    // Abrir por defeito na aba 🧩 (Quadro/Puzzle)
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector('[data-ref-tab="puzzle"]').classList.add('active');
-    window.renderLibraryRefTab('puzzle');
+    const puzzleTab = document.querySelector('[data-ref-tab="puzzle"]');
+    if (puzzleTab) {
+        puzzleTab.classList.add('active');
+        window.renderLibraryRefTab('puzzle');
+    }
 };
 
 // Função auxiliar para criar o botão da aba caso não exista no HTML
@@ -3818,24 +3799,25 @@ if (rawHtml.includes("question-mode")) {
                 card.style.borderLeftColor = accentColor;
                 
                 // 2. Construir o HTML interno (Sem onclick no título)
-                card.innerHTML = `
-                    <div class="card-menu-container">
-                        <div class="card-menu-btn" onclick="window.toggleCardMenu(event)">••</div>
-                        <div class="card-dropdown">
-                            <button onclick="window.openNoteFromBoard('${item.noteId}')">👁️ Abrir Nota Inteira</button>
-                        </div>
-                    </div>
-                    
-                    <div class="card-category-label" style="color: ${accentColor}">
-                        ${icon} ${categoryLabel}
-                    </div>
-                    
-                    <span class="card-note-title">${item.noteName || 'Sem Título'}</span>
-                    
-                    <div class="card-snippet">
-                        ${cleanMicaContent(item.snippet)}
-                    </div>
-                `;
+              card.innerHTML = `
+    <div class="card-menu-container">
+        <div class="card-menu-btn" onclick="window.toggleCardMenu(event)">••</div>
+        <div class="card-dropdown">
+            <!-- NOVA OPÇÃO DE REMOVER -->
+            <button class="btn-remove-card" onclick="window.deleteLibraryCard(${index})">🗑️ Remover Nota</button>
+        </div>
+    </div>
+    
+    <div class="card-category-label" style="color: ${accentColor}">
+        ${icon} ${categoryLabel}
+    </div>
+    
+    <span class="card-note-title">${item.noteName || 'Sem Título'}</span>
+    
+    <div class="card-snippet">
+        ${cleanMicaContent(item.snippet)}
+    </div>
+`;
                 content.appendChild(card);
             });
         }
@@ -4611,8 +4593,6 @@ function buildVerseHTML(data, num) {
 
 function cleanMicaContent(snippet) {
     if (!snippet) return "";
-    
-    // 1. Descodifica o conteúdo (trata casos de codificação URI)
     let decoded = "";
     try {
         decoded = decodeURIComponent(snippet);
@@ -4620,47 +4600,16 @@ function cleanMicaContent(snippet) {
         decoded = snippet;
     }
 
-    // 2. Cria um elemento temporário para manipular o HTML via DOM
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = decoded;
 
-    // 3. REMOÇÃO DE ELEMENTOS DE INTERFACE:
-    // Remove barras de ferramentas, botões, campos de título e scripts
-    const elementsToRemove = [
-        '.mini-note-toolbar', 
-        '.mini-note-title-input', 
-        'button', 
-        'textarea',
-        'script',
-        'style'
-    ];
+    // Remove elementos de lixo do editor
+    const toRemove = ['.mini-note-toolbar', '.mini-note-title-input', 'button', 'textarea', 'script', 'style'];
+    toRemove.forEach(s => tempDiv.querySelectorAll(s).forEach(el => el.remove()));
 
-    elementsToRemove.forEach(selector => {
-        tempDiv.querySelectorAll(selector).forEach(el => el.remove());
-    });
-
-    // 4. EXTRAÇÃO DO CONTEÚDO REAL:
-    // Tentamos primeiro o div específico do conteúdo, se não houver, pegamos no texto geral
-    const contentDiv = tempDiv.querySelector('.mini-note-content');
-    let text = contentDiv ? contentDiv.innerText : tempDiv.innerText;
-
-    // 5. LIMPEZA PROFUNDA DE TEXTO:
-    // - Remove emojis de controle internos do sistema
-    // - Substitui múltiplas quebras de linha ou espaços por um único espaço
-    // - Corta espaços em branco no início e no fim
-    const systemIconsRegex = /[🔐🔺🔻⚡🧬🎨📋🗑️]/gu;
-    
-    text = text.replace(systemIconsRegex, '')
-               .replace(/\s+/g, ' ') // A chave para compactar o card: remove espaços extras
-               .trim();
-
-    // 6. TRATAMENTO DE CONTEÚDO VAZIO:
-    // Se após a limpeza não sobrar nada relevante
-    if (!text || text === " " || text.length === 0) {
-        return ""; 
-    }
-
-    return text;
+    let text = tempDiv.innerText;
+    // Limpa emojis de sistema e espaços excessivos
+    return text.replace(/[🔐🔺🔻⚡🧬🎨📋🗑️]/gu, '').replace(/\s+/g, ' ').trim();
 }
 
 window.switchLibraryTab = (btn, tabName) => {
@@ -6142,6 +6091,51 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
+
+window.deleteLibraryCard = async (index) => {
+    const panel = document.getElementById('side-panel');
+    const refName = panel.dataset.currentRef; // Ex: "w25 dezembro pp. 2-7 - Parágrafo 1"
+
+    // 1. Confirmação
+    if (!confirm("Remover? Deseja retirar esta nota deste parágrafo?")) return;
+
+    try {
+        const { doc, getDoc, updateDoc, query, collection, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+
+        // 2. Identificar a coleção correta
+        const isBible = refName.includes(':') && !refName.includes('pp.');
+        const targetColl = isBible ? 'textosbiblicos' : 'livros';
+
+        // 3. Procurar o documento do parágrafo no Firebase
+        const q = query(
+            collection(db, targetColl), 
+            where('nome', '==', refName), 
+            where('userId', '==', auth.currentUser.uid)
+        );
+        const snap = await getDocs(q);
+
+        if (!snap.empty) {
+            const docSnapshot = snap.docs[0];
+            const data = docSnapshot.data();
+            let board = data.puzzleBoard || [];
+
+            // 4. Remover o item do array pelo índice
+            board.splice(index, 1);
+
+            // 5. Atualizar o Firebase
+            await updateDoc(doc(db, targetColl, docSnapshot.id), {
+                puzzleBoard: board
+            });
+
+            // 6. Feedback visual: Recarregar a aba atual
+            window.renderLibraryRefTab('puzzle');
+            console.log("✅ Referência removida com sucesso.");
+        }
+    } catch (e) {
+        console.error("❌ Erro ao remover cartão da biblioteca:", e);
+        alert("Erro ao remover a nota.");
+    }
+};
 
 
 function escapeRegExp(string) { return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
