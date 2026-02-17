@@ -2745,36 +2745,26 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
         const qId = window.activeQuestionId; 
         const pNum = qId.split('_Q').pop(); 
         
-        // 1. LIMPEZA PROFUNDA DE TEXTO
+        // Limpeza de texto
         const contentText = editor.innerText.trim(); 
         let contentHtml = editor.innerHTML.trim();
-
-        if (contentText.length === 0) {
-            contentHtml = ""; 
-        }
+        if (contentText.length === 0) contentHtml = ""; 
         
-        // 2. Determinar a COR VISUAL
+        // Cor Visual
         let visualColor = 'none'; 
         let coresArray = [];
-
         if (contentHtml === "") {
             visualColor = 'none';
-            coresArray = []; 
-        } 
-        else if (!window.selectedColorHex) {
+        } else if (!window.selectedColorHex) {
             visualColor = '#555';
-            coresArray = [];
-        } 
-        else {
+        } else {
             visualColor = window.selectedColorHex;
             coresArray = [window.selectedColorHex.toUpperCase()];
         }
 
-        // Recuperar user name
         const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
         const userName = userSnap.exists() ? (userSnap.data().nome || "Utilizador") : "Anónimo";
 
-        // Preparar HTML do wrapper
         const boxHtml = `<div class="mini-note-wrapper question-mode" id="box_${Date.now()}" data-highlight="${window.selectedColorHex || ''}" contenteditable="false"><textarea class="mini-note-title-input">${qText}</textarea><div class="mini-note-content" contenteditable="true">${contentHtml}</div></div>`;
 
         const noteData = {
@@ -2785,13 +2775,17 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
             qId: qId,
             userId: auth.currentUser.uid,
             userName: userName,
-            isPublic: userSettings.sharedAnswers, // <--- CORREÇÃO AQUI (era isShared)
+            isPublic: userSettings.sharedAnswers, 
             estado: 'ativa',
+            
+            // --- NOVO CAMPO OBRIGATÓRIO ---
+            especial: 'comentario', 
+            // -----------------------------
+
             coresUsadas: coresArray, 
             ultimaedicao: serverTimestamp()
         };
 
-        // 3. GRAVAR NA BASE DE DADOS
         if (docId && docId !== "null") {
             await updateDoc(doc(db, 'pastas', docId), noteData);
         } else if (contentHtml.length > 0) { 
@@ -2799,12 +2793,10 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
             await addDoc(collection(db, 'pastas'), noteData);
         }
 
-        // 4. ATUALIZAÇÃO VISUAL IMEDIATA
         window.currentQuestionsCache[pNum] = visualColor;
         window.paintQuestionDots();
 
         btn.textContent = "✅ GUARDADO";
-        
         setTimeout(() => { 
             btn.disabled = false; 
             btn.textContent = docId !== "null" ? "ATUALIZAR RESPOSTA" : "GRAVAR RESPOSTA"; 
@@ -2816,6 +2808,8 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
         alert("Erro ao gravar resposta.");
     }
 };
+
+       
 
 // --- 6. GESTÃO DE DADOS DO UTILIZADOR (HIGHLIGHTS) ---
 
@@ -3900,6 +3894,11 @@ window.renderLibraryRefTab = async function(tab) {
     if (tab === 'shared') {
         content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
         const qId = `${currentPubId}_Q${activeParaNum}`;
+
+         // --- DEBUG LOG ---
+    console.log("🔍 A procurar respostas partilhadas:");
+    console.log("👉 ID Gerado para busca:", qId);
+    console.log("👉 O meu UID:", auth.currentUser.uid);
 
         try {
             const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
@@ -6521,10 +6520,8 @@ window.saveLibrarySettings = async () => {
     const btn = document.getElementById('btn-save-settings');
     const originalText = btn ? btn.innerHTML : "GRAVAR DEFINIÇÕES";
 
-    // 1. Ativar Loading no Botão (Mini Roda)
     if (btn) {
         btn.disabled = true;
-        // Reutilizamos a classe .global-spinner mas forçamos tamanho pequeno
         btn.innerHTML = `<div class="global-spinner" style="width:18px; height:18px; border-width:2px; display:inline-block; vertical-align:middle; margin-right:8px;"></div> A gravar...`;
     }
 
@@ -6537,13 +6534,20 @@ window.saveLibrarySettings = async () => {
     try {
         const { doc, setDoc, collection, query, where, getDocs, writeBatch } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        // 2. Gravar definição no perfil
+        // 1. Gravar preferência no perfil
         await setDoc(doc(db, 'configuracoes', myUid), { 
             sharedAnswers: isSharedActive 
         }, { merge: true });
 
-        // 3. Atualizar todas as notas em lote (Batch)
-        const q = query(collection(db, 'pastas'), where('userId', '==', myUid));
+        // 2. Atualizar APENAS documentos marcados como 'comentario'
+        const q = query(
+            collection(db, 'pastas'), 
+            where('userId', '==', myUid),
+            // --- FILTRO DE SEGURANÇA ---
+            where('especial', '==', 'comentario') 
+            // ---------------------------
+        );
+        
         const snap = await getDocs(q);
         const batch = writeBatch(db);
         
@@ -6553,17 +6557,13 @@ window.saveLibrarySettings = async () => {
         
         await batch.commit();
 
-        // 4. Atualizar estado local
         userSettings.sharedAnswers = isSharedActive;
         localStorage.setItem('sharedAnswersActive', isSharedActive);
         
-        // 5. Feedback de Sucesso no Botão
         if (btn) btn.innerHTML = "✅ GUARDADO";
 
-        // 6. Fechar modal automaticamente após 1 segundo
         setTimeout(() => {
             document.getElementById('settings-modal').style.display = 'none';
-            // Restaurar botão para o próximo uso
             if (btn) {
                 btn.innerHTML = originalText;
                 btn.disabled = false;
