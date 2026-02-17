@@ -2736,76 +2736,94 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
     const editor = document.getElementById('flash-editor');
     const qText = decodeURIComponent(encodedQText);
     
-    if (btn.disabled) return;
+    if (!btn || btn.disabled) return;
     btn.disabled = true;
 
     try {
         const { collection, addDoc, doc, updateDoc, serverTimestamp, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
-        const qId = window.activeQuestionId; 
-        const pNum = qId.split('_Q').pop(); 
+        // 1. GERAR O NOME COMPLETO (ÂNCORA UNIFICADA)
+        // Usamos o activeParaNum (parágrafo atual) para criar o nome descritivo
+        const pNum = window.activeParaNum;
+        const isMagazine = (currentSectionId === 'publicacoes');
+        const cap = currentBookData.capitulos[currentChapterIdx];
         
-        // Limpeza de texto
+        const fullName = isMagazine 
+            ? `${cap.referencia} - Parágrafo ${pNum}` 
+            : `${currentPubId} ${currentChapter}:${pNum}`;
+
+        // 2. LIMPEZA E FORMATAÇÃO DO CONTEÚDO
         const contentText = editor.innerText.trim(); 
         let contentHtml = editor.innerHTML.trim();
+        
+        // Se o utilizador apagou tudo, limpamos o HTML
         if (contentText.length === 0) contentHtml = ""; 
         
-        // Cor Visual
+        // 3. DEFINIÇÃO DA COR VISUAL (Para o pontinho no leitor)
         let visualColor = 'none'; 
         let coresArray = [];
-        if (contentHtml === "") {
-            visualColor = 'none';
-        } else if (!window.selectedColorHex) {
-            visualColor = '#555';
-        } else {
-            visualColor = window.selectedColorHex;
-            coresArray = [window.selectedColorHex.toUpperCase()];
+        
+        if (contentHtml !== "") {
+            if (!window.selectedColorHex) {
+                visualColor = '#555'; // Cinza se tiver texto mas nenhuma cor escolhida
+            } else {
+                visualColor = window.selectedColorHex;
+                coresArray = [window.selectedColorHex.toUpperCase()];
+            }
         }
 
+        // 4. OBTER DADOS DO UTILIZADOR (Para o comentário público)
         const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
         const userName = userSnap.exists() ? (userSnap.data().nome || "Utilizador") : "Anónimo";
 
-        const boxHtml = `<div class="mini-note-wrapper question-mode" id="box_${Date.now()}" data-highlight="${window.selectedColorHex || ''}" contenteditable="false"><textarea class="mini-note-title-input">${qText}</textarea><div class="mini-note-content" contenteditable="true">${contentHtml}</div></div>`;
+        // 5. CONSTRUIR O WRAPPER HTML (Igual ao formato do NoteBook)
+        const boxHtml = `
+            <div class="mini-note-wrapper question-mode" id="box_${Date.now()}" data-highlight="${window.selectedColorHex || ''}" contenteditable="false">
+                <textarea class="mini-note-title-input">${qText}</textarea>
+                <div class="mini-note-content" contenteditable="true">${contentHtml}</div>
+            </div>`;
 
+        // 6. PREPARAR OBJETO DE DADOS
         const noteData = {
-            nome: qText,
+            nome: fullName,             // A referência completa (w25 janeiro...)
+            pergunta_original: qText,   // Texto da pergunta para referência
             conteudo: boxHtml,
             tipo: 'nota',
-            oque: 'back',
-            qId: qId,
+            oque: 'back',               // Define que vai para a Mochila/Bag
             userId: auth.currentUser.uid,
             userName: userName,
-            isPublic: userSettings.sharedAnswers, 
+            isPublic: userSettings.sharedAnswers, // Define se outros podem ver (aba 💬)
             estado: 'ativa',
-            
-            // --- NOVO CAMPO OBRIGATÓRIO ---
-            especial: 'comentario', 
-            // -----------------------------
-
+            especial: 'comentario',      // Filtro essencial para separar notas de comentários
             coresUsadas: coresArray, 
             ultimaedicao: serverTimestamp()
         };
 
+        // 7. GRAVAR NO FIRESTORE
         if (docId && docId !== "null") {
+            // Atualizar resposta existente
             await updateDoc(doc(db, 'pastas', docId), noteData);
         } else if (contentHtml.length > 0) { 
+            // Criar nova resposta apenas se houver conteúdo
             noteData.createdAt = serverTimestamp();
             await addDoc(collection(db, 'pastas'), noteData);
         }
 
+        // 8. ATUALIZAR INTERFACE (Pintar os pontinhos no leitor)
         window.currentQuestionsCache[pNum] = visualColor;
         window.paintQuestionDots();
 
+        // Feedback de sucesso
         btn.textContent = "✅ GUARDADO";
         setTimeout(() => { 
             btn.disabled = false; 
-            btn.textContent = docId !== "null" ? "ATUALIZAR RESPOSTA" : "GRAVAR RESPOSTA"; 
+            btn.textContent = (docId && docId !== "null") ? "ATUALIZAR RESPOSTA" : "GRAVAR RESPOSTA"; 
         }, 2000);
 
     } catch (e) {
-        console.error(e);
+        console.error("Erro ao gravar resposta:", e);
         btn.disabled = false;
-        alert("Erro ao gravar resposta.");
+        alert("Erro ao gravar resposta. Verifique a sua ligação.");
     }
 };
 
@@ -3202,6 +3220,7 @@ window.openSidePanel = async (pNum) => {
     tabsContainer.style.display = 'flex'; 
     window.activeParaNum = pNum;
 
+    // 1. GERAR O NOME UNIFICADO (ÂNCORA)
     const isMagazine = (currentSectionId === 'publicacoes');
     const cap = currentBookData.capitulos[currentChapterIdx];
     
@@ -3209,15 +3228,15 @@ window.openSidePanel = async (pNum) => {
         ? `${cap.referencia} - Parágrafo ${pNum}` 
         : `${currentPubId} ${currentChapter}:${pNum}`;
 
-    panel.dataset.currentRef = fullName;
+    panel.dataset.currentRef = fullName; // Guarda para as abas usarem
 
+    // 2. TÍTULO DO PAINEL
     const displayTitle = isMagazine ? `Parágrafo ${pNum}` : `${currentChapter}:${pNum}`;
-
-    // Detecção de Bíblia
+    
+    // Detecção de Bíblia (X-Ray)
     const textoParaAnalisar = paragraphEl.innerText;
     const bibleRegex = /\b((?:[123]\s)?[A-Z][a-zçáéíóú]+\.?\s+\d+[:.]\d+)/;
     const temBiblia = bibleRegex.test(textoParaAnalisar);
-
     const btnXrayHTML = temBiblia ? 
         `<button class="btn-header-create" onclick="window.runParaXRay('${pNum}')" style="background: linear-gradient(135deg, #8e44ad, #9b59b6); margin-right:5px;" title="X-Ray Profundo">+ 📟</button>` 
         : '';
@@ -3230,29 +3249,27 @@ window.openSidePanel = async (pNum) => {
         </div>
     `;
 
-    // --- LÓGICA DE VERIFICAÇÃO DE RESPOSTAS PÚBLICAS (CORES) ---
+    // 3. VERIFICAR RESPOSTAS PÚBLICAS (Âncora por Nome)
     const oldSharedBtn = document.getElementById('tab-shared-btn');
     if (oldSharedBtn) oldSharedBtn.remove();
 
     if (userSettings.sharedAnswers) {
-        // 1. Criar o ID da pergunta
-        const qId = `${currentPubId}_Q${pNum}`;
         const myUid = auth.currentUser.uid;
-
-        // 2. Consultar se existe pelo menos uma resposta de outro user
         const { collection, query, where, getDocs, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // PESQUISA PELO NOME DESCRITIVO
         const qPublic = query(
             collection(db, 'pastas'),
-            where('qId', '==', qId),
+            where('nome', '==', fullName),
             where('isPublic', '==', true),
             where('userId', '!=', myUid),
+            where('especial', '==', 'comentario'),
             limit(1)
         );
         
         const publicSnap = await getDocs(qPublic);
         const hasPublicAnswers = !publicSnap.empty;
 
-        // 3. Criar o botão com a cor condicional
         const btnShared = document.createElement('button');
         btnShared.className = 'tab-btn';
         btnShared.id = 'tab-shared-btn';
@@ -3260,11 +3277,12 @@ window.openSidePanel = async (pNum) => {
         btnShared.title = 'Respostas da Comunidade';
         btnShared.innerHTML = '💬';
         
-        // Se houver respostas, fica amarelo. Se não, fica branco.
-        btnShared.style.color = hasPublicAnswers ? '#f1c40f' : '#ffffff';
-        // Se usar filtro para o emoji:
+        // Fica Amarelo se houver respostas de outros
         if (hasPublicAnswers) {
-            btnShared.style.filter = "drop-shadow(0 0 2px rgba(241, 196, 15, 0.5))";
+            btnShared.style.color = '#f1c40f';
+            btnShared.style.filter = "drop-shadow(0 0 3px rgba(241, 196, 15, 0.6))";
+        } else {
+            btnShared.style.color = '#ffffff';
         }
 
         btnShared.onclick = () => {
@@ -3276,11 +3294,10 @@ window.openSidePanel = async (pNum) => {
         tabsContainer.appendChild(btnShared);
     }
 
-    // Voltar à aba Puzzle por padrão
+    // Por padrão, abre a aba Puzzle (Notas Pessoais)
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     const puzzleTab = document.querySelector('[data-ref-tab="puzzle"]');
     if (puzzleTab) puzzleTab.classList.add('active');
-
     window.renderLibraryRefTab('puzzle');
 };
 
@@ -3858,247 +3875,151 @@ window.renderLibraryRefTab = async function(tab) {
     const panel = document.getElementById('side-panel');
     const content = document.getElementById('side-content');
     const myUid = auth.currentUser.uid;
+    const fullName = panel.dataset.currentRef; // Âncora: "w25 janeiro..."
     
-    // 1. GESTÃO DE ESTADO E SCROLL
     if (content.dataset.currentTab === 'enxertos') {
         globalEnxertoScroll = content.scrollTop;
     }
     content.dataset.currentTab = tab;
 
-    // Estilos de fundo para abas de leitura/profunda
+    // Configuração de estilo para abas de leitura
     if (['para-xray', 'enxertos', 'bibletext', 'shared'].includes(tab)) {
         content.classList.add('xray-active');
     } else {
         content.classList.remove('xray-active');
     }
 
-    // --- ABAS DE CACHE (X-RAY E ENXERTOS) ---
+    // --- CASE: ENXERTOS ---
     if (tab === 'enxertos') {
         content.innerHTML = cacheSegmentoHTML || '<div class="xray-empty-msg">Nenhum artigo aberto.</div>';
         setTimeout(() => { content.scrollTop = globalEnxertoScroll; }, 50);
         return;
     }
+
+    // --- CASE: X-RAY ---
     if (tab === 'para-xray') {
         content.innerHTML = cacheXrayHTML || '<div class="xray-empty-msg">Scanner vazio.</div>';
         return;
     }
 
-    // --- ABA BÍBLIA ---
+    // --- CASE: BÍBLIA ---
     if (tab === 'bibletext') {
-        const ref = panel.dataset.currentRef;
-        window.renderBibleTextInPanel(ref);
+        window.renderBibleTextInPanel(fullName);
         return;
     }
 
-    // --- ABA RESPOSTAS COMPARTILHADAS (NOVO 💬) ---
+    // --- CASE: COMPARTILHADOS (💬) ---
     if (tab === 'shared') {
         content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
-        const qId = `${currentPubId}_Q${activeParaNum}`;
-
-
         try {
             const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
             
-            // Procura respostas públicas de outros usuários para esta pergunta
+            // BUSCA PELO NOME UNIFICADO
             const q = query(
                 collection(db, 'pastas'),
-                where('qId', '==', qId),
+                where('nome', '==', fullName),
                 where('isPublic', '==', true),
                 where('userId', '!=', myUid),
-                 where('especial', '==', 'comentario')
+                where('especial', '==', 'comentario')
             );
 
             const snap = await getDocs(q);
-            content.innerHTML = '<h4 style="color:#888; font-size:0.7rem; text-transform:uppercase; margin: 10px 0 15px 15px; letter-spacing:1px;">Estudo da Comunidade</h4>';
+            content.innerHTML = '<h4 style="color:#888; font-size:0.7rem; text-transform:uppercase; margin: 15px 0 15px 5px; letter-spacing:1px; border-bottom:1px solid #333; padding-bottom:5px;">Comentários da Comunidade</h4>';
 
             if (snap.empty) {
-                content.innerHTML += '<div class="xray-empty-msg">Ainda não há respostas compartilhadas para esta pergunta.</div>';
+                content.innerHTML += '<div class="xray-empty-msg">Ainda não há comentários públicos para este parágrafo.</div>';
                 return;
             }
 
             snap.forEach(docSnap => {
                 const data = docSnap.data();
+                const userColor = getUserColor(data.userId); // Função que gera cor pelo ID
                 const card = document.createElement('div');
                 card.className = 'detail-card';
-                card.style.borderLeftColor = '#9b59b6'; // Cor Roxa para diferenciar do usuário
+                card.style.cssText = `border-left: 4px solid ${userColor}; background: #1a1a1d; padding: 12px; margin-bottom: 10px; text-align: left; display: block;`;
                 
                 card.innerHTML = `
-                    <div style="font-size:0.65rem; color:#9b59b6; font-weight:800; margin-bottom:6px; display:flex; align-items:center; gap:5px;">
-                        <span>👤</span> ${data.userName || "Utilizador"}
+                    <div style="font-size:0.75rem; color:${userColor}; font-weight:800; margin-bottom:8px; display:flex; align-items:center; gap:6px;">
+                        <span style="font-size:1rem;">💬</span> ${data.userName || "Anónimo"}
                     </div>
-                    <div class="card-snippet" style="color:#cecece; font-style:italic; line-height:1.5;">
-                        "${cleanMicaContent(data.conteudo)}"
+                    <div class="card-snippet" style="color:#cecece; font-size:0.9rem; line-height:1.5; white-space: pre-wrap;">
+                        ${cleanMicaContent(data.conteudo)}
                     </div>
                 `;
                 content.appendChild(card);
             });
         } catch (e) {
             console.error("Erro Shared:", e);
-            content.innerHTML = '<div class="xray-empty-msg">Erro ao carregar respostas compartilhadas.</div>';
+            content.innerHTML = '<div class="xray-empty-msg">Erro ao carregar comentários.</div>';
         }
         return;
     }
 
-    // --- CARREGAMENTO DE DADOS PESSOAIS (🧩 ⚡ 📼) ---
-    const refName = panel.dataset.currentRef;
-    if (!refName) return;
-
+    // --- CASOS: PUZZLE (🧩), LINKS (⚡), DOSSIÊ (📼) ---
+    if (!fullName) return;
     content.innerHTML = '<div style="padding:50px; text-align:center;"><div class="global-spinner"></div></div>';
 
     try {
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        
-        // DECISÃO CRÍTICA: De qual coleção puxamos?
-        // Se houver um ":" no nome, é quase certo que é um versículo bíblico
-        const isBible = refName.includes(':') && !refName.includes('pp.'); 
+        const isBible = fullName.includes(':') && !fullName.includes('pp.'); 
         const targetCollection = isBible ? 'textosbiblicos' : 'livros';
 
         const q = query(collection(db, targetCollection), 
-                        where('nome', '==', refName), 
-                        where('userId', '==', auth.currentUser.uid));
+                        where('nome', '==', fullName), 
+                        where('userId', '==', myUid));
         
         const snap = await getDocs(q);
-
         if (snap.empty) {
-            content.innerHTML = `<div class="xray-empty-msg">Sem registos em "${refName}".</div>`;
+            content.innerHTML = `<div class="xray-empty-msg">Sem registos pessoais.</div>`;
             return;
         }
 
         const data = snap.docs[0].data();
         content.innerHTML = ''; 
 
-        // 🧩 ABA PUZZLE (NOTAS FLASH)
-       if (tab === 'puzzle') {
+        if (tab === 'puzzle') {
             const board = data.puzzleBoard || [];
-            if(board.length === 0) { content.innerHTML = '<div class="xray-empty-msg">Sem notas.</div>'; return; }
-            
+            if(board.length === 0) { content.innerHTML = '<div class="xray-empty-msg">Sem notas no Quadro.</div>'; return; }
             board.forEach((item, index) => {
-                // 1. Identificar o Tipo de Card pelo Snippet
-             let rawHtml = "";
-try { rawHtml = decodeURIComponent(item.snippet); } catch(e) { rawHtml = item.snippet; }
-
-const parser = new DOMParser();
-const docSnippet = parser.parseFromString(rawHtml, 'text/html');
-const wrapper = docSnippet.querySelector('.mini-note-wrapper');
-
-// 1. Valores Padrão
-let categoryLabel = "SUBNOTA";
-let icon = "📘";
-let accentColor = item.noteColor || "#3498db";
-
-// 2. Detecção por Classe ou Atributo data-focus
-if (rawHtml.includes("question-mode")) {
-    categoryLabel = "QUESTÃO";
-    icon = "📗";
-    accentColor = "#2ecc71";
-} else if (wrapper && wrapper.getAttribute('data-focus')) {
-    const focus = wrapper.getAttribute('data-focus').toUpperCase();
-    categoryLabel = focus; 
-    icon = "📙";
-    // Mapear cores de foco se desejar
-    if(focus === "DILEMA") accentColor = "#e67e22";
-    if(focus === "PEROLA") accentColor = "#f1c40f";
-} else if (rawHtml.includes('consultor-mode')) {
-    categoryLabel = "CONSULTOR";
-    icon = "📕";
-    accentColor = "#e74c3c";
-}
-
                 const card = document.createElement('div');
                 card.className = 'detail-card';
-                card.style.borderLeftColor = accentColor;
-                const isLibraryNote = item.isLibraryNote === true;
-
-                // 2. Construir o HTML interno (Sem onclick no título)
-              card.innerHTML = `
- <div class="card-menu-container">
-        <div class="card-menu-btn" onclick="window.toggleCardMenu(event)">••</div>
-        <div class="card-dropdown">
-            ${isLibraryNote ? `<button onclick="window.openEditCard('${refName}', ${index})">🖋️ Editar</button>` : ''}
-            
-            <button class="btn-remove-card" onclick="window.deleteLibraryCard(${index})">🗑️ Remover</button>
-        </div>
-    </div>
-    
-    <div class="card-category-label" style="color: ${accentColor}">
-        ${icon} ${categoryLabel}
-    </div>
-    
-    <span class="card-note-title">${item.noteName || 'Sem Título'}</span>
-    
-    <div class="card-snippet">
-        ${cleanMicaContent(item.snippet)}
-    </div>
-`;
+                card.style.borderLeftColor = item.noteColor || "#3498db";
+                card.innerHTML = `
+                    <div class="card-menu-container">
+                        <div class="card-menu-btn" onclick="window.toggleCardMenu(event)">••</div>
+                        <div class="card-dropdown">
+                            ${item.isLibraryNote ? `<button onclick="window.openEditCard('${fullName}', ${index})">🖋️ Editar</button>` : ''}
+                            <button class="btn-remove-card" onclick="window.deleteLibraryCard(${index})">🗑️ Remover</button>
+                        </div>
+                    </div>
+                    <span class="card-note-title">${item.noteName || 'Sem Título'}</span>
+                    <div class="card-snippet">${cleanMicaContent(item.snippet)}</div>
+                `;
                 content.appendChild(card);
             });
-        }
-        // ⚡ ABA LINKS
-        else if (tab === 'links') {
+        } else if (tab === 'links') {
             const links = data.panelLinks || [];
             if(links.length === 0) { content.innerHTML = '<div class="xray-empty-msg">Sem links.</div>'; return; }
-            
             links.forEach(link => {
-                content.innerHTML += `
-                    <div class="flash-url-row" style="margin: 10px 15px;">
-                        <span style="font-size:1.2rem;">🔗</span>
-                        <a href="${link.url}" target="_blank" style="color:white; text-decoration:none; word-break:break-all;">${link.url}</a>
-                    </div>`;
+                content.innerHTML += `<div class="flash-url-row" style="margin: 10px 15px;"><a href="${link.url}" target="_blank" style="color:white; text-decoration:none;">🔗 ${link.url}</a></div>`;
             });
-        }
-        // 📼 ABA DOSSIÊ (MICAS)
-     else if (tab === 'dossie') {
+        } else if (tab === 'dossie') {
             const dossie = data.dossie || [];
-            if(dossie.length === 0) { content.innerHTML = '<div class="xray-empty-msg">Sem micas neste parágrafo.</div>'; return; }
-
+            if(dossie.length === 0) { content.innerHTML = '<div class="xray-empty-msg">Sem micas.</div>'; return; }
             dossie.forEach((mica) => {
-                const micaColor = mica.color || '#e74c3c';
                 const micaDiv = document.createElement('div');
                 micaDiv.className = 'mica-folder';
-                micaDiv.style.borderLeft = `3px solid ${micaColor}`; // Borda um pouco mais fina
-                
-                let itemsList = "";
-                if(mica.items && mica.items.length > 0) {
-                    mica.items.forEach(mi => {
-                        // REMOVIDO: onclick="window.openNoteFromBoard(...)"
-                        itemsList += `
-                            <div style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.05); position: relative;">
-                                <!-- Label superior dentro da Mica -->
-                                <div style="font-size: 0.55rem; color: #3498db; font-weight: 800; text-transform: uppercase; margin-bottom: 2px;">
-                                    📔 ITEM DE DOSSIÊ
-                                </div>
-                                
-                                <div style="color:#ffffff; font-weight: 700; font-size: 0.9rem; line-height: 1.2;">
-                                    ${mi.noteName}
-                                </div>
-                                
-                                <div style="color:#cecece; font-size: 0.8rem; line-height: 1.4; margin-top: 2px;">
-                                    ${cleanMicaContent(mi.snippet)}
-                                </div>
-                            </div>`;
-                    });
-                } else {
-                    itemsList = `<div style="padding:15px; color:#555; font-size:0.8rem; font-style:italic; text-align:center;">Pasta vazia.</div>`;
-                }
-
-                micaDiv.innerHTML = `
-                    <div class="mica-header" style="padding: 8px 12px; background: rgba(255,255,255,0.02);" onclick="this.nextElementSibling.classList.toggle('hidden')">
-                        <span style="color:${micaColor}; font-size: 0.75rem; font-weight: 800;">📂 ${mica.name.toUpperCase()}</span>
-                        <span style="color:#555; font-size: 0.7rem;">▼</span>
-                    </div>
-                    <div class="mica-content hidden" style="background: #141416;">
-                        ${itemsList}
-                    </div>`;
+                micaDiv.style.borderLeft = `3px solid ${mica.color || '#e74c3c'}`;
+                micaDiv.innerHTML = `<div class="mica-header" onclick="this.nextElementSibling.classList.toggle('hidden')"><span>📂 ${mica.name.toUpperCase()}</span><span>▼</span></div><div class="mica-content hidden"></div>`;
                 content.appendChild(micaDiv);
             });
         }
     } catch (e) {
-        console.error("Erro ao carregar dados:", e);
-        content.innerHTML = '<p style="color:red; text-align:center;">Erro ao carregar do banco de dados.</p>';
+        content.innerHTML = '<p style="color:red; text-align:center;">Erro ao carregar dados.</p>';
     }
 };
 
-
+   
 
 
 
@@ -6615,6 +6536,39 @@ onAuthStateChanged(auth, async (user) => {
         await loadUserLibraryConfig();
     }
 });
+
+
+// Gera uma cor consistente baseada no texto (ID do User)
+function getUserColor(str) {
+    const colors = [
+        '#e74c3c', // Vermelho
+        '#e67e22', // Laranja
+        '#f1c40f', // Amarelo
+        '#2ecc71', // Verde
+        '#3498db', // Azul
+        '#9b59b6', // Roxo
+        '#1abc9c', // Turquesa
+        '#e91e63'  // Rosa Choque
+    ];
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    // Usa o módulo para escolher uma cor da lista
+    const index = Math.abs(hash % colors.length);
+    return colors[index];
+}
+
+
+window.getCurrentReferenceName = (pNum) => {
+    const isMagazine = (currentSectionId === 'publicacoes');
+    const cap = currentBookData.capitulos[currentChapterIdx];
+    
+    // Gera: "w25 janeiro pp. 2-7 - Parágrafo 1" ou "od 1:12"
+    return isMagazine 
+        ? `${cap.referencia} - Parágrafo ${pNum}` 
+        : `${currentPubId} ${currentChapter}:${pNum}`;
+};
 
 
 
