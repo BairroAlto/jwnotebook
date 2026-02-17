@@ -2785,19 +2785,19 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
         // Nota: Removi os espaços entre as tags para evitar o bug do " \n "
         const boxHtml = `<div class="mini-note-wrapper question-mode" id="box_${Date.now()}" data-highlight="${window.selectedColorHex || ''}" contenteditable="false"><textarea class="mini-note-title-input">${qText}</textarea><div class="mini-note-content" contenteditable="true">${contentHtml}</div></div>`;
 
-        const noteData = {
-            nome: qText,
-            conteudo: boxHtml,
-            tipo: 'nota',
-            oque: 'back',
-            qId: qId,
-            userId: auth.currentUser.uid,
-            userName: userName,
-            isPublic: userSettings.sharedAnswers,
-            estado: 'ativa',
-            coresUsadas: coresArray, 
-            ultimaedicao: serverTimestamp()
-        };
+    const noteData = {
+    nome: qText,
+    conteudo: boxHtml,
+    tipo: 'nota',
+    oque: 'back',
+    qId: qId,
+    userId: auth.currentUser.uid,
+    userName: userName, // Importante para outros verem quem escreveu
+    isPublic: userSettings.sharedAnswers, // Puxa das definições globais
+    estado: 'ativa',
+    coresUsadas: coresArray, 
+    ultimaedicao: serverTimestamp()
+};
 
         // 3. GRAVAR NA BASE DE DADOS
         if (docId && docId !== "null") {
@@ -3208,35 +3208,99 @@ function updateHeader(title, backAction) {
 window.openSidePanel = async (pNum) => {
     const panel = document.getElementById('side-panel');
     const titleContainer = document.getElementById('side-title-container');
+    const tabsContainer = document.getElementById('library-ref-tabs');
+    const paragraphEl = document.getElementById(`p-${pNum}`);
     
+    if (!paragraphEl) return;
+
+    // 1. CONFIGURAÇÃO INICIAL
     panel.classList.add('open');
-    document.getElementById('library-ref-tabs').style.display = 'flex'; 
+    tabsContainer.style.display = 'flex'; 
     activeParaNum = pNum;
 
-    // --- LÓGICA DE UNIFICAÇÃO (PARA O BANCO DE DADOS) ---
     const isMagazine = (currentSectionId === 'publicacoes');
     const cap = currentBookData.capitulos[currentChapterIdx];
-
-    // Mantemos o fullName completo para que as abas saibam o que procurar no Firebase
+    
+    // Identificador único para a nota (unificação)
     const fullName = isMagazine 
         ? `${cap.referencia} - Parágrafo ${pNum}` 
         : `${currentPubId} ${currentChapter}:${pNum}`;
+    
+    // ID de busca para perguntas/respostas (usado no qId)
+    const qId = `${currentPubId}_Q${pNum}`;
 
     panel.dataset.currentRef = fullName;
-
-    // --- LÓGICA VISUAL (PARA O UTILIZADOR) ---
-    // Aqui simplificamos o que aparece no título
     const displayTitle = isMagazine ? `Parágrafo ${pNum}` : `${currentChapter}:${pNum}`;
+
+    // 2. DETECÇÃO DE BÍBLIA (X-RAY)
+    const bibleRegex = /\b((?:[123]\s)?[A-Z][a-zçáéíóú]+\.?\s+\d+[:.]\d+)/;
+    const temBiblia = bibleRegex.test(paragraphEl.innerText);
+    const btnXrayHTML = temBiblia ? 
+        `<button class="btn-header-create" onclick="window.runParaXRay('${pNum}')" 
+                 style="background: linear-gradient(135deg, #8e44ad, #9b59b6); margin-right:5px;" 
+                 title="X-Ray Profundo">+ 📟</button>` : '';
 
     titleContainer.innerHTML = `
         <span style="color: var(--accent-color); font-weight: bold;">🎯 ${displayTitle}</span>
         <div style="display:flex; align-items:center;">
             <button class="btn-header-create" onclick="window.prepareNoteFromPanel('${pNum}')" title="Nova Nota">+ 📝</button>
-            <button class="btn-header-create" onclick="window.runParaXRay('${pNum}')" style="background: linear-gradient(135deg, #8e44ad, #9b59b6); margin-right:5px;" title="X-Ray Profundo">+ 📟</button>
+            ${btnXrayHTML}
         </div>
     `;
 
-    // Carrega a aba padrão
+    // 3. VERIFICAÇÃO DE RESPOSTAS PARTILHADAS (Lógica do Ícone 💬)
+    let sharedTab = document.querySelector('[data-ref-tab="shared"]');
+    
+    // Criar a aba se não existir no DOM
+    if (!sharedTab) {
+        sharedTab = document.createElement('button');
+        sharedTab.className = 'tab-btn';
+        sharedTab.dataset.refTab = 'shared';
+        sharedTab.title = 'Respostas da Comunidade';
+        sharedTab.innerHTML = '💬';
+        sharedTab.onclick = (e) => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            sharedTab.classList.add('active');
+            window.renderLibraryRefTab('shared');
+        };
+        tabsContainer.appendChild(sharedTab);
+    }
+
+    // PESQUISA NO FIRESTORE: Existe conteúdo de outros utilizadores?
+    try {
+        const { collection, query, where, getDocs, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const qShared = query(
+            collection(db, 'pastas'),
+            where('qId', '==', qId),
+            where('isPublic', '==', true),
+            where('userId', '!=', auth.currentUser.uid),
+            limit(1) // Só precisamos de saber se existe pelo menos UM
+        );
+
+        const sharedSnap = await getDocs(qShared);
+        
+        // O ícone SÓ aparece se:
+        // 1. O utilizador tiver a opção ligada nas definições
+        // 2. EXISTIR conteúdo de outros no banco de dados
+        if (userSettings.sharedAnswers && !sharedSnap.empty) {
+            sharedTab.style.display = 'inline-block';
+        } else {
+            sharedTab.style.display = 'none';
+        }
+    } catch (e) {
+        console.error("Erro ao verificar partilhas:", e);
+        sharedTab.style.display = 'none';
+    }
+
+    // 4. LIMPEZA E FOCO INICIAL
+    const bibleTab = document.getElementById('tab-bible-btn');
+    const xrayTab = document.getElementById('tab-xray-btn');
+    if (bibleTab) bibleTab.style.display = 'none';
+    if (xrayTab) xrayTab.style.display = 'none';
+
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector('[data-ref-tab="puzzle"]').classList.add('active');
     window.renderLibraryRefTab('puzzle');
 };
 
@@ -3847,51 +3911,55 @@ window.renderLibraryRefTab = async function(tab) {
     }
 
     // --- ABA RESPOSTAS COMPARTILHADAS (NOVO 💬) ---
-    if (tab === 'shared') {
-        content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
-        const qId = `${currentPubId}_Q${activeParaNum}`;
+if (tab === 'shared') {
+    const myUid = auth.currentUser.uid;
+    const qId = `${currentPubId}_Q${activeParaNum}`; // ID da pergunta ou parágrafo
 
-        try {
-            const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-            
-            // Procura respostas públicas de outros usuários para esta pergunta
-            const q = query(
-                collection(db, 'pastas'),
-                where('qId', '==', qId),
-                where('isPublic', '==', true),
-                where('userId', '!=', myUid)
-            );
+    content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
 
-            const snap = await getDocs(q);
-            content.innerHTML = '<h4 style="color:#888; font-size:0.7rem; text-transform:uppercase; margin: 10px 0 15px 15px; letter-spacing:1px;">Estudo da Comunidade</h4>';
+    try {
+        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // Pesquisa: Mesma pergunta, marcador isPublic=true, mas utilizador diferente
+        const q = query(
+            collection(db, 'pastas'),
+            where('qId', '==', qId),
+            where('isPublic', '==', true),
+            where('userId', '!=', myUid)
+        );
 
-            if (snap.empty) {
-                content.innerHTML += '<div class="xray-empty-msg">Ainda não há respostas compartilhadas para esta pergunta.</div>';
-                return;
-            }
+        const snap = await getDocs(q);
+        content.innerHTML = '<h4 style="color:#888; font-size:0.7rem; text-transform:uppercase; margin: 10px 0 15px 15px; letter-spacing:1px;">Estudo da Comunidade</h4>';
 
-            snap.forEach(docSnap => {
-                const data = docSnap.data();
-                const card = document.createElement('div');
-                card.className = 'detail-card';
-                card.style.borderLeftColor = '#9b59b6'; // Cor Roxa para diferenciar do usuário
-                
-                card.innerHTML = `
-                    <div style="font-size:0.65rem; color:#9b59b6; font-weight:800; margin-bottom:6px; display:flex; align-items:center; gap:5px;">
-                        <span>👤</span> ${data.userName || "Utilizador"}
-                    </div>
-                    <div class="card-snippet" style="color:#cecece; font-style:italic; line-height:1.5;">
-                        "${cleanMicaContent(data.conteudo)}"
-                    </div>
-                `;
-                content.appendChild(card);
-            });
-        } catch (e) {
-            console.error("Erro Shared:", e);
-            content.innerHTML = '<div class="xray-empty-msg">Erro ao carregar respostas compartilhadas.</div>';
+        if (snap.empty) {
+            content.innerHTML += '<div class="xray-empty-msg">Ninguém partilhou uma resposta para este parágrafo ainda.</div>';
+            return;
         }
-        return;
+
+        snap.forEach(docSnap => {
+            const data = docSnap.data();
+            const card = document.createElement('div');
+            card.className = 'detail-card';
+            // Borda roxa para distinguir que não é uma nota nossa
+            card.style.borderLeftColor = '#9b59b6'; 
+            
+            card.innerHTML = `
+                <div style="font-size:0.6rem; color:#9b59b6; font-weight:800; text-transform:uppercase; margin-bottom:4px; display:flex; align-items:center; gap:5px;">
+                    <span>👤</span> ${data.userName || "Utilizador Anónimo"}
+                </div>
+                <div class="card-snippet" style="color:#cecece; font-style:italic;">
+                    "${cleanMicaContent(data.conteudo)}"
+                </div>
+            `;
+            content.appendChild(card);
+        });
+
+    } catch (e) {
+        console.error("Erro ao carregar partilhas:", e);
+        content.innerHTML = '<div class="xray-empty-msg">Erro ao carregar dados da comunidade.</div>';
     }
+    return;
+}
 
     // --- CARREGAMENTO DE DADOS PESSOAIS (🧩 ⚡ 📼) ---
     const refName = panel.dataset.currentRef;
@@ -6320,46 +6388,31 @@ if (btnBusca && modalBusca) {
 
 // Lógica para os botões do Modal de Definições
 document.addEventListener('DOMContentLoaded', () => {
+    // Mapeamento dos elementos
     const sharedToggle = document.getElementById('shared-answers-toggle');
     const xrayToggle = document.getElementById('xray-deep-search');
 
-    if(sharedToggle) {
+    if (sharedToggle) {
         sharedToggle.checked = userSettings.sharedAnswers;
-        
         sharedToggle.onchange = (e) => {
-            const isNowActive = e.target.checked;
-            userSettings.sharedAnswers = isNowActive;
-            localStorage.setItem('sharedAnswersActive', isNowActive);
-
-            // --- LÓGICA LIVE: OCULTAR ABA IMEDIATAMENTE ---
+            userSettings.sharedAnswers = e.target.checked;
+            // Lógica visual para esconder/mostrar a aba se o painel estiver aberto
             const sharedTabBtn = document.getElementById('tab-shared-btn');
-            
-            if (!isNowActive && sharedTabBtn) {
-                // 1. Esconde o botão da aba
+            if (!e.target.checked && sharedTabBtn) {
                 sharedTabBtn.style.display = 'none';
-
-                // 2. Se o utilizador estiver nesse exato momento a ver a aba shared, 
-                // forçamos o regresso à aba "Quadro (puzzle)"
                 if (sharedTabBtn.classList.contains('active')) {
-                    const puzzleTab = document.querySelector('[data-ref-tab="puzzle"]');
-                    if (puzzleTab) {
-                        puzzleTab.click(); // Simula o clique para trocar o conteúdo
-                    }
-                }
-            } 
-            else if (isNowActive) {
-                // Caso ele ative e já tenhamos um parágrafo aberto, 
-                // podemos disparar a verificação para ver se a aba deve aparecer
-                if (typeof activeParaNum !== 'undefined' && activeParaNum !== null) {
-                    window.openSidePanel(activeParaNum); 
+                    document.querySelector('[data-ref-tab="puzzle"]')?.click();
                 }
             }
         };
     }
     
-    if(xrayToggle) {
+    // CORREÇÃO AQUI: Verifica se o elemento existe antes de usar
+    if (xrayToggle) {
         xrayToggle.checked = userSettings.xrayDeepSearch;
-        xrayToggle.onchange = (e) => userSettings.xrayDeepSearch = e.target.checked;
+        xrayToggle.onchange = (e) => {
+            userSettings.xrayDeepSearch = e.target.checked;
+        };
     }
 });
 
@@ -6489,13 +6542,22 @@ window.saveLibrarySettings = async () => {
     const originalText = btn.innerText;
     btn.innerText = "A GRAVAR...";
 
+    // Captura o estado atual do checkbox de respostas públicas
+    const sharedToggle = document.getElementById('shared-answers-toggle');
+    const isSharedActive = sharedToggle ? sharedToggle.checked : false;
+
     try {
         const { doc, setDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
         await setDoc(doc(db, 'configuracoes', auth.currentUser.uid), {
             libraryCardSize: userConfig.cardTextSize,
-            libraryReaderSize: userConfig.readerTextSize // Grava o novo tamanho
+            libraryReaderSize: userConfig.readerTextSize,
+            sharedAnswers: isSharedActive // <-- NOVO: Salva no Firebase
         }, { merge: true });
+
+        // Atualiza o estado global e o localStorage (como fallback)
+        userSettings.sharedAnswers = isSharedActive;
+        localStorage.setItem('sharedAnswersActive', isSharedActive);
 
         document.getElementById('settings-modal').style.display = 'none';
     } catch (e) {
@@ -6518,7 +6580,16 @@ async function loadUserLibraryConfig() {
         if (snap.exists()) {
             const data = snap.data();
             if (data.libraryCardSize) userConfig.cardTextSize = data.libraryCardSize;
-            if (data.libraryReaderSize) userConfig.readerTextSize = data.libraryReaderSize; // Recupera o valor
+            if (data.libraryReaderSize) userConfig.readerTextSize = data.libraryReaderSize;
+            
+            // <-- NOVO: Carrega as Respostas Públicas do Firebase
+            if (data.hasOwnProperty('sharedAnswers')) {
+                userSettings.sharedAnswers = data.sharedAnswers;
+                // Atualiza o checkbox no modal de configurações
+                const sharedToggle = document.getElementById('shared-answers-toggle');
+                if (sharedToggle) sharedToggle.checked = data.sharedAnswers;
+            }
+            
             applyConfigToUI();
         }
     } catch (e) { 
