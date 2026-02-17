@@ -1841,16 +1841,22 @@ z-index: 2147483647 !important;
 .bible-popup {
     position: fixed;
     width: 320px;
-    max-height: 400px;
+    max-width: 85vw; /* Impede que o popup seja mais largo que o telemóvel */
+    max-height: 50vh; /* Limita a altura para não tapar o ecrã todo */
     background: #1f1f22;
-    border: 2px solid #3498db; /* Borda azul para destacar */
+    border: 2px solid #3498db;
     border-radius: 12px;
-    z-index: 2147483647 !important; /* Valor máximo possível */
+    z-index: 2147483647;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
     overflow: hidden;
-    animation: popupAppear 0.2s ease-out;
+}
+
+@media (max-width: 768px) {
+    .bible-popup {
+        width: 280px; /* Um pouco mais estreito em telemóveis pequenos */
+    }
 }
 
 @keyframes popupAppear {
@@ -6457,36 +6463,36 @@ window.openBiblePopup = async function(refName) {
     popup.className = 'bible-popup';
     popup.id = popupId;
     
-    // Posição inicial (Cascata leve)
-    const offset = document.querySelectorAll('.bible-popup').length * 20;
-    popup.style.top = (100 + offset) + "px";
-    popup.style.left = (50 + offset) + "px";
+    // Posição Inicial Segura (Mobile Friendly)
+    const isMobile = window.innerWidth <= 768;
+    popup.style.top = isMobile ? "20%" : "100px";
+    popup.style.left = isMobile ? "10%" : "100px";
 
     popup.innerHTML = `
-        <div class="bible-popup-header" onmousedown="window.makeElementDraggable(this.parentElement)">
-            <span class="bible-popup-title">📖 ${refName}</span>
+        <div class="bible-popup-header" style="cursor: move; touch-action: none;">
+            <span class="bible-popup-title" style="user-select: none;">📖 ${refName}</span>
             <button class="bible-popup-close" onclick="this.parentElement.parentElement.remove()">×</button>
         </div>
-        <div class="bible-popup-content">A carregar...</div>
+        <div class="bible-popup-content" style="overflow-y: auto; padding: 15px; -webkit-overflow-scrolling: touch;">
+            A carregar...
+        </div>
     `;
 
     document.body.appendChild(popup);
     
-    // Carregar o texto bíblico para dentro do popup
+    // Ativar o arrasto (Touch + Mouse)
+    window.makeElementDraggable(popup);
+
+    // Carregar o texto
     const contentDiv = popup.querySelector('.bible-popup-content');
     const verseList = window.expandVerseReference(refName);
     
     try {
         const texts = await Promise.all(verseList.map(v => fetchPublicBibleText(v)));
-        contentDiv.innerHTML = texts.map((t, i) => t ? `<p><b style="color:var(--accent-color); font-size:0.8em; margin-right:8px;">${verseList[i].split(':').pop()}</b>${t}</p>` : '').join('');
+        contentDiv.innerHTML = texts.map((t, i) => t ? `<p style="margin-bottom:10px;"><b style="color:var(--accent-color); font-size:0.8em; margin-right:8px;">${verseList[i].split(':').pop()}</b>${t}</p>` : '').join('');
     } catch (e) {
         contentDiv.innerHTML = "Erro ao carregar texto.";
     }
-
-    // Trazer para a frente ao clicar
-    popup.addEventListener('mousedown', () => {
-        popup.style.zIndex = ++popupZIndex;
-    });
 };
 
 // Motor de Arrasto com Limites de Tela
@@ -6494,19 +6500,70 @@ window.makeElementDraggable = function(el) {
     let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
     const header = el.querySelector('.bible-popup-header');
     
-    header.onmousedown = dragMouseDown;
-    header.ontouchstart = dragMouseDown;
+    header.onmousedown = dragStart;
+    header.ontouchstart = dragStart;
 
-    function dragMouseDown(e) {
-        e = e || window.event;
-        // Posição inicial do mouse/toque
-        pos3 = e.clientX || e.touches[0].clientX;
-        pos4 = e.clientY || e.touches[0].clientY;
-        document.onmouseup = closeDragElement;
-        document.onmousemove = elementDrag;
-        document.ontouchend = closeDragElement;
-        document.ontouchmove = elementDrag;
+    function dragStart(e) {
+        // Trazer para a frente ao tocar
+        el.style.zIndex = ++popupZIndex;
+        
+        // Obter coordenadas (Mouse ou Touch)
+        const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+        const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+        
+        pos3 = clientX;
+        pos4 = clientY;
+
+        document.onmouseup = dragEnd;
+        document.onmousemove = dragMove;
+        document.ontouchend = dragEnd;
+        document.ontouchmove = dragMove;
     }
+
+    function dragMove(e) {
+        // Previne scroll da página enquanto arrasta no mobile
+        if (e.type === 'touchmove') e.preventDefault();
+
+        const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+        const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+
+        pos1 = pos3 - clientX;
+        pos2 = pos4 - clientY;
+        pos3 = clientX;
+        pos4 = clientY;
+
+        let newTop = el.offsetTop - pos2;
+        let newLeft = el.offsetLeft - pos1;
+
+        // --- LIMITES DA TELA (BOUNDARIES) ---
+        const screenW = window.innerWidth;
+        const screenH = window.innerHeight;
+        const popupW = el.offsetWidth;
+        const popupH = el.offsetHeight;
+
+        // Limite Superior (Não deixa o cabeçalho sair para cima)
+        if (newTop < 0) newTop = 0;
+        
+        // Limite Esquerdo
+        if (newLeft < 0) newLeft = 0;
+        
+        // Limite Direito
+        if (newLeft + popupW > screenW) newLeft = screenW - popupW;
+        
+        // Limite Inferior
+        if (newTop + popupH > screenH) newTop = screenH - popupH;
+
+        el.style.top = newTop + "px";
+        el.style.left = newLeft + "px";
+    }
+    
+     function dragEnd() {
+        document.onmouseup = null;
+        document.onmousemove = null;
+        document.ontouchend = null;
+        document.ontouchmove = null;
+    }
+
 
     function elementDrag(e) {
         e = e || window.event;
