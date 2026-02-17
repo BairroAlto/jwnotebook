@@ -1976,7 +1976,7 @@ z-index: 2147483647 !important;
                     </label>
                 </div>
 
-              <button id="btn-save-settings" onclick="window.saveLibrarySettings()" style="width:100%; margin-top:15px; padding:12px; background:#333; color:white; border:1px solid #444; border-radius:6px; font-weight:bold; cursor:pointer;">GRAVAR DEFINIÇÕES</button>
+                <button onclick="window.saveLibrarySettings()" style="width:100%; margin-top:15px; padding:12px; background:#333; color:white; border:1px solid #444; border-radius:6px; font-weight:bold; cursor:pointer;">GRAVAR DEFINIÇÕES</button>
             </div>
         </div>
     </div>
@@ -2004,6 +2004,7 @@ z-index: 2147483647 !important;
     <button class="tab-btn active" data-ref-tab="puzzle" title="Quadro">🧩</button>
     <button class="tab-btn" data-ref-tab="links" title="Links">⚡</button>
     <button class="tab-btn" data-ref-tab="dossie" title="Micas">📼</button>
+    <button class="tab-btn" data-ref-tab="shared" title="Respostas Públicas" id="tab-shared-btn">💬</button>
     <!-- Aba de Segmentos (escondida por padrão) -->
     <button class="tab-btn" data-ref-tab="para-xray" title="X-Ray Parágrafo" id="tab-xray-btn" style="display: none;">📟</button>
         <button class="tab-btn" data-ref-tab="enxertos" id="tab-enxertos-btn" style="display:none;" title="Segmentos Selecionados">❛❛❞</button>
@@ -2736,98 +2737,62 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
     const editor = document.getElementById('flash-editor');
     const qText = decodeURIComponent(encodedQText);
     
-    if (!btn || btn.disabled) return;
+    if (btn.disabled) return;
     btn.disabled = true;
 
     try {
         const { collection, addDoc, doc, updateDoc, serverTimestamp, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
-        // 1. GERAR O NOME COMPLETO (ÂNCORA UNIFICADA)
-        // Usamos o activeParaNum (parágrafo atual) para criar o nome descritivo
-        const pNum = window.activeParaNum;
+        const qId = window.activeQuestionId; 
+        const pNum = qId.split('_Q').pop(); 
+        
+        // --- CÁLCULO DO INTERVALO (6,7) ---
+        const pRange = window.getParagraphRangeForQuestion(pNum);
+
         const isMagazine = (currentSectionId === 'publicacoes');
         const cap = currentBookData.capitulos[currentChapterIdx];
         
-        const fullName = isMagazine 
-            ? `${cap.referencia} - Parágrafo ${pNum}` 
-            : `${currentPubId} ${currentChapter}:${pNum}`;
+        // fullName simples para o ID do documento, mas fullNameRange para o indice_pesquisa
+        const fullNameRange = isMagazine 
+            ? `${cap.referencia} - Parágrafo ${pRange}` 
+            : `${currentPubId} ${currentChapter}:${pRange}`;
 
-        // 2. LIMPEZA E FORMATAÇÃO DO CONTEÚDO
-        const contentText = editor.innerText.trim(); 
-        let contentHtml = editor.innerHTML.trim();
-        
-        // Se o utilizador apagou tudo, limpamos o HTML
-        if (contentText.length === 0) contentHtml = ""; 
-        
-        // 3. DEFINIÇÃO DA COR VISUAL (Para o pontinho no leitor)
-        let visualColor = 'none'; 
-        let coresArray = [];
-        
-        if (contentHtml !== "") {
-            if (!window.selectedColorHex) {
-                visualColor = '#555'; // Cinza se tiver texto mas nenhuma cor escolhida
-            } else {
-                visualColor = window.selectedColorHex;
-                coresArray = [window.selectedColorHex.toUpperCase()];
-            }
-        }
+        const contentHtml = editor.innerHTML.trim();
 
-        // 4. OBTER DADOS DO UTILIZADOR (Para o comentário público)
         const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
         const userName = userSnap.exists() ? (userSnap.data().nome || "Utilizador") : "Anónimo";
 
-        // 5. CONSTRUIR O WRAPPER HTML (Igual ao formato do NoteBook)
-        const boxHtml = `
-            <div class="mini-note-wrapper question-mode" id="box_${Date.now()}" data-highlight="${window.selectedColorHex || ''}" contenteditable="false">
-                <textarea class="mini-note-title-input">${qText}</textarea>
-                <div class="mini-note-content" contenteditable="true">${contentHtml}</div>
-            </div>`;
+        const boxHtml = `<div class="mini-note-wrapper question-mode" id="box_${Date.now()}" data-highlight="${window.selectedColorHex || ''}" contenteditable="false"><textarea class="mini-note-title-input">${qText}</textarea><div class="mini-note-content" contenteditable="true">${contentHtml}</div></div>`;
 
-        // 6. PREPARAR OBJETO DE DADOS
         const noteData = {
-            nome: fullName,             // A referência completa (w25 janeiro...)
-            pergunta_original: qText,   // Texto da pergunta para referência
+            nome: qText,
             conteudo: boxHtml,
             tipo: 'nota',
-            oque: 'back',               // Define que vai para a Mochila/Bag
+            oque: 'back',
+            especial: "comentario",
+            indice_pesquisa: fullNameRange, // <--- GRAVA O INTERVALO (6,7)
+            qId: qId,
             userId: auth.currentUser.uid,
             userName: userName,
-            isPublic: userSettings.sharedAnswers, // Define se outros podem ver (aba 💬)
+            isPublic: userSettings.sharedAnswers,
             estado: 'ativa',
-            especial: 'comentario',      // Filtro essencial para separar notas de comentários
-            coresUsadas: coresArray, 
+            coresUsadas: window.selectedColorHex ? [window.selectedColorHex.toUpperCase()] : [], 
             ultimaedicao: serverTimestamp()
         };
 
-        // 7. GRAVAR NO FIRESTORE
         if (docId && docId !== "null") {
-            // Atualizar resposta existente
             await updateDoc(doc(db, 'pastas', docId), noteData);
-        } else if (contentHtml.length > 0) { 
-            // Criar nova resposta apenas se houver conteúdo
+        } else if (contentHtml !== "") { 
             noteData.createdAt = serverTimestamp();
             await addDoc(collection(db, 'pastas'), noteData);
         }
 
-        // 8. ATUALIZAR INTERFACE (Pintar os pontinhos no leitor)
-        window.currentQuestionsCache[pNum] = visualColor;
+        window.currentQuestionsCache[pNum] = window.selectedColorHex || '#555';
         window.paintQuestionDots();
-
-        // Feedback de sucesso
         btn.textContent = "✅ GUARDADO";
-        setTimeout(() => { 
-            btn.disabled = false; 
-            btn.textContent = (docId && docId !== "null") ? "ATUALIZAR RESPOSTA" : "GRAVAR RESPOSTA"; 
-        }, 2000);
-
-    } catch (e) {
-        console.error("Erro ao gravar resposta:", e);
-        btn.disabled = false;
-        alert("Erro ao gravar resposta. Verifique a sua ligação.");
-    }
+        setTimeout(() => { btn.disabled = false; btn.textContent = "ATUALIZAR RESPOSTA"; }, 2000);
+    } catch (e) { console.error(e); btn.disabled = false; }
 };
-
-       
 
 // --- 6. GESTÃO DE DADOS DO UTILIZADOR (HIGHLIGHTS) ---
 
@@ -3211,94 +3176,50 @@ function updateHeader(title, backAction) {
 window.openSidePanel = async (pNum) => {
     const panel = document.getElementById('side-panel');
     const titleContainer = document.getElementById('side-title-container');
-    const paragraphEl = document.getElementById(`p-${pNum}`);
-    const tabsContainer = document.getElementById('library-ref-tabs');
-    
-    if (!paragraphEl) return;
+    const sharedTabBtn = document.getElementById('tab-shared-btn'); // Captura o botão da aba 💬
 
+    // 1. Abrir o painel e mostrar a barra de abas
     panel.classList.add('open');
-    tabsContainer.style.display = 'flex'; 
-    window.activeParaNum = pNum;
+    document.getElementById('library-ref-tabs').style.display = 'flex'; 
+    activeParaNum = pNum;
 
-    // 1. GERAR O NOME UNIFICADO (ÂNCORA)
+    // 2. Lógica de unificação da referência (Magazine vs Livro)
     const isMagazine = (currentSectionId === 'publicacoes');
     const cap = currentBookData.capitulos[currentChapterIdx];
-    
+
     const fullName = isMagazine 
         ? `${cap.referencia} - Parágrafo ${pNum}` 
         : `${currentPubId} ${currentChapter}:${pNum}`;
 
-    panel.dataset.currentRef = fullName; // Guarda para as abas usarem
+    panel.dataset.currentRef = fullName;
 
-    // 2. TÍTULO DO PAINEL
+    // 3. Atualizar o Título e os botões de ação rápida no topo do painel
     const displayTitle = isMagazine ? `Parágrafo ${pNum}` : `${currentChapter}:${pNum}`;
-    
-    // Detecção de Bíblia (X-Ray)
-    const textoParaAnalisar = paragraphEl.innerText;
-    const bibleRegex = /\b((?:[123]\s)?[A-Z][a-zçáéíóú]+\.?\s+\d+[:.]\d+)/;
-    const temBiblia = bibleRegex.test(textoParaAnalisar);
-    const btnXrayHTML = temBiblia ? 
-        `<button class="btn-header-create" onclick="window.runParaXRay('${pNum}')" style="background: linear-gradient(135deg, #8e44ad, #9b59b6); margin-right:5px;" title="X-Ray Profundo">+ 📟</button>` 
-        : '';
 
     titleContainer.innerHTML = `
         <span style="color: var(--accent-color); font-weight: bold;">🎯 ${displayTitle}</span>
         <div style="display:flex; align-items:center;">
             <button class="btn-header-create" onclick="window.prepareNoteFromPanel('${pNum}')" title="Nova Nota">+ 📝</button>
-            ${btnXrayHTML}
+            <button class="btn-header-create" onclick="window.runParaXRay('${pNum}')" style="background: linear-gradient(135deg, #8e44ad, #9b59b6); margin-right:5px;" title="X-Ray Profundo">+ 📟</button>
         </div>
     `;
 
-    // 3. VERIFICAR RESPOSTAS PÚBLICAS (Âncora por Nome)
-    const oldSharedBtn = document.getElementById('tab-shared-btn');
-    if (oldSharedBtn) oldSharedBtn.remove();
-
-    if (userSettings.sharedAnswers) {
-        const myUid = auth.currentUser.uid;
-        const { collection, query, where, getDocs, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        
-        // PESQUISA PELO NOME DESCRITIVO
-        const qPublic = query(
-            collection(db, 'pastas'),
-            where('nome', '==', fullName),
-            where('isPublic', '==', true),
-            where('userId', '!=', myUid),
-            where('especial', '==', 'comentario'),
-            limit(1)
-        );
-        
-        const publicSnap = await getDocs(qPublic);
-        const hasPublicAnswers = !publicSnap.empty;
-
-        const btnShared = document.createElement('button');
-        btnShared.className = 'tab-btn';
-        btnShared.id = 'tab-shared-btn';
-        btnShared.dataset.refTab = 'shared';
-        btnShared.title = 'Respostas da Comunidade';
-        btnShared.innerHTML = '💬';
-        
-        // Fica Amarelo se houver respostas de outros
-        if (hasPublicAnswers) {
-            btnShared.style.color = '#f1c40f';
-            btnShared.style.filter = "drop-shadow(0 0 3px rgba(241, 196, 15, 0.6))";
+    // 4. CONTROLO DE VISIBILIDADE DA ABA "RESPOSTAS PÚBLICAS" (💬)
+    if (sharedTabBtn) {
+        // O botão da aba 💬 só aparece se "Respostas Públicas" estiver ativado nas definições
+        if (userSettings.sharedAnswers === true) {
+            sharedTabBtn.style.display = 'inline-block';
         } else {
-            btnShared.style.color = '#ffffff';
+            sharedTabBtn.style.display = 'none';
         }
-
-        btnShared.onclick = () => {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            btnShared.classList.add('active');
-            window.renderLibraryRefTab('shared');
-        };
-        
-        tabsContainer.appendChild(btnShared);
     }
 
-    // Por padrão, abre a aba Puzzle (Notas Pessoais)
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    const puzzleTab = document.querySelector('[data-ref-tab="puzzle"]');
-    if (puzzleTab) puzzleTab.classList.add('active');
+    // 5. Carregar a aba padrão (Quadro/Puzzle) por defeito
     window.renderLibraryRefTab('puzzle');
+    
+    // Reset de estilos das abas (garante que a 'puzzle' fica ativa visualmente)
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector('[data-ref-tab="puzzle"]').classList.add('active');
 };
 
 // Função auxiliar para criar o botão da aba caso não exista no HTML
@@ -3875,151 +3796,259 @@ window.renderLibraryRefTab = async function(tab) {
     const panel = document.getElementById('side-panel');
     const content = document.getElementById('side-content');
     const myUid = auth.currentUser.uid;
-    const fullName = panel.dataset.currentRef; // Âncora: "w25 janeiro..."
     
+    // 1. GESTÃO DE ESTADO E SCROLL
     if (content.dataset.currentTab === 'enxertos') {
         globalEnxertoScroll = content.scrollTop;
     }
     content.dataset.currentTab = tab;
 
-    // Configuração de estilo para abas de leitura
+    // Estilos de fundo para abas de leitura/profunda
     if (['para-xray', 'enxertos', 'bibletext', 'shared'].includes(tab)) {
         content.classList.add('xray-active');
     } else {
         content.classList.remove('xray-active');
     }
 
-    // --- CASE: ENXERTOS ---
+    // --- ABAS DE CACHE (X-RAY E ENXERTOS) ---
     if (tab === 'enxertos') {
         content.innerHTML = cacheSegmentoHTML || '<div class="xray-empty-msg">Nenhum artigo aberto.</div>';
         setTimeout(() => { content.scrollTop = globalEnxertoScroll; }, 50);
         return;
     }
-
-    // --- CASE: X-RAY ---
     if (tab === 'para-xray') {
         content.innerHTML = cacheXrayHTML || '<div class="xray-empty-msg">Scanner vazio.</div>';
         return;
     }
 
-    // --- CASE: BÍBLIA ---
+    // --- ABA BÍBLIA ---
     if (tab === 'bibletext') {
-        window.renderBibleTextInPanel(fullName);
+        const ref = panel.dataset.currentRef;
+        window.renderBibleTextInPanel(ref);
         return;
     }
 
-    // --- CASE: COMPARTILHADOS (💬) ---
-    if (tab === 'shared') {
-        content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
-        try {
-            const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-            
-            // BUSCA PELO NOME UNIFICADO
-            const q = query(
-                collection(db, 'pastas'),
-                where('nome', '==', fullName),
-                where('isPublic', '==', true),
-                where('userId', '!=', myUid),
-                where('especial', '==', 'comentario')
-            );
+    // --- ABA RESPOSTAS COMPARTILHADAS (NOVO 💬) ---
+if (tab === 'shared') {
+    content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
+    
+    // 1. Descobre a chave de pesquisa (ex: "w25... - Parágrafo 6,7")
+    const searchKey = window.findSearchIndexForParagraph(activeParaNum);
+    const myUid = auth.currentUser.uid;
 
-            const snap = await getDocs(q);
-            content.innerHTML = '<h4 style="color:#888; font-size:0.7rem; text-transform:uppercase; margin: 15px 0 15px 5px; letter-spacing:1px; border-bottom:1px solid #333; padding-bottom:5px;">Comentários da Comunidade</h4>';
+    try {
+        const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // 2. Procura comentários de outros utilizadores
+        const q = query(
+            collection(db, 'pastas'),
+            where('indice_pesquisa', '==', searchKey),
+            where('especial', '==', 'comentario'),
+            where('estado', '==', 'ativa'),
+            where('userId', '!=', myUid)
+        );
 
-            if (snap.empty) {
-                content.innerHTML += '<div class="xray-empty-msg">Ainda não há comentários públicos para este parágrafo.</div>';
-                return;
-            }
+        const snap = await getDocs(q);
+        content.innerHTML = `<h4 style="color:#888; font-size:0.7rem; text-transform:uppercase; margin: 10px 0 15px 15px; letter-spacing:1px;">Comentários da Comunidade</h4>`;
 
-            snap.forEach(docSnap => {
-                const data = docSnap.data();
-                const userColor = getUserColor(data.userId); // Função que gera cor pelo ID
-                const card = document.createElement('div');
-                card.className = 'detail-card';
-                card.style.cssText = `border-left: 4px solid ${userColor}; background: #1a1a1d; padding: 12px; margin-bottom: 10px; text-align: left; display: block;`;
-                
-                card.innerHTML = `
-                    <div style="font-size:0.75rem; color:${userColor}; font-weight:800; margin-bottom:8px; display:flex; align-items:center; gap:6px;">
-                        <span style="font-size:1rem;">💬</span> ${data.userName || "Anónimo"}
-                    </div>
-                    <div class="card-snippet" style="color:#cecece; font-size:0.9rem; line-height:1.5; white-space: pre-wrap;">
-                        ${cleanMicaContent(data.conteudo)}
-                    </div>
-                `;
-                content.appendChild(card);
-            });
-        } catch (e) {
-            console.error("Erro Shared:", e);
-            content.innerHTML = '<div class="xray-empty-msg">Erro ao carregar comentários.</div>';
+        if (snap.empty) {
+            content.innerHTML += '<div class="xray-empty-msg">Nenhuma resposta pública encontrada para este parágrafo.</div>';
+            return;
         }
-        return;
-    }
 
-    // --- CASOS: PUZZLE (🧩), LINKS (⚡), DOSSIÊ (📼) ---
-    if (!fullName) return;
+        snap.forEach(docSnap => {
+            const data = docSnap.data();
+            const userColor = window.getUserColor(data.userId); // Gera a cor única do user
+            
+            const card = document.createElement('div');
+            card.className = 'detail-card';
+            card.style.borderLeftColor = userColor; // Borda com a cor do user
+            
+            card.innerHTML = `
+                <!-- Cabeçalho do Card: Ícone + Nome do User -->
+                <div style="font-size:0.65rem; color:${userColor}; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">
+                    💬 ${data.userName || "Utilizador"}
+                </div>
+                
+                <!-- Subtítulo: Resposta -->
+                <div style="font-size:0.55rem; color:#666; font-weight:800; text-transform:uppercase; margin-bottom:8px;">
+                    Resposta
+                </div>
+                
+                <!-- Conteúdo da Resposta -->
+                <div class="card-snippet" style="color:#cecece; font-size:0.9rem; line-height:1.5;">
+                    ${cleanMicaContent(data.conteudo)}
+                </div>
+            `;
+            content.appendChild(card);
+        });
+    } catch (e) {
+        console.error("Erro Shared:", e);
+        content.innerHTML = '<div class="xray-empty-msg">Erro ao carregar respostas.</div>';
+    }
+    return;
+}
+
+    // --- CARREGAMENTO DE DADOS PESSOAIS (🧩 ⚡ 📼) ---
+    const refName = panel.dataset.currentRef;
+    if (!refName) return;
+
     content.innerHTML = '<div style="padding:50px; text-align:center;"><div class="global-spinner"></div></div>';
 
     try {
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-        const isBible = fullName.includes(':') && !fullName.includes('pp.'); 
+        
+        // DECISÃO CRÍTICA: De qual coleção puxamos?
+        // Se houver um ":" no nome, é quase certo que é um versículo bíblico
+        const isBible = refName.includes(':') && !refName.includes('pp.'); 
         const targetCollection = isBible ? 'textosbiblicos' : 'livros';
 
         const q = query(collection(db, targetCollection), 
-                        where('nome', '==', fullName), 
-                        where('userId', '==', myUid));
+                        where('nome', '==', refName), 
+                        where('userId', '==', auth.currentUser.uid));
         
         const snap = await getDocs(q);
+
         if (snap.empty) {
-            content.innerHTML = `<div class="xray-empty-msg">Sem registos pessoais.</div>`;
+            content.innerHTML = `<div class="xray-empty-msg">Sem registos em "${refName}".</div>`;
             return;
         }
 
         const data = snap.docs[0].data();
         content.innerHTML = ''; 
 
-        if (tab === 'puzzle') {
+        // 🧩 ABA PUZZLE (NOTAS FLASH)
+       if (tab === 'puzzle') {
             const board = data.puzzleBoard || [];
-            if(board.length === 0) { content.innerHTML = '<div class="xray-empty-msg">Sem notas no Quadro.</div>'; return; }
+            if(board.length === 0) { content.innerHTML = '<div class="xray-empty-msg">Sem notas.</div>'; return; }
+            
             board.forEach((item, index) => {
+                // 1. Identificar o Tipo de Card pelo Snippet
+             let rawHtml = "";
+try { rawHtml = decodeURIComponent(item.snippet); } catch(e) { rawHtml = item.snippet; }
+
+const parser = new DOMParser();
+const docSnippet = parser.parseFromString(rawHtml, 'text/html');
+const wrapper = docSnippet.querySelector('.mini-note-wrapper');
+
+// 1. Valores Padrão
+let categoryLabel = "SUBNOTA";
+let icon = "📘";
+let accentColor = item.noteColor || "#3498db";
+
+// 2. Detecção por Classe ou Atributo data-focus
+if (rawHtml.includes("question-mode")) {
+    categoryLabel = "QUESTÃO";
+    icon = "📗";
+    accentColor = "#2ecc71";
+} else if (wrapper && wrapper.getAttribute('data-focus')) {
+    const focus = wrapper.getAttribute('data-focus').toUpperCase();
+    categoryLabel = focus; 
+    icon = "📙";
+    // Mapear cores de foco se desejar
+    if(focus === "DILEMA") accentColor = "#e67e22";
+    if(focus === "PEROLA") accentColor = "#f1c40f";
+} else if (rawHtml.includes('consultor-mode')) {
+    categoryLabel = "CONSULTOR";
+    icon = "📕";
+    accentColor = "#e74c3c";
+}
+
                 const card = document.createElement('div');
                 card.className = 'detail-card';
-                card.style.borderLeftColor = item.noteColor || "#3498db";
-                card.innerHTML = `
-                    <div class="card-menu-container">
-                        <div class="card-menu-btn" onclick="window.toggleCardMenu(event)">••</div>
-                        <div class="card-dropdown">
-                            ${item.isLibraryNote ? `<button onclick="window.openEditCard('${fullName}', ${index})">🖋️ Editar</button>` : ''}
-                            <button class="btn-remove-card" onclick="window.deleteLibraryCard(${index})">🗑️ Remover</button>
-                        </div>
-                    </div>
-                    <span class="card-note-title">${item.noteName || 'Sem Título'}</span>
-                    <div class="card-snippet">${cleanMicaContent(item.snippet)}</div>
-                `;
+                card.style.borderLeftColor = accentColor;
+                const isLibraryNote = item.isLibraryNote === true;
+
+                // 2. Construir o HTML interno (Sem onclick no título)
+              card.innerHTML = `
+ <div class="card-menu-container">
+        <div class="card-menu-btn" onclick="window.toggleCardMenu(event)">••</div>
+        <div class="card-dropdown">
+            ${isLibraryNote ? `<button onclick="window.openEditCard('${refName}', ${index})">🖋️ Editar</button>` : ''}
+            
+            <button class="btn-remove-card" onclick="window.deleteLibraryCard(${index})">🗑️ Remover</button>
+        </div>
+    </div>
+    
+    <div class="card-category-label" style="color: ${accentColor}">
+        ${icon} ${categoryLabel}
+    </div>
+    
+    <span class="card-note-title">${item.noteName || 'Sem Título'}</span>
+    
+    <div class="card-snippet">
+        ${cleanMicaContent(item.snippet)}
+    </div>
+`;
                 content.appendChild(card);
             });
-        } else if (tab === 'links') {
+        }
+        // ⚡ ABA LINKS
+        else if (tab === 'links') {
             const links = data.panelLinks || [];
             if(links.length === 0) { content.innerHTML = '<div class="xray-empty-msg">Sem links.</div>'; return; }
+            
             links.forEach(link => {
-                content.innerHTML += `<div class="flash-url-row" style="margin: 10px 15px;"><a href="${link.url}" target="_blank" style="color:white; text-decoration:none;">🔗 ${link.url}</a></div>`;
+                content.innerHTML += `
+                    <div class="flash-url-row" style="margin: 10px 15px;">
+                        <span style="font-size:1.2rem;">🔗</span>
+                        <a href="${link.url}" target="_blank" style="color:white; text-decoration:none; word-break:break-all;">${link.url}</a>
+                    </div>`;
             });
-        } else if (tab === 'dossie') {
+        }
+        // 📼 ABA DOSSIÊ (MICAS)
+     else if (tab === 'dossie') {
             const dossie = data.dossie || [];
-            if(dossie.length === 0) { content.innerHTML = '<div class="xray-empty-msg">Sem micas.</div>'; return; }
+            if(dossie.length === 0) { content.innerHTML = '<div class="xray-empty-msg">Sem micas neste parágrafo.</div>'; return; }
+
             dossie.forEach((mica) => {
+                const micaColor = mica.color || '#e74c3c';
                 const micaDiv = document.createElement('div');
                 micaDiv.className = 'mica-folder';
-                micaDiv.style.borderLeft = `3px solid ${mica.color || '#e74c3c'}`;
-                micaDiv.innerHTML = `<div class="mica-header" onclick="this.nextElementSibling.classList.toggle('hidden')"><span>📂 ${mica.name.toUpperCase()}</span><span>▼</span></div><div class="mica-content hidden"></div>`;
+                micaDiv.style.borderLeft = `3px solid ${micaColor}`; // Borda um pouco mais fina
+                
+                let itemsList = "";
+                if(mica.items && mica.items.length > 0) {
+                    mica.items.forEach(mi => {
+                        // REMOVIDO: onclick="window.openNoteFromBoard(...)"
+                        itemsList += `
+                            <div style="padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.05); position: relative;">
+                                <!-- Label superior dentro da Mica -->
+                                <div style="font-size: 0.55rem; color: #3498db; font-weight: 800; text-transform: uppercase; margin-bottom: 2px;">
+                                    📔 ITEM DE DOSSIÊ
+                                </div>
+                                
+                                <div style="color:#ffffff; font-weight: 700; font-size: 0.9rem; line-height: 1.2;">
+                                    ${mi.noteName}
+                                </div>
+                                
+                                <div style="color:#cecece; font-size: 0.8rem; line-height: 1.4; margin-top: 2px;">
+                                    ${cleanMicaContent(mi.snippet)}
+                                </div>
+                            </div>`;
+                    });
+                } else {
+                    itemsList = `<div style="padding:15px; color:#555; font-size:0.8rem; font-style:italic; text-align:center;">Pasta vazia.</div>`;
+                }
+
+                micaDiv.innerHTML = `
+                    <div class="mica-header" style="padding: 8px 12px; background: rgba(255,255,255,0.02);" onclick="this.nextElementSibling.classList.toggle('hidden')">
+                        <span style="color:${micaColor}; font-size: 0.75rem; font-weight: 800;">📂 ${mica.name.toUpperCase()}</span>
+                        <span style="color:#555; font-size: 0.7rem;">▼</span>
+                    </div>
+                    <div class="mica-content hidden" style="background: #141416;">
+                        ${itemsList}
+                    </div>`;
                 content.appendChild(micaDiv);
             });
         }
     } catch (e) {
-        content.innerHTML = '<p style="color:red; text-align:center;">Erro ao carregar dados.</p>';
+        console.error("Erro ao carregar dados:", e);
+        content.innerHTML = '<p style="color:red; text-align:center;">Erro ao carregar do banco de dados.</p>';
     }
 };
 
-   
+
 
 
 
@@ -4526,37 +4555,29 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
             return;
         }
 
-        // ============================================================
-        // 1. CONSTRUIR O NOME IDÊNTICO AO NOTEBOOK (UNIFICAÇÃO)
-        // ============================================================
+        // --- DADOS BÁSICOS DE LOCALIZAÇÃO ---
         const isMagazine = (currentSectionId === 'publicacoes');
         const cap = currentBookData.capitulos[currentChapterIdx];
         const pNum = activeParaNum; 
 
-        const fullName = isMagazine 
+        // 1. FORMATO NORMAL (Para ancorar a nota no parágrafo inicial)
+        const fullNameNormal = isMagazine 
             ? `${cap.referencia} - Parágrafo ${pNum}` 
             : `${currentPubId} ${currentChapter}:${pNum}`;
 
-        // ============================================================
-        // 2. GERAR ESTRUTURA DE CODEX TÉCNICA (Lógica Condicional)
-        // ============================================================
+        // --- CÁLCULO DO INTERVALO (6,7) APENAS PARA PERGUNTAS ---
+        let fullNameRange = fullNameNormal;
+        if (noteType === 'question' && typeof window.getParagraphRangeForQuestion === 'function') {
+            const pRange = window.getParagraphRangeForQuestion(pNum);
+            fullNameRange = isMagazine 
+                ? `${cap.referencia} - Parágrafo ${pRange}` 
+                : `${currentPubId} ${currentChapter}:${pRange}`;
+        }
+
+        // --- PREPARAÇÃO DO CONTEÚDO HTML ---
         if (!window.currentFlashLinks) window.currentFlashLinks = {};
-        
-        const autoCodex = {
-            serie: isMagazine ? cap.referencia : currentPubId,
-            // SÓ GRAVA CAPÍTULO SE NÃO FOR REVISTA
-            capitulo: isMagazine ? "" : String(currentChapter), 
-            paragrafos: [String(pNum)],
-            codiceshow: fullName,
-            type: 'codex'
-        };
-
-        window.currentFlashLinks.codex = [autoCodex];
-        window.currentFlashLinks.categories = [{ id: "temp", name: fullName, type: "livro_ref" }];
-
         const safeTopics = JSON.stringify(window.currentFlashTopics || {}).replace(/"/g, '&quot;');
         const safeBoxLinks = JSON.stringify(window.currentFlashLinks).replace(/"/g, '&quot;');
-
         const commonToolbarHTML = `<div class="mini-note-toolbar" contenteditable="false"><button type="button" data-action="sharing-settings">🔐</button><div class="toolbar-btn-group"><button type="button" data-action="move-up">🔺</button><button type="button" data-action="move-down">🔻</button></div><button type="button" data-action="manage-box-links">⚡</button><button type="button" data-action="append-mini-note">🧬</button><button type="button" data-action="highlight-color">🎨</button><button type="button" data-action="manage-mini-note-topics">📋</button><button type="button" data-action="delete-mini-note">🗑️</button></div>`;
 
         let wrapperClass = "mini-note-wrapper";
@@ -4572,26 +4593,30 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
             </div><p><br></p>
         `;
 
-        // ============================================================
-        // 3. GRAVAR NOTA NA MOCHILA (PASTAS)
-        // ============================================================
-        const noteRef = await addDoc(collection(db, 'pastas'), {
+        // --- DADOS PARA A COLEÇÃO 'PASTAS' (NOTEBOOK) ---
+        const noteData = {
             nome: title,
             conteudo: subNoteHtml,
             tipo: 'nota',
-            oque: 'back', // Vai para a Bag
+            oque: 'back', 
             userId: auth.currentUser.uid,
             estado: 'ativa',
             boxIds: [boxUniqueId],
             coresUsadas: [color.toUpperCase()],
             createdAt: serverTimestamp(),
             ultimaedicao: serverTimestamp()
-        });
+        };
 
-        // ============================================================
-        // 4. VINCULAR AO PARÁGRAFO (LIVROS / TEXTOSBIBLICOS)
-        // ============================================================
-        const targetCollection = (fullName.includes(':') && !fullName.includes('pp.')) ? 'textobiblico' : 'livros';
+        // CAMPOS ESPECIAIS PARA PERGUNTAS
+        if (noteType === 'question') {
+            noteData.especial = "comentario";
+            noteData.indice_pesquisa = fullNameRange; // Salva ex: "... - Parágrafo 6,7"
+        }
+
+        const noteRef = await addDoc(collection(db, 'pastas'), noteData);
+
+        // --- VINCULAÇÃO À BIBLIOTECA (PUZZLEBOARD) ---
+        const targetCollection = (fullNameNormal.includes(':') && !fullNameNormal.includes('pp.')) ? 'textobiblico' : 'livros';
         
         const puzzleItem = {
             type: 'ref',
@@ -4599,12 +4624,12 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
             noteName: title,
             snippet: encodeURIComponent(subNoteHtml),
             noteColor: color,
-            isLibraryNote: true, // Habilita o botão "🖋️ Editar"
+            isLibraryNote: true,
             addedAt: Date.now()
         };
 
         const q = query(collection(db, targetCollection), 
-                        where('nome', '==', fullName), 
+                        where('nome', '==', fullNameNormal), 
                         where('userId', '==', auth.currentUser.uid));
         const snap = await getDocs(q);
 
@@ -4615,39 +4640,29 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
             });
         } else {
             await addDoc(collection(db, targetCollection), {
-                nome: fullName,
+                nome: fullNameNormal,
                 userId: auth.currentUser.uid,
                 puzzleBoard: [puzzleItem],
                 referencias: { [noteRef.id]: true },
-                dossie: [],
-                panelLinks: [],
                 createdAt: serverTimestamp()
             });
         }
 
-        // ============================================================
-        // 5. ATUALIZAÇÃO LIVE: MUDAR COR DO NÚMERO IMEDIATAMENTE
-        // ============================================================
+        // --- ATUALIZAÇÃO VISUAL ---
         const numEl = document.querySelector(`.block-paragrafo[data-pnum="${pNum}"] .ref-num`);
-        if (numEl) {
-            numEl.classList.add('has-data');
-        }
-
-        // Atualiza cache local para persistir a cor ao navegar
+        if (numEl) numEl.classList.add('has-data');
         const pId = `p-${pNum}`;
         if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
         currentChapterHighlights[pId].hasNoteData = true;
 
-        // Finalização
         clickedBtn.textContent = "✅ GUARDADO";
         setTimeout(() => {
             window.closeSidePanel();
-            window.renderLibraryRefTab('puzzle'); // Refresh da aba para mostrar o novo card
+            window.renderLibraryRefTab('puzzle');
         }, 1000);
 
     } catch (e) {
-        console.error("Erro ao gravar nota da biblioteca:", e);
-        alert("Erro ao gravar nota.");
+        console.error("Erro ao gravar nota:", e);
         clickedBtn.disabled = false;
         clickedBtn.textContent = originalText;
     }
@@ -4982,63 +4997,45 @@ window.saveEditLibraryNote = async (docLibraryId, index, noteId) => {
     btn.disabled = true;
 
     try {
-        const { doc, updateDoc, serverTimestamp, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
-
+        const { doc, updateDoc, serverTimestamp, getDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const newTitle = document.getElementById('flash-title').value.trim();
         const newContent = document.getElementById('flash-editor').innerHTML;
-        
-        // Recupera os metadados (Tópicos e Links) que foram definidos nos modais
-        const safeTopics = JSON.stringify(window.currentFlashTopics || {}).replace(/"/g, '&quot;');
-        const safeLinks = JSON.stringify(window.currentFlashLinks || {}).replace(/"/g, '&quot;');
         const color = window.selectedColorHex || '#3498db';
-
-        // Reconstroi o HTML da caixa (Subnota ou Questão)
         const isQuestion = document.getElementById('flash-type-select')?.value === 'question';
-        const wrapperClass = isQuestion ? "mini-note-wrapper question-mode" : "mini-note-wrapper";
 
-        const commonToolbarHTML = `<div class="mini-note-toolbar" contenteditable="false"><button type="button" data-action="sharing-settings">🔐</button><div class="toolbar-btn-group"><button type="button" data-action="move-up">🔺</button><button type="button" data-action="move-down">🔻</button></div><button type="button" data-action="manage-box-links">⚡</button><button type="button" data-action="append-mini-note">🧬</button><button type="button" data-action="highlight-color">🎨</button><button type="button" data-action="manage-mini-note-topics">📋</button><button type="button" data-action="delete-mini-note">🗑️</button></div>`;
+        const updatedHtml = `<div class="mini-note-wrapper ${isQuestion ? 'question-mode' : ''}" data-highlight="${color}" contenteditable="false"><textarea class="mini-note-title-input">${newTitle}</textarea><div class="mini-note-content" contenteditable="true">${newContent}</div></div>`;
 
-        const updatedHtml = `
-            <div class="${wrapperClass}" data-topics='${safeTopics}' data-box-links='${safeLinks}' data-highlight="${color}" contenteditable="false">
-                <textarea class="mini-note-title-input">${newTitle}</textarea>
-                ${commonToolbarHTML}
-                <div class="mini-note-content" contenteditable="true">${newContent}</div>
-            </div>`;
-
-        // --- 1. ATUALIZA A NOTA REAL (A que está na Bag/Pastas) ---
-        await updateDoc(doc(db, 'pastas', noteId), {
+        const noteUpdate = {
             nome: newTitle,
             conteudo: updatedHtml,
             ultimaedicao: serverTimestamp()
-        });
+        };
 
-        // --- 2. ATUALIZA O CARD NO PARÁGRAFO (O que aparece na 4ª coluna) ---
-        const isBible = docLibraryId.includes(':') && !docLibraryId.includes('pp.'); // Se for texto bíblico o id é o nome
-        const targetColl = (docLibraryId.length > 25) ? 'livros' : 'livros'; // Fallback seguro
-        
+        // --- SE FOR PERGUNTA, ATUALIZA OU REMOVE OS CAMPOS ---
+        if (isQuestion) {
+            noteUpdate.especial = "comentario";
+            noteUpdate.indice_pesquisa = docLibraryId; // docLibraryId já é o formato "w25... - Parágrafo 1"
+        } else {
+            noteUpdate.especial = deleteField();
+            noteUpdate.indice_pesquisa = deleteField();
+        }
+
+        await updateDoc(doc(db, 'pastas', noteId), noteUpdate);
+
         const libRef = doc(db, 'livros', docLibraryId);
         const libSnap = await getDoc(libRef);
-        
         if (libSnap.exists()) {
             const board = libSnap.data().puzzleBoard;
             board[index].noteName = newTitle;
             board[index].snippet = encodeURIComponent(updatedHtml);
             board[index].noteColor = color;
-            board[index].isLibraryNote = true; 
             await updateDoc(libRef, { puzzleBoard: board });
         }
 
-        // Finalização
         document.getElementById('edit-card-modal').style.display = 'none';
-        window.renderLibraryRefTab('puzzle'); // Refresh visual
+        window.renderLibraryRefTab('puzzle');
         alert("Alterações gravadas!");
-
-    } catch (e) {
-        console.error(e);
-        alert("Erro ao salvar.");
-    } finally {
-        btn.disabled = false;
-    }
+    } catch (e) { console.error(e); } finally { btn.disabled = false; }
 };
 
 
@@ -6287,32 +6284,70 @@ if (btnBusca && modalBusca) {
 
 // Lógica para os botões do Modal de Definições
 document.addEventListener('DOMContentLoaded', () => {
-    // Mapeamento dos elementos
     const sharedToggle = document.getElementById('shared-answers-toggle');
     const xrayToggle = document.getElementById('xray-deep-search');
 
+    // --- LÓGICA DO TOGGLE DE RESPOSTAS PÚBLICAS (COMENTÁRIOS) ---
     if (sharedToggle) {
-        sharedToggle.checked = userSettings.sharedAnswers;
-        sharedToggle.onchange = (e) => {
-            userSettings.sharedAnswers = e.target.checked;
-            // Lógica visual para esconder/mostrar a aba se o painel estiver aberto
-            const sharedTabBtn = document.getElementById('tab-shared-btn');
-            if (!e.target.checked && sharedTabBtn) {
-                sharedTabBtn.style.display = 'none';
-                if (sharedTabBtn.classList.contains('active')) {
-                    document.querySelector('[data-ref-tab="puzzle"]')?.click();
+        // Define o estado inicial baseado no cache local antes do Firebase carregar
+        sharedToggle.checked = localStorage.getItem('sharedAnswersActive') === 'true';
+
+        sharedToggle.onchange = async (e) => {
+            const isNowActive = e.target.checked;
+            
+            // 1. Feedback visual imediato e bloqueio do botão
+            sharedToggle.disabled = true;
+            console.log("A sincronizar estado das respostas...");
+
+            try {
+                // 2. Grava a definição global no perfil do user (para outros dispositivos)
+                await window.saveGlobalPreference('sharedAnswers', isNowActive);
+
+                // 3. Atualiza TODAS as notas de comentário no Firebase (Massa)
+                await window.updateAllCommentsState(isNowActive);
+
+                // 4. Atualiza o estado local do site
+                userSettings.sharedAnswers = isNowActive;
+                localStorage.setItem('sharedAnswersActive', isNowActive);
+
+                // 5. Gestão da Aba "Shared" no painel lateral
+                const sharedTabBtn = document.getElementById('tab-shared-btn');
+                if (!isNowActive && sharedTabBtn) {
+                    sharedTabBtn.style.display = 'none';
+                    if (sharedTabBtn.classList.contains('active')) {
+                        const puzzleTab = document.querySelector('[data-ref-tab="puzzle"]');
+                        if (puzzleTab) puzzleTab.click();
+                    }
                 }
+
+                // 6. Recarrega os indicadores visuais (pontinhos) na página atual
+                // Precisamos recarregar os dados para o cache local refletir as mudanças do Firebase
+                if (currentPubId && currentChapter) {
+                    await loadLibraryDataForChapter(currentPubId, currentChapter);
+                }
+
+            } catch (error) {
+                console.error("Erro ao sincronizar respostas:", error);
+                alert("Erro ao atualizar estado das respostas. Tente novamente.");
+                sharedToggle.checked = !isNowActive; // Reverte o toggle em caso de erro
+            } finally {
+                sharedToggle.disabled = false;
             }
         };
     }
     
-    // CORREÇÃO AQUI: Verifica se o elemento existe antes de usar
+    // --- LÓGICA DO TOGGLE X-RAY ---
     if (xrayToggle) {
         xrayToggle.checked = userSettings.xrayDeepSearch;
         xrayToggle.onchange = (e) => {
             userSettings.xrayDeepSearch = e.target.checked;
+            // Opcional: Gravar também esta preferência globalmente
+            window.saveGlobalPreference('xrayDeepSearch', e.target.checked);
         };
     }
+
+    // Inicializa tooltips ou outros componentes se necessário
+    console.log("Definições de utilizador prontas.");
 });
 
 
@@ -6435,68 +6470,26 @@ function applyConfigToUI() {
 
 // --- GRAVAR DEFINIÇÕES NO FIREBASE ---
 window.saveLibrarySettings = async () => {
-    const btn = document.getElementById('btn-save-settings');
-    const originalText = btn ? btn.innerHTML : "GRAVAR DEFINIÇÕES";
-
-    if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = `<div class="global-spinner" style="width:18px; height:18px; border-width:2px; display:inline-block; vertical-align:middle; margin-right:8px;"></div> A gravar...`;
-    }
-
-    const sharedToggle = document.getElementById('shared-answers-toggle');
-    const isSharedActive = sharedToggle ? sharedToggle.checked : false;
-    
     if (!auth.currentUser) return;
-    const myUid = auth.currentUser.uid;
+    
+    const btn = event.target;
+    const originalText = btn.innerText;
+    btn.innerText = "A GRAVAR...";
 
     try {
-        const { doc, setDoc, collection, query, where, getDocs, writeBatch } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { doc, setDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        // 1. Gravar preferência no perfil
-        await setDoc(doc(db, 'configuracoes', myUid), { 
-            sharedAnswers: isSharedActive 
+        await setDoc(doc(db, 'configuracoes', auth.currentUser.uid), {
+            libraryCardSize: userConfig.cardTextSize,
+            libraryReaderSize: userConfig.readerTextSize // Grava o novo tamanho
         }, { merge: true });
 
-        // 2. Atualizar APENAS documentos marcados como 'comentario'
-        const q = query(
-            collection(db, 'pastas'), 
-            where('userId', '==', myUid),
-            // --- FILTRO DE SEGURANÇA ---
-            where('especial', '==', 'comentario') 
-            // ---------------------------
-        );
-        
-        const snap = await getDocs(q);
-        const batch = writeBatch(db);
-        
-        snap.forEach(documento => {
-            batch.update(documento.ref, { isPublic: isSharedActive });
-        });
-        
-        await batch.commit();
-
-        userSettings.sharedAnswers = isSharedActive;
-        localStorage.setItem('sharedAnswersActive', isSharedActive);
-        
-        if (btn) btn.innerHTML = "✅ GUARDADO";
-
-        setTimeout(() => {
-            document.getElementById('settings-modal').style.display = 'none';
-            if (btn) {
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-            }
-        }, 1000);
-
+        document.getElementById('settings-modal').style.display = 'none';
     } catch (e) {
         console.error(e);
-        if (btn) {
-            btn.innerHTML = "❌ Erro";
-            setTimeout(() => {
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-            }, 2000);
-        }
+        alert("Erro ao gravar configurações.");
+    } finally {
+        btn.innerText = originalText;
     }
 };
 
@@ -6505,24 +6498,29 @@ window.saveLibrarySettings = async () => {
 async function loadUserLibraryConfig() {
     if (!auth.currentUser) return;
     try {
+        // CORREÇÃO: URL completo do gstatic para o import funcionar
         const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         const docRef = doc(db, 'configuracoes', auth.currentUser.uid);
         const snap = await getDoc(docRef);
         
         if (snap.exists()) {
             const data = snap.data();
+            
+            // Sincroniza o tamanho do texto
             if (data.libraryCardSize) userConfig.cardTextSize = data.libraryCardSize;
             if (data.libraryReaderSize) userConfig.readerTextSize = data.libraryReaderSize;
-            
-            // <-- NOVO: Carrega as Respostas Públicas do Firebase
-            if (data.hasOwnProperty('sharedAnswers')) {
+
+            // --- SINCRONIZAÇÃO DAS RESPOSTAS PÚBLICAS (COMENTÁRIOS) ---
+            if (data.sharedAnswers !== undefined) {
                 userSettings.sharedAnswers = data.sharedAnswers;
-                // Atualiza o checkbox no modal de configurações
+                localStorage.setItem('sharedAnswersActive', data.sharedAnswers);
+                
                 const sharedToggle = document.getElementById('shared-answers-toggle');
                 if (sharedToggle) sharedToggle.checked = data.sharedAnswers;
             }
-            
+
             applyConfigToUI();
+            console.log("Definições sincronizadas do Firebase com sucesso.");
         }
     } catch (e) { 
         console.error("Erro ao carregar definições:", e); 
@@ -6538,36 +6536,139 @@ onAuthStateChanged(auth, async (user) => {
 });
 
 
-// Gera uma cor consistente baseada no texto (ID do User)
-function getUserColor(str) {
-    const colors = [
-        '#e74c3c', // Vermelho
-        '#e67e22', // Laranja
-        '#f1c40f', // Amarelo
-        '#2ecc71', // Verde
-        '#3498db', // Azul
-        '#9b59b6', // Roxo
-        '#1abc9c', // Turquesa
-        '#e91e63'  // Rosa Choque
-    ];
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+// Função para descobrir o intervalo de parágrafos de uma pergunta
+window.getParagraphRangeForQuestion = (startPNum) => {
+    if (!currentBookData || !currentBookData.capitulos) return startPNum;
+    const cap = currentBookData.capitulos[currentChapterIdx];
+    if (!cap || !cap.conteudo) return startPNum;
+
+    const rangeSet = new Set();
+    let foundStart = false;
+
+    // Função para extrair números individuais de strings como "6-7" ou "1, 2"
+    const processValue = (val) => {
+        if (!val) return;
+        // Divide a string por hífen, vírgula ou traço longo
+        const parts = String(val).split(/[,\-–]/);
+        parts.forEach(p => {
+            const clean = p.trim();
+            if (clean) rangeSet.add(clean);
+        });
+    };
+
+    for (const block of cap.conteudo) {
+        // 1. Localizar o início (a pergunta onde clicou)
+        if (String(block.numero_ref) === String(startPNum) && block.tipo === 'pergunta') {
+            foundStart = true;
+            processValue(block.numero_ref);
+            continue;
+        }
+
+        if (foundStart) {
+            // 2. Parar se encontrar a próxima pergunta ou subtema
+            if (block.tipo === 'pergunta' || block.tipo === 'subtema') break;
+            
+            // 3. Adicionar parágrafos ao Set (o Set remove duplicados automaticamente)
+            if (block.numero_ref) {
+                processValue(block.numero_ref);
+            }
+        }
     }
-    // Usa o módulo para escolher uma cor da lista
-    const index = Math.abs(hash % colors.length);
-    return colors[index];
-}
+
+    // Converter para array e ordenar numericamente
+    const sortedRange = Array.from(rangeSet).sort((a, b) => parseInt(a) - parseInt(b));
+
+    // Retorna os números limpos e separados por vírgula (Ex: "6,7")
+    return sortedRange.length > 0 ? sortedRange.join(',') : startPNum;
+};
 
 
-window.getCurrentReferenceName = (pNum) => {
-    const isMagazine = (currentSectionId === 'publicacoes');
+// Grava a preferência no perfil do utilizador (coleção configuracoes)
+window.saveGlobalPreference = async (key, value) => {
+    if (!auth.currentUser) return;
+    try {
+        const { doc, setDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        await setDoc(doc(db, 'configuracoes', auth.currentUser.uid), {
+            [key]: value
+        }, { merge: true });
+        console.log(`Preferência ${key} guardada: ${value}`);
+    } catch (e) { 
+        console.error("Erro ao gravar preferência global:", e); 
+    }
+};
+
+// Atualiza o estado de todos os comentários do utilizador
+window.updateAllCommentsState = async (isActive) => {
+    if (!auth.currentUser) return;
+    
+    try {
+        const { collection, query, where, getDocs, writeBatch, doc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const q = query(
+            collection(db, 'pastas'),
+            where('userId', '==', auth.currentUser.uid),
+            where('especial', '==', 'comentario')
+        );
+
+        const snap = await getDocs(q);
+        if (snap.empty) {
+            console.log("Nenhum comentário para atualizar.");
+            return;
+        }
+
+        const batch = writeBatch(db);
+        const novoEstado = isActive ? "ativa" : "desativa";
+
+        snap.forEach((docSnapshot) => {
+            const docRef = doc(db, 'pastas', docSnapshot.id);
+            batch.update(docRef, { 
+                estado: novoEstado,
+                isPublic: isActive 
+            });
+        });
+
+        await batch.commit();
+        console.log(`${snap.size} comentários atualizados com sucesso.`);
+    } catch (e) {
+        console.error("Erro ao atualizar comentários em massa:", e);
+        throw e; // Lança o erro para o toggle saber que falhou
+    }
+};
+
+
+window.findSearchIndexForParagraph = (pNum) => {
+    if (!currentBookData || !currentBookData.capitulos) return "";
     const cap = currentBookData.capitulos[currentChapterIdx];
     
-    // Gera: "w25 janeiro pp. 2-7 - Parágrafo 1" ou "od 1:12"
-    return isMagazine 
-        ? `${cap.referencia} - Parágrafo ${pNum}` 
-        : `${currentPubId} ${currentChapter}:${pNum}`;
+    let activeRange = pNum;
+
+    // Percorre o conteúdo para ver em que "bloco de pergunta" este parágrafo está
+    for (const block of cap.conteudo) {
+        if (block.tipo === 'pergunta') {
+            // Calcula o intervalo desta pergunta específica
+            activeRange = window.getParagraphRangeForQuestion(block.numero_ref);
+        }
+        
+        // Se o parágrafo atual faz parte deste intervalo calculado
+        const parts = activeRange.split(',');
+        if (parts.includes(String(pNum))) {
+            const isMagazine = (currentSectionId === 'publicacoes');
+            return isMagazine 
+                ? `${cap.referencia} - Parágrafo ${activeRange}` 
+                : `${currentPubId} ${currentChapter}:${activeRange}`;
+        }
+    }
+    return "";
+};
+
+window.getUserColor = (uid) => {
+    const colors = ['#e67e22', '#2ecc71', '#9b59b6', '#f1c40f', '#e74c3c', '#1abc9c', '#e91e63', '#00bcd4'];
+    // Soma os códigos de caracteres do UID para gerar um índice fixo
+    let hash = 0;
+    for (let i = 0; i < uid.length; i++) {
+        hash = uid.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
 };
 
 
