@@ -6380,65 +6380,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- LÓGICA DO TOGGLE DE RESPOSTAS PÚBLICAS (COMENTÁRIOS) ---
     if (sharedToggle) {
-        // Define o estado inicial baseado no cache local antes do Firebase carregar
-        sharedToggle.checked = localStorage.getItem('sharedAnswersActive') === 'true';
+        // Define o estado visual baseado na variável global carregada ao iniciar
+        // (vinda do localStorage ou do Firebase via loadUserLibraryConfig)
+        sharedToggle.checked = userSettings.sharedAnswers;
 
-        sharedToggle.onchange = async (e) => {
-            const isNowActive = e.target.checked;
-            
-            // 1. Feedback visual imediato e bloqueio do botão
-            sharedToggle.disabled = true;
-            console.log("A sincronizar estado das respostas...");
-
-            try {
-                // 2. Grava a definição global no perfil do user (para outros dispositivos)
-                await window.saveGlobalPreference('sharedAnswers', isNowActive);
-
-                // 3. Atualiza TODAS as notas de comentário no Firebase (Massa)
-                await window.updateAllCommentsState(isNowActive);
-
-                // 4. Atualiza o estado local do site
-                userSettings.sharedAnswers = isNowActive;
-                localStorage.setItem('sharedAnswersActive', isNowActive);
-
-                // 5. Gestão da Aba "Shared" no painel lateral
-                const sharedTabBtn = document.getElementById('tab-shared-btn');
-                if (!isNowActive && sharedTabBtn) {
-                    sharedTabBtn.style.display = 'none';
-                    if (sharedTabBtn.classList.contains('active')) {
-                        const puzzleTab = document.querySelector('[data-ref-tab="puzzle"]');
-                        if (puzzleTab) puzzleTab.click();
-                    }
-                }
-
-                // 6. Recarrega os indicadores visuais (pontinhos) na página atual
-                // Precisamos recarregar os dados para o cache local refletir as mudanças do Firebase
-                if (currentPubId && currentChapter) {
-                    await loadLibraryDataForChapter(currentPubId, currentChapter);
-                }
-
-            } catch (error) {
-                console.error("Erro ao sincronizar respostas:", error);
-                alert("Erro ao atualizar estado das respostas. Tente novamente.");
-                sharedToggle.checked = !isNowActive; // Reverte o toggle em caso de erro
-            } finally {
-                sharedToggle.disabled = false;
-            }
+        // O evento onchange agora é apenas visual e informativo.
+        // Nenhuma operação assíncrona ou de Firebase acontece aqui.
+        sharedToggle.onchange = () => {
+            console.log("Estado de 'Respostas Públicas' alterado no modal.");
+            console.log("Aguardando clique em 'GRAVAR DEFINIÇÕES' para processar alterações.");
         };
     }
     
     // --- LÓGICA DO TOGGLE X-RAY ---
     if (xrayToggle) {
+        // Inicializa o estado visual
         xrayToggle.checked = userSettings.xrayDeepSearch;
+
         xrayToggle.onchange = (e) => {
+            // Atualiza apenas a variável local para uso imediato na página.
+            // A gravação permanente no Firebase também acontecerá no saveLibrarySettings.
             userSettings.xrayDeepSearch = e.target.checked;
-            // Opcional: Gravar também esta preferência globalmente
-            window.saveGlobalPreference('xrayDeepSearch', e.target.checked);
+            console.log("X-Ray Deep Search atualizado localmente para: " + e.target.checked);
         };
     }
 
-    // Inicializa tooltips ou outros componentes se necessário
-    console.log("Definições de utilizador prontas.");
+    // Outras inicializações de UI (opcional)
+    console.log("Interface da Biblioteca inicializada e pronta.");
 });
 
 
@@ -6563,24 +6531,55 @@ function applyConfigToUI() {
 window.saveLibrarySettings = async () => {
     if (!auth.currentUser) return;
     
+    // Identifica o botão que foi clicado através do evento global
     const btn = event.target;
     const originalText = btn.innerText;
+    
+    const sharedToggle = document.getElementById('shared-answers-toggle');
+    const isNowActive = sharedToggle ? sharedToggle.checked : userSettings.sharedAnswers;
+
     btn.innerText = "A GRAVAR...";
+    btn.disabled = true;
 
     try {
         const { doc, setDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
+        // 1. Grava as preferências no Firebase
         await setDoc(doc(db, 'configuracoes', auth.currentUser.uid), {
             libraryCardSize: userConfig.cardTextSize,
-            libraryReaderSize: userConfig.readerTextSize // Grava o novo tamanho
+            libraryReaderSize: userConfig.readerTextSize,
+            sharedAnswers: isNowActive
         }, { merge: true });
 
+        // 2. Se o estado mudou, atualiza as notas em massa
+        if (isNowActive !== userSettings.sharedAnswers) {
+            await window.updateAllCommentsState(isNowActive);
+        }
+
+        // 3. Atualiza variáveis locais
+        userSettings.sharedAnswers = isNowActive;
+        localStorage.setItem('sharedAnswersActive', isNowActive);
+
+        // 4. Atualiza a UI imediata
+        applyConfigToUI();
+        
+        const sharedTabBtn = document.getElementById('tab-shared-btn');
+        if (sharedTabBtn) {
+            sharedTabBtn.style.display = isNowActive ? 'inline-block' : 'none';
+        }
+        
+        if (typeof window.paintQuestionDots === 'function') {
+            window.paintQuestionDots();
+        }
+
+        // 5. Fecha o modal silenciosamente
         document.getElementById('settings-modal').style.display = 'none';
+
     } catch (e) {
-        console.error(e);
-        alert("Erro ao gravar configurações.");
+        console.error("Erro ao gravar definições:", e);
     } finally {
         btn.innerText = originalText;
+        btn.disabled = false;
     }
 };
 
