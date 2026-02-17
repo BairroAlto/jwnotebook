@@ -2732,7 +2732,7 @@ window.renderColorPicker = (containerId) => {
 };
 
 // Gravação da Nota na Biblioteca
-window.saveQuestionAnswer = async (docId, encodedQText) => {
+ window.saveQuestionAnswer = async (docId, encodedQText) => {
     const btn = document.getElementById('btn-save-question');
     const editor = document.getElementById('flash-editor');
     const qText = decodeURIComponent(encodedQText);
@@ -2741,28 +2741,43 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
     btn.disabled = true;
 
     try {
-        const { collection, addDoc, doc, updateDoc, serverTimestamp, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { collection, addDoc, doc, updateDoc, deleteDoc, serverTimestamp, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
         const qId = window.activeQuestionId; 
         const pNum = qId.split('_Q').pop(); 
-        
-        // --- CÁLCULO DO INTERVALO (6,7) ---
-        const pRange = window.getParagraphRangeForQuestion(pNum);
+        const contentText = editor.innerText.trim(); 
 
+        // --- LÓGICA DE REMOÇÃO SE ESTIVER VAZIO ---
+        if (contentText.length === 0) {
+            if (docId && docId !== "null") {
+                await deleteDoc(doc(db, 'pastas', docId));
+            }
+            // Atualiza visualmente para remover o ponto colorido
+            window.currentQuestionsCache[pNum] = 'none';
+            window.paintQuestionDots();
+            
+            btn.textContent = "🗑️ REMOVIDO";
+            setTimeout(() => { 
+                btn.disabled = false; 
+                btn.textContent = "GRAVAR RESPOSTA";
+                window.closeSidePanel();
+            }, 1500);
+            return;
+        }
+
+        // --- LÓGICA DE GRAVAÇÃO (CASO TENHA TEXTO) ---
+        const pRange = window.getParagraphRangeForQuestion(pNum);
         const isMagazine = (currentSectionId === 'publicacoes');
         const cap = currentBookData.capitulos[currentChapterIdx];
         
-        // fullName simples para o ID do documento, mas fullNameRange para o indice_pesquisa
         const fullNameRange = isMagazine 
             ? `${cap.referencia} - Parágrafo ${pRange}` 
             : `${currentPubId} ${currentChapter}:${pRange}`;
 
-        const contentHtml = editor.innerHTML.trim();
-
         const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
         const userName = userSnap.exists() ? (userSnap.data().nome || "Utilizador") : "Anónimo";
 
-        const boxHtml = `<div class="mini-note-wrapper question-mode" id="box_${Date.now()}" data-highlight="${window.selectedColorHex || ''}" contenteditable="false"><textarea class="mini-note-title-input">${qText}</textarea><div class="mini-note-content" contenteditable="true">${contentHtml}</div></div>`;
+        const boxHtml = `<div class="mini-note-wrapper question-mode" id="box_${Date.now()}" data-highlight="${window.selectedColorHex || ''}" contenteditable="false"><textarea class="mini-note-title-input">${qText}</textarea><div class="mini-note-content" contenteditable="true">${editor.innerHTML.trim()}</div></div>`;
 
         const noteData = {
             nome: qText,
@@ -2770,7 +2785,7 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
             tipo: 'nota',
             oque: 'back',
             especial: "comentario",
-            indice_pesquisa: fullNameRange, // <--- GRAVA O INTERVALO (6,7)
+            indice_pesquisa: fullNameRange,
             qId: qId,
             userId: auth.currentUser.uid,
             userName: userName,
@@ -2782,17 +2797,28 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
 
         if (docId && docId !== "null") {
             await updateDoc(doc(db, 'pastas', docId), noteData);
-        } else if (contentHtml !== "") { 
+        } else {
             noteData.createdAt = serverTimestamp();
             await addDoc(collection(db, 'pastas'), noteData);
         }
 
+        // Atualiza o ponto visual
         window.currentQuestionsCache[pNum] = window.selectedColorHex || '#555';
         window.paintQuestionDots();
+        
         btn.textContent = "✅ GUARDADO";
-        setTimeout(() => { btn.disabled = false; btn.textContent = "ATUALIZAR RESPOSTA"; }, 2000);
-    } catch (e) { console.error(e); btn.disabled = false; }
+        setTimeout(() => { 
+            btn.disabled = false; 
+            btn.textContent = "ATUALIZAR RESPOSTA"; 
+        }, 2000);
+
+    } catch (e) {
+        console.error("Erro ao processar resposta:", e);
+        btn.disabled = false;
+        btn.textContent = "ERRO AO GRAVAR";
+    }
 };
+
 
 // --- 6. GESTÃO DE DADOS DO UTILIZADOR (HIGHLIGHTS) ---
 
@@ -5020,13 +5046,45 @@ window.saveEditLibraryNote = async (docLibraryId, index, noteId) => {
     btn.disabled = true;
 
     try {
-        const { doc, updateDoc, serverTimestamp, getDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { doc, updateDoc, deleteDoc, serverTimestamp, getDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        const editor = document.getElementById('flash-editor');
+        const newContentText = editor.innerText.trim();
         const newTitle = document.getElementById('flash-title').value.trim();
-        const newContent = document.getElementById('flash-editor').innerHTML;
+
+        // --- LÓGICA DE REMOÇÃO SE ESTIVER VAZIO ---
+        if (newContentText.length === 0) {
+            // 1. Remove da coleção principal de notas
+            await deleteDoc(doc(db, 'pastas', noteId));
+
+            // 2. Remove o card da lista puzzleBoard do parágrafo
+            const targetColl = (docLibraryId.includes(':') && !docLibraryId.includes('pp.')) ? 'textobiblico' : 'livros';
+            const libRef = doc(db, targetColl, docLibraryId);
+            const libSnap = await getDoc(libRef);
+            
+            if (libSnap.exists()) {
+                const board = libSnap.data().puzzleBoard || [];
+                board.splice(index, 1); // Remove o item do array
+                await updateDoc(libRef, { puzzleBoard: board });
+            }
+
+            btn.textContent = "🗑️ REMOVIDO";
+            setTimeout(() => {
+                window.renderLibraryRefTab('puzzle'); // Refresh visual
+                btn.disabled = false;
+            }, 1000);
+            return;
+        }
+
+        // --- LÓGICA DE ATUALIZAÇÃO (CASO TENHA TEXTO) ---
         const color = window.selectedColorHex || '#3498db';
         const isQuestion = document.getElementById('flash-type-select')?.value === 'question';
-
-        const updatedHtml = `<div class="mini-note-wrapper ${isQuestion ? 'question-mode' : ''}" data-highlight="${color}" contenteditable="false"><textarea class="mini-note-title-input">${newTitle}</textarea><div class="mini-note-content" contenteditable="true">${newContent}</div></div>`;
+        
+        const updatedHtml = `
+            <div class="mini-note-wrapper ${isQuestion ? 'question-mode' : ''}" data-highlight="${color}" contenteditable="false">
+                <textarea class="mini-note-title-input">${newTitle}</textarea>
+                <div class="mini-note-content" contenteditable="true">${editor.innerHTML.trim()}</div>
+            </div>`;
 
         const noteUpdate = {
             nome: newTitle,
@@ -5034,31 +5092,41 @@ window.saveEditLibraryNote = async (docLibraryId, index, noteId) => {
             ultimaedicao: serverTimestamp()
         };
 
-        // --- SE FOR PERGUNTA, ATUALIZA OU REMOVE OS CAMPOS ---
         if (isQuestion) {
             noteUpdate.especial = "comentario";
-            noteUpdate.indice_pesquisa = docLibraryId; // docLibraryId já é o formato "w25... - Parágrafo 1"
+            noteUpdate.indice_pesquisa = docLibraryId;
         } else {
             noteUpdate.especial = deleteField();
             noteUpdate.indice_pesquisa = deleteField();
         }
 
+        // 1. Atualiza o documento na coleção 'pastas'
         await updateDoc(doc(db, 'pastas', noteId), noteUpdate);
 
-        const libRef = doc(db, 'livros', docLibraryId);
+        // 2. Atualiza o card dentro do 'puzzleBoard' na coleção da biblioteca
+        const targetColl = (docLibraryId.includes(':') && !docLibraryId.includes('pp.')) ? 'textobiblico' : 'livros';
+        const libRef = doc(db, targetColl, docLibraryId);
         const libSnap = await getDoc(libRef);
+        
         if (libSnap.exists()) {
             const board = libSnap.data().puzzleBoard;
-            board[index].noteName = newTitle;
-            board[index].snippet = encodeURIComponent(updatedHtml);
-            board[index].noteColor = color;
-            await updateDoc(libRef, { puzzleBoard: board });
+            if (board[index]) {
+                board[index].noteName = newTitle;
+                board[index].snippet = encodeURIComponent(updatedHtml);
+                board[index].noteColor = color;
+                await updateDoc(libRef, { puzzleBoard: board });
+            }
         }
 
-        document.getElementById('edit-card-modal').style.display = 'none';
         window.renderLibraryRefTab('puzzle');
         alert("Alterações gravadas!");
-    } catch (e) { console.error(e); } finally { btn.disabled = false; }
+
+    } catch (e) {
+        console.error("Erro ao editar nota:", e);
+        alert("Erro ao salvar alterações.");
+    } finally {
+        btn.disabled = false;
+    }
 };
 
 
