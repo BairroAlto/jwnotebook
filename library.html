@@ -1976,7 +1976,7 @@ z-index: 2147483647 !important;
                     </label>
                 </div>
 
-                <button onclick="window.saveLibrarySettings()" style="width:100%; margin-top:15px; padding:12px; background:#333; color:white; border:1px solid #444; border-radius:6px; font-weight:bold; cursor:pointer;">GRAVAR DEFINIÇÕES</button>
+              <button id="btn-save-settings" onclick="window.saveLibrarySettings()" style="width:100%; margin-top:15px; padding:12px; background:#333; color:white; border:1px solid #444; border-radius:6px; font-weight:bold; cursor:pointer;">GRAVAR DEFINIÇÕES</button>
             </div>
         </div>
     </div>
@@ -2746,13 +2746,9 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
         const pNum = qId.split('_Q').pop(); 
         
         // 1. LIMPEZA PROFUNDA DE TEXTO
-        // O innerText pega no texto visível. Se não houver texto visível, consideramos vazio.
         const contentText = editor.innerText.trim(); 
-        
-        // O innerHTML pode ter espaços. Fazemos trim().
         let contentHtml = editor.innerHTML.trim();
 
-        // Se o utilizador apagou tudo, mas ficou um <br>, limpamos.
         if (contentText.length === 0) {
             contentHtml = ""; 
         }
@@ -2761,17 +2757,14 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
         let visualColor = 'none'; 
         let coresArray = [];
 
-        // CASO A: Está em branco (remove ponto)
         if (contentHtml === "") {
             visualColor = 'none';
             coresArray = []; 
         } 
-        // CASO B: Tem texto, mas sem destaque (ponto cinzento)
         else if (!window.selectedColorHex) {
             visualColor = '#555';
             coresArray = [];
         } 
-        // CASO C: Tem texto e tem destaque (ponto colorido)
         else {
             visualColor = window.selectedColorHex;
             coresArray = [window.selectedColorHex.toUpperCase()];
@@ -2781,8 +2774,7 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
         const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
         const userName = userSnap.exists() ? (userSnap.data().nome || "Utilizador") : "Anónimo";
 
-        // Preparar HTML do wrapper (SEM QUEBRAS DE LINHA NA STRING)
-        // Nota: Removi os espaços entre as tags para evitar o bug do " \n "
+        // Preparar HTML do wrapper
         const boxHtml = `<div class="mini-note-wrapper question-mode" id="box_${Date.now()}" data-highlight="${window.selectedColorHex || ''}" contenteditable="false"><textarea class="mini-note-title-input">${qText}</textarea><div class="mini-note-content" contenteditable="true">${contentHtml}</div></div>`;
 
         const noteData = {
@@ -2793,7 +2785,7 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
             qId: qId,
             userId: auth.currentUser.uid,
             userName: userName,
-            isPublic: userSettings.sharedAnswers,
+            isPublic: userSettings.sharedAnswers, // <--- CORREÇÃO AQUI (era isShared)
             estado: 'ativa',
             coresUsadas: coresArray, 
             ultimaedicao: serverTimestamp()
@@ -2803,7 +2795,6 @@ window.saveQuestionAnswer = async (docId, encodedQText) => {
         if (docId && docId !== "null") {
             await updateDoc(doc(db, 'pastas', docId), noteData);
         } else if (contentHtml.length > 0) { 
-            // Só cria novo documento se tiver conteúdo REAL
             noteData.createdAt = serverTimestamp();
             await addDoc(collection(db, 'pastas'), noteData);
         }
@@ -6527,35 +6518,67 @@ function applyConfigToUI() {
 
 // --- GRAVAR DEFINIÇÕES NO FIREBASE ---
 window.saveLibrarySettings = async () => {
-    if (!auth.currentUser) return;
-    
-    const btn = event.target;
-    const originalText = btn.innerText;
-    btn.innerText = "A GRAVAR...";
+    const btn = document.getElementById('btn-save-settings');
+    const originalText = btn ? btn.innerHTML : "GRAVAR DEFINIÇÕES";
 
-    // Captura o estado atual do checkbox de respostas públicas
+    // 1. Ativar Loading no Botão (Mini Roda)
+    if (btn) {
+        btn.disabled = true;
+        // Reutilizamos a classe .global-spinner mas forçamos tamanho pequeno
+        btn.innerHTML = `<div class="global-spinner" style="width:18px; height:18px; border-width:2px; display:inline-block; vertical-align:middle; margin-right:8px;"></div> A gravar...`;
+    }
+
     const sharedToggle = document.getElementById('shared-answers-toggle');
     const isSharedActive = sharedToggle ? sharedToggle.checked : false;
+    
+    if (!auth.currentUser) return;
+    const myUid = auth.currentUser.uid;
 
     try {
-        const { doc, setDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { doc, setDoc, collection, query, where, getDocs, writeBatch } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        await setDoc(doc(db, 'configuracoes', auth.currentUser.uid), {
-            libraryCardSize: userConfig.cardTextSize,
-            libraryReaderSize: userConfig.readerTextSize,
-            sharedAnswers: isSharedActive // <-- NOVO: Salva no Firebase
+        // 2. Gravar definição no perfil
+        await setDoc(doc(db, 'configuracoes', myUid), { 
+            sharedAnswers: isSharedActive 
         }, { merge: true });
 
-        // Atualiza o estado global e o localStorage (como fallback)
+        // 3. Atualizar todas as notas em lote (Batch)
+        const q = query(collection(db, 'pastas'), where('userId', '==', myUid));
+        const snap = await getDocs(q);
+        const batch = writeBatch(db);
+        
+        snap.forEach(documento => {
+            batch.update(documento.ref, { isPublic: isSharedActive });
+        });
+        
+        await batch.commit();
+
+        // 4. Atualizar estado local
         userSettings.sharedAnswers = isSharedActive;
         localStorage.setItem('sharedAnswersActive', isSharedActive);
+        
+        // 5. Feedback de Sucesso no Botão
+        if (btn) btn.innerHTML = "✅ GUARDADO";
 
-        document.getElementById('settings-modal').style.display = 'none';
+        // 6. Fechar modal automaticamente após 1 segundo
+        setTimeout(() => {
+            document.getElementById('settings-modal').style.display = 'none';
+            // Restaurar botão para o próximo uso
+            if (btn) {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }, 1000);
+
     } catch (e) {
         console.error(e);
-        alert("Erro ao gravar configurações.");
-    } finally {
-        btn.innerText = originalText;
+        if (btn) {
+            btn.innerHTML = "❌ Erro";
+            setTimeout(() => {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }, 2000);
+        }
     }
 };
 
