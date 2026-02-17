@@ -3176,24 +3176,17 @@ function updateHeader(title, backAction) {
 window.openSidePanel = async (pNum) => {
     const panel = document.getElementById('side-panel');
     const titleContainer = document.getElementById('side-title-container');
-    const sharedTabBtn = document.getElementById('tab-shared-btn'); // Captura o botão da aba 💬
+    const sharedTabBtn = document.getElementById('tab-shared-btn');
 
-    // 1. Abrir o painel e mostrar a barra de abas
     panel.classList.add('open');
     document.getElementById('library-ref-tabs').style.display = 'flex'; 
     activeParaNum = pNum;
 
-    // 2. Lógica de unificação da referência (Magazine vs Livro)
     const isMagazine = (currentSectionId === 'publicacoes');
     const cap = currentBookData.capitulos[currentChapterIdx];
-
-    const fullName = isMagazine 
-        ? `${cap.referencia} - Parágrafo ${pNum}` 
-        : `${currentPubId} ${currentChapter}:${pNum}`;
-
+    const fullName = isMagazine ? `${cap.referencia} - Parágrafo ${pNum}` : `${currentPubId} ${currentChapter}:${pNum}`;
     panel.dataset.currentRef = fullName;
 
-    // 3. Atualizar o Título e os botões de ação rápida no topo do painel
     const displayTitle = isMagazine ? `Parágrafo ${pNum}` : `${currentChapter}:${pNum}`;
 
     titleContainer.innerHTML = `
@@ -3204,20 +3197,43 @@ window.openSidePanel = async (pNum) => {
         </div>
     `;
 
-    // 4. CONTROLO DE VISIBILIDADE DA ABA "RESPOSTAS PÚBLICAS" (💬)
+    // --- LÓGICA DA ABA DE RESPOSTAS PÚBLICAS (💬) ---
     if (sharedTabBtn) {
-        // O botão da aba 💬 só aparece se "Respostas Públicas" estiver ativado nas definições
         if (userSettings.sharedAnswers === true) {
             sharedTabBtn.style.display = 'inline-block';
+            sharedTabBtn.style.color = ''; // Reset da cor
+            sharedTabBtn.style.textShadow = ''; // Reset do brilho
+
+            // VERIFICAÇÃO DE EXISTÊNCIA DE RESPOSTAS
+            try {
+                const { collection, query, where, getDocs, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+                const searchKey = window.findSearchIndexForParagraph(pNum);
+                const myUid = auth.currentUser.uid;
+
+                const q = query(
+                    collection(db, 'pastas'),
+                    where('indice_pesquisa', '==', searchKey),
+                    where('especial', '==', 'comentario'),
+                    where('estado', '==', 'ativa'),
+                    where('userId', '!=', myUid),
+                    limit(1) // Só precisamos de saber se existe pelo menos uma
+                );
+
+                const snap = await getDocs(q);
+                if (!snap.empty) {
+                    // SE EXISTIREM RESPOSTAS, FICA AMARELO
+                    sharedTabBtn.style.color = '#f1c40f'; 
+                    sharedTabBtn.style.textShadow = '0 0 10px rgba(241, 196, 15, 0.6)';
+                }
+            } catch (e) {
+                console.error("Erro ao verificar respostas públicas:", e);
+            }
         } else {
             sharedTabBtn.style.display = 'none';
         }
     }
 
-    // 5. Carregar a aba padrão (Quadro/Puzzle) por defeito
     window.renderLibraryRefTab('puzzle');
-    
-    // Reset de estilos das abas (garante que a 'puzzle' fica ativa visualmente)
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelector('[data-ref-tab="puzzle"]').classList.add('active');
 };
@@ -3832,14 +3848,12 @@ window.renderLibraryRefTab = async function(tab) {
 if (tab === 'shared') {
     content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
     
-    // 1. Descobre a chave de pesquisa (ex: "w25... - Parágrafo 6,7")
     const searchKey = window.findSearchIndexForParagraph(activeParaNum);
     const myUid = auth.currentUser.uid;
 
     try {
         const { collection, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        // 2. Procura comentários de outros utilizadores
         const q = query(
             collection(db, 'pastas'),
             where('indice_pesquisa', '==', searchKey),
@@ -3852,31 +3866,36 @@ if (tab === 'shared') {
         content.innerHTML = `<h4 style="color:#888; font-size:0.7rem; text-transform:uppercase; margin: 10px 0 15px 15px; letter-spacing:1px;">Comentários da Comunidade</h4>`;
 
         if (snap.empty) {
-            content.innerHTML += '<div class="xray-empty-msg">Nenhuma resposta pública encontrada para este parágrafo.</div>';
+            content.innerHTML += '<div class="xray-empty-msg">Nenhuma resposta pública encontrada.</div>';
             return;
         }
 
         snap.forEach(docSnap => {
             const data = docSnap.data();
-            const userColor = window.getUserColor(data.userId); // Gera a cor única do user
+            const userColor = window.getUserColor(data.userId);
             
             const card = document.createElement('div');
             card.className = 'detail-card';
-            card.style.borderLeftColor = userColor; // Borda com a cor do user
+            
+            // --- ESTILO SOLICITADO ---
+            // Fundo com a cor do user (15 no final do hex = ~8% de opacidade)
+            card.style.backgroundColor = `${userColor}15`; 
+            card.style.borderLeftColor = userColor;
+            card.style.paddingLeft = '0'; // Remove o gap à esquerda do card
             
             card.innerHTML = `
-                <!-- Cabeçalho do Card: Ícone + Nome do User -->
-                <div style="font-size:0.65rem; color:${userColor}; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">
-                    💬 ${data.userName || "Utilizador"}
+                <!-- Cabeçalho (Alinhado com margem pequena para não colar na borda) -->
+                <div style="margin-left: 12px;">
+                    <div style="font-size:0.65rem; color:${userColor}; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">
+                        💬 ${data.userName || "Utilizador"}
+                    </div>
+                    <div style="font-size:0.55rem; color:#666; font-weight:800; text-transform:uppercase; margin-bottom:8px;">
+                        Resposta
+                    </div>
                 </div>
                 
-                <!-- Subtítulo: Resposta -->
-                <div style="font-size:0.55rem; color:#666; font-weight:800; text-transform:uppercase; margin-bottom:8px;">
-                    Resposta
-                </div>
-                
-                <!-- Conteúdo da Resposta -->
-                <div class="card-snippet" style="color:#cecece; font-size:0.9rem; line-height:1.5;">
+                <!-- Comentário (Totalmente alinhado à esquerda, sem gap) -->
+                <div class="card-snippet" style="color:#cecece; font-size:0.95rem; line-height:1.5; padding-left: 12px; border-left: 0; text-align: left;">
                     ${cleanMicaContent(data.conteudo)}
                 </div>
             `;
