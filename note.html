@@ -7817,9 +7817,10 @@ body, .notebook-container {
 }
 
 .ghost-block:focus {
-    background: rgba(255, 255, 255, 0.05); /* Fundo ligeiramente visível */
-    border-color: rgba(255, 255, 255, 0.1); /* Borda subtil */
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2); /* Sombra para destacar */
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
 }
 
 /* Placeholder */
@@ -7932,10 +7933,8 @@ body, .notebook-container {
 /* 2. ESTILO DE SELEÇÃO (Apenas linha Esquerda) */
 .ghost-block:focus,
 .ghost-block.active-selection {
-    background-color: rgba(255, 255, 255, 0.04) !important;
+    background: rgba(255, 255, 255, 0.03) !important;
     border-left: 3px solid var(--accent-color) !important;
-    border-right: none !important;
-    border-bottom: none !important;
 }
 
 /* 3. EXCEÇÕES SEMÂNTICAS (SÓ ESTES PODEM TER LINHA NO TOPO) */
@@ -11773,6 +11772,20 @@ html, body {
 /* Garante que o botão quando oculto não ocupe espaço */
 #selection-popup button[style*="display: none"] {
     display: none !important;
+}
+
+/* Garante que o botão esteja sempre na frente de outros blocos */
+.ghost-add-between-btn {
+    z-index: 999 !important;
+    pointer-events: auto !important;
+    cursor: pointer !important;
+}
+
+/* Evita que a margem do bloco de baixo cubra o botão */
+.ghost-block {
+    position: relative;
+    overflow: visible !important;
+      user-select: text;
 }
 
 </style>
@@ -43486,128 +43499,100 @@ if (aqToolbarFix) {
 window.activeGhost = null;
 
 // 2. Função para ativar o bloco e mostrar a barra
-window.setActiveGhost = function(ghost) {
+window.setActiveGhost = function(ghost, isKeyboard = false) {
+    if (!ghost) return;
     window.activeGhost = ghost;
     
-    // --- LIMPEZA DE DESTAQUE DO ARMAZÉM (Mantém a lógica existente) ---
-    if (window.activeStoreGhostId && ghost.id !== window.activeStoreGhostId) {
-        const oldTarget = document.getElementById(window.activeStoreGhostId);
-        if (oldTarget) {
-            oldTarget.classList.remove('active-store-target');
-            oldTarget.style.border = '';
-            oldTarget.style.backgroundColor = '';
-            oldTarget.style.boxShadow = '';
-        }
-    }
-
     const contextTools = document.getElementById('aq-context-tools');
     
-    if (contextTools) {
-        contextTools.style.setProperty('display', 'flex', 'important');
-        
-        // 1. Limpa classes de todos os blocos
-        document.querySelectorAll('.ghost-block').forEach(g => {
-            g.classList.remove('active-selection');
-            g.classList.remove('has-next'); // Remove a permissão do botão +
-            
-            // Limpezas de estilo inline
-            g.style.borderTop = '';
-            g.style.border = '';
-            g.style.outline = '';
-        });
-        
-        // 2. Adiciona classe de seleção ao atual
+    // Limpa seleções anteriores
+    document.querySelectorAll('.ghost-block').forEach(g => {
+        g.classList.remove('active-selection');
+        g.classList.remove('has-next');
+    });
+
+    if (isKeyboard) {
+        // No teclado, apenas escondemos a toolbar e não pomos bordas
+        if (contextTools) contextTools.style.setProperty('display', 'none', 'important');
+    } else {
+        // No clique, comportamento normal
         ghost.classList.add('active-selection');
-        
-        // ============================================================
-        // NOVA LÓGICA DO BOTÃO "+"
-        // ============================================================
-        // Verifica se existe um elemento irmão seguinte E se é um ghost-block
-        const nextBlock = ghost.nextElementSibling;
-        
-        if (nextBlock && nextBlock.classList.contains('ghost-block')) {
-            // Se houver um bloco a seguir, adiciona a classe que faz o CSS mostrar o botão
+        if (contextTools) contextTools.style.setProperty('display', 'flex', 'important');
+        if (ghost.nextElementSibling && ghost.nextElementSibling.classList.contains('ghost-block')) {
             ghost.classList.add('has-next');
         }
-        // ============================================================
-
-        // 3. SEGURANÇA MÁXIMA (Mantém lógica existente)
-        ghost.style.removeProperty('border-top');
-        ghost.style.removeProperty('border');
-        ghost.style.removeProperty('outline');
-        
-    } else {
-        console.warn("⚠️ Barra de ferramentas #aq-context-tools não encontrada.");
     }
 };
 
 // Função auxiliar para injetar os botões se não existirem
 function ensureGhostActions(ghost) {
-    
-    // 1. Botões de Topo (Menu e Armazém)
+    // 1. GARANTIA DE ID (Essencial para os logs e para o Firebase)
+    if (!ghost.id) ghost.id = 'ghost_' + Date.now();
+
+    // 2. BOTÕES DE TOPO (🐚 Armazém e ⇱ Popup)
     if (!ghost.querySelector('.ghost-actions')) {
         const actionsDiv = document.createElement('div');
         actionsDiv.className = 'ghost-actions';
-        actionsDiv.setAttribute('contenteditable', 'false'); // Atributo HTML explícito
+        actionsDiv.setAttribute('contenteditable', 'false'); // Impede edição nos botões
         actionsDiv.innerHTML = `
             <button class="ghost-action-btn" title="Armazém (Notas Anexadas)" onclick="window.openGhostStore(this)">🐚</button>
-            <button class="ghost-action-btn" title="Abrir Popup" onclick="window.openGhostPopup(this)">⇱</button>
+            <button class="ghost-action-btn" title="Abrir em Janela" onclick="window.openGhostPopup(this)">⇱</button>
         `;
         ghost.prepend(actionsDiv);
     }
 
-    // 2. Limpeza de botões antigos soltos
-    const oldAddBtn = ghost.querySelector(':scope > .ghost-add-between-btn');
-    if (oldAddBtn) oldAddBtn.remove();
-
-    // 3. CONTROLOS LATERAIS (Setas + Botão Adicionar)
+    // 3. CONTROLOS LATERAIS (Setas ▲ ▼ e o botão +)
     let sideControls = ghost.querySelector('.ghost-side-controls');
     
     if (!sideControls) {
-        console.log("🛠️ [DEBUG] Criando barra lateral (Secure Mode)...");
-        
         sideControls = document.createElement('div');
         sideControls.className = 'ghost-side-controls';
-        sideControls.setAttribute('contenteditable', 'false'); // BLINDAGEM 1
+        sideControls.setAttribute('contenteditable', 'false');
 
-        // Botão Subir (🔺)
+        // --- BOTÃO SUBIR (▲) ---
         const upBtn = document.createElement('button');
         upBtn.className = 'ghost-move-btn';
         upBtn.innerHTML = '▲';
-        upBtn.setAttribute('contenteditable', 'false'); // BLINDAGEM 2
-        
-        upBtn.onclick = (e) => {
-            console.log("🔺 [CLIQUE] Botão SUBIR!");
-            e.preventDefault(); e.stopPropagation(); 
+        upBtn.onmousedown = (e) => {
+            e.preventDefault(); e.stopPropagation();
             window.moveGhostBlock(ghost, -1);
         };
-        // O mousedown previne que o foco mude para o texto
-        upBtn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
 
-        // Botão Descer (🔻)
+        // --- BOTÃO DESCER (▼) ---
         const downBtn = document.createElement('button');
         downBtn.className = 'ghost-move-btn';
         downBtn.innerHTML = '▼';
-        downBtn.setAttribute('contenteditable', 'false'); // BLINDAGEM 2
-        
-        downBtn.onclick = (e) => {
-            console.log("🔻 [CLIQUE] Botão DESCER!");
+        downBtn.onmousedown = (e) => {
             e.preventDefault(); e.stopPropagation();
             window.moveGhostBlock(ghost, 1);
         };
-        downBtn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
 
-        // Botão Adicionar (+)
+        // --- BOTÃO ADICIONAR (+) - O SEU FOCO ---
         const addBtn = document.createElement('div');
         addBtn.className = 'ghost-add-between-btn';
-        addBtn.setAttribute('contenteditable', 'false'); // BLINDAGEM 2
+        addBtn.setAttribute('contenteditable', 'false');
         
-        addBtn.onclick = (e) => {
-            console.log("➕ [CLIQUE] Botão ADICIONAR!");
-            e.preventDefault(); e.stopPropagation();
-            window.insertBlockBelow(ghost);
+        // LOG DE CRIAÇÃO
+        console.log(`[WIDGET] Botão + injetado no bloco: ${ghost.id}`);
+
+        // EVENTO DE CLIQUE COM LOGS
+        addBtn.onmousedown = (e) => {
+            console.group("%c➕ [CLIQUE DETETADO] Botão de Inserção", "color: #3498db; font-weight: bold;");
+            console.log("ID do Bloco Pai:", ghost.id);
+            console.log("Posição do Clique Y:", e.clientY);
+            
+            // Impede que o clique "vaze" para o texto de baixo ou desmarque a caixa
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (typeof window.insertBlockBelow === 'function') {
+                console.log("🚀 Chamando window.insertBlockBelow...");
+                window.insertBlockBelow(ghost);
+            } else {
+                console.error("❌ ERRO: A função window.insertBlockBelow não foi encontrada no escopo global.");
+            }
+            console.groupEnd();
         };
-        addBtn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
 
         sideControls.appendChild(upBtn);
         sideControls.appendChild(downBtn);
@@ -43616,17 +43601,13 @@ function ensureGhostActions(ghost) {
         ghost.prepend(sideControls);
     }
 
-    // 4. Garantia de Cursor
-    let hasContent = false;
-    ghost.childNodes.forEach(node => {
-        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== '') hasContent = true;
-    });
-
-    if (!hasContent && !ghost.querySelector('br')) {
+    // 4. GARANTIA DE CURSOR (Evita que o bloco colapse visualmente)
+    if (ghost.innerText.trim() === '' && !ghost.querySelector('br')) {
         const br = document.createElement('br');
         ghost.appendChild(br);
     }
 }
+
 
 // Atualiza a criação de novos blocos
 function createNewGhost() {
@@ -43663,27 +43644,25 @@ function createNewGhost() {
 }
 
 window.insertBlockBelow = function(currentBlock) {
-    console.log("🚀 A criar novo bloco...");
-    
     const newGhost = document.createElement('div');
     newGhost.className = 'ghost-block';
     newGhost.id = 'ghost_' + Date.now();
     newGhost.setAttribute('contenteditable', 'true');
     newGhost.dataset.placeholder = "";
     
+    // O SEGREDO: Inserir após o bloco atual (currentBlock)
     currentBlock.insertAdjacentElement('afterend', newGhost);
 
+    // Adiciona os ícones (🐚, ⇱, ▲, ▼, +) ao novo bloco
     ensureGhostActions(newGhost);
 
+    // Foca na nova caixa para escrever
     setTimeout(() => {
         newGhost.focus();
-        if (typeof window.setActiveGhost === 'function') {
-            window.setActiveGhost(newGhost);
-        }
-    }, 10);
+        window.setActiveGhost(newGhost);
+    }, 50);
     
-    // --- GRAVAÇÃO IMEDIATA ---
-    updateAquariumStatus('saving');
+    // Grava no Firebase
     if (typeof window.saveAquariumState === 'function') window.saveAquariumState();
 };
 
@@ -43769,10 +43748,13 @@ window.insertBlockBelow = function(currentBlock) {
             }
 
             // C. DETETAR FOCO (Tab ou Seleção)
-            canvas.addEventListener('focusin', (e) => {
-                const ghost = e.target.closest('.ghost-block');
-                if (ghost) window.setActiveGhost(ghost);
-            });
+          canvas.addEventListener('focusin', (e) => {
+    const ghost = e.target.closest('.ghost-block');
+    // Se o foco veio de um clique, ativa a UI. Se veio de tab/setas, fica calado.
+    if (ghost && e.detail === 0) { // e.detail 0 geralmente indica teclado
+        window.setActiveGhost(ghost, true);
+    }
+});
 
       // D. DETETAR ESCRITA (Lógica de "Por Guardar")
            canvas.addEventListener('input', (e) => {
@@ -43784,6 +43766,12 @@ window.insertBlockBelow = function(currentBlock) {
     if (typeof updateAquariumStatus === 'function') {
         updateAquariumStatus('unsaved');
     }
+
+    // Dentro do listener de input do Canvas do Aquário:
+if (ghost.innerHTML === "" || ghost.innerHTML === "<br>") {
+    // Garante que existe sempre um espaço para o cursor "viver"
+    ghost.innerHTML = '<br>'; 
+}
 
     // 2. Limpa o temporizador anterior
     // (Isto é o "Debounce": se escrever outra letra antes dos 2 min, o relógio volta ao zero)
@@ -43809,124 +43797,73 @@ window.insertBlockBelow = function(currentBlock) {
             }
 
             // E. TECLADO (Lógica Semântica de Enter)
-            canvas.addEventListener('keydown', (e) => {
-                const currentGhost = e.target.closest('.ghost-block');
-                if (!currentGhost) return;
+canvas.addEventListener('keydown', (e) => {
+    const currentGhost = e.target.closest('.ghost-block');
+    if (!currentGhost || currentGhost.classList.contains('locked-popup')) return;
 
-                // --- DETETOR DE ENTER ---
-                if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        const sel = window.getSelection();
+        if (!sel.rangeCount) return;
+
+        const range = sel.getRangeAt(0);
+        const preRect = range.getBoundingClientRect();
+
+        if (e.key === 'ArrowUp') {
+            // Teste de movimento: tenta subir 1 linha
+            sel.modify("move", "backward", "line");
+            const postRect = sel.getRangeAt(0).getBoundingClientRect();
+
+            // Se a posição Y não mudou (ou desceu), estávamos na primeira linha do bloco
+            if (postRect.top >= preRect.top - 1) {
+                const prev = currentGhost.previousElementSibling;
+                if (prev && prev.classList.contains('ghost-block')) {
+                    e.preventDefault(); // Impede o navegador de ignorar o comando
+                    window.setActiveGhost(prev, true); // Ativa modo silencioso
+                    prev.focus();
                     
-                    // 1. Verificar o tipo semântico atual
-                    // Se não tiver atributo, assume 'p' (Parágrafo Normal)
-                    const type = currentGhost.dataset.semantic || 'p';
-
-                    // --- COMPORTAMENTO A: MANTER NA MESMA CAIXA ---
-                    // Aplica-se a: Parágrafo (p) e Nota (note)
-                    if (type === 'p' || type === 'note') {
-                        // Previne a criação de div/bloco novo
-                        e.preventDefault(); 
-                        
-                        // Insere uma quebra de linha manual (<br>)
-                        document.execCommand('insertLineBreak');
-                        return; // Fica aqui, não cria novo fantasma
-                    }
-
-                    // --- COMPORTAMENTO B: CRIAR NOVA CAIXA EM BAIXO ---
-                    // Aplica-se a: Subparágrafo (sub), H1 e H2
-                    if (type === 'sub' || type === 'h1' || type === 'h2') {
-                        e.preventDefault();
-                        
-                        const newGhost = document.createElement('div');
-                        newGhost.className = 'ghost-block';
-                        newGhost.setAttribute('contenteditable', 'true');
-                        newGhost.dataset.placeholder = "";
-                        
-                        // Se o atual era um Subparágrafo, o próximo também será por conveniência
-                        if (type === 'sub') {
-                            newGhost.setAttribute('data-semantic', 'sub');
-                        }
-                        // Se era H1 ou H2, o próximo volta a ser Parágrafo (padrão, sem atributo)
-
-                        if (currentGhost.nextSibling) {
-                            canvas.insertBefore(newGhost, currentGhost.nextSibling);
-                        } else {
-                            canvas.appendChild(newGhost);
-                        }
-                        
-                        setTimeout(() => {
-                            newGhost.focus();
-                            window.setActiveGhost(newGhost);
-                        }, 10);
-                    }
+                    // Coloca o cursor no fim exato do bloco anterior
+                    const newRange = document.createRange();
+                    newRange.selectNodeContents(prev);
+                    newRange.collapse(false);
+                    sel.removeAllRanges();
+                    sel.addRange(newRange);
                 }
-                
-                // BACKSPACE: Apagar se vazio
-                if (e.key === 'Backspace' && currentGhost.textContent === '') {
-                    if (canvas.children.length > 1) {
-                        e.preventDefault();
-                        if (typeof sendToBlackHole === 'function') sendToBlackHole(currentGhost);
-                        const prev = currentGhost.previousElementSibling;
-                        currentGhost.remove();
-                        
-                        const tools = document.getElementById('aq-context-tools');
-                        if(tools) tools.style.setProperty('display', 'none', 'important');
+            } else {
+                // Se o movimento foi bem sucedido dentro da mesma caixa,
+                // voltamos atrás e deixamos o navegador fazer o movimento natural (evita saltar 2)
+                sel.modify("move", "forward", "line");
+            }
+        } 
+        else if (e.key === 'ArrowDown') {
+            // Teste de movimento: tenta descer 1 linha
+            sel.modify("move", "forward", "line");
+            const postRect = sel.getRangeAt(0).getBoundingClientRect();
 
-                        if (prev) {
-                            prev.focus();
-                            const range = document.createRange();
-                            range.selectNodeContents(prev);
-                            range.collapse(false);
-                            const sel = window.getSelection();
-                            sel.removeAllRanges();
-                            sel.addRange(range);
-                            window.setActiveGhost(prev);
-                        }
-                    }
+            // Se a posição Y não mudou (ou subiu), estávamos na última linha do bloco
+            if (postRect.bottom <= preRect.bottom + 1) {
+                const next = currentGhost.nextElementSibling;
+                if (next && next.classList.contains('ghost-block')) {
+                    e.preventDefault(); // Impede o navegador de travar no fundo
+                    window.setActiveGhost(next, true); // Ativa modo silencioso
+                    next.focus();
+
+                    // Coloca o cursor no início exato do bloco seguinte
+                    const newRange = document.createRange();
+                    newRange.selectNodeContents(next);
+                    newRange.collapse(true);
+                    sel.removeAllRanges();
+                    sel.addRange(newRange);
                 }
-                
-                // SETAS
-                if (e.key === 'ArrowUp') {
-                    const prev = currentGhost.previousElementSibling;
-                    if (prev) setTimeout(() => { prev.focus(); window.setActiveGhost(prev); }, 10);
-                }
-                if (e.key === 'ArrowDown') {
-                    const next = currentGhost.nextElementSibling;
-                    if (next) setTimeout(() => { next.focus(); window.setActiveGhost(next); }, 10);
-                }
-            });
+            } else {
+                // Reverte o teste para deixar o navegador mover naturalmente (evita saltar 2)
+                sel.modify("move", "backward", "line");
+            }
+        }
+    }
+});
         }
     }, 500);
 
-
-// Função para inserir um bloco novo entre A e B
-window.insertBlockBelow = function(currentBlock) {
-    console.log("🚀 A criar novo bloco...");
-    
-    // 1. Criar
-    const newGhost = document.createElement('div');
-    newGhost.className = 'ghost-block';
-    newGhost.id = 'ghost_' + Date.now();
-    newGhost.setAttribute('contenteditable', 'true');
-    newGhost.dataset.placeholder = "";
-    
-    // 2. Inserir
-    currentBlock.insertAdjacentElement('afterend', newGhost);
-
-    // 3. Adicionar botões ao novo bloco
-    ensureGhostActions(newGhost);
-
-    // 4. Focar
-    setTimeout(() => {
-        newGhost.focus();
-        // Ativa o novo bloco (isto vai mover o botão + para o sítio certo)
-        if (typeof window.setActiveGhost === 'function') {
-            window.setActiveGhost(newGhost);
-        }
-    }, 10);
-    
-    // 5. Gravar
-    if (typeof window.saveAquariumState === 'function') window.saveAquariumState();
-};
 
 
 // ============================================================
@@ -46638,28 +46575,50 @@ setTimeout(() => {
 const aquariumCanvas = document.getElementById('aquarium-content-canvas');
 if (aquariumCanvas) {
     aquariumCanvas.addEventListener('paste', (e) => {
-        // Verifica se o alvo é um bloco fantasma
-        if (e.target.classList.contains('ghost-block') || e.target.closest('.ghost-block')) {
-            
-            // 1. Tenta obter HTML do clipboard
-            const htmlData = (e.clipboardData || window.clipboardData).getData('text/html');
-            const textData = (e.clipboardData || window.clipboardData).getData('text/plain');
+        // 1. Identifica se o alvo é um bloco fantasma
+        const target = e.target.closest('.ghost-block');
+        if (!target) return;
 
-            // 2. Verifica se o HTML contém os nossos links especiais
-            if (htmlData && htmlData.includes('silent-link')) {
-                // Se for um link interno nosso, deixa o navegador lidar com isso (preserva o HTML)
-                // Não fazemos preventDefault aqui.
-                return; 
-            }
+        // 2. Obtém o texto bruto do clipboard
+        let text = (e.clipboardData || window.clipboardData).getData('text/plain');
 
-            // 3. Se for lixo externo ou texto normal, força Texto Limpo
-            e.preventDefault();
-            document.execCommand("insertText", false, textData);
-            
-            // Força uma gravação do estado
-            if (typeof window.saveAquariumState === 'function') {
-                window.saveAquariumState();
-            }
+        // 3. LÓGICA DE LIMPEZA (O SEU CASO):
+        // Remove espaços vazios ou quebras de linha excessivas apenas no INÍCIO do texto
+        // Isso evita que o "vazio de cima" entre no bloco
+        text = text.replace(/^\s+/, ''); 
+
+        // 4. Se for um link interno nosso, deixamos o comportamento padrão (preserva HTML)
+        const htmlData = (e.clipboardData || window.clipboardData).getData('text/html');
+        if (htmlData && htmlData.includes('silent-link')) {
+            return; 
+        }
+
+        // 5. IMPEDIR COLAGEM PADRÃO
+        e.preventDefault();
+
+        // 6. INSERÇÃO MANUAL SEGURA (Selection API)
+        // Isso garante que o cursor não se perca e a caixa não quebre
+        const selection = window.getSelection();
+        if (!selection.rangeCount) return;
+        
+        const range = selection.getRangeAt(0);
+        range.deleteContents(); // Remove o texto que estava selecionado (se houver)
+        
+        const textNode = document.createTextNode(text);
+        range.insertNode(textNode);
+
+        // Move o cursor para o fim do texto colado
+        range.setStartAfter(textNode);
+        range.setEndAfter(textNode);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        console.log("📋 [AQUÁRIO] Texto colado e limpo com sucesso.");
+
+        // 7. Notifica o sistema de que houve alteração para gravar
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        if (typeof window.saveAquariumState === 'function') {
+            window.saveAquariumState();
         }
     });
 }
@@ -47217,13 +47176,29 @@ function restoreCursorFromGPS() {
 
 // Auxiliar para colocar cursor no fim
 function placeCaretAtEnd(el) {
+    if (!el) return;
+    // 1. Força o foco no elemento
     el.focus();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
+    // 2. Verifica se o navegador suporta a Selection API moderna
+    if (typeof window.getSelection !== "undefined" && typeof document.createRange !== "undefined") {
+        const range = document.createRange();
+        // Seleciona todo o conteúdo interno do elemento
+        range.selectNodeContents(el);
+        // Colapsa o intervalo para o ponto final (false = end, true = start)
+        range.collapse(false);
+        const sel = window.getSelection();
+        // Remove seleções anteriores (limpa o azul de seleção)
+        sel.removeAllRanges();
+        // Adiciona o novo ponto de inserção (o cursor a piscar)
+        sel.addRange(range);
+    } 
+    // Suporte legado para versões muito antigas do Internet Explorer (opcional)
+    else if (typeof document.body.createTextRange !== "undefined") {
+        const textRange = document.body.createTextRange();
+        textRange.moveToElementText(el);
+        textRange.collapse(false);
+        textRange.select();
+    }
 }
 
 // 3. LISTENERS CONSTANTES (Para manter o GPS atualizado)
@@ -57261,6 +57236,29 @@ document.getElementById('selection-color-picker').addEventListener('mousedown', 
 // Usamos touchstart para Mobile e mousedown para garantir que não falha no simulador
 window.addEventListener('touchstart', aquariumIconsShield, { passive: false, capture: true });
 window.addEventListener('mousedown', aquariumIconsShield, { capture: true });
+
+// FORÇA BRUTA: Intercetor de cliques para o botão + do Aquário
+document.getElementById('aquarium-environment').addEventListener('mousedown', (e) => {
+    const btn = e.target.closest('.ghost-add-between-btn');
+    
+    if (btn) {
+        
+        // 1. Para tudo o resto (impede o Aquário de desmarcar a caixa)
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        // 2. Identifica o bloco pai (o fantasma que tem o botão)
+        const ghost = btn.closest('.ghost-block');
+        
+        if (ghost && typeof window.insertBlockBelow === 'function') {
+            window.insertBlockBelow(ghost);
+        } else {
+            console.error("❌ Falha: Bloco pai não encontrado ou função de inserção em falta.");
+        }
+    }
+}, true); // O 'true' é fundamental aqui para capturar o clique antes de todos
+
 
     </script>
 </body>
