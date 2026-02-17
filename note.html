@@ -43650,20 +43650,25 @@ window.insertBlockBelow = function(currentBlock) {
     newGhost.setAttribute('contenteditable', 'true');
     newGhost.dataset.placeholder = "";
     
-    // O SEGREDO: Inserir após o bloco atual (currentBlock)
     currentBlock.insertAdjacentElement('afterend', newGhost);
-
-    // Adiciona os ícones (🐚, ⇱, ▲, ▼, +) ao novo bloco
     ensureGhostActions(newGhost);
 
-    // Foca na nova caixa para escrever
     setTimeout(() => {
         newGhost.focus();
-        window.setActiveGhost(newGhost);
+        window.setActiveGhost(newGhost, true); 
     }, 50);
     
-    // Grava no Firebase
-    if (typeof window.saveAquariumState === 'function') window.saveAquariumState();
+    // --- ALTERAÇÃO AQUI ---
+    // Em vez de gravar no servidor, apenas avisamos a interface que há alterações
+    if (typeof updateAquariumStatus === 'function') {
+        updateAquariumStatus('unsaved'); 
+    }
+
+    // Opcional: Se quiseres que grave após 2 minutos de inatividade (como na escrita):
+    clearTimeout(aqAutoSaveTimer);
+    aqAutoSaveTimer = setTimeout(() => {
+        window.saveAquariumState();
+    }, 120000); 
 };
 
 // 4. Configurar Listeners do Canvas (com atraso para garantir que o HTML existe)
@@ -43809,19 +43814,17 @@ canvas.addEventListener('keydown', (e) => {
         const preRect = range.getBoundingClientRect();
 
         if (e.key === 'ArrowUp') {
-            // Teste de movimento: tenta subir 1 linha
+            // Move internamente
             sel.modify("move", "backward", "line");
             const postRect = sel.getRangeAt(0).getBoundingClientRect();
 
-            // Se a posição Y não mudou (ou desceu), estávamos na primeira linha do bloco
+            // Se o cursor não subiu de facto, mudamos de bloco
             if (postRect.top >= preRect.top - 1) {
                 const prev = currentGhost.previousElementSibling;
                 if (prev && prev.classList.contains('ghost-block')) {
-                    e.preventDefault(); // Impede o navegador de ignorar o comando
-                    window.setActiveGhost(prev, true); // Ativa modo silencioso
+                    e.preventDefault(); 
+                    window.setActiveGhost(prev, true); // Modo silencioso
                     prev.focus();
-                    
-                    // Coloca o cursor no fim exato do bloco anterior
                     const newRange = document.createRange();
                     newRange.selectNodeContents(prev);
                     newRange.collapse(false);
@@ -43829,25 +43832,20 @@ canvas.addEventListener('keydown', (e) => {
                     sel.addRange(newRange);
                 }
             } else {
-                // Se o movimento foi bem sucedido dentro da mesma caixa,
-                // voltamos atrás e deixamos o navegador fazer o movimento natural (evita saltar 2)
+                // Reverte o teste para deixar o navegador fazer o movimento natural de 1 linha
                 sel.modify("move", "forward", "line");
             }
         } 
         else if (e.key === 'ArrowDown') {
-            // Teste de movimento: tenta descer 1 linha
             sel.modify("move", "forward", "line");
             const postRect = sel.getRangeAt(0).getBoundingClientRect();
 
-            // Se a posição Y não mudou (ou subiu), estávamos na última linha do bloco
             if (postRect.bottom <= preRect.bottom + 1) {
                 const next = currentGhost.nextElementSibling;
                 if (next && next.classList.contains('ghost-block')) {
-                    e.preventDefault(); // Impede o navegador de travar no fundo
-                    window.setActiveGhost(next, true); // Ativa modo silencioso
+                    e.preventDefault();
+                    window.setActiveGhost(next, true); // Modo silencioso
                     next.focus();
-
-                    // Coloca o cursor no início exato do bloco seguinte
                     const newRange = document.createRange();
                     newRange.selectNodeContents(next);
                     newRange.collapse(true);
@@ -43855,7 +43853,6 @@ canvas.addEventListener('keydown', (e) => {
                     sel.addRange(newRange);
                 }
             } else {
-                // Reverte o teste para deixar o navegador mover naturalmente (evita saltar 2)
                 sel.modify("move", "backward", "line");
             }
         }
@@ -46579,46 +46576,33 @@ if (aquariumCanvas) {
         const target = e.target.closest('.ghost-block');
         if (!target) return;
 
-        // 2. Obtém o texto bruto do clipboard
+        // --- MÁGICA ANTI-DUPLICAÇÃO ---
+        // Impede que o listener global do editor principal também processe este "colar"
+        e.stopPropagation();
+
+        // 2. Obtém o texto bruto
         let text = (e.clipboardData || window.clipboardData).getData('text/plain');
 
-        // 3. LÓGICA DE LIMPEZA (O SEU CASO):
-        // Remove espaços vazios ou quebras de linha excessivas apenas no INÍCIO do texto
-        // Isso evita que o "vazio de cima" entre no bloco
+        // 3. Limpeza de espaços no início (seu requisito anterior)
         text = text.replace(/^\s+/, ''); 
 
-        // 4. Se for um link interno nosso, deixamos o comportamento padrão (preserva HTML)
+        // 4. Se for um link interno nosso (silent-link), permite o comportamento padrão
         const htmlData = (e.clipboardData || window.clipboardData).getData('text/html');
         if (htmlData && htmlData.includes('silent-link')) {
             return; 
         }
 
-        // 5. IMPEDIR COLAGEM PADRÃO
+        // 5. Previne o colar padrão do browser
         e.preventDefault();
 
-        // 6. INSERÇÃO MANUAL SEGURA (Selection API)
-        // Isso garante que o cursor não se perca e a caixa não quebre
-        const selection = window.getSelection();
-        if (!selection.rangeCount) return;
-        
-        const range = selection.getRangeAt(0);
-        range.deleteContents(); // Remove o texto que estava selecionado (se houver)
-        
-        const textNode = document.createTextNode(text);
-        range.insertNode(textNode);
+        // 6. Insere o texto usando insertText (mais seguro que insertNode)
+        // Isso garante que o texto entra uma única vez e respeita o histórico (Undo/Redo)
+        document.execCommand('insertText', false, text);
 
-        // Move o cursor para o fim do texto colado
-        range.setStartAfter(textNode);
-        range.setEndAfter(textNode);
-        selection.removeAllRanges();
-        selection.addRange(range);
-
-        console.log("📋 [AQUÁRIO] Texto colado e limpo com sucesso.");
-
-        // 7. Notifica o sistema de que houve alteração para gravar
+        // 7. Notifica o sistema para gravar
         target.dispatchEvent(new Event('input', { bubbles: true }));
-        if (typeof window.saveAquariumState === 'function') {
-            window.saveAquariumState();
+        if (typeof window.saveStoreGhostChanges === 'function') {
+             window.saveStoreGhostChanges(target);
         }
     });
 }
