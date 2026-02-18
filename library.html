@@ -3799,35 +3799,51 @@ async function removeDirectHighlight() {
         
         const capituloId = `${currentPubId}_${currentChapter}`;
         
-        // Procuramos o destaque exato ou muito aproximado no banco de dados
+        // 1. Procurar no Firebase
         const q = query(collection(db, 'trechosbiblicos'), 
             where('userId', '==', auth.currentUser.uid),
             where('capituloId', '==', capituloId)
         );
         
         const snap = await getDocs(q);
-        let apagou = false;
+        let apagouAlgoNoFirebase = false;
 
         for (const d of snap.docs) {
             const data = d.data();
-            // Verifica se o texto guardado é igual ou contém a seleção atual
+            // Verifica se o texto guardado coincide com a seleção
             if (data.nome.includes(currentSelectionText) || currentSelectionText.includes(data.nome)) {
-                // Só apaga se for sublinhado simples (sem Nota Flash)
                 if (!data.noteIds || data.noteIds.length === 0) {
                     await deleteDoc(doc(db, 'trechosbiblicos', d.id));
-                    apagou = true;
+                    apagouAlgoNoFirebase = true;
                 }
             }
         }
 
-        if (apagou) {
-            // Atualiza o cache local e redesenha
-            await loadLibraryDataForChapter(currentPubId, currentChapter);
-            hideSelectionToolbar();
-            window.getSelection().removeAllRanges();
+        // 2. LIMPEZA IMEDIATA NO ECRÃ (Mesmo que o Firebase demore)
+        currentSelectedParagraphs.forEach(pNum => {
+            const pId = `p-${pNum}`;
+            if (currentChapterHighlights[pId]) {
+                // Removemos do cache local qualquer destaque que contenha o texto selecionado
+                currentChapterHighlights[pId] = currentChapterHighlights[pId].filter(h => {
+                    return !(h.texto.includes(currentSelectionText) || currentSelectionText.includes(h.texto));
+                });
+            }
+        });
+
+        // 3. RE-PINTAR O TEXTO AGORA MESMO
+        window.refreshVisualHighlights();
+
+        // 4. Limpar a seleção e a barra
+        hideSelectionToolbar();
+        window.getSelection().removeAllRanges();
+
+        // 5. Opcional: Re-sincronizar com o banco de dados em segundo plano
+        if (apagouAlgoNoFirebase) {
+            loadLibraryDataForChapter(currentPubId, currentChapter);
         }
+
     } catch (e) {
-        console.error("Erro ao apagar:", e);
+        console.error("Erro ao apagar destaque:", e);
     }
 }
 
