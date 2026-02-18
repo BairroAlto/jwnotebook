@@ -176,6 +176,7 @@
         .icon-1 { left: 15%; animation-delay: 0.2s; }
         .icon-2 { left: 45%; animation-delay: 0.9s; }
         .icon-3 { left: 75%; animation-delay: 0.5s; }
+        .icon-4 { left: 30%; animation-delay: 1.2s; }
 
         @keyframes capture-icon {
             0% { transform: translateY(-60px) scale(0.5); opacity: 0; }
@@ -411,6 +412,7 @@
                 <button class="tab-btn active" data-tab="bible">📖</button>
                 <button class="tab-btn" data-tab="books">📔</button>
                 <button class="tab-btn" data-tab="pubs">📚</button>
+                <button class="tab-btn" data-tab="videos">🎞️</button>
                 <button id="tab-btn-mix" class="tab-btn" data-tab="mix" style="display:none;">🍜</button>
                 <button class="tab-btn" data-tab="viewer">🪶</button>
             </div>
@@ -418,6 +420,7 @@
             <div id="tab-bible" class="tab-content active"></div>
             <div id="tab-books" class="tab-content"></div>
             <div id="tab-pubs" class="tab-content"></div>
+            <div id="tab-videos" class="tab-content"></div>
             <div id="tab-mix" class="tab-content"></div>
             <div id="tab-viewer" class="tab-content"><div id="viewer-container"></div></div>
         </aside>
@@ -441,10 +444,11 @@ let currentUser = null;
 let localLibraryCache = {}; 
 let localBibleCache = {};
 let detectedCoords = []; 
-let rawResultsCache = { books: [], pubs: [], mix: [] }; 
+let rawResultsCache = { books: [], pubs: [], videos: [], mix: [] };
 let scanTimeout;
 let needsBooksRefresh = true;
 let needsPubsRefresh = true;
+let needsVideosRefresh = true;
 let lastDetectedCoordsStr = ""; // Para saber se o texto mudou
 
 const editor = document.getElementById('xray-editor');
@@ -546,6 +550,7 @@ const XRAY_LOADER_HTML = `
             <div class="falling-icon icon-1">📔</div>
             <div class="falling-icon icon-2">📄</div>
             <div class="falling-icon icon-3">📚</div>
+             <div class="falling-icon icon-4">🎞️</div> 
             <div class="wave wave-1"></div><div class="wave wave-2"></div><div class="wave wave-3"></div>
             <div class="dish"></div>
         </div>
@@ -677,7 +682,6 @@ async function performXRay() {
     const bibleRegex = createBibleRegex();
     const matches = [...new Set(text.match(bibleRegex) || [])];
 
-    // 1. Se não houver referências, limpa e para
     if (matches.length === 0) {
         statusInfo.textContent = "Pronto.";
         detectedCoords = [];
@@ -686,95 +690,134 @@ async function performXRay() {
         return; 
     }
 
-    // 2. Criar o objeto de coordenadas completo (sem placeholders!)
     const currentCoords = matches.map(m => {
         const info = parseReference(m);
         if (!info) return null;
-        
-        // Mapear variantes (ex: Gen, Gn, Gênesis) para o Regex de busca interna
         const variants = Object.keys(BIBLE_ABBREVIATIONS).filter(s => BIBLE_ABBREVIATIONS[s] === info.book);
         variants.push(info.book);
         const escaped = [...new Set(variants)].map(v => v.replace(/\./g, '\\.')).join('|');
-        
-        // Criar padrões de busca para cada versículo individual
         const searchPatterns = info.verses.map(ver => new RegExp(`(?:^|\\s|—|\\()(${escaped})\\.?\\s*${info.cap}[:.]${ver}\\b`, 'i'));
-        
         return { ...info, isActive: true, searchPatterns };
     }).filter(v => v !== null);
 
-    // 3. Verificar se o texto mudou (se mudou, temos de re-escanear tudo)
     const currentCoordsStr = JSON.stringify(currentCoords.map(c => c.book + c.cap + c.originalVerses));
     
     if (currentCoordsStr !== lastDetectedCoordsStr) {
         needsBooksRefresh = true;
         needsPubsRefresh = true;
+        needsVideosRefresh = true; // Garante que vídeos também resetam
         lastDetectedCoordsStr = currentCoordsStr;
     }
     
-    // Atualiza a variável global usada pela renderização da Bíblia
     detectedCoords = currentCoords;
-
-    // 4. ATUALIZAR A BÍBLIA IMEDIATAMENTE (é local, não precisa de loader)
     renderBibleTranscription();
 
+    // --- AQUI ESTÁ O SEGREDO: INJETAR OS LOADERS EM SIMULTÂNEO ---
     statusInfo.textContent = "Scanner em curso...";
 
-    // 5. PROCESSAMENTO DOS LIVROS (Só se necessário)
     if (needsBooksRefresh) {
         rawResultsCache.books = [];
-        // Limpa resultados de livros da aba Mix
-        rawResultsCache.mix = rawResultsCache.mix.filter(m => m.folder !== 'books');
-        
         document.getElementById('tab-books').innerHTML = XRAY_LOADER_HTML;
-        if(document.getElementById('tab-mix')) document.getElementById('tab-mix').innerHTML = XRAY_LOADER_HTML;
-        
-        await scanExternalData('books');
-        applyFilters('books');
-        needsBooksRefresh = false; // Reset da flag
     }
-
-    // 6. PROCESSAMENTO DAS PUBLICAÇÕES (Só se necessário)
     if (needsPubsRefresh) {
         rawResultsCache.pubs = [];
-        // Limpa resultados de revistas da aba Mix
-        rawResultsCache.mix = rawResultsCache.mix.filter(m => m.folder !== 'publicacoes');
-        
         document.getElementById('tab-pubs').innerHTML = XRAY_LOADER_HTML;
-        
-        await scanExternalData('publicacoes');
-        applyFilters('publicacoes');
-        needsPubsRefresh = false; // Reset da flag
+    }
+    if (needsVideosRefresh) {
+        rawResultsCache.videos = [];
+        document.getElementById('tab-videos').innerHTML = XRAY_LOADER_HTML;
+    }
+    
+    // O loader do Mix também aparece se houver temas ativos
+    if (Object.values(xrayFilters.themes).some(v => v === true)) {
+        rawResultsCache.mix = [];
+        document.getElementById('tab-mix').innerHTML = XRAY_LOADER_HTML;
     }
 
-    // Atualiza a aba Mix no final se houver temas ativos
+    // --- DISPARAR AS PESQUISAS EM PARALELO ---
+    const tarefas = [];
+
+    if (needsBooksRefresh) {
+        tarefas.push(scanExternalData('books').then(() => {
+            applyFilters('books');
+            needsBooksRefresh = false;
+        }));
+    }
+
+    if (needsPubsRefresh) {
+        tarefas.push(scanExternalData('publicacoes').then(() => {
+            applyFilters('publicacoes');
+            needsPubsRefresh = false;
+        }));
+    }
+
+    if (needsVideosRefresh) {
+        tarefas.push(scanExternalData('videos').then(() => {
+            applyFilters('videos');
+            needsVideosRefresh = false;
+        }));
+    }
+
+    // Espera que todas as tarefas (Livros, Pubs e Vídeos) terminem
+    await Promise.all(tarefas);
+
+    // Só no fim de tudo é que aplicamos o filtro da aba Mix
     applyFilters('mix');
     
     statusInfo.textContent = "X-Ray Concluído.";
 }
 
 async function scanExternalData(folder) {
+    // 1. Identificar quais temas da aba Mix (🍜) estão ativos para passar ao processador
     const activeThemes = Object.keys(xrayFilters.themes).filter(t => xrayFilters.themes[t]);
-    
-    if (folder === 'publicacoes') {
-        // Revistas
+
+    if (folder === 'videos') {
+        // --- VARREDURA DE VÍDEOS (2020 a 2026) ---
+        // Percorre os anos em ordem decrescente (do mais recente para o mais antigo)
+        for (let ano = 2026; ano >= 2020; ano--) {
+            // Percorre os ficheiros de 01 a 60 (ajuste o limite se necessário)
+            for (let i = 1; i <= 60; i++) {
+                const id = i.toString().padStart(2, '0');
+                const siglaVideo = `V${ano.toString().slice(-2)}_${id}`; // Ex: V25_01
+                const path = `./js/videos/${ano}/${id}.json`;
+
+                // O processador fetchAndProcess irá validar se o ficheiro existe e extrair as referências
+                await fetchAndProcess(path, siglaVideo, 'videos', rawResultsCache.videos, `Ano ${ano}`, activeThemes);
+            }
+        }
+    } 
+    else if (folder === 'publicacoes') {
+        // --- VARREDURA DE REVISTAS E PERIÓDICOS ---
+        // 1. Sentinela e Despertai por anos (definidos no CONFIG_SCAN)
         for (let ano = CONFIG_SCAN.anoFim; ano >= CONFIG_SCAN.anoInicio; ano--) {
-            if (!xrayFilters.watchtower[ano] && !xrayFilters.awake[ano]) continue;
+            const anoStr = ano.toString();
+            
+            // Verifica se o filtro para este ano específico está ativo
+            if (!xrayFilters.watchtower[anoStr] && !xrayFilters.awake[anoStr]) continue;
+
             for (const mes of CONFIG_SCAN.meses) {
-                if (xrayFilters.watchtower[ano]) {
-                    await fetchAndProcess(`./js/publicacoes/sentinelas/${ano}/${mes}.json`, `sentinelas/${ano}/${mes}`, 'publicacoes', rawResultsCache.pubs, `${mes}/${ano}`, activeThemes);
+                if (xrayFilters.watchtower[anoStr]) {
+                    const pathW = `./js/publicacoes/sentinelas/${ano}/${mes}.json`;
+                    const siglaW = `sentinelas/${ano}/${mes}`;
+                    await fetchAndProcess(pathW, siglaW, 'publicacoes', rawResultsCache.pubs, `${mes}/${ano}`, activeThemes);
                 }
-                if (xrayFilters.awake[ano]) {
-                    await fetchAndProcess(`./js/publicacoes/despertai/${ano}/${mes}.json`, `despertai/${ano}/${mes}`, 'publicacoes', rawResultsCache.pubs, `${mes}/${ano}`, activeThemes);
+                if (xrayFilters.awake[anoStr]) {
+                    const pathG = `./js/publicacoes/despertai/${ano}/${mes}.json`;
+                    const siglaG = `despertai/${ano}/${mes}`;
+                    await fetchAndProcess(pathG, siglaG, 'publicacoes', rawResultsCache.pubs, `${mes}/${ano}`, activeThemes);
                 }
             }
         }
-        // Outras Pubs (mwb, km)
-        for (const sigla of Object.keys(xrayFilters.pubs).filter(s => xrayFilters.pubs[s])) {
+        // 2. Outras Publicações Periódicas (mwb, km, etc.)
+        const outrasPubs = Object.keys(xrayFilters.pubs).filter(s => xrayFilters.pubs[s]);
+        for (const sigla of outrasPubs) {
             await fetchAndProcess(`./js/publicacoes/${sigla}.json`, sigla, 'publicacoes', rawResultsCache.pubs, "", activeThemes);
         }
-    } else {
-        // Livros
-        for (const sigla of Object.keys(xrayFilters.books).filter(s => xrayFilters.books[s])) {
+    } 
+    else if (folder === 'books') {
+        // --- VARREDURA DE LIVROS ESTÁTICOS ---
+        const livrosAtivos = Object.keys(xrayFilters.books).filter(s => xrayFilters.books[s]);
+        for (const sigla of livrosAtivos) {
             await fetchAndProcess(`./js/books/${sigla}.json`, sigla, 'books', rawResultsCache.books, "", activeThemes);
         }
     }
@@ -782,31 +825,51 @@ async function scanExternalData(folder) {
 
 async function fetchAndProcess(url, sigla, folder, targetArray, dateLabel, activeThemes) {
     try {
+        // 1. Verificar se os dados já estão no cache local para evitar downloads repetidos
         let data = localLibraryCache[sigla];
         if (!data) {
             const resp = await fetch(url);
-            if (!resp.ok) return;
+            if (!resp.ok) return; // Ficheiro não existe, passa à frente
             data = await resp.json();
             localLibraryCache[sigla] = data;
         }
 
-        const secoes = data.artigos || data.capitulos || [];
+        // 2. Normalizar a estrutura: Vídeos usam data.video, Livros/Pubs usam listas
+        const secoes = data.artigos || data.capitulos || (data.video ? [data.video] : []);
+        
         secoes.forEach((secao, sIdx) => {
+            if (!secao || !secao.conteudo) return;
+
             secao.conteudo.forEach((block, bIdx) => {
                 if (!block.texto) return;
+
+                // 3. Comparar o texto do parágrafo com as referências bíblicas detetadas no editor
                 detectedCoords.forEach(v => {
+                    // v.searchPatterns contém as Regex criadas no performXRay
                     if (v.searchPatterns.some(p => p.test(block.texto))) {
+                        
+                        // Criar o objeto de resultado
                         const resObj = {
-                            sigla, folder, matchKey: `${v.book} ${v.cap}:${v.originalVerses}`,
-                            pubTitle: dateLabel ? `${data.titulo || "Revista"} (${dateLabel})` : (data.titulo || sigla),
-                            capTitle: secao.titulo, capIdx: sIdx, blockIdx: bIdx, pNum: block.numero_ref,
-                            text: block.texto, matchRef: `${v.book} ${v.cap}:${v.originalVerses}`
+                            sigla, 
+                            folder, 
+                            matchKey: `${v.book} ${v.cap}:${v.originalVerses}`,
+                            pubTitle: dateLabel ? `${data.titulo || (data.video ? data.video.titulo : "Revista")} (${dateLabel})` : (data.titulo || (data.video ? data.video.titulo : sigla)),
+                            capTitle: secao.titulo || "Conteúdo", 
+                            capIdx: sIdx, 
+                            blockIdx: bIdx, 
+                            pNum: block.numero_ref || (bIdx + 1),
+                            text: block.texto, 
+                            matchRef: `${v.book} ${v.cap}:${v.originalVerses}`
                         };
+
+                        // Adicionar ao array da aba específica (Books, Pubs ou Vídeos)
                         targetArray.push(resObj);
 
-                        // Verificação Semântica para Aba Mix 🍜
+                        // 4. Verificação Semântica para Aba Mix 🍜
+                        // Se houver temas ativos (ex: Consolo), verifica se este bloco encaixa na regra
                         activeThemes.forEach(themeKey => {
                             if (checkThemeMatch(block.texto, secao, themeKey)) {
+                                // Adiciona uma cópia com a tag do tema para a aba Mix
                                 rawResultsCache.mix.push({ ...resObj, themeTag: themeKey });
                             }
                         });
@@ -814,7 +877,9 @@ async function fetchAndProcess(url, sigla, folder, targetArray, dateLabel, activ
                 });
             });
         });
-    } catch (e) {}
+    } catch (e) {
+        // Erros de rede ou JSON malformado são ignorados para não travar o scanner
+    }
 }
 
 // --- 7. RENDERIZAÇÃO E FILTROS ---
@@ -835,6 +900,12 @@ function applyFilters(target = 'all') {
         const f = rawResultsCache.pubs.filter(r => activeKeys.includes(r.matchKey));
         renderResults(f, document.getElementById('tab-pubs'), 'publicacoes');
     }
+    // --- ADICIONA ESTA PARTE PARA OS VÍDEOS ---
+    if (target === 'all' || target === 'videos') {
+        const f = rawResultsCache.videos.filter(r => activeKeys.includes(r.matchKey));
+        renderResults(f, document.getElementById('tab-videos'), 'videos');
+    }
+    // ------------------------------------------
     if (target === 'all' || target === 'mix') {
         const f = rawResultsCache.mix.filter(r => activeKeys.includes(r.matchKey));
         renderResults(f, document.getElementById('tab-mix'), 'mix');
@@ -852,8 +923,10 @@ function renderResults(data, container, folderType) {
     const unique = data.filter((v, i, a) => a.findIndex(t => t.sigla === v.sigla && t.blockIdx === v.blockIdx) === i);
     
     const cards = unique.map(res => `
-        <div class="res-card" onclick="window.openInViewer('${res.sigla}', ${res.capIdx}, ${res.blockIdx}, '${res.folder === 'publicacoes' ? 'publicacoes' : 'books'}')">
-            <span class="res-ref">${res.pubTitle} ${res.themeTag ? `| 🍜 ${res.themeTag}` : ''}</span>
+        <div class="res-card" onclick="window.openInViewer('${res.sigla}', ${res.capIdx}, ${res.blockIdx}, '${res.folder}')">
+            <span class="res-ref">
+                ${res.folder === 'videos' ? '🎞️' : '📑'} ${res.pubTitle} ${res.themeTag ? `| 🍜 ${res.themeTag}` : ''}
+            </span>
             <div style="font-size:0.7rem; color:#666; margin-bottom:5px;">${res.capTitle}</div>
             <div class="res-text"><b>${res.matchRef}</b> — ${res.text}</div>
         </div>
@@ -929,29 +1002,76 @@ window.togglePiccard = (idx) => {
 };
 
 window.openInViewer = async (sigla, capIdx, targetIdx, folder) => {
-    // Mudar para aba Viewer
+    // 1. UI: Trocar visualmente para a aba do Visualizador (🪶)
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === 'viewer'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-viewer'));
     
     const container = document.getElementById('viewer-container');
-    container.innerHTML = XRAY_LOADER_HTML;
+    container.innerHTML = XRAY_LOADER_HTML; // Mostrar animação enquanto carrega
 
     try {
+        // 2. Obter os dados (do cache ou novo fetch)
         let data = localLibraryCache[sigla];
         if (!data) {
-            const resp = await fetch(`./js/${folder}/${sigla}.json`);
+            let path = "";
+            if (folder === 'videos') {
+                const parts = sigla.split('_'); // Ex: V25_01 -> ["V25", "01"]
+                const ano = "20" + parts[0].substring(1);
+                path = `./js/videos/${ano}/${parts[1]}.json`;
+            } else if (folder === 'publicacoes') {
+                // Se a sigla contiver barras, é uma revista (ex: sentinelas/2024/05)
+                path = sigla.includes('/') ? `./js/publicacoes/${sigla}.json` : `./js/publicacoes/${sigla}.json`;
+            } else {
+                path = `./js/books/${sigla}.json`;
+            }
+            const resp = await fetch(path);
             data = await resp.json();
+            localLibraryCache[sigla] = data;
         }
-        const cap = (data.artigos || data.capitulos)[capIdx];
-        let html = `<div style="color:var(--accent-color); font-size:1.2rem; margin-bottom:20px; border-bottom:1px solid #333; padding-bottom:10px;">${cap.titulo}</div>`;
+
+        // 3. Identificar a seção correta
+        const cap = data.artigos ? data.artigos[capIdx] : 
+                    data.capitulos ? data.capitulos[capIdx] : data.video;
+
+        if (!cap || !cap.conteudo) throw new Error("Conteúdo não encontrado");
+
+        // 4. Construir o HTML do Artigo/Transcrição
+        let html = `
+            <div style="padding:15px; border-bottom:1px solid #333; margin-bottom:20px;">
+                <div style="color:var(--accent-color); font-size:0.7rem; font-weight:bold; text-transform:uppercase; margin-bottom:5px;">
+                    ${folder === 'videos' ? '🎬 Transcrição de Vídeo' : '📖 Documento Original'}
+                </div>
+                <h2 style="color:#fff; font-size:1.2rem; line-height:1.3;">${cap.titulo}</h2>
+            </div>
+        `;
+
         cap.conteudo.forEach((b, i) => {
-            html += `<div class="viewer-block ${i === targetIdx ? 'highlight-target' : ''}" id="v-block-${i}">
-                ${b.numero_ref ? `<span class="para-badge">${b.numero_ref}</span>` : ''} ${b.texto}
-            </div>`;
+            // Se este for o parágrafo que gerou o match, aplicamos a classe de destaque
+            const isTarget = i === targetIdx;
+            html += `
+                <div class="viewer-block ${isTarget ? 'highlight-target' : ''}" id="v-block-${i}">
+                    ${b.numero_ref ? `<span class="para-badge">${b.numero_ref}</span>` : ''} 
+                    ${b.texto}
+                </div>`;
         });
-        container.innerHTML = html;
-        setTimeout(() => document.getElementById(`v-block-${targetIdx}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
-    } catch (e) { container.innerHTML = "Erro ao carregar no visualizador."; }
+
+        container.innerHTML = html + `<div style="height:100px;"></div>`; // Espaço final para scroll
+
+        // 5. Scroll automático para o parágrafo alvo
+        setTimeout(() => {
+            const targetEl = document.getElementById(`v-block-${targetIdx}`);
+            if (targetEl) {
+                targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }, 300);
+
+    } catch (e) {
+        console.error("Erro no Visualizador:", e);
+        container.innerHTML = `<div style="padding:40px; color:#666; text-align:center;">
+            <p>Não foi possível carregar o conteúdo original.</p>
+            <small>${sigla}</small>
+        </div>`;
+    }
 };
 
 // --- 9. BIBLIA E UTILS ---
