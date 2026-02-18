@@ -2839,15 +2839,9 @@ window.renderColorPicker = (containerId) => {
  window.saveQuestionAnswer = async (docId, encodedQText) => {
     const btn = document.getElementById('btn-save-question');
     const editor = document.getElementById('flash-editor');
-if (editor) {
-    editor.addEventListener('input', () => {
-        console.log("Alteração detetada no editor!");
-        window.hasUnsavedChanges = true; // Isto ativa o popup
-    });
-}
     const qText = decodeURIComponent(encodedQText);
     
-    if (btn.disabled) return;
+    if (!btn || btn.disabled) return;
     btn.disabled = true;
 
     try {
@@ -2857,25 +2851,18 @@ if (editor) {
         const pNum = qId.split('_Q').pop(); 
         const contentText = editor.innerText.trim(); 
 
-        // --- LÓGICA DE REMOÇÃO SE ESTIVER VAZIO ---
+        // Se apagar tudo, removemos o documento
         if (contentText.length === 0) {
             if (docId && docId !== "null") {
                 await deleteDoc(doc(db, 'pastas', docId));
             }
-            // Atualiza visualmente para remover o ponto colorido
             window.currentQuestionsCache[pNum] = 'none';
             window.paintQuestionDots();
-            
             btn.textContent = "🗑️ REMOVIDO";
-            setTimeout(() => { 
-                btn.disabled = false; 
-                btn.textContent = "GRAVAR RESPOSTA";
-                window.closeSidePanel();
-            }, 1500);
+            setTimeout(() => window.closeSidePanel(), 1000);
             return;
         }
 
-        // --- LÓGICA DE GRAVAÇÃO (CASO TENHA TEXTO) ---
         const pRange = window.getParagraphRangeForQuestion(pNum);
         const isMagazine = (currentSectionId === 'publicacoes');
         const cap = currentBookData.capitulos[currentChapterIdx];
@@ -2887,7 +2874,8 @@ if (editor) {
         const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
         const userName = userSnap.exists() ? (userSnap.data().nome || "Utilizador") : "Anónimo";
 
-        const boxHtml = `<div class="mini-note-wrapper question-mode" id="box_${Date.now()}" data-highlight="${window.selectedColorHex || ''}" contenteditable="false"><textarea class="mini-note-title-input">${qText}</textarea><div class="mini-note-content" contenteditable="true">${editor.innerHTML.trim()}</div></div>`;
+        // Monta o HTML no formato esperado pelo NoteBook
+        const boxHtml = `<div class="mini-note-wrapper question-mode" data-highlight="${window.selectedColorHex || '#2ecc71'}" contenteditable="false"><textarea class="mini-note-title-input">${qText}</textarea><div class="mini-note-content" contenteditable="true">${editor.innerHTML.trim()}</div></div>`;
 
         const noteData = {
             nome: qText,
@@ -2906,24 +2894,31 @@ if (editor) {
         };
 
         if (docId && docId !== "null") {
+            // ATUALIZAÇÃO
             await updateDoc(doc(db, 'pastas', docId), noteData);
+            btn.textContent = "✅ ATUALIZADO";
         } else {
+            // CRIAÇÃO NOVA
             noteData.createdAt = serverTimestamp();
-            await addDoc(collection(db, 'pastas'), noteData);
+            const newDoc = await addDoc(collection(db, 'pastas'), noteData);
+            
+            // IMPORTANTE: Atualiza o atributo do botão para o próximo clique ser update
+            btn.setAttribute('data-docid', newDoc.id); 
+            btn.textContent = "✅ GRAVADO";
         }
 
-        // Atualiza o ponto visual
+        // Atualiza o ponto na tela principal
         window.currentQuestionsCache[pNum] = window.selectedColorHex || '#555';
         window.paintQuestionDots();
-        
-        btn.textContent = "✅ GUARDADO";
+        window.hasUnsavedChanges = false;
+
         setTimeout(() => { 
             btn.disabled = false; 
             btn.textContent = "ATUALIZAR RESPOSTA"; 
         }, 2000);
 
     } catch (e) {
-        console.error("Erro ao processar resposta:", e);
+        console.error("Erro ao salvar:", e);
         btn.disabled = false;
         btn.textContent = "ERRO AO GRAVAR";
     }
@@ -4199,7 +4194,6 @@ document.getElementById('side-content').addEventListener('scroll', (e) => {
 
 
 window.openQuestionEditor = async (qNum, qText) => {
-    // 1. INICIALIZAÇÃO DE FLAGS DE CONTROLO
     isCurrentlyEditing = true;
     window.isEditingQuestion = true;
     window.hasUnsavedChanges = false;
@@ -4208,19 +4202,16 @@ window.openQuestionEditor = async (qNum, qText) => {
     const content = document.getElementById('side-content');
     const titleContainer = document.getElementById('side-title-container');
 
-    // 2. CONFIGURAÇÃO VISUAL DO PAINEL
     panel.classList.add('open');
     if (window.innerWidth <= 768) {
-        panel.style.transition = 'height 0.3s ease';
         panel.style.height = '75vh';
     }
     
     document.getElementById('library-ref-tabs').style.display = 'none';
 
-    // 3. DEFINIÇÃO DE DADOS BÁSICOS
+    // Garante que o qId seja consistente (Ex: W2501_Q5)
     const qId = `${currentPubId}_Q${qNum}`;
     window.activeQuestionId = qId; 
-    window.selectedColorHex = null;
 
     content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
 
@@ -4231,6 +4222,7 @@ window.openQuestionEditor = async (qNum, qText) => {
     try {
         const { collection, query, where, getDocs, limit } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
+        // Busca se já existe uma resposta ativa para esta pergunta deste usuário
         const q = query(
             collection(db, 'pastas'), 
             where('userId', '==', auth.currentUser.uid),
@@ -4242,13 +4234,15 @@ window.openQuestionEditor = async (qNum, qText) => {
         const snap = await getDocs(q);
 
         if (!snap.empty) {
-            const docData = snap.docs[0].data();
-            existingDocId = snap.docs[0].id;
+            const docSnapshot = snap.docs[0];
+            existingDocId = docSnapshot.id; // Pegamos o ID real do Firestore
+            const docData = docSnapshot.data();
             
+            // Extrair o conteúdo de dentro do wrapper mini-note-content
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = docData.conteudo;
             const contentDiv = tempDiv.querySelector('.mini-note-content');
-            existingContent = contentDiv ? contentDiv.innerHTML.trim() : (docData.conteudo ? docData.conteudo.trim() : "");
+            existingContent = contentDiv ? contentDiv.innerHTML : (docData.conteudo || "");
             
             if (docData.coresUsadas && docData.coresUsadas.length > 0) {
                 window.selectedColorHex = docData.coresUsadas[0];
@@ -4256,36 +4250,34 @@ window.openQuestionEditor = async (qNum, qText) => {
             }
         }
     } catch (e) {
-        console.error("Erro ao carregar resposta:", e);
+        console.error("Erro ao buscar resposta existente:", e);
     }
 
     const isMobile = window.innerWidth <= 768;
     
-    // --- BOTÃO CORRIGIDO PARA NÃO FICAR ESMAGADO ---
-    const saveBtnHTML = `
+    // O segredo é passar o existingDocId corretamente para a função de salvar
+    const renderSaveButton = (id) => `
         <button id="btn-save-question" 
-                onclick="window.saveQuestionAnswer('${existingDocId}', '${encodeURIComponent(qText)}')" 
+                data-docid="${id}"
+                onclick="window.saveQuestionAnswer(this.getAttribute('data-docid'), '${encodeURIComponent(qText)}')" 
                 style="${isMobile ? 
-                    'margin-left: auto; background: var(--accent-color); color: white; border: none; padding: 0 15px; border-radius: 6px; font-weight: 800; font-size: 0.75rem; height: 32px; min-width: 90px; display: flex; align-items: center; justify-content: center; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,0.3);' : 
+                    'margin-left: auto; background: var(--accent-color); color: white; border: none; padding: 0 15px; border-radius: 6px; font-weight: 800; font-size: 0.75rem; height: 32px; min-width: 90px; display: flex; align-items: center; justify-content: center;' : 
                     'width:100%; margin-top:20px; padding:15px; background:var(--accent-color); color:white; border:none; border-radius:8px; font-weight:bold; cursor:pointer;'}">
-            ${existingDocId !== "null" ? "ATUALIZAR" : "GRAVAR"}
+            ${id !== "null" ? "ATUALIZAR RESPOSTA" : "GRAVAR RESPOSTA"}
         </button>`;
 
     titleContainer.innerHTML = `<span style="color:#e67e22; font-weight:bold;">Pergunta ${qNum}</span>`;
 
     content.innerHTML = `
         <div class="note-creation-form" style="padding: 10px;">
-            <h2 style="font-size:1.1em; color:#ddd; margin-bottom:15px; line-height:1.4; border-bottom:1px solid #333; padding-bottom:10px;">${qText}</h2>
+            <h2 style="font-size:1.1em; color:#ddd; margin-bottom:15px; line-height:1.4;">${qText}</h2>
             
-            <div class="flash-toolbar" style="display: flex; align-items: center; gap: 5px; padding-right: 5px;">
+            <div class="flash-toolbar">
                 <button onclick="document.execCommand('bold')"><b>B</b></button>
                 <button onclick="document.execCommand('italic')"><i>I</i></button>
-                <div style="width:1px; height:20px; background:#444; margin:0 5px;"></div>
-                <button onclick="window.toggleQuestionColorGrid()" title="Cor">🎨</button>
-                <button onclick="window.removeQuestionColor()" title="Limpar">⚪</button>
-                <div style="width:1px; height:20px; background:#444; margin:0 5px;"></div>
-                <button onclick="window.openFlashLinkManager()">⚡</button>
-                ${isMobile ? saveBtnHTML : ''}
+                <button onclick="window.toggleQuestionColorGrid()">🎨</button>
+                <button onclick="window.removeQuestionColor()">⚪</button>
+                ${isMobile ? renderSaveButton(existingDocId) : ''}
             </div>
 
             <div id="q-color-grid" style="display:none; grid-template-columns: repeat(5, 1fr); gap: 10px; background: #252528; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #444;">
@@ -4293,19 +4285,11 @@ window.openQuestionEditor = async (qNum, qText) => {
             </div>
 
             <div id="flash-editor" class="flash-editor" contenteditable="true" 
-                 placeholder="Escreva a sua resposta aqui..."
-                 style="border-left: 4px solid ${editorBorderColor}; min-height:250px; padding:15px; outline:none; background:rgba(0,0,0,0.2); font-size: 1.1rem; line-height: 1.5; color: #eee;">${existingContent}</div>
+                 style="border-left: 4px solid ${editorBorderColor}; min-height:250px;">${existingContent}</div>
 
-            ${!isMobile ? saveBtnHTML : ''}
+            ${!isMobile ? renderSaveButton(existingDocId) : ''}
         </div>
     `;
-
-    const editor = document.getElementById('flash-editor');
-    if (editor) {
-        editor.addEventListener('input', () => {
-            window.hasUnsavedChanges = true;
-        });
-    }
 };
 
 
