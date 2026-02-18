@@ -1943,6 +1943,16 @@ z-index: 2147483647 !important;
     margin-bottom: 20px;
 }
 
+.block-discurso { 
+    border-left: 5px solid #f1c40f; /* Amarelo Ouro */
+    background: rgba(241, 196, 15, 0.05); /* Fundo amarelado quase invisível */
+    padding: 15px; 
+    margin-bottom: 15px; 
+    color: #eee;
+    border-radius: 0 8px 8px 0;
+}
+
+
 </style>
 
 
@@ -2572,13 +2582,14 @@ cap.conteudo.forEach(block => {
         }
 
         // 3. DISCURSO (Novo - Laranja)
-        else if (block.tipo === 'discurso') {
-            html += `
-                <div ${blockId} ${dataAttr} class="block-discurso">
-                    ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
-                    ${textoFinal}
-                </div>`;
-        }
+    else if (block.tipo === 'discurso') {
+    html += `
+        <div ${blockId} ${dataAttr} class="block-discurso">
+            ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
+            ${textoFinal}
+        </div>`;
+}
+
 
         // 4. VÍDEO (Novo - Azul)
         else if (block.tipo === 'video') {
@@ -2735,7 +2746,7 @@ document.addEventListener('selectionchange', () => {
         
         // Descobrir quais parágrafos estão na seleção
         currentSelectedParagraphs = [];
-        const paragraphs = document.querySelectorAll('.block-paragrafo');
+        const paragraphs = document.querySelectorAll('.block-paragrafo, .block-discurso, .block-video-segmento, .block-pergunta, .block-musical');
         paragraphs.forEach(p => {
             const nodeRange = document.createRange();
             nodeRange.selectNode(p);
@@ -5490,27 +5501,43 @@ async function performLibSearch() {
     }
 
     // B. PESQUISA EM VÍDEOS
-    if (libSearchState.filter === 'all' || libSearchState.filter === 'videos') {
-        const anosVideos = [2026]; 
+   if (libSearchState.filter === 'all' || libSearchState.filter === 'videos') {
+       const anosVideos = [2026, 2025, 2024, 2023, 2022, 2021, 2020]; // Define os anos que queres pesquisar
+        const maxFicheirosPorAno = 60; // Define até que número o scanner deve procurar (ex: 01 a 15)
+
         for (const ano of anosVideos) {
-            if (currentSearchId !== lastSearchId) return;
-            try {
-                const response = await fetch(`./js/videos/${ano}/index.json`);
-                if (!response.ok) continue;
-                const data = await response.json();
+            if (currentSearchId !== lastSearchId) return; // Aborta se o utilizador escreveu algo novo
+
+            // Criamos uma lista de pedidos paralelos para os ficheiros do ano
+            const pedidosDoAno = [];
+            for (let i = 1; i <= maxFicheirosPorAno; i++) {
+                const id = i.toString().padStart(2, '0');
+                const path = `./js/videos/${ano}/${id}.json`;
+                pedidosDoAno.push(fetchWithCache(path));
+            }
+
+            // Esperamos que todos os pedidos (ou tentativas) terminem
+            const resultadosAno = await Promise.all(pedidosDoAno);
+
+            resultadosAno.forEach((data, idx) => {
+                if (currentSearchId !== lastSearchId) return;
                 
-                if (data.video && data.video.conteudo) {
-                    processarDados(data.video.conteudo, `V${ano}`, data.video.titulo, "Transcrição", "index", 'videos', ano);
-                } else if (data.videos) {
-                    for (const v of data.videos) {
-                        const vRes = await fetch(`./js/videos/${ano}/${v.id}.json`);
-                        if (vRes.ok) {
-                            const vData = await vRes.json();
-                            processarDados(vData.video.conteudo, `V${ano}`, vData.video.titulo, "Transcrição", v.id, 'videos', ano);
-                        }
-                    }
+                // Se o ficheiro existe e tem conteúdo de vídeo
+                if (data && data.video) {
+                    const idFicheiro = (idx + 1).toString().padStart(2, '0');
+                    const siglaVideo = `V${ano.toString().slice(-2)}_${idFicheiro}`; // Ex: V26_01
+                    
+                    processarDados(
+                        data.video.conteudo, 
+                        siglaVideo, 
+                        data.video.titulo, 
+                        "Transcrição", 
+                        idFicheiro, 
+                        'videos', 
+                        ano
+                    );
                 }
-            } catch (e) {}
+            });
         }
     }
 
@@ -6055,55 +6082,38 @@ async function deepSearchInLibrary(searchTerms, sourcePNum) {
     // PARTE C: VÍDEOS (2020 - 2026) - ATUALIZADO
     // ------------------------------------------
     // Loop de 2026 até 2020 (Decrescente)
-    for (let ano = 2026; ano >= 2020; ano--) {
-        try {
-            const indexData = await fetchWithCache(`./js/videos/${ano}/index.json`);
+for (let ano = 2026; ano >= 2020; ano--) {
+        const maxFicheirosXRay = 60; // Tenta do 01.json ao 20.json
+        const pedidosXRay = [];
 
-            if (indexData) {
-                // CASO 1: O index.json é um filme/drama único
-                if (indexData.video && indexData.video.conteudo) {
-                    scanContentXRay(
-                        [indexData.video], // Envolve em array para simular capitulos
-                        indexData.video.titulo, 
-                        `V${ano}`, // Sigla genérica do ano
-                        matches, 
-                        searchTerms, 
-                        sourcePNum, 
-                        'videos', 
-                        ano
-                    );
-                }
-                
-                // CASO 2: O index.json é uma lista de vídeos (Lista de IDs)
-                if (indexData.videos && Array.isArray(indexData.videos)) {
-                    // Buscar os JSONs individuais (01.json, 02.json...)
-                    const videoPromises = indexData.videos.map(v => 
-                        fetchWithCache(`./js/videos/${ano}/${v.id}.json`)
-                    );
-                    
-                    const videosData = await Promise.all(videoPromises);
-                    
-                    videosData.forEach((vFile, idx) => {
-                        if (vFile && vFile.video) {
-                            const metaInfo = indexData.videos[idx];
-                            scanContentXRay(
-                                [vFile.video], 
-                                vFile.video.titulo,
-                                `V${ano}_${metaInfo.id}`, // Sigla única (Ex: V23_05)
-                                matches,
-                                searchTerms,
-                                sourcePNum,
-                                'videos',
-                                ano
-                            );
-                        }
-                    });
-                }
-            }
-        } catch (e) {
-            // Ignora silenciosamente se o ano não tiver pasta de vídeos
-            // console.warn(`[X-RAY] Falha ao ler vídeos de ${ano}`, e);
+        // Prepara as tentativas de leitura para todos os ficheiros do ano de uma vez
+        for (let i = 1; i <= maxFicheirosXRay; i++) {
+            const id = i.toString().padStart(2, '0');
+            pedidosXRay.push(fetchWithCache(`./js/videos/${ano}/${id}.json`));
         }
+
+        // Executa o scanner no ano atual
+        const resultadosXRay = await Promise.all(pedidosXRay);
+
+        resultadosXRay.forEach((vData, idx) => {
+            // Se encontrou o vídeo e ele tem conteúdo
+            if (vData && vData.video) {
+                const idFicheiro = (idx + 1).toString().padStart(2, '0');
+                const siglaXRay = `V${ano.toString().slice(-2)}_${idFicheiro}`; // Ex: V25_02
+
+                // Envia para o motor de busca do X-Ray
+                scanContentXRay(
+                    [vData.video], // Envolvemos em array porque a função espera uma lista
+                    vData.video.titulo,
+                    siglaXRay,
+                    matches,
+                    searchTerms,
+                    sourcePNum,
+                    'videos',
+                    ano
+                );
+            }
+        });
     }
 
     return matches;
@@ -7219,30 +7229,42 @@ async function showVideoList(year) {
     navStack.push(() => window.showVideoYears());
     container.innerHTML = '<div class="global-spinner" style="margin:50px auto;"></div>';
 
+    let foundVideos = [];
+    const maxVideos = 50; // O site vai tentar procurar do 01 ao 30
+
+    // Criamos uma lista de tentativas de procura
+    const probes = [];
+    for (let i = 1; i <= maxVideos; i++) {
+        const id = i.toString().padStart(2, '0');
+        probes.push(
+            fetch(`./js/videos/${year}/${id}.json`)
+                .then(async res => {
+                    if (res.ok) {
+                        const data = await res.json();
+                        // Se o ficheiro existe e tem a chave "video", adicionamos à lista
+                        if (data && data.video) return { id, titulo: data.video.titulo };
+                    }
+                    return null;
+                })
+                .catch(() => null)
+        );
+    }
+
     try {
-        // Tentamos carregar o index.json da pasta do ano
-        const response = await fetch(`./js/videos/${year}/index.json`);
-        if (!response.ok) throw new Error(`Não existe índice para o ano ${year}.`);
-        
-        const data = await response.json();
-        
-        // Verificamos se é uma lista (formato correto) ou um vídeo único (o que tinhas na imagem)
-        let listaVideos = [];
-        
-        if (data.videos && Array.isArray(data.videos)) {
-            // Formato ideal: { "videos": [ {...}, {...} ] }
-            listaVideos = data.videos;
-        } else if (data.video) {
-            // Caso o index.json seja ele próprio o conteúdo do vídeo 01 (como na tua foto)
-            listaVideos = [{ id: data.video.id || "01", titulo: data.video.titulo }];
-        } else {
-            throw new Error("Formato de ficheiro não reconhecido.");
+        const results = await Promise.all(probes);
+        foundVideos = results.filter(v => v !== null);
+
+        if (foundVideos.length === 0) {
+            container.innerHTML = `<div style="text-align:center; color:#888; padding:40px;">
+                <p>Nenhum vídeo (01.json, 02.json...) encontrado na pasta /js/videos/${year}/</p>
+            </div>`;
+            return;
         }
 
         container.innerHTML = `<h2 class="section-title">Conteúdo de ${year}</h2><div class="chapter-list"></div>`;
         const list = container.querySelector('.chapter-list');
 
-        listaVideos.forEach((vid) => {
+        foundVideos.forEach((vid) => {
             const item = document.createElement('div');
             item.className = 'chapter-item';
             item.innerHTML = `
@@ -7255,25 +7277,12 @@ async function showVideoList(year) {
                 </div>
                 <span>➔</span>
             `;
-            // Se o index já tem o conteúdo, passamos o ano e o ID para carregar o ficheiro específico
             item.onclick = () => loadVideoContent(year, vid.id);
             list.appendChild(item);
         });
 
     } catch (e) {
-        console.error("Erro ao listar vídeos:", e);
-        container.innerHTML = `
-            <div style="text-align:center; color:#888; padding:40px;">
-                <p>${e.message}</p>
-                <div style="margin-top:20px; font-family:monospace; font-size:0.8rem; background:#222; padding:15px; border-radius:8px; border:1px solid #333; text-align:left;">
-                    <strong>Dica:</strong> O ficheiro <span style="color:#3498db;">js/videos/${year}/index.json</span> deve conter:<br><br>
-                    {<br>
-                    &nbsp;&nbsp;"videos": [<br>
-                    &nbsp;&nbsp;&nbsp;&nbsp;{ "id": "01", "titulo": "Nome do Vídeo" }<br>
-                    &nbsp;&nbsp;]<br>
-                    }
-                </div>
-            </div>`;
+        console.error("Erro ao listar:", e);
     }
     updateHeader(`Ano ${year}`, () => { const last = navStack.pop(); if (last) last(); });
 }
