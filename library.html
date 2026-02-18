@@ -92,10 +92,17 @@
     }
     
     /* Blocos de texto */
-    .block-paragrafo, .block-pergunta, .block-subtema, .block-rodape {
-        position: relative;
-        user-select: text !important; -webkit-user-select: text !important;
-    }
+  .block-paragrafo, 
+.block-pergunta, 
+.block-subtema, 
+.block-rodape, 
+.block-discurso, 
+.block-video-segmento, 
+.block-musical {
+    position: relative;
+    user-select: text !important; 
+    -webkit-user-select: text !important;
+}
 
     .block-subtema { color: var(--accent-color); font-size: 1.4em; font-weight: bold; margin: 30px 0 15px 0; }
     .block-pergunta { color: #e67e22; font-weight: bold; background: rgba(230, 126, 34, 0.05); padding: 10px; border-radius: 4px; margin-bottom: 10px; }
@@ -3790,25 +3797,37 @@ async function removeDirectHighlight() {
     try {
         const { collection, query, where, getDocs, deleteDoc, doc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
+        const capituloId = `${currentPubId}_${currentChapter}`;
+        
+        // Procuramos o destaque exato ou muito aproximado no banco de dados
         const q = query(collection(db, 'trechosbiblicos'), 
             where('userId', '==', auth.currentUser.uid),
-            where('nome', '==', currentSelectionText)
+            where('capituloId', '==', capituloId)
         );
+        
         const snap = await getDocs(q);
+        let apagou = false;
 
         for (const d of snap.docs) {
-            // Só remove se não tiver notas vinculadas (segurança)
-            // Se quiser apagar sempre, retire a condição do if
-            if (!d.data().noteIds || d.data().noteIds.length === 0) {
-                await deleteDoc(doc(db, 'trechosbiblicos', d.id));
+            const data = d.data();
+            // Verifica se o texto guardado é igual ou contém a seleção atual
+            if (data.nome.includes(currentSelectionText) || currentSelectionText.includes(data.nome)) {
+                // Só apaga se for sublinhado simples (sem Nota Flash)
+                if (!data.noteIds || data.noteIds.length === 0) {
+                    await deleteDoc(doc(db, 'trechosbiblicos', d.id));
+                    apagou = true;
+                }
             }
         }
 
-        loadLibraryDataForChapter(currentPubId, currentChapter);
-        window.getSelection().removeAllRanges();
-
+        if (apagou) {
+            // Atualiza o cache local e redesenha
+            await loadLibraryDataForChapter(currentPubId, currentChapter);
+            hideSelectionToolbar();
+            window.getSelection().removeAllRanges();
+        }
     } catch (e) {
-        console.error("Erro ao remover destaque:", e);
+        console.error("Erro ao apagar:", e);
     }
 }
 
@@ -3819,53 +3838,50 @@ window.refreshVisualHighlights = () => {
     const reader = document.getElementById('reader-area');
     if (!reader) return;
 
-    for (const [pId, highlights] of Object.entries(currentChapterHighlights)) {
-        const paragraphEl = document.getElementById(pId);
-        if (!paragraphEl) continue;
+    // Percorremos todos os parágrafos que podem ter destaques
+    const paragraphs = reader.querySelectorAll('.block-paragrafo, .block-discurso, .block-video-segmento, .block-pergunta');
+    
+    paragraphs.forEach(paragraphEl => {
         const pNum = paragraphEl.getAttribute('data-pnum');
+        const pId = `p-${pNum}`;
+        const highlights = currentChapterHighlights[pId];
 
-        // 1. OBTENÇÃO DO TEXTO PURO
+        if (!highlights) return;
+
+        // 1. Obtemos o texto puro (sem o número do parágrafo)
         let textToProcess = paragraphEl.innerText;
         if (textToProcess.startsWith(pNum)) {
             textToProcess = textToProcess.replace(pNum, "").trim();
         }
 
-        // 2. APLICAR DESTAQUES (CORES) NO TEXTO PURO
-        if (Array.isArray(highlights)) {
-            const sortedHighlights = [...highlights].sort((a, b) => b.texto.length - a.texto.length);
-            sortedHighlights.forEach(h => {
-                if (!h.texto) return;
-                const escapedText = h.texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const regex = new RegExp(`(${escapedText})`, 'gi');
+        // 2. Aplicamos as cores (Sublinhados)
+        // Ordenamos por tamanho para não quebrar tags dentro de tags
+        const sortedHighlights = [...highlights].sort((a, b) => b.texto.length - a.texto.length);
+        
+        sortedHighlights.forEach(h => {
+            if (!h.texto) return;
+            const escapedText = h.texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`(${escapedText})(?!\\d)`, 'gi');
 
-                let className = h.temNota ? 'highlight-picotado' : 'direct-highlight';
-                let style = h.temNota 
-                    ? `background-image: linear-gradient(to right, ${h.cor} 50%, transparent 50%)`
-                    : `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
+            let className = h.temNota ? 'highlight-picotado' : 'direct-highlight';
+            let style = h.temNota 
+                ? `background-image: linear-gradient(to right, ${h.cor} 50%, transparent 50%)`
+                : `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
 
-                // Aplicamos apenas a classe e o estilo, SEM onclick
-                textToProcess = textToProcess.replace(regex, 
-                    `<span class="${className}" style="${style}" data-is-highlight="true">$1</span>`
-                );
-            });
-        }
+            textToProcess = textToProcess.replace(regex, 
+                `<span class="${className}" style="${style}" data-is-highlight="true">$1</span>`
+            );
+        });
 
-        // 3. RE-GERAR LINKS BÍBLICOS (SOBRE O HTML DAS CORES)
+        // 3. Re-aplicamos os links bíblicos invisíveis
         if (typeof window.linkifyBibleReferences === 'function') {
             textToProcess = window.linkifyBibleReferences(textToProcess);
         }
 
-        // 4. RECONSTRUIR O DOM
-        const refNumHTML = `<span class="ref-num" data-action="open-p">${pNum}</span>`;
-        paragraphEl.innerHTML = `${refNumHTML} ${textToProcess}`;
-
-        // 5. ATUALIZAR COR DO NÚMERO (HAS-DATA)
-        const numEl = paragraphEl.querySelector('.ref-num');
-        if (numEl) {
-            if (highlights.hasNoteData) numEl.classList.add('has-data');
-            else numEl.classList.remove('has-data');
-        }
-    }
+        // 4. Montamos o HTML final com o número do parágrafo clicável
+        const hasNotesClass = highlights.hasNoteData ? 'has-data' : '';
+        paragraphEl.innerHTML = `<span class="ref-num ${hasNotesClass}" onclick="window.openSidePanel('${pNum}')">${pNum}</span> ${textToProcess}`;
+    });
 };
     
 
@@ -5876,59 +5892,33 @@ document.addEventListener('click', async (e) => {
 
 // Detetar clique em referências bíblicas dentro do texto
 document.addEventListener('click', (e) => {
+    // 1. Se for um link da Bíblia (Mantemos como está)
     const bibleLink = e.target.closest('.bible-ref-ghost');
-    
-    // SE CLICOU NUMA REFERÊNCIA BÍBLICA
     if (bibleLink) {
         e.preventDefault();
         e.stopPropagation();
-        
         const refName = bibleLink.dataset.entityName;
-
-        // REGRA: Se o editor estiver aberto, abre POPUP. Se não, abre PAINEL LATERAL.
         if (isCurrentlyEditing) {
-            console.log("Modo edição ativo: Abrindo Popup para", refName);
             window.openBiblePopup(refName);
         } else {
-            console.log("Modo leitura: Abrindo Painel Lateral para", refName);
-            const panel = document.getElementById('side-panel');
-            const tabs = document.getElementById('library-ref-tabs');
-            const bibleTabBtn = document.getElementById('tab-bible-btn');
-            
-            // --- CORREÇÃO MOBILE AQUI ---
-            panel.classList.add('open');
-            if (window.innerWidth <= 768) {
-                panel.style.transition = 'height 0.3s ease';
-                panel.style.height = '75vh'; // Define a altura no mobile
-            }
-            
-            tabs.style.display = 'flex';
-            bibleTabBtn.style.display = 'inline-block';
-            
-            // Ativar a aba da Bíblia visualmente
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            bibleTabBtn.classList.add('active');
-            
-            // Carregar o texto
             window.renderBibleTextInPanel(refName);
+            const panel = document.getElementById('side-panel');
+            panel.classList.add('open');
+            if (window.innerWidth <= 768) panel.style.height = '75vh';
         }
         return;
     }
 
-    // SE CLICOU NUM PARÁGRAFO OU DESTAQUE (Apenas se não for Bíblia)
-    const highlight = e.target.closest('[data-is-highlight="true"]');
+    // 2. LÓGICA DO PAINEL LATERAL: Só abre se clicar no NÚMERO
     const refNum = e.target.closest('.ref-num');
-    const paragraph = e.target.closest('.block-paragrafo');
-
-    if (highlight || refNum || paragraph) {
-        // Se estivermos editando uma nota, talvez você não queira mudar o parágrafo do painel
-        // Se quiser que mude mesmo assim, mantenha o código abaixo:
-        const targetPara = (highlight || refNum || paragraph).closest('.block-paragrafo');
-        if (targetPara) {
-            const pNum = targetPara.getAttribute('data-pnum');
-            window.openSidePanel(pNum);
-        }
+    if (refNum) {
+        e.stopPropagation();
+        const pNum = refNum.innerText.trim();
+        window.openSidePanel(pNum);
+        return;
     }
+
+    // Se clicar em qualquer outra parte do parágrafo ou destaque, não fazemos nada.
 }, true);
 
 function updateLibraryURL(params = {}) {
