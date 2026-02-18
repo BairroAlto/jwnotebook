@@ -1960,6 +1960,42 @@ z-index: 2147483647 !important;
 }
 
 
+/* Contentor dos filtros de vídeo */
+.video-filter-bar {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 5px 0 15px 0;
+    scrollbar-width: none; /* Firefox */
+}
+.video-filter-bar::-webkit-scrollbar { display: none; } /* Chrome/Safari */
+
+.video-chip {
+    background: #1a1a1a;
+    color: #888;
+    padding: 6px 14px;
+    border-radius: 15px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    cursor: pointer;
+    border: 1px solid #333;
+    transition: 0.2s;
+    font-weight: bold;
+}
+
+.video-chip.active {
+    background: rgba(241, 196, 15, 0.15); /* Amarelo Video */
+    border-color: #f1c40f;
+    color: #f1c40f;
+}
+
+.video-chip span {
+    margin-left: 5px;
+    opacity: 0.6;
+    font-size: 0.7rem;
+}
+
+
 </style>
 
 
@@ -2416,7 +2452,7 @@ let userConfig = {
     readerTextSize: 100  // Novo campo
 };
 let lastSearchId = 0;
-
+let activeVideoFilter = "Todos";
 
 
 const container = document.getElementById('content-container');
@@ -7235,11 +7271,9 @@ async function showVideoList(year) {
     navStack.push(() => window.showVideoYears());
     container.innerHTML = '<div class="global-spinner" style="margin:50px auto;"></div>';
 
-    let foundVideos = [];
-    const maxVideos = 50; // O site vai tentar procurar do 01 ao 30
-
-    // Criamos uma lista de tentativas de procura
+    const maxVideos = 60; 
     const probes = [];
+    
     for (let i = 1; i <= maxVideos; i++) {
         const id = i.toString().padStart(2, '0');
         probes.push(
@@ -7247,8 +7281,13 @@ async function showVideoList(year) {
                 .then(async res => {
                     if (res.ok) {
                         const data = await res.json();
-                        // Se o ficheiro existe e tem a chave "video", adicionamos à lista
-                        if (data && data.video) return { id, titulo: data.video.titulo };
+                        if (data && data.video) {
+                            return { 
+                                id, 
+                                titulo: data.video.titulo, 
+                                contexto: data.video.contexto || "Outros" 
+                            };
+                        }
                     }
                     return null;
                 })
@@ -7258,34 +7297,15 @@ async function showVideoList(year) {
 
     try {
         const results = await Promise.all(probes);
-        foundVideos = results.filter(v => v !== null);
+        const foundVideos = results.filter(v => v !== null);
 
         if (foundVideos.length === 0) {
-            container.innerHTML = `<div style="text-align:center; color:#888; padding:40px;">
-                <p>Nenhum vídeo (01.json, 02.json...) encontrado na pasta /js/videos/${year}/</p>
-            </div>`;
+            container.innerHTML = `<div style="text-align:center; color:#888; padding:40px;">Nenhum vídeo encontrado para ${year}.</div>`;
             return;
         }
 
-        container.innerHTML = `<h2 class="section-title">Conteúdo de ${year}</h2><div class="chapter-list"></div>`;
-        const list = container.querySelector('.chapter-list');
-
-        foundVideos.forEach((vid) => {
-            const item = document.createElement('div');
-            item.className = 'chapter-item';
-            item.innerHTML = `
-                <div style="display:flex; align-items:center; text-align:left;">
-                    <b style="color:#f1c40f; margin-right:15px; font-size:1.2em;">▶</b>
-                    <div style="display:flex; flex-direction:column;">
-                        <small style="color:#666; font-weight:bold;">VÍDEO ${vid.id}</small>
-                        <span style="font-weight:bold; color:#eee;">${vid.titulo}</span>
-                    </div>
-                </div>
-                <span>➔</span>
-            `;
-            item.onclick = () => loadVideoContent(year, vid.id);
-            list.appendChild(item);
-        });
+        // --- LÓGICA DE RENDERIZAÇÃO ---
+        window.renderVideoGallery(year, foundVideos);
 
     } catch (e) {
         console.error("Erro ao listar:", e);
@@ -7336,6 +7356,65 @@ async function loadVideoContent(year, fileId) {
     }
 }
 
+
+// Função para desenhar a galeria com filtros
+window.renderVideoGallery = (year, videos) => {
+    // 1. Contagem de contextos
+    const counts = { "Todos": videos.length };
+    videos.forEach(v => {
+        counts[v.contexto] = (counts[v.contexto] || 0) + 1;
+    });
+
+    // 2. Criar HTML dos Filtros (Chips)
+    const contextsOrdenados = ["Todos", "Discurso", "Adoração Matinal", "Broadcasting", "Eventos Especiais", 
+                               "Formatura de Gileade", "Reunião Anual", "Congresso", "Assembleia", 
+                               "Reunião Semana", "Reunião Fim de Semana"];
+    
+    // Filtramos apenas os contextos que realmente existem neste ano
+    const chipsHTML = contextsOrdenados
+        .filter(c => counts[c] > 0)
+        .map(c => `
+            <div class="video-chip ${activeVideoFilter === c ? 'active' : ''}" 
+                 onclick="window.filterVideosByContext('${c}', ${year}, ${JSON.stringify(videos).replace(/"/g, '&quot;')})">
+                ${c} <span>(${counts[c]})</span>
+            </div>
+        `).join('');
+
+    // 3. Filtrar a lista de vídeos
+    const videosFiltrados = activeVideoFilter === "Todos" 
+        ? videos 
+        : videos.filter(v => v.contexto === activeVideoFilter);
+
+    // 4. Montar o HTML Final
+    container.innerHTML = `
+        <h2 class="section-title">CONTEÚDO DE ${year}</h2>
+        
+        <div class="video-filter-bar">
+            ${chipsHTML}
+        </div>
+
+        <div class="chapter-list">
+            ${videosFiltrados.map(vid => `
+                <div class="chapter-item" onclick="loadVideoContent('${year}', '${vid.id}')">
+                    <div style="display:flex; align-items:center; text-align:left;">
+                        <b style="color:#f1c40f; margin-right:15px; font-size:1.2em;">▶</b>
+                        <div style="display:flex; flex-direction:column;">
+                            <small style="color:#666; font-weight:bold;">${vid.contexto.toUpperCase()} ${vid.id}</small>
+                            <span style="font-weight:bold; color:#eee;">${vid.titulo}</span>
+                        </div>
+                    </div>
+                    <span>➔</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
+};
+
+// Função para lidar com o clique no filtro
+window.filterVideosByContext = (context, year, allVideos) => {
+    activeVideoFilter = context;
+    window.renderVideoGallery(year, allVideos);
+};
 
 function extrairFraseDoVideo(texto, termos) {
     if (!texto) return "";
