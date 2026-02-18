@@ -1909,6 +1909,40 @@ z-index: 2147483647 !important;
     font-size: 1em; /* 1em significa "100% do tamanho do pai (.reader-content)" */
 }
 
+/* --- ESTILOS ESPECÍFICOS PARA VÍDEOS --- */
+.block-discurso { 
+    border-left: 5px solid #e67e22; 
+    background: rgba(230, 126, 34, 0.05); 
+    padding: 15px; 
+    margin-bottom: 15px; 
+    color: #eee;
+}
+
+.block-video-segmento { 
+    border-left: 5px solid #3498db; 
+    background: rgba(52, 152, 219, 0.05); 
+    padding: 15px; 
+    margin-bottom: 15px; 
+    font-style: italic;
+    color: #3498db;
+}
+
+.block-musical { 
+    border-left: 5px solid #9b59b6; 
+    background: rgba(155, 89, 182, 0.05); 
+    padding: 15px; 
+    margin-bottom: 15px; 
+    text-align: center;
+    color: #d291e6;
+}
+
+/* Reutilização para o título do vídeo */
+.video-header-title {
+    color: #f1c40f; /* Amarelo para destacar que é um vídeo */
+    font-size: 1.6rem;
+    margin-bottom: 20px;
+}
+
 </style>
 
 
@@ -2258,6 +2292,7 @@ z-index: 2147483647 !important;
                     <button class="testament-btn active" onclick="window.setLibFilter('all', this)">Todos</button>
                     <button class="testament-btn" onclick="window.setLibFilter('books', this)">Livros</button>
                     <button class="testament-btn" onclick="window.setLibFilter('publicacoes', this)">Publicações</button>
+                    <button class="testament-btn" onclick="window.setLibFilter('videos', this)">Vídeos</button>
                 </div>
 
                 <!-- TOGGLE ESCOPO (Aparece via JS) -->
@@ -2321,6 +2356,9 @@ import { db, auth } from './js/firebase-config.js';
 import { doc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, arrayUnion, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
 import { SIGLAS_PUBLICACOES } from './js/siglas-data.js';
+import { BIBLE_ABBREVIATIONS } from './js/bible-map.js'; 
+import { BIBLE_DATA } from './js/bible-data.js';
+
 
 // --- ESTADO GLOBAL ---
 let currentBookData = null;
@@ -2360,7 +2398,7 @@ let userConfig = {
     cardTextSize: 100,
     readerTextSize: 100  // Novo campo
 };
-
+let lastSearchId = 0;
 
 
 
@@ -2503,7 +2541,7 @@ function renderReading(chapterIdx, sectionId, pubId) {
             <div class="reader-chapter-title">${cap.titulo}</div>
     `;
 
-    cap.conteudo.forEach(block => {
+cap.conteudo.forEach(block => {
         const pNum = block.numero_ref;
         const blockId = pNum ? `id="p-${pNum}"` : '';
         const dataAttr = pNum ? `data-pnum="${pNum}"` : '';
@@ -2511,28 +2549,63 @@ function renderReading(chapterIdx, sectionId, pubId) {
         // PROCESSAMENTO DE LINKS BÍBLICOS (Invisíveis)
         const textoFinal = window.linkifyBibleReferences(block.texto || "");
 
+        // Detecção de Cântico
         const isCantico = block.texto && (block.texto.startsWith("CÂNTICO") || block.tipo === 'cantico');
 
+        // 1. SUBTEMA
         if (block.tipo === 'subtema') {
             html += `<div class="block-subtema">${textoFinal}</div>`;
         } 
-else if (block.tipo === 'pergunta') {
-    const safeText = encodeURIComponent(block.texto);
-    // ADICIONADO: O span .question-dot antes do texto
-    html += `
-        <div class="block-pergunta" 
-             id="q-block-${pNum}" 
-             data-pnum="${pNum}" 
-             style="cursor:pointer;" 
-             onclick="window.openQuestionEditor('${pNum || ''}', decodeURIComponent('${safeText}'))">
-            <span class="question-dot" id="dot-${pNum}"></span>
-            <div class="pergunta-texto">${textoFinal}</div>
-        </div>`;
-}
+        
+        // 2. PERGUNTA (Estilo Sentinela)
+        else if (block.tipo === 'pergunta') {
+            const safeText = encodeURIComponent(block.texto);
+            html += `
+                <div class="block-pergunta" 
+                     id="q-block-${pNum}" 
+                     data-pnum="${pNum}" 
+                     style="cursor:pointer;" 
+                     onclick="window.openQuestionEditor('${pNum || ''}', decodeURIComponent('${safeText}'))">
+                    <span class="question-dot" id="dot-${pNum}"></span>
+                    <div class="pergunta-texto">${textoFinal}</div>
+                </div>`;
+        }
+
+        // 3. DISCURSO (Novo - Laranja)
+        else if (block.tipo === 'discurso') {
+            html += `
+                <div ${blockId} ${dataAttr} class="block-discurso">
+                    ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
+                    ${textoFinal}
+                </div>`;
+        }
+
+        // 4. VÍDEO (Novo - Azul)
+        else if (block.tipo === 'video') {
+            html += `
+                <div ${blockId} ${dataAttr} class="block-video-segmento">
+                    ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
+                    <span style="font-weight:bold; margin-right:5px;">🎬 VÍDEO:</span> ${textoFinal}
+                </div>`;
+        }
+
+        // 5. VÍDEO MUSICAL (Novo - Roxo)
+        else if (block.tipo === 'musical') {
+            html += `
+                <div ${blockId} ${dataAttr} class="block-musical">
+                    ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
+                    <span style="display:block; font-size:1.2em; margin-bottom:5px;">🎵</span>
+                    ${textoFinal}
+                </div>`;
+        }
+
+        // 6. RODAPÉ OU CÂNTICO
         else if (block.tipo === 'rodape' || isCantico) {
             const extraStyle = isCantico ? 'color:#e67e22; font-weight:bold; border:none; text-align:center;' : '';
             html += `<div class="block-rodape" style="${extraStyle}">${textoFinal}</div>`;
         }
+
+        // 7. PARÁGRAFO PADRÃO (Livros e Revistas)
         else {
             html += `
                 <div ${blockId} ${dataAttr} class="block-paragrafo">
@@ -3011,7 +3084,7 @@ window.applyHighlightToUI = (text, color, refId) => {
 // --- 7. VISTAS DE NAVEGAÇÃO DA BIBLIOTECA ---
 
 function showRoot() {
-     hideSelectionToolbar();
+    hideSelectionToolbar();
     navStack = []; 
     container.innerHTML = `
         <h2 class="section-title">Coleções</h2>
@@ -3023,6 +3096,10 @@ function showRoot() {
             <div class="pub-card type-pub" onclick="showList('magazines')">
                 <span style="font-size:3em;">📰</span>
                 <span class="pub-title">Publicações & Revistas</span>
+            </div>
+            <div class="pub-card" style="border-top-color: #f1c40f;" onclick="window.showVideoYears()">
+                <span style="font-size:3em;">🎬</span>
+                <span class="pub-title">Vídeos</span>
             </div>
         </div>
     `;
@@ -5296,10 +5373,19 @@ if (btnAbrirPesquisa) {
 
 // 2. Filtros Globais
 window.setLibFilter = (type, btn) => {
+    // 1. Limpa o estado e a UI imediatamente
     libSearchState.filter = type;
+    libSearchState.allResults = [];
+    libSearchState.selectedPub = null;
+    
+    const itemsContainer = document.getElementById('lib-items-container');
+    if (itemsContainer) itemsContainer.innerHTML = '';
+    
+    // 2. Atualiza os botões visuais
     document.querySelectorAll('#lib-filter-group .testament-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    libSearchState.selectedPub = null;
+    
+    // 3. Dispara a nova pesquisa
     performLibSearch();
 };
 
@@ -5326,13 +5412,19 @@ async function performLibSearch() {
     const input = document.getElementById('lib-search-input').value.trim();
     const itemsContainer = document.getElementById('lib-items-container');
     const chipsContainer = document.getElementById('lib-search-chips');
-    const scopeContainer = document.getElementById('lib-scope-container');
 
     if (input.length < 2) {
         itemsContainer.innerHTML = '<div style="text-align:center; color:#555; margin-top:50px;">Introduza termos para pesquisar...</div>';
         chipsContainer.innerHTML = '';
+        libSearchState.allResults = [];
         return;
     }
+
+    // --- CONTROLO DE SOBREPOSIÇÃO ---
+    const currentSearchId = ++lastSearchId; 
+    libSearchState.allResults = []; 
+    itemsContainer.innerHTML = '<div style="text-align:center; padding:50px;"><div class="global-spinner" style="margin:0 auto;"></div><br><span style="color:#888;">A pesquisar...</span></div>';
+    // --------------------------------
 
     const phrases = [];
     const phraseRegex = /"([^"]+)"/g;
@@ -5341,85 +5433,96 @@ async function performLibSearch() {
     const words = input.replace(phraseRegex, ' ').toLowerCase().split(/\s+/).filter(w => w.length > 1);
     const allTerms = phrases.concat(words);
 
-    if (phrases.length >= 2) { scopeContainer.style.display = 'flex'; } 
-    else { scopeContainer.style.display = 'none'; libSearchState.scope = 'para'; }
-
-    itemsContainer.innerHTML = '<div style="text-align:center; padding:50px;"><div class="global-spinner" style="margin:0 auto;"></div><br><span style="color:#888;">A pesquisar em toda a biblioteca...</span></div>';
-
-    libSearchState.allResults = [];
+    const registrosUnicos = new Set();
     
-    // 1. DEFINIR O QUE PESQUISAR
-    const pubsToSearch = Object.keys(SIGLAS_PUBLICACOES).map(id => {
-        const isMag = SIGLAS_REVISTAS.includes(id);
-        const type = isMag ? 'publicacoes' : 'books';
-        return { id, type, isMag };
-    }).filter(pub => {
-        if (libSearchState.filter === 'books' && pub.isMag) return false;
-        if (libSearchState.filter === 'publicacoes' && !pub.isMag) return false;
-        return true;
-    });
+    function processarDados(conteudo, pubId, pubTitle, capTitle, identifier, sourceType, ano, mes) {
+        // Se uma nova pesquisa começou, interrompe esta imediatamente
+        if (currentSearchId !== lastSearchId) return;
 
-    for (const pub of pubsToSearch) {
-        try {
-            if (pub.isMag) {
-                // PESQUISA EM REVISTAS (Estrutura: js/publicacoes/sentinelas/ANO/MES.json)
-                // Para não sobrecarregar o browser, vamos pesquisar anos recentes (ex: 2014-2024)
-                // Nota: O ideal seria ter um ficheiro de índice, mas aqui vamos simular a busca nos ficheiros
-                const subFolder = MAGAZINE_FOLDERS[pub.id] || 'sentinelas';
-                const anosParaPesquisar = [2014, 2024]; // Podes ajustar o range ou anos específicos
-
-                for (let ano = anosParaPesquisar[0]; ano <= anosParaPesquisar[1]; ano++) {
-                    for (let mes = 1; mes <= 12; mes++) {
-                        const mesStr = mes.toString().padStart(2, '0');
-                        const path = `./js/publicacoes/${subFolder}/${ano}/${mesStr}.json`;
-                        
-                        const response = await fetch(path);
-                        if (!response.ok) continue;
-                        const data = await response.json();
-                        
-                        // Processar artigos da revista encontrada
-                        data.artigos.forEach((artigo, artIdx) => {
-                            processarDadosParaBusca(artigo.conteudo, pub.id, data.titulo, artigo.titulo, artIdx, pub.type, ano, mesStr);
-                        });
-                    }
-                }
-            } else {
-                // PESQUISA EM LIVROS (Estrutura simples: js/books/ID.json)
-                const response = await fetch(`./js/${pub.type}/${pub.id}.json`);
-                if (!response.ok) continue;
-                const data = await response.json();
-
-                data.capitulos.forEach((cap, capIdx) => {
-                    processarDadosParaBusca(cap.conteudo, pub.id, data.titulo, cap.titulo, capIdx, pub.type);
-                });
-            }
-        } catch (e) { console.warn("Erro ao ler ficheiro:", e); }
-    }
-
-    // Função interna para validar termos e adicionar ao array global
-    function processarDadosParaBusca(conteudo, pubId, pubTitle, capTitle, capIdx, sourceType, ano = null, mes = null) {
         conteudo.forEach(block => {
             if (!block.texto) return;
             const lowText = block.texto.toLowerCase();
-            const hasPhrases = phrases.every(p => lowText.includes(p));
-            const hasWords = words.every(w => lowText.includes(w));
-
-            if (hasPhrases && hasWords) {
-                libSearchState.allResults.push({
-                    pubId, pubTitle, capTitle,
-                    text: block.texto,
-                    pNum: block.numero_ref,
-                    capIdx: capIdx,
-                    sourceType: sourceType,
-                    ano: ano,
-                    mes: mes
-                });
+            if (phrases.every(p => lowText.includes(p)) && words.every(w => lowText.includes(w))) {
+                const chaveUnica = `${pubId}-${identifier}-${block.numero_ref}`;
+                if (!registrosUnicos.has(chaveUnica)) {
+                    registrosUnicos.add(chaveUnica);
+                    libSearchState.allResults.push({
+                        pubId, pubTitle, capTitle, text: block.texto,
+                        pNum: block.numero_ref, capIdx: identifier, sourceType, ano, mes
+                    });
+                }
             }
         });
     }
 
-    renderLibResults(allTerms);
+    // A. PESQUISA EM LIVROS E REVISTAS
+    if (libSearchState.filter !== 'videos') {
+        const searchTasks = Object.keys(SIGLAS_PUBLICACOES).map(id => {
+            const isMag = SIGLAS_REVISTAS.includes(id);
+            return { id, type: isMag ? 'publicacoes' : 'books', isMag };
+        }).filter(pub => {
+            if (libSearchState.filter === 'books' && pub.isMag) return false;
+            if (libSearchState.filter === 'publicacoes' && !pub.isMag) return false;
+            return true;
+        });
+
+        for (const pub of searchTasks) {
+            if (currentSearchId !== lastSearchId) return; // Aborta se mudou de pesquisa
+            try {
+                if (pub.isMag) {
+                    const subFolder = MAGAZINE_FOLDERS[pub.id] || pub.id;
+                    for (let ano = 2024; ano <= 2026; ano++) {
+                        for (let mes = 1; mes <= 12; mes++) {
+                            const data = await fetchWithCache(`./js/publicacoes/${subFolder}/${ano}/${mes.toString().padStart(2, '0')}.json`);
+                            if (data && data.artigos) {
+                                data.artigos.forEach((art, idx) => processarDados(art.conteudo, pub.id, data.titulo, art.titulo, idx, 'publicacoes', ano, mes));
+                            }
+                        }
+                    }
+                } else {
+                    const data = await fetchWithCache(`./js/books/${pub.id}.json`);
+                    if (data && data.capitulos) {
+                        data.capitulos.forEach((cap, idx) => processarDados(cap.conteudo, pub.id, data.titulo, cap.titulo, idx, 'books'));
+                    }
+                }
+            } catch (e) {}
+        }
+    }
+
+    // B. PESQUISA EM VÍDEOS
+    if (libSearchState.filter === 'all' || libSearchState.filter === 'videos') {
+        const anosVideos = [2026]; 
+        for (const ano of anosVideos) {
+            if (currentSearchId !== lastSearchId) return;
+            try {
+                const response = await fetch(`./js/videos/${ano}/index.json`);
+                if (!response.ok) continue;
+                const data = await response.json();
+                
+                if (data.video && data.video.conteudo) {
+                    processarDados(data.video.conteudo, `V${ano}`, data.video.titulo, "Transcrição", "index", 'videos', ano);
+                } else if (data.videos) {
+                    for (const v of data.videos) {
+                        const vRes = await fetch(`./js/videos/${ano}/${v.id}.json`);
+                        if (vRes.ok) {
+                            const vData = await vRes.json();
+                            processarDados(vData.video.conteudo, `V${ano}`, vData.video.titulo, "Transcrição", v.id, 'videos', ano);
+                        }
+                    }
+                }
+            } catch (e) {}
+        }
+    }
+
+    // Finalização: apenas renderiza se ainda formos a pesquisa ativa
+    if (currentSearchId === lastSearchId) {
+        renderLibResults(allTerms);
+    }
 }
+
+
+
+   
 
 // O segredo está aqui: Guardamos o 'sourceType' em cada resultado
 function addLibResult(pubId, pubTitle, capTitle, block, capIdx, sourceType) {
@@ -5438,18 +5541,22 @@ function renderLibResults(highlightTerms) {
     const chipsContainer = document.getElementById('lib-search-chips');
     const loadMoreBtn = document.getElementById('lib-search-load-more');
 
-    // Chips Dinâmicos
+    if (!itemsContainer) return;
+
+    // 1. Gerar Chips de Filtro (Livros/Vídeos/Revistas)
     const pubCounts = {};
     libSearchState.allResults.forEach(r => pubCounts[r.pubId] = (pubCounts[r.pubId] || 0) + 1);
     const uniquePubs = Object.keys(pubCounts);
 
     chipsContainer.innerHTML = '';
-    // Só mostra chips se houver mais de uma obra com resultados
     if (uniquePubs.length > 1) {
         uniquePubs.forEach(id => {
             const chip = document.createElement('div');
             chip.className = `lib-pub-chip ${libSearchState.selectedPub === id ? 'active' : ''}`;
-            chip.innerText = SIGLAS_PUBLICACOES[id] || id.toUpperCase();
+            const prefix = id.startsWith('V') ? '🎬 ' : '';
+            // Tenta obter o nome amigável da sigla
+            const nomeExibicao = (window.SIGLAS_PUBLICACOES && window.SIGLAS_PUBLICACOES[id]) ? window.SIGLAS_PUBLICACOES[id] : id.toUpperCase();
+            chip.innerText = prefix + nomeExibicao;
             chip.onclick = () => {
                 libSearchState.selectedPub = (libSearchState.selectedPub === id) ? null : id;
                 renderLibResults(highlightTerms);
@@ -5458,6 +5565,7 @@ function renderLibResults(highlightTerms) {
         });
     }
 
+    // 2. Filtragem de Resultados
     let filtered = libSearchState.allResults;
     if (libSearchState.selectedPub) filtered = filtered.filter(r => r.pubId === libSearchState.selectedPub);
 
@@ -5466,10 +5574,11 @@ function renderLibResults(highlightTerms) {
 
     if (toShow.length === 0) {
         itemsContainer.innerHTML = '<div style="text-align:center; color:#555; margin-top:50px;">Nenhum resultado encontrado.</div>';
-        loadMoreBtn.style.display = 'none';
+        if (loadMoreBtn) loadMoreBtn.style.display = 'none';
         return;
     }
 
+    // 3. Renderização dos Itens
     let lastHeader = "";
     toShow.forEach(res => {
         if (libSearchState.scope === 'page') {
@@ -5486,7 +5595,14 @@ function renderLibResults(highlightTerms) {
         const div = document.createElement('div');
         div.className = 'lib-res-item';
         
-        let highlighted = res.text;
+        const isVideo = res.sourceType === 'videos';
+        const isMagazine = res.sourceType === 'publicacoes';
+        
+        // Tratar o texto (Frase para vídeo, parágrafo para o resto)
+        let textoDisplay = isVideo ? extrairFraseDoVideo(res.text, highlightTerms) : res.text;
+
+        // Highlighting dos termos de pesquisa
+        let highlighted = textoDisplay;
         const sorted = [...highlightTerms].sort((a,b) => b.length - a.length);
         sorted.forEach(t => {
             const regex = new RegExp(`(${escapeRegExp(t)})`, 'gi');
@@ -5494,41 +5610,75 @@ function renderLibResults(highlightTerms) {
         });
 
         div.innerHTML = `
-            <span class="lib-res-pub">${res.pubId}</span>
-            <div class="lib-res-title">${res.capTitle} ${res.pNum ? '(par. '+res.pNum+')' : ''}</div>
-            <div class="lib-res-text">${highlighted}</div>
+            <span class="lib-res-pub">${isVideo ? '🎬 ' : ''}${res.pubId}</span>
+            <div class="lib-res-title">${res.capTitle} ${res.pNum ? (isVideo ? '(seg. ' : '(par. ') + res.pNum + ')' : ''}</div>
+            <div class="lib-res-text" style="${isVideo ? 'font-style: italic; color: #aaa;' : ''}">${highlighted}</div>
         `;
 
-    div.onclick = async () => {
-    document.getElementById('search-library-modal').style.display = 'none';
-    
-    // USAMOS O TIPO GUARDADO NO RESULTADO
-    const folder = res.sourceType; 
-    
-    const ok = await loadPublication(folder, res.pubId);
-    if (ok) {
-        // A função renderReading agora recebe a pasta correta (folder)
-        renderReading(res.capIdx, folder, res.pubId);
-        
-        setTimeout(() => {
-            const target = document.getElementById(`p-${res.pNum}`);
-            if (target) {
-                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                target.style.backgroundColor = 'rgba(52, 152, 219, 0.2)';
-                setTimeout(() => target.style.backgroundColor = '', 2000);
+        // 4. Lógica de Clique: Abrir o Leitor
+        div.onclick = async () => {
+            document.getElementById('search-library-modal').style.display = 'none';
+
+            if (isVideo) {
+                // ABRE VÍDEO
+                if (typeof loadVideoContent === 'function') await loadVideoContent(res.ano, res.capIdx);
+            } 
+            else if (isMagazine && res.ano && res.mes) {
+                // ABRE REVISTA (Reconstrói o ambiente)
+                const sigla = res.pubId.toLowerCase();
+                const subFolder = MAGAZINE_FOLDERS[sigla] || sigla;
+                const path = `./js/publicacoes/${subFolder}/${res.ano}/${res.mes}.json`;
+
+                try {
+                    const resp = await fetch(path);
+                    const data = await resp.json();
+
+                    // CORREÇÃO DO TÍTULO "UNDEFINED":
+                    const nomePubExtenso = (window.SIGLAS_PUBLICACOES && window.SIGLAS_PUBLICACOES[res.pubId]) ? window.SIGLAS_PUBLICACOES[res.pubId] : res.pubId.toUpperCase();
+                    const tituloFinal = data.titulo || `${nomePubExtenso} - ${res.mes}/${res.ano}`;
+
+                    currentBookData = {
+                        titulo: tituloFinal,
+                        capitulos: data.artigos.map(a => ({
+                            capitulo: a.referencia.split(' ').pop(),
+                            titulo: a.titulo,
+                            conteudo: a.conteudo,
+                            referencia: a.referencia
+                        }))
+                    };
+                    
+                    currentPubId = res.pubId.toUpperCase() + res.ano.toString().slice(-2) + "_" + res.mes;
+                    renderReading(res.capIdx, 'publicacoes', currentPubId);
+
+                } catch (e) {
+                    console.error("Erro ao carregar revista:", e);
+                }
+            } 
+            else {
+                // ABRE LIVRO ESTÁTICO
+                const ok = await loadPublication(res.sourceType, res.pubId);
+                if (ok) renderReading(res.capIdx, res.sourceType, res.pubId);
             }
-        }, 600);
-    }
-};
+            
+            // Scroll para o alvo
+            setTimeout(() => {
+                const target = document.getElementById(`p-${res.pNum}`);
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    target.style.backgroundColor = 'rgba(52, 152, 219, 0.2)';
+                    setTimeout(() => target.style.backgroundColor = '', 2000);
+                }
+            }, 700);
+        };
+
         itemsContainer.appendChild(div);
     });
 
-    loadMoreBtn.style.display = filtered.length > toShow.length ? 'block' : 'none';
+    if (loadMoreBtn) {
+        loadMoreBtn.style.display = filtered.length > toShow.length ? 'block' : 'none';
+    }
 }
 
-// --- IMPORTAÇÕES ADICIONAIS ---
-import { BIBLE_ABBREVIATIONS } from './js/bible-map.js'; 
-import { BIBLE_DATA } from './js/bible-data.js';
 
 // --- FUNÇÃO PARA TRANSFORMAR TEXTO EM LINKS CLICÁVEIS ---
 window.linkifyBibleReferences = function(text) {
@@ -5788,95 +5938,174 @@ window.runParaXRay = async (pNum) => {
     const paragraphEl = document.getElementById(`p-${pNum}`);
     if (!paragraphEl) return;
 
-    console.log(`%c[X-RAY SCANNER] 🕵️ Analisando parágrafo ${pNum}...`, "background: #222; color: #3498db; padding: 5px; font-weight: bold;");
+    // 1. ABRIR O PAINEL E INJETAR O LOADER IMEDIATAMENTE
+    const panel = document.getElementById('side-panel');
+    const content = document.getElementById('side-content');
+    
+    panel.classList.add('open');
+    if (window.innerWidth <= 768) {
+        panel.style.transition = 'height 0.3s ease';
+        panel.style.height = '75vh';
+    }
 
-    // 1. Setup UI
     const xrayTabBtn = document.getElementById('tab-xray-btn');
+    const tabsContainer = document.getElementById('library-ref-tabs');
+    
+    tabsContainer.style.display = 'flex';
     xrayTabBtn.style.display = 'inline-block'; 
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    xrayTabBtn.classList.add('active', 'tab-blinking');
-    
-    const content = document.getElementById('side-content');
-    content.innerHTML = XRAY_LOADER_HTML;
+    xrayTabBtn.classList.add('active');
 
-    // 2. Extração
+    // Injeta a animação do Radar
+    content.innerHTML = XRAY_LOADER_HTML || '<div class="global-spinner" style="margin:50px auto;"></div>';
+    content.classList.add('xray-active');
+
+    // 2. PAUSA PARA O BROWSER DESENHAR (Crucial para o loader aparecer)
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // 3. CAPTURA E PROCESSAMENTO INTELIGENTE
     const text = paragraphEl.innerText;
-    // Regex para capturar referências
+    // Regex para capturar referências bíblicas
     const bibleRegex = /\b((?:[123]\s)?[A-Z][a-zçáéíóú]+\.?\s+\d+[:.]\d+(?:\s*[-–,;]\s*\d+[:.-]?\d*)*)/g;
-    const originalVerses = text.match(bibleRegex) || [];
+    const originalMatches = text.match(bibleRegex) || [];
     
-    console.log(`%c[PASSO 1] Referências encontradas no texto:`, "color: #888;", originalVerses);
-
-    // 3. Expansão (Deep Search)
     let allSearchTerms = [];
-    originalVerses.forEach(v => {
-        // Remove parênteses e limpa a string
-        const cleanV = v.replace(/[()]/g, '').trim();
-        const expanded = expandBibleRange(cleanV);
+
+    originalMatches.forEach(matchRaw => {
+        // Limpa parênteses e pontuação final
+        const cleanRef = matchRaw.replace(/[()]/g, '').replace(/[.,;]+$/, '').trim();
+        
+        // A. ADICIONA O TERMO COMPLETO (Ex: "Hebreus 9:9-14, 24")
+        if (cleanRef.length > 3) { // Validação mínima
+            allSearchTerms.push(cleanRef);
+        }
+
+        // B. ADICIONA OS VERSÍCULOS EXPANDIDOS (Ex: "Hebreus 9:9", "Hebreus 9:10"...)
+        const expanded = window.expandBibleRange(cleanRef);
         allSearchTerms = [...allSearchTerms, ...expanded];
     });
 
-    // Remove duplicados
+    // Remove duplicados (caso "João 11:35" seja igual ao expandido)
     currentXrayVersesList = Array.from(new Set(allSearchTerms));
-    console.log(`%c[PASSO 3] Lista FINAL de termos para pesquisa:`, "color: #2ecc71; font-weight: bold;", currentXrayVersesList);
     
+    // Filtros ativos iniciam com tudo selecionado
     activeXrayVerseFilters = new Set(currentXrayVersesList);
 
-    // 4. Pesquisa Real
+    console.log(`%c[X-RAY] Termos de pesquisa:`, "color: cyan", currentXrayVersesList);
+
+    // 4. EXECUTAR A PESQUISA NA BIBLIOTECA
     const results = await deepSearchInLibrary(currentXrayVersesList, pNum);
     
+    // 5. MOSTRAR RESULTADOS
     currentXrayData = results; 
-    xrayTabBtn.classList.remove('tab-blinking');
     window.renderXrayResults(results, currentXrayVersesList);
 };
 
 
 async function deepSearchInLibrary(searchTerms, sourcePNum) {
     let matches = [];
-    const startYear = 1950;
+    const startYearPubs = 1950; // Para revistas
     const agora = new Date();
     const anoAtual = agora.getFullYear();
     const mesAtual = agora.getMonth() + 1;
 
-    // Marcamos o tempo de início para ver a performance
-    const startTime = performance.now();
-    const cacheInicial = Object.keys(libraryDataCache).length;
+    // ------------------------------------------
+    // PARTE A: LIVROS (Estáticos)
+    // ------------------------------------------
+    const livrosSiglas = Object.keys(SIGLAS_PUBLICACOES).filter(s => !['w', 'g', 'wp', 'km', 'mwb'].includes(s));
+    
+    // Executa em paralelo para ser mais rápido
+    await Promise.all(livrosSiglas.map(async (sigla) => {
+        const data = await fetchWithCache(`./js/books/${sigla}.json`);
+        if (data && data.capitulos) {
+            scanContentXRay(data.capitulos, data.titulo, sigla, matches, searchTerms, sourcePNum, 'books');
+        }
+    }));
 
-    console.log(`%c[X-RAY 📟] Pesquisa Iniciada para: ${searchTerms.join(", ")}`, "background: #222; color: #3498db; padding: 5px; border-radius: 4px;");
-
-    // --- PARTE A: LIVROS ---
-const livrosSiglas = Object.keys(SIGLAS_PUBLICACOES).filter(s => !['w', 'g', 'wp', 'km', 'mwb'].includes(s));
-for (const sigla of livrosSiglas) {
-    const data = await fetchWithCache(`./js/books/${sigla}.json`);
-    if (data && data.capitulos) {
-        // O último argumento define a pasta como 'books'
-        scanContentXRay(data.capitulos, data.titulo, sigla, matches, searchTerms, sourcePNum, 'books');
-    }
-}
-
-    // --- PARTE B: REVISTAS ---
+    // ------------------------------------------
+    // PARTE B: REVISTAS (1950 - Atual)
+    // ------------------------------------------
     const revistas = [{ id: 'w', folder: 'sentinelas' }, { id: 'g', folder: 'despertai' }];
-    for (let ano = startYear; ano <= anoAtual; ano++) {
+    
+    // Dica de Performance: Limitamos a busca profunda em revistas antigas se necessário,
+    // mas aqui mantemos a lógica completa.
+    for (let ano = anoAtual; ano >= startYearPubs; ano--) {
+        const limiteMes = (ano === anoAtual) ? mesAtual : 12;
+        
         for (const rev of revistas) {
-            const limiteMes = (ano === anoAtual) ? mesAtual : 12;
             const monthPromises = [];
+            // Carrega os 12 meses do ano em paralelo
             for (let mes = 1; mes <= limiteMes; mes++) {
                 monthPromises.push(fetchWithCache(`./js/publicacoes/${rev.folder}/${ano}/${mes.toString().padStart(2, '0')}.json`));
             }
+            
             const monthsData = await Promise.all(monthPromises);
+            
             monthsData.forEach((data, idx) => {
                 if (data && data.artigos) {
-                    const siglaRes = `${rev.id.toUpperCase()}${ano.toString().slice(-2)}_${(idx+1).toString().padStart(2, '0')}`;
-                    scanContentXRay(data.artigos, data.titulo, siglaRes, matches, searchTerms, sourcePNum, 'publicacoes', ano, (idx+1).toString().padStart(2, '0'));
+                    const mesStr = (idx + 1).toString().padStart(2, '0');
+                    const siglaRes = `${rev.id.toUpperCase()}${ano.toString().slice(-2)}_${mesStr}`;
+                    scanContentXRay(data.artigos, data.titulo, siglaRes, matches, searchTerms, sourcePNum, 'publicacoes', ano, mesStr);
                 }
             });
         }
     }
 
-    const endTime = performance.now();
-    const cacheFinal = Object.keys(libraryDataCache).length;
-    const novosFicheiros = cacheFinal - cacheInicial;
-    
+    // ------------------------------------------
+    // PARTE C: VÍDEOS (2020 - 2026) - ATUALIZADO
+    // ------------------------------------------
+    // Loop de 2026 até 2020 (Decrescente)
+    for (let ano = 2026; ano >= 2020; ano--) {
+        try {
+            const indexData = await fetchWithCache(`./js/videos/${ano}/index.json`);
+
+            if (indexData) {
+                // CASO 1: O index.json é um filme/drama único
+                if (indexData.video && indexData.video.conteudo) {
+                    scanContentXRay(
+                        [indexData.video], // Envolve em array para simular capitulos
+                        indexData.video.titulo, 
+                        `V${ano}`, // Sigla genérica do ano
+                        matches, 
+                        searchTerms, 
+                        sourcePNum, 
+                        'videos', 
+                        ano
+                    );
+                }
+                
+                // CASO 2: O index.json é uma lista de vídeos (Lista de IDs)
+                if (indexData.videos && Array.isArray(indexData.videos)) {
+                    // Buscar os JSONs individuais (01.json, 02.json...)
+                    const videoPromises = indexData.videos.map(v => 
+                        fetchWithCache(`./js/videos/${ano}/${v.id}.json`)
+                    );
+                    
+                    const videosData = await Promise.all(videoPromises);
+                    
+                    videosData.forEach((vFile, idx) => {
+                        if (vFile && vFile.video) {
+                            const metaInfo = indexData.videos[idx];
+                            scanContentXRay(
+                                [vFile.video], 
+                                vFile.video.titulo,
+                                `V${ano}_${metaInfo.id}`, // Sigla única (Ex: V23_05)
+                                matches,
+                                searchTerms,
+                                sourcePNum,
+                                'videos',
+                                ano
+                            );
+                        }
+                    });
+                }
+            }
+        } catch (e) {
+            // Ignora silenciosamente se o ano não tiver pasta de vídeos
+            // console.warn(`[X-RAY] Falha ao ler vídeos de ${ano}`, e);
+        }
+    }
+
     return matches;
 }
 
@@ -5964,67 +6193,65 @@ window.renderXrayResults = (results, verses) => {
 
     content.classList.add('xray-active');
 
+    // Função interna para gerar o HTML de cada aba
     const getFilteredContentHTML = (type) => {
-        // Filtra os resultados pelo tipo (books ou publicacoes) e pelos versículos ativos
         let filtered = results.filter(r => 
             r.folder === type && 
             activeXrayVerseFilters.has(r.refFound)
         );
 
-        // Ordenação especial apenas para revistas (por data decrescente)
-        if (type === 'publicacoes') {
-            filtered.sort((a, b) => {
-                if (parseInt(b.ano) !== parseInt(a.ano)) return parseInt(b.ano) - parseInt(a.ano);
-                return parseInt(b.mes) - parseInt(a.mes);
-            });
+        // Ordenação para Publicações e Vídeos (Mais recentes primeiro)
+        if (type === 'publicacoes' || type === 'videos') {
+            filtered.sort((a, b) => parseInt(b.ano) - parseInt(a.ano));
         }
 
         if (filtered.length === 0) {
-            return `<div class="xray-empty-msg">Nenhum resultado em ${type === 'books' ? 'Livros' : 'Publicações'}.</div>`;
+            const label = type === 'books' ? 'Livros' : (type === 'videos' ? 'Vídeos' : 'Publicações');
+            return `<div class="xray-empty-msg">Nenhum resultado em ${label}.</div>`;
         }
 
-     return filtered.map(res => {
-    const escapedTerm = res.refFound.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(${escapedTerm})(?!\\d)`, 'gi');
-    const highlightedSnippet = (res.text || "").replace(regex, '<strong style="color:#fff; border-bottom:1px solid #3498db;">$1</strong>');
+        return filtered.map(res => {
+            const escapedTerm = res.refFound.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`(${escapedTerm})(?!\\d)`, 'gi');
+            
+            // Se for vídeo, usamos a lógica de extração de frase para o snippet ficar curto
+            let textoDisplay = type === 'videos' ? extrairFraseDoVideo(res.text, [res.refFound]) : res.text;
+            
+            const highlightedSnippet = textoDisplay.replace(regex, '<strong style="color:#fff; border-bottom:1px solid #3498db;">$1</strong>');
+            const infoLinha = `${res.artRef || ''} — ${res.capTitle}`;
 
-    // FORMATAÇÃO SOLICITADA: "Referência — Título" em itálico
-    const infoLinha = `${res.artRef} — ${res.capTitle}`;
-
-    return `
-    <div class="xray-res-card" 
-         style="margin: 12px 15px; background:rgba(255,255,255,0.03); padding:15px; border-radius:8px; border-left:4px solid #3498db; cursor:pointer;"
-         onclick='window.openSegmentoInSidebar(${JSON.stringify(res).replace(/'/g, "&apos;")})'>
-        
-        <div style="font-size:0.75rem; color:#3498db; font-weight:800; text-transform:uppercase; margin-bottom:2px;">
-            ${res.refFound}
-        </div>
-
-        <!-- LINHA CORRIGIDA: Itálico e sem undefined -->
-        <div style="font-size:0.75rem; color:#888; margin-bottom:12px; font-style: italic; line-height:1.3;">
-            ${infoLinha}
-        </div>
-
-        <div style="font-size:0.92rem; color:#cecece; line-height:1.6;">
-            ${highlightedSnippet}
-        </div>
-    </div>`;
-}).join('');
+            return `
+            <div class="xray-res-card" 
+                 style="margin: 12px 15px; background:rgba(255,255,255,0.03); padding:15px; border-radius:8px; border-left:4px solid #3498db; cursor:pointer;"
+                 onclick='window.openSegmentoInSidebar(${JSON.stringify(res).replace(/'/g, "&apos;")})'>
+                
+                <div style="font-size:0.75rem; color:#3498db; font-weight:800; text-transform:uppercase; margin-bottom:2px;">
+                    ${res.refFound}
+                </div>
+                <div style="font-size:0.75rem; color:#888; margin-bottom:12px; font-style: italic; line-height:1.3;">
+                    ${infoLinha}
+                </div>
+                <div style="font-size:0.92rem; color:#cecece; line-height:1.6;">
+                    ${highlightedSnippet}
+                </div>
+            </div>`;
+        }).join('');
     };
 
-    // Renderização do HTML (Abas + Panes)
+    // Renderização com as 3 SUB-ABAS
     content.innerHTML = `
       <div style="background:#000; position:sticky; top:0; z-index:100; border-bottom:1px solid #222;">
         <div class="xray-sub-tabs-annex">
-            <div class="xray-sub-group">
-                <button class="xray-sub-btn ${window.currentXrayTab !== 'publicacoes' ? 'active' : ''}" 
-                        onclick="window.switchXraySubTab(this, 'xray-books')">Livros</button>
+            <div class="xray-sub-group" style="display: flex;">
+                <button class="xray-sub-btn ${window.currentXrayTab === 'books' ? 'active' : ''}" 
+                        style="flex:1" onclick="window.switchXraySubTab(this, 'xray-books')">Livros</button>
                 <button class="xray-sub-btn ${window.currentXrayTab === 'publicacoes' ? 'active' : ''}" 
-                        onclick="window.switchXraySubTab(this, 'xray-pubs')">Publicações</button>
+                        style="flex:1" onclick="window.switchXraySubTab(this, 'xray-pubs')">Pubs</button>
+                <button class="xray-sub-btn ${window.currentXrayTab === 'videos' ? 'active' : ''}" 
+                        style="flex:1" onclick="window.switchXraySubTab(this, 'xray-vids')">Vídeos</button>
             </div>
         </div>
         
-        <!-- BARRA COM SETAS -->
         <div class="filter-nav-container">
             <button class="nav-arrow-xray" onclick="window.scrollXrayBar(-1)">❮</button>
             <div id="xray-bar">
@@ -6037,17 +6264,22 @@ window.renderXrayResults = (results, verses) => {
         </div>
     </div>
     
-    <div id="xray-books" class="xray-pane" style="display:${window.currentXrayTab !== 'publicacoes' ? 'block' : 'none'};">
+    <div id="xray-books" class="xray-pane" style="display:${window.currentXrayTab === 'books' ? 'block' : 'none'};">
         ${getFilteredContentHTML('books')}
     </div>
     <div id="xray-pubs" class="xray-pane" style="display:${window.currentXrayTab === 'publicacoes' ? 'block' : 'none'};">
         ${getFilteredContentHTML('publicacoes')}
     </div>
+    <div id="xray-vids" class="xray-pane" style="display:${window.currentXrayTab === 'videos' ? 'block' : 'none'};">
+        ${getFilteredContentHTML('videos')}
+    </div>
     `;
     cacheXrayHTML = content.innerHTML;
 };
 
-  
+
+
+
 
    
    
@@ -6093,9 +6325,7 @@ window.toggleXrayVerse = (verse) => {
 };
 
 window.switchXraySubTab = (btn, paneId) => {
-    // Atualiza a variável global de estado da sub-aba
-    window.currentXrayTab = (paneId === 'xray-pubs') ? 'publicacoes' : 'books';
-    // Re-renderiza para aplicar a mudança e salvar no cache
+    window.currentXrayTab = paneId === 'xray-vids' ? 'videos' : (paneId === 'xray-pubs' ? 'publicacoes' : 'books');
     window.renderXrayResults(currentXrayData, currentXrayVersesList);
 };
 
@@ -6112,56 +6342,74 @@ document.getElementById('xray-deep-search').onchange = (e) => {
 };
 
 // 4. FUNÇÃO MÁGICA: Expandir Referências (Ex: Romanos 7:21-24 -> individual)
-function expandBibleRange(ref) {
-    // 1. Limpeza inicial (remove parênteses e pontuação final)
+window.expandBibleRange = function(ref) {
+    // 1. Limpeza inicial
     let cleanRef = ref.replace(/[()]/g, '').replace(/[.,;]+$/, '').trim();
     let finalTerms = [];
 
     // Se o Deep Search estiver desligado, devolve apenas a referência original
     if (!userSettings.xrayDeepSearch) return [cleanRef];
 
-    // 2. Dividir por Ponto e Vírgula para tratar grupos
-    // Ex: "Atos 8:3; 26:9-11" -> ["Atos 8:3", "26:9-11"]
+    // 2. Dividir por Ponto e Vírgula (Separa blocos de capítulos/livros)
+    // Ex: "Hebreus 3:1; 6:20; 9:9-14, 24" vira 3 partes
     const groups = cleanRef.split(';').map(g => g.trim());
     let lastBook = "";
 
     groups.forEach(group => {
-        // Detectar o livro
+        // Tenta encontrar o nome do livro no início do grupo
         const bookMatch = group.match(/^((?:[123]\s)?[A-Z][a-zçáéíóú]+\.?)\s/i);
-        let currentRef = group;
+        let currentString = group;
 
         if (bookMatch) {
             lastBook = bookMatch[1].trim();
         } else if (lastBook) {
-            // Reconstrói a referência se faltar o livro (ex: "26:9-11" -> "Atos 26:9-11")
-            currentRef = `${lastBook} ${group}`;
+            // Se não tem livro, usa o anterior (ex: "6:20" vira "Hebreus 6:20")
+            currentString = `${lastBook} ${group}`;
         }
 
-        // --- ADIÇÃO CRUCIAL ---
-        // Adicionamos sempre a referência do grupo (seja ela simples ou um intervalo)
-        // Ex: Adiciona "Atos 8:3" e também adiciona "Atos 26:9-11"
-        finalTerms.push(currentRef);
+        // Se a string não tiver livro nem conseguirmos inferir, ignoramos
+        if (!currentString.includes(lastBook)) return;
 
-        // 3. Se for um intervalo, expandimos os versículos individuais
-        const rangeMatch = currentRef.match(/^(.+?)\s+(\d+)[:.](\d+)[-–](\d+)$/);
+        // 3. Separar Capítulo dos Versículos
+        // Procura algo como "Hebreus 9:..." ou "9:..."
+        const chapterMatch = currentString.match(/(\d+)[:.](.+)/);
+        
+        if (chapterMatch) {
+            const capitulo = chapterMatch[1];
+            const restoVersiculos = chapterMatch[2]; // Ex: "9-14, 24"
 
-        if (rangeMatch) {
-            const [_, livro, cap, inicio, fim] = rangeMatch;
-            const start = parseInt(inicio);
-            const end = parseInt(fim);
+            // Divide os versículos por vírgula para processar pedaço a pedaço
+            const chunks = restoVersiculos.split(',');
 
-            if (end > start && (end - start) < 50) {
-                // Adiciona cada versículo do intervalo à lista
-                for (let i = start; i <= end; i++) {
-                    finalTerms.push(`${livro} ${cap}:${i}`);
+            chunks.forEach(chunk => {
+                let vPart = chunk.trim();
+                
+                // CASO A: Intervalo (ex: "9-14")
+                if (vPart.includes('-') || vPart.includes('–')) {
+                    const [start, end] = vPart.split(/[-–]/).map(n => parseInt(n.trim()));
+                    if (!isNaN(start) && !isNaN(end) && end > start && (end - start) < 100) {
+                        for (let i = start; i <= end; i++) {
+                            finalTerms.push(`${lastBook} ${capitulo}:${i}`);
+                        }
+                    }
+                } 
+                // CASO B: Número simples (ex: "24")
+                else {
+                    const num = parseInt(vPart);
+                    if (!isNaN(num)) {
+                        finalTerms.push(`${lastBook} ${capitulo}:${num}`);
+                    }
                 }
-            }
+            });
+        } else {
+            // Se não conseguir fazer parse (ex: referência inteira sem versículos), adiciona como está
+            finalTerms.push(currentString);
         }
     });
 
-    // Remover duplicados (caso a expansão gere algo que já existia)
+    // Remove duplicados e retorna
     return Array.from(new Set(finalTerms));
-}
+};
 
 
 window.openSegmentoInSidebar = async (res) => {
@@ -6169,31 +6417,39 @@ window.openSegmentoInSidebar = async (res) => {
     const enxertoBtn = document.getElementById('tab-enxertos-btn');
     
     // 1. GESTÃO DE UI E ESTADO
-    // Resetamos a posição do scroll global pois estamos a carregar um NOVO documento
     window.enxertoScrollPos = 0;
 
-    // Ativar a aba de Enxertos (❛❛❞) no cabeçalho do painel
     if (enxertoBtn) {
         enxertoBtn.style.display = 'inline-block';
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         enxertoBtn.classList.add('active');
     }
     
-    // Configurar o container para modo X-Ray (fundo preto e tipografia)
     content.dataset.currentTab = 'enxertos';
     content.classList.add('xray-active');
-    
-    // Mostrar loading enquanto processa o JSON
     content.innerHTML = `<div style="padding:50px; text-align:center;"><div class="global-spinner"></div></div>`;
 
     try {
-        // 2. DETERMINAR O CAMINHO DO FICHEIRO (Pasta 'books' ou 'publicacoes')
+        // 2. DETERMINAR O CAMINHO DO FICHEIRO
         let path = "";
+        
         if (res.folder === 'publicacoes') {
             const sigla = res.sigla.substring(0, 1).toLowerCase(); 
             const subFolder = MAGAZINE_FOLDERS[sigla] || 'sentinelas';
             path = `./js/publicacoes/${subFolder}/${res.ano}/${res.mes}.json`;
-        } else {
+        } 
+        else if (res.folder === 'videos') {
+            // LÓGICA NOVA PARA VÍDEOS
+            // Se a sigla for V26_01, extraímos o "01". Se for V26, é o "index".
+            if (res.sigla.includes('_')) {
+                const fileId = res.sigla.split('_')[1]; 
+                path = `./js/videos/${res.ano}/${fileId}.json`;
+            } else {
+                path = `./js/videos/${res.ano}/index.json`;
+            }
+        } 
+        else {
+            // Livros
             path = `./js/books/${res.sigla}.json`;
         }
 
@@ -6202,18 +6458,33 @@ window.openSegmentoInSidebar = async (res) => {
         if (!response.ok) throw new Error("Ficheiro não encontrado.");
         const data = await response.json();
         
-        // Suporte para ambas as estruturas: 'artigos' (revistas) ou 'capitulos' (livros)
-        const lista = data.artigos || data.capitulos;
-        const artigo = lista[res.capIdx];
+        let artigo;
+
+        // 4. NORMALIZAR ESTRUTURA (Vídeo vs Texto)
+        if (res.folder === 'videos') {
+            // O JSON de vídeo tem a propriedade "video" (objeto único)
+            // Como carregámos o ficheiro específico, o conteúdo é esse objeto.
+            artigo = data.video; 
+        } else {
+            // Livros e Revistas têm listas (artigos ou capitulos)
+            const lista = data.artigos || data.capitulos;
+            artigo = lista[res.capIdx];
+        }
 
         if (!artigo) throw new Error("Segmento inválido.");
 
-        // 4. CONSTRUÇÃO DO HTML DO ARTIGO
+        // 5. CONSTRUÇÃO DO HTML DO ARTIGO
+        // Botão de "Abrir Tela Cheia" adaptado para vídeos
+        const fullScreenAction = (res.folder === 'videos') 
+            ? `window.loadVideoContent('${res.ano}', '${res.sigla.includes('_') ? res.sigla.split('_')[1] : 'index'}')`
+            : `window.loadPublication('${res.folder}', '${res.sigla}').then(() => window.renderReading(${res.capIdx}, '${res.folder}', '${res.sigla}'))`;
+
         let html = `
-            <!-- Cabeçalho Fixo do Enxerto -->
             <div style="padding:15px; background:#1a1a1d; border-bottom:1px solid #333; position:sticky; top:0; z-index:10; display:flex; justify-content:space-between; align-items:center;">
-                <span style="color:var(--accent-color); font-weight:bold; font-size:0.7rem; letter-spacing:1px;">ENXERTO SELECIONADO</span>
-                <button onclick="window.loadPublication('${res.folder}', '${res.sigla}').then(() => window.renderReading(${res.capIdx}, '${res.folder}', '${res.sigla}'))" 
+                <span style="color:var(--accent-color); font-weight:bold; font-size:0.7rem; letter-spacing:1px;">
+                    ${res.folder === 'videos' ? '🎬 TRANSCRIÇÃO' : 'ENXERTO SELECIONADO'}
+                </span>
+                <button onclick="${fullScreenAction}" 
                         style="background:var(--accent-color); color:white; border:none; padding:6px 14px; border-radius:20px; font-size:0.7rem; cursor:pointer; font-weight:bold; box-shadow: 0 4px 10px rgba(0,0,0,0.3);">
                     ABRIR TELA CHEIA
                 </button>
@@ -6223,41 +6494,38 @@ window.openSegmentoInSidebar = async (res) => {
                 <h2 style="color:#eee; font-size:1.4rem; margin-bottom:25px; line-height:1.2;">${artigo.titulo}</h2>
         `;
 
-        // Renderizar cada bloco de texto do artigo
-        artigo.conteudo.forEach(block => {
-            const pNum = block.numero_ref;
-            const isTarget = String(pNum) === String(res.pNum);
-            const blockId = pNum ? `id="enxerto-p-${pNum}"` : '';
-            
-            // Destaque visual apenas no parágrafo que continha a referência encontrada
-            const highlightStyle = isTarget 
-                ? 'background:rgba(52, 152, 219, 0.12); border-left:4px solid #3498db; padding:15px; border-radius:4px; margin-left:-15px; margin-right:-15px;' 
-                : 'padding:12px 0;';
+        // Renderizar blocos
+        if (artigo.conteudo) {
+            artigo.conteudo.forEach(block => {
+                const pNum = block.numero_ref;
+                const isTarget = String(pNum) === String(res.pNum);
+                const blockId = pNum ? `id="enxerto-p-${pNum}"` : '';
+                
+                const highlightStyle = isTarget 
+                    ? 'background:rgba(52, 152, 219, 0.12); border-left:4px solid #3498db; padding:15px; border-radius:4px; margin-left:-15px; margin-right:-15px;' 
+                    : 'padding:12px 0;';
 
-            // Linkar textos bíblicos automaticamente (Ghost links)
-            const textoFinal = window.linkifyBibleReferences(block.texto || "");
+                const textoFinal = window.linkifyBibleReferences(block.texto || "");
 
-            html += `
-                <div ${blockId} class="enxerto-block" style="margin-bottom:10px; ${highlightStyle}">
-                    ${pNum ? `<b style="color:#555; font-size:0.75rem; margin-right:12px; font-family:monospace;">${pNum}</b>` : ''}
-                    ${textoFinal}
-                </div>`;
-        });
+                html += `
+                    <div ${blockId} class="enxerto-block" style="margin-bottom:10px; ${highlightStyle}">
+                        ${pNum ? `<b style="color:#555; font-size:0.75rem; margin-right:12px; font-family:monospace;">${pNum}</b>` : ''}
+                        ${textoFinal}
+                    </div>`;
+            });
+        } else {
+            html += `<div style="color:#666;">Sem transcrição disponível.</div>`;
+        }
 
-        // Adicionar espaço no fim para permitir que o último parágrafo suba no scroll
         html += `</div><div style="height:200px;"></div>`;
         
-        // 5. INJETAR E SALVAR CACHE
         content.innerHTML = html;
-        cacheSegmentoHTML = html; // Importantíssimo para a persistência entre abas
+        window.cacheSegmentoHTML = html;
 
-        // 6. SCROLL AUTOMÁTICO PARA O ALVO
+        // 6. SCROLL
        setTimeout(() => {
             const targetId = `enxerto-p-${res.pNum}`;
             const targetEl = document.getElementById(targetId);
-            
-            // SÓ faz o scroll automático se a posição guardada for 0 
-            // (ou seja, se acabámos de abrir o artigo agora)
             if (targetEl && content && (!window.enxertoScrollPos || window.enxertoScrollPos === 0)) {
                 const header = content.querySelector('div[style*="position:sticky"]');
                 const headerHeight = header ? header.offsetHeight : 60;
@@ -6265,7 +6533,6 @@ window.openSegmentoInSidebar = async (res) => {
                     top: targetEl.offsetTop - headerHeight - 10,
                     behavior: 'smooth'
                 });
-                // Atualiza a memória após o scroll automático
                 setTimeout(() => { window.enxertoScrollPos = content.scrollTop; }, 600);
             }
         }, 500);
@@ -6929,9 +7196,156 @@ sideHeader.addEventListener('touchstart', handleTouchStart, { passive: true });
 window.addEventListener('touchmove', handleTouchMove, { passive: false });
 window.addEventListener('touchend', handleTouchEnd);
 
+// Nível 1 Vídeos: Seleção de Ano
+window.showVideoYears = () => {
+    navStack.push(() => showRoot());
+    container.innerHTML = `<h2 class="section-title">Vídeos - Selecionar Ano</h2><div class="grid" id="video-year-grid"></div>`;
+    const grid = document.getElementById('video-year-grid');
+
+    const currentYear = new Date().getFullYear();
+    for (let i = currentYear; i >= 2020; i--) {
+        const card = document.createElement('div');
+        card.className = 'pub-card';
+        card.style.borderTopColor = "#f1c40f";
+        card.innerHTML = `<span class="pub-title">${i}</span>`;
+        card.onclick = () => showVideoList(i);
+        grid.appendChild(card);
+    }
+    updateHeader("Vídeos", () => { const last = navStack.pop(); if (last) last(); });
+};
+
+// Nível 2: Lista de Vídeos do Ano (Lê o index.json da pasta do ano)
+async function showVideoList(year) {
+    navStack.push(() => window.showVideoYears());
+    container.innerHTML = '<div class="global-spinner" style="margin:50px auto;"></div>';
+
+    try {
+        // Tentamos carregar o index.json da pasta do ano
+        const response = await fetch(`./js/videos/${year}/index.json`);
+        if (!response.ok) throw new Error(`Não existe índice para o ano ${year}.`);
+        
+        const data = await response.json();
+        
+        // Verificamos se é uma lista (formato correto) ou um vídeo único (o que tinhas na imagem)
+        let listaVideos = [];
+        
+        if (data.videos && Array.isArray(data.videos)) {
+            // Formato ideal: { "videos": [ {...}, {...} ] }
+            listaVideos = data.videos;
+        } else if (data.video) {
+            // Caso o index.json seja ele próprio o conteúdo do vídeo 01 (como na tua foto)
+            listaVideos = [{ id: data.video.id || "01", titulo: data.video.titulo }];
+        } else {
+            throw new Error("Formato de ficheiro não reconhecido.");
+        }
+
+        container.innerHTML = `<h2 class="section-title">Conteúdo de ${year}</h2><div class="chapter-list"></div>`;
+        const list = container.querySelector('.chapter-list');
+
+        listaVideos.forEach((vid) => {
+            const item = document.createElement('div');
+            item.className = 'chapter-item';
+            item.innerHTML = `
+                <div style="display:flex; align-items:center; text-align:left;">
+                    <b style="color:#f1c40f; margin-right:15px; font-size:1.2em;">▶</b>
+                    <div style="display:flex; flex-direction:column;">
+                        <small style="color:#666; font-weight:bold;">VÍDEO ${vid.id}</small>
+                        <span style="font-weight:bold; color:#eee;">${vid.titulo}</span>
+                    </div>
+                </div>
+                <span>➔</span>
+            `;
+            // Se o index já tem o conteúdo, passamos o ano e o ID para carregar o ficheiro específico
+            item.onclick = () => loadVideoContent(year, vid.id);
+            list.appendChild(item);
+        });
+
+    } catch (e) {
+        console.error("Erro ao listar vídeos:", e);
+        container.innerHTML = `
+            <div style="text-align:center; color:#888; padding:40px;">
+                <p>${e.message}</p>
+                <div style="margin-top:20px; font-family:monospace; font-size:0.8rem; background:#222; padding:15px; border-radius:8px; border:1px solid #333; text-align:left;">
+                    <strong>Dica:</strong> O ficheiro <span style="color:#3498db;">js/videos/${year}/index.json</span> deve conter:<br><br>
+                    {<br>
+                    &nbsp;&nbsp;"videos": [<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;{ "id": "01", "titulo": "Nome do Vídeo" }<br>
+                    &nbsp;&nbsp;]<br>
+                    }
+                </div>
+            </div>`;
+    }
+    updateHeader(`Ano ${year}`, () => { const last = navStack.pop(); if (last) last(); });
+}
+
+// Nível 3: Carregar o JSON do vídeo e abrir no leitor
+async function loadVideoContent(year, fileId) {
+    container.innerHTML = '<div class="global-spinner" style="margin:50px auto;"></div>';
+    try {
+        // Tenta carregar o ficheiro específico (ex: 01.json) ou o próprio index se for o caso
+        let path = `./js/videos/${year}/${fileId}.json`;
+        
+        // Se o utilizador clicar no item que veio do index.json e o ID for "01",
+        // tentamos ler o 01.json, mas se falhar, tentamos o index.json de novo.
+        let response = await fetch(path);
+        if (!response.ok) {
+            path = `./js/videos/${year}/index.json`;
+            response = await fetch(path);
+        }
+
+        const data = await response.json();
+        const videoData = data.video; // Extrai o objeto principal
+
+        if (!videoData) throw new Error("Dados do vídeo não encontrados no JSON.");
+
+        // Adaptamos para o formato de leitura da Biblioteca
+        currentBookData = {
+            titulo: videoData.titulo,
+            capitulos: [{
+                capitulo: 1,
+                titulo: videoData.titulo,
+                conteudo: videoData.conteudo,
+                referencia: videoData.referencia
+            }]
+        };
+        
+        // Geramos um ID único para as notas guardadas no Firebase (Ex: V26_01)
+        currentPubId = `V${year.toString().slice(-2)}_${fileId}`;
+        
+        // Abre o leitor no "Capítulo 1" (que é o vídeo)
+        renderReading(0, 'videos', currentPubId);
+        
+    } catch (e) {
+        console.error("Erro ao carregar vídeo:", e);
+        container.innerHTML = `<div style="padding:40px; color:red; text-align:center;">Erro: ${e.message}</div>`;
+    }
+}
 
 
-function escapeRegExp(string) { return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function extrairFraseDoVideo(texto, termos) {
+    if (!texto) return "";
+    // Divide por pontos, exclamações ou interrogações seguidos de espaço
+    const frases = texto.split(/(?<=[.!?])\s+|(?<=[.!?])$/);
+    
+    const frasesEncontradas = frases.filter(frase => {
+        const fraseLow = frase.toLowerCase();
+        return termos.some(t => fraseLow.includes(t.toLowerCase()));
+    });
+
+    let resultado = frasesEncontradas.join(" ");
+    
+    if (resultado.length > 0 && resultado.length < texto.length) {
+        return `...${resultado.trim()}...`;
+    }
+    
+    return resultado || texto;
+}
+
+
+
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 
 // Adicione isto dentro do <script type="module">
