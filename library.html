@@ -2194,7 +2194,7 @@ z-index: 2147483647 !important;
                 <span id="flash-codex-info" style="color: #3498db; font-weight:bold;"></span>
             </div>
 
-            <button id="btn-save-flash" onclick="window.saveLibraryFlashNote()" style="width:100%; margin-top:20px; padding:12px; background:var(--accent-color); color:white; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:1rem;">
+            <button id="btn-save-flash" onclick="window.saveLibraryFlashNote(this)" style="width:100%; margin-top:20px; padding:12px; background:var(--accent-color); color:white; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:1rem;">
                 GRAVAR NOTA
             </button>
         </div>
@@ -2884,6 +2884,9 @@ window.openFlashModal = () => {
     const cap = currentBookData.capitulos[currentChapterIdx];
     const pNum = currentSelectedParagraphs[0];
 
+    // ADICIONA ESTA LINHA: Memoriza o parágrafo atual para a gravação!
+    activeParaNum = pNum;
+
     const fullName = isMagazine 
         ? `${cap.referencia} - Parágrafo ${pNum}` 
         : `${currentPubId} ${currentChapter}:${pNum}`;
@@ -3016,7 +3019,6 @@ window.currentQuestionsCache = {};
 
 async function loadLibraryDataForChapter(pubId, chapter) {
     const capituloId = `${pubId}_${chapter}`;
-    // Prefixos para busca (AGORA INCLUI O CAPÍTULO PARA SER ÚNICO)
     const qPrefix = `${capituloId}_Q`;
     
     currentChapterHighlights = {}; 
@@ -3031,7 +3033,6 @@ async function loadLibraryDataForChapter(pubId, chapter) {
                 where('userId', '==', auth.currentUser.uid),
                 where('capituloId', '==', capituloId))),
             
-            // Busca na coleção livros (Quadro e Dossiê)
             getDocs(query(collection(db, 'livros'), 
                 where('userId', '==', auth.currentUser.uid))),
                 
@@ -3042,67 +3043,65 @@ async function loadLibraryDataForChapter(pubId, chapter) {
                 where('estado', '==', 'ativa')))
         ]);
 
-
-        // --- PROCESSAMENTO PERGUNTAS (ATUALIZADO) ---
+        // --- PROCESSAMENTO PERGUNTAS ---
         snapPerguntas.forEach(doc => {
             const data = doc.data();
             const parts = data.qId.split('_Q');
-            
             if (parts.length > 1) {
                 const pNum = parts.pop();
-                
-                // 1. Verificar se tem conteúdo real (não apenas tags HTML vazias)
                 const tempDiv = document.createElement('div');
                 tempDiv.innerHTML = data.conteudo || "";
-                // Removemos o título da pergunta do wrapper para verificar apenas a resposta
                 const titleInput = tempDiv.querySelector('.mini-note-title-input');
                 if (titleInput) titleInput.remove();
 
                 const textContent = tempDiv.innerText.trim();
-
-                let dotColor = 'none'; // Default: Invisível
+                let dotColor = 'none'; 
 
                 if (textContent.length > 0) {
-                    // Tem texto: Decide entre Cor ou Cinzento
-                    if (data.coresUsadas && data.coresUsadas.length > 0) {
-                        dotColor = data.coresUsadas[0]; // Cor do Destaque
-                    } else {
-                        dotColor = '#555'; // Cinzento Escuro
-                    }
+                    dotColor = (data.coresUsadas && data.coresUsadas.length > 0) ? data.coresUsadas[0] : '#555';
                 }
-                
                 window.currentQuestionsCache[pNum] = dotColor;
             }
         });
 
-        // --- Processamento Highlights (Mantém igual) ---
+        // --- PROCESSAMENTO HIGHLIGHTS (A CORREÇÃO ESTÁ AQUI) ---
         snapCores.forEach(docSnap => {
             const data = docSnap.data();
-            data.textosbiblicos.forEach(ref => {
-                const pNum = ref.split(':').pop();
-                const pId = `p-${pNum}`;
-                if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
-                currentChapterHighlights[pId].push({
-                    texto: data.nome,
-                    cor: data.cor,
-                    temNota: (data.noteIds && data.noteIds.length > 0)
+            if (data.textosbiblicos) {
+                data.textosbiblicos.forEach(ref => {
+                    let pNum = "";
+                    
+                    // Lógica para detetar de onde tirar o número
+                    if (ref.includes(" - Parágrafo ")) {
+                        // Ex: "w24 05 pp. 2-7 - Parágrafo 1"
+                        pNum = ref.split(" - Parágrafo ").pop();
+                    } else if (ref.includes(":")) {
+                        // Ex: "Atos 1:5" ou "Livro 1:5"
+                        pNum = ref.split(':').pop();
+                    }
+
+                    if (pNum) {
+                        const pId = `p-${pNum}`;
+                        if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
+                        currentChapterHighlights[pId].push({
+                            texto: data.nome,
+                            cor: data.cor,
+                            temNota: (data.noteIds && data.noteIds.length > 0)
+                        });
+                    }
                 });
-            });
+            }
         });
 
-        // --- Processamento Notas (Mantém igual) ---
-      snapNotas.forEach(docSnap => {
+        // --- PROCESSAMENTO NOTAS ---
+        snapNotas.forEach(docSnap => {
             const data = docSnap.data();
-            const refName = data.nome; // Ex: "w25 dezembro pp. 2-7 - Parágrafo 1"
+            const refName = data.nome; 
 
-            // 1. Verificar se este documento pertence à publicação/capitulo atual
-            // Para revistas: verifica se o nome contém a referência técnica
-            // Para livros: verifica se começa com a sigla e capítulo
             const isMatch = refName.includes(currentBookData.capitulos[currentChapterIdx].referencia) || 
                           refName.startsWith(`${currentPubId} ${currentChapter}:`);
 
             if (isMatch) {
-                // 2. Extrair o número do parágrafo do fim da string
                 const match = refName.match(/(?:Parágrafo |:)(\d+)$/);
                 if (match) {
                     const pNum = match[1];
@@ -3110,7 +3109,6 @@ async function loadLibraryDataForChapter(pubId, chapter) {
 
                     if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
 
-                    // 3. SEGREDO: Se tiver algo no Puzzle OU no Dossiê, marca como Data
                     const hasPuzzle = data.puzzleBoard && data.puzzleBoard.length > 0;
                     const hasDossie = data.dossie && data.dossie.length > 0;
 
@@ -3948,7 +3946,7 @@ window.refreshVisualHighlights = () => {
         const pId = `p-${pNum}`;
         const highlights = currentChapterHighlights[pId];
 
-        // Se não houver destaques, não fazemos nada e o HTML original mantém-se intacto
+        // Se não houver destaques, não fazemos nada
         if (!highlights) return;
 
         // 1. Obtemos o texto puro
@@ -3957,7 +3955,7 @@ window.refreshVisualHighlights = () => {
             textToProcess = textToProcess.replace(pNum, "").trim();
         }
 
-        // 2. Aplicamos as cores (Sublinhados)
+        // 2. Aplicamos as cores (Sublinhados e CLIQUE)
         const sortedHighlights = [...highlights].sort((a, b) => b.texto.length - a.texto.length);
         
         sortedHighlights.forEach(h => {
@@ -3970,8 +3968,9 @@ window.refreshVisualHighlights = () => {
                 ? `background-image: linear-gradient(to right, ${h.cor} 50%, transparent 50%)`
                 : `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
 
+            // A MÁGICA ESTÁ AQUI: Adicionado onclick para abrir o painel lateral!
             textToProcess = textToProcess.replace(regex, 
-                `<span class="${className}" style="${style}" data-is-highlight="true">$1</span>`
+                `<span class="${className}" style="${style}" data-is-highlight="true" onclick="window.openSidePanel('${pNum}')">$1</span>`
             );
         });
 
@@ -3980,22 +3979,20 @@ window.refreshVisualHighlights = () => {
             textToProcess = window.linkifyBibleReferences(textToProcess);
         }
 
-        // 4. CORREÇÃO: Montamos o HTML final consoante seja Pergunta ou Parágrafo
+        // 4. Montamos o HTML final
         const hasNotesClass = highlights.hasNoteData ? 'has-data' : '';
         
         if (paragraphEl.classList.contains('block-pergunta')) {
-            // Se for pergunta, mantemos a estrutura do pontinho intacta!
             paragraphEl.innerHTML = `
                 <span class="question-dot" id="dot-${pNum}"></span>
                 <div class="pergunta-texto">${textToProcess}</div>
             `;
         } else {
-            // Se for parágrafo normal
             paragraphEl.innerHTML = `<span class="ref-num ${hasNotesClass}" onclick="window.openSidePanel('${pNum}')">${pNum}</span> ${textToProcess}`;
         }
     });
 
-    // 5. CORREÇÃO: Após reescrevermos o HTML, temos de mandar pintar os pontinhos de novo!
+    // 5. Após reescrevermos o HTML, temos de mandar pintar os pontinhos de novo!
     if (typeof window.paintQuestionDots === 'function') {
         window.paintQuestionDots();
     }
@@ -4782,6 +4779,9 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
     const originalText = clickedBtn.textContent;
     clickedBtn.textContent = "A gravar...";
 
+    console.log("=========================================");
+    console.log("🚀 [INÍCIO] saveLibraryFlashNote disparado!");
+
     try {
         const { collection, addDoc, doc, updateDoc, arrayUnion, serverTimestamp, query, where, getDocs } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
 
@@ -4806,6 +4806,8 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
         const isMagazine = (currentSectionId === 'publicacoes');
         const cap = currentBookData.capitulos[currentChapterIdx];
         const pNum = activeParaNum; 
+
+        console.log("📍 Parágrafo alvo:", pNum, "| Cor:", color);
 
         const fullNameNormal = isMagazine 
             ? `${cap.referencia} - Parágrafo ${pNum}` 
@@ -4890,18 +4892,82 @@ window.saveLibraryFlashNote = async (clickedBtn) => {
             });
         }
 
+        // =================================================================
+        // 3. NOVO: LÓGICA DE DESTAQUE DE TEXTO (PINTAR A FRASE SELECIONADA)
+        // =================================================================
+        console.log("=========================================");
+        console.log("📝 Texto lido da memória = ", currentSelectionText); // Sem o window!
+
+        if (currentSelectionText && currentSelectionText.length > 5) {
+            const capituloId = `${currentPubId}_${currentChapter}`;
+            const pId = `p-${pNum}`;
+
+            // A. Atualizar cache local
+            if (!currentChapterHighlights) currentChapterHighlights = {}; // Sem o window!
+            if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
+            
+            const existingHighlight = currentChapterHighlights[pId].find(h => h.texto === currentSelectionText);
+            if (existingHighlight) {
+                existingHighlight.cor = color;
+                existingHighlight.temNota = true;
+            } else {
+                currentChapterHighlights[pId].push({
+                    texto: currentSelectionText,
+                    cor: color,
+                    temNota: true 
+                });
+            }
+
+            // B. Gravar na Base de Dados (trechosbiblicos)
+            const qDestaque = query(collection(db, 'trechosbiblicos'), 
+                where('userId', '==', auth.currentUser.uid),
+                where('nome', '==', currentSelectionText),
+                where('capituloId', '==', capituloId)
+            );
+            const snapDestaque = await getDocs(qDestaque);
+
+            if (!snapDestaque.empty) {
+                await updateDoc(doc(db, 'trechosbiblicos', snapDestaque.docs[0].id), { 
+                    cor: color,
+                    noteIds: arrayUnion(noteRef.id),
+                    ultimaEdicao: serverTimestamp() 
+                });
+            } else {
+                await addDoc(collection(db, 'trechosbiblicos'), {
+                    userId: auth.currentUser.uid,
+                    nome: currentSelectionText,
+                    cor: color,
+                    capituloId: capituloId,
+                    textosbiblicos: [fullNameNormal],
+                    noteIds: [noteRef.id],
+                    createdAt: serverTimestamp()
+                });
+            }
+
+            // C. Mandar o HTML re-desenhar as cores
+            if (typeof window.refreshVisualHighlights === 'function') {
+                window.refreshVisualHighlights();
+            }
+
+            currentSelectionText = ""; // Limpar a variável global
+        } 
+        console.log("=========================================");
+        // =================================================================
+
         // --- SUCESSO: RESET DE FLAGS ---
         window.hasUnsavedChanges = false; 
         isCurrentlyEditing = false; 
 
         clickedBtn.textContent = "✅ GUARDADO";
+        
         setTimeout(() => {
-            window.closeSidePanel(); // Fechará sem aviso agora
-            window.renderLibraryRefTab('puzzle');
+            if (typeof window.closeFlashModal === 'function') window.closeFlashModal(); 
+            if (typeof window.closeSidePanel === 'function') window.closeSidePanel();
+            if (typeof window.renderLibraryRefTab === 'function') window.renderLibraryRefTab('puzzle');
         }, 800);
 
     } catch (e) {
-        console.error("Erro ao gravar nota:", e);
+        console.error("❌ Erro fatal ao gravar nota:", e);
         clickedBtn.disabled = false;
         clickedBtn.textContent = originalText;
     }
@@ -5267,7 +5333,8 @@ window.deleteLibraryCard = async (index) => {
 
 // --- GRAVAR ALTERAÇÕES ---
 window.saveEditLibraryNote = async (docLibraryId, index, noteId) => {
-    const btn = document.getElementById('btn-save-flash');
+    // Captura o botão que efetuou o clique (pode ser do modal flutuante ou do painel)
+    const btn = document.getElementById('btn-confirm-edit') || document.getElementById('btn-save-flash');
     if(!btn || btn.disabled) return;
 
     const originalText = btn.textContent;
@@ -5275,10 +5342,12 @@ window.saveEditLibraryNote = async (docLibraryId, index, noteId) => {
     btn.textContent = "A gravar...";
 
     try {
-        const { doc, updateDoc, deleteDoc, serverTimestamp, getDoc, deleteField } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        const { doc, updateDoc, deleteDoc, serverTimestamp, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
         
-        const editor = document.getElementById('flash-editor');
-        const titleInput = document.getElementById('flash-title');
+        // Dependendo de onde a nota foi aberta, os IDs podem variar
+        const editor = document.getElementById('edit-card-editor') || document.getElementById('flash-editor');
+        const titleInput = document.getElementById('edit-card-title') || document.getElementById('flash-title');
+        
         const newContentText = editor.innerText.trim();
         const newTitle = titleInput.value.trim();
 
@@ -5303,7 +5372,12 @@ window.saveEditLibraryNote = async (docLibraryId, index, noteId) => {
             window.hasUnsavedChanges = false;
             isCurrentlyEditing = false;
             btn.textContent = "🗑️ REMOVIDO";
-            setTimeout(() => window.closeSidePanel(), 800);
+            setTimeout(() => {
+                const editModal = document.getElementById('edit-card-modal');
+                if (editModal) editModal.style.display = 'none';
+                window.closeSidePanel(); 
+                window.renderLibraryRefTab('puzzle');
+            }, 800);
             return;
         }
 
@@ -5317,7 +5391,7 @@ window.saveEditLibraryNote = async (docLibraryId, index, noteId) => {
                 <div class="mini-note-content" contenteditable="true">${editor.innerHTML.trim()}</div>
             </div>`;
 
-        // 1. Atualizar Documento da Nota
+        // 1. Atualizar Documento da Nota (FireStore)
         const noteUpdate = {
             nome: newTitle,
             conteudo: updatedHtml,
@@ -5325,7 +5399,7 @@ window.saveEditLibraryNote = async (docLibraryId, index, noteId) => {
         };
         await updateDoc(doc(db, 'pastas', noteId), noteUpdate);
 
-        // 2. Atualizar o card no Parágrafo
+        // 2. Atualizar o card (Snippet) no Parágrafo
         const isBible = refName.includes(':') && !refName.includes('pp.');
         const targetColl = isBible ? 'textosbiblicos' : 'livros';
         const libRef = doc(db, targetColl, docLibraryId);
@@ -5341,15 +5415,20 @@ window.saveEditLibraryNote = async (docLibraryId, index, noteId) => {
             }
         }
 
-        // --- SUCESSO: RESET DE FLAGS ---
+        // --- SUCESSO: MANTER ABERTO E RETIRAR AVISOS DE ALTERAÇÕES ---
         window.hasUnsavedChanges = false; 
-        isCurrentlyEditing = false; 
+        // Não metemos isCurrentlyEditing = false porque o utilizador ainda tem a janela aberta!
 
         btn.textContent = "✅ ATUALIZADO";
+        
+        // Atualiza a vista de fundo (lista de notas) para refletir a nova informação de forma invisível
+        if (typeof window.renderLibraryRefTab === 'function') window.renderLibraryRefTab('puzzle');
+
+        // Passado 2 segundos, voltamos a colocar o botão no estado normal
         setTimeout(() => {
-            window.closeSidePanel(); // Fecha sem aviso
-            window.renderLibraryRefTab('puzzle');
-        }, 800);
+            btn.textContent = "GRAVAR ALTERAÇÕES";
+            btn.disabled = false;
+        }, 2000);
 
     } catch (e) {
         console.error("Erro ao editar nota:", e);
