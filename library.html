@@ -2020,6 +2020,11 @@ z-index: 2147483647 !important;
 /* Garante que o contentor da scanner UI tem posição relativa para os ícones se guiarem por ele */
 .scanner-ui { position: relative; width: 80px; height: 80px; margin-bottom: 15px; }
 
+/* Esconde a caixa do número especificamente dentro das perguntas */
+.block-pergunta .ref-num {
+    display: none !important;
+}
+
 </style>
 
 
@@ -2632,19 +2637,19 @@ cap.conteudo.forEach(block => {
         const blockId = pNum ? `id="p-${pNum}"` : '';
         const dataAttr = pNum ? `data-pnum="${pNum}"` : '';
         
-        // PROCESSAMENTO DE LINKS BÍBLICOS (Invisíveis)
+        // PROCESSAMENTO DE LINKS BÍBLICOS
         const textoFinal = window.linkifyBibleReferences(block.texto || "");
 
-        // Detecção de Cântico
-        const isCantico = block.texto && (block.texto.startsWith("CÂNTICO") || block.tipo === 'cantico');
+        // DETEÇÃO AUTOMÁTICA: É pergunta se o tipo for 'pergunta' OU se acabar em '?'
+        const isPergunta = block.tipo === 'pergunta' || (block.texto && block.texto.trim().endsWith('?'));
 
         // 1. SUBTEMA
         if (block.tipo === 'subtema') {
             html += `<div class="block-subtema">${textoFinal}</div>`;
         } 
         
-        // 2. PERGUNTA (Estilo Sentinela)
-        else if (block.tipo === 'pergunta') {
+        // 2. PERGUNTA (Agora deteta automaticamente pelo '?')
+        else if (isPergunta) {
             const safeText = encodeURIComponent(block.texto);
             html += `
                 <div class="block-pergunta" 
@@ -2652,22 +2657,22 @@ cap.conteudo.forEach(block => {
                      data-pnum="${pNum}" 
                      style="cursor:pointer;" 
                      onclick="window.openQuestionEditor('${pNum || ''}', decodeURIComponent('${safeText}'))">
+                    <!-- AQUI ESTÁ O PONTINHO -->
                     <span class="question-dot" id="dot-${pNum}"></span>
                     <div class="pergunta-texto">${textoFinal}</div>
                 </div>`;
         }
 
-        // 3. DISCURSO (Novo - Laranja)
-    else if (block.tipo === 'discurso') {
-    html += `
-        <div ${blockId} ${dataAttr} class="block-discurso">
-            ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
-            ${textoFinal}
-        </div>`;
-}
+        // 3. DISCURSO
+        else if (block.tipo === 'discurso') {
+            html += `
+                <div ${blockId} ${dataAttr} class="block-discurso">
+                    ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
+                    ${textoFinal}
+                </div>`;
+        }
 
-
-        // 4. VÍDEO (Novo - Azul)
+        // 4. VÍDEO
         else if (block.tipo === 'video') {
             html += `
                 <div ${blockId} ${dataAttr} class="block-video-segmento">
@@ -2676,7 +2681,7 @@ cap.conteudo.forEach(block => {
                 </div>`;
         }
 
-        // 5. VÍDEO MUSICAL (Novo - Roxo)
+        // 5. MUSICAL
         else if (block.tipo === 'musical') {
             html += `
                 <div ${blockId} ${dataAttr} class="block-musical">
@@ -2687,12 +2692,13 @@ cap.conteudo.forEach(block => {
         }
 
         // 6. RODAPÉ OU CÂNTICO
-        else if (block.tipo === 'rodape' || isCantico) {
+        else if (block.tipo === 'rodape' || (block.texto && block.texto.startsWith("CÂNTICO"))) {
+            const isCantico = block.texto && block.texto.startsWith("CÂNTICO");
             const extraStyle = isCantico ? 'color:#e67e22; font-weight:bold; border:none; text-align:center;' : '';
             html += `<div class="block-rodape" style="${extraStyle}">${textoFinal}</div>`;
         }
 
-        // 7. PARÁGRAFO PADRÃO (Livros e Revistas)
+        // 7. PARÁGRAFO PADRÃO (Restante)
         else {
             html += `
                 <div ${blockId} ${dataAttr} class="block-paragrafo">
@@ -2701,6 +2707,9 @@ cap.conteudo.forEach(block => {
                 </div>`;
         }
     });
+
+
+
 
     html += `</div>`;
     container.innerHTML = html;
@@ -3007,8 +3016,8 @@ window.currentQuestionsCache = {};
 
 async function loadLibraryDataForChapter(pubId, chapter) {
     const capituloId = `${pubId}_${chapter}`;
-    // Prefixos para busca
-    const qPrefix = `${pubId}_Q`; 
+    // Prefixos para busca (AGORA INCLUI O CAPÍTULO PARA SER ÚNICO)
+    const qPrefix = `${capituloId}_Q`;
     
     currentChapterHighlights = {}; 
     window.currentQuestionsCache = {}; 
@@ -3939,16 +3948,16 @@ window.refreshVisualHighlights = () => {
         const pId = `p-${pNum}`;
         const highlights = currentChapterHighlights[pId];
 
+        // Se não houver destaques, não fazemos nada e o HTML original mantém-se intacto
         if (!highlights) return;
 
-        // 1. Obtemos o texto puro (sem o número do parágrafo)
+        // 1. Obtemos o texto puro
         let textToProcess = paragraphEl.innerText;
         if (textToProcess.startsWith(pNum)) {
             textToProcess = textToProcess.replace(pNum, "").trim();
         }
 
         // 2. Aplicamos as cores (Sublinhados)
-        // Ordenamos por tamanho para não quebrar tags dentro de tags
         const sortedHighlights = [...highlights].sort((a, b) => b.texto.length - a.texto.length);
         
         sortedHighlights.forEach(h => {
@@ -3971,10 +3980,25 @@ window.refreshVisualHighlights = () => {
             textToProcess = window.linkifyBibleReferences(textToProcess);
         }
 
-        // 4. Montamos o HTML final com o número do parágrafo clicável
+        // 4. CORREÇÃO: Montamos o HTML final consoante seja Pergunta ou Parágrafo
         const hasNotesClass = highlights.hasNoteData ? 'has-data' : '';
-        paragraphEl.innerHTML = `<span class="ref-num ${hasNotesClass}" onclick="window.openSidePanel('${pNum}')">${pNum}</span> ${textToProcess}`;
+        
+        if (paragraphEl.classList.contains('block-pergunta')) {
+            // Se for pergunta, mantemos a estrutura do pontinho intacta!
+            paragraphEl.innerHTML = `
+                <span class="question-dot" id="dot-${pNum}"></span>
+                <div class="pergunta-texto">${textToProcess}</div>
+            `;
+        } else {
+            // Se for parágrafo normal
+            paragraphEl.innerHTML = `<span class="ref-num ${hasNotesClass}" onclick="window.openSidePanel('${pNum}')">${pNum}</span> ${textToProcess}`;
+        }
     });
+
+    // 5. CORREÇÃO: Após reescrevermos o HTML, temos de mandar pintar os pontinhos de novo!
+    if (typeof window.paintQuestionDots === 'function') {
+        window.paintQuestionDots();
+    }
 };
     
 
@@ -4320,8 +4344,8 @@ window.openQuestionEditor = async (qNum, qText) => {
     document.getElementById('library-ref-tabs').style.display = 'none';
 
     // Garante que o qId seja consistente (Ex: W2501_Q5)
-    const qId = `${currentPubId}_Q${qNum}`;
-    window.activeQuestionId = qId; 
+  const qId = `${currentPubId}_${currentChapter}_Q${qNum}`;
+    window.activeQuestionId = qId;
 
     content.innerHTML = '<div style="padding:40px;text-align:center;"><div class="global-spinner"></div></div>';
 
