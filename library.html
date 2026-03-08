@@ -2712,6 +2712,15 @@ const XRAY_LOADER_HTML = `
         <div style="font-family:monospace; font-size:0.65rem; letter-spacing:2px; margin-top:10px;">PESQUISA PROFUNDA...</div>
     </div>
 `;
+// Lista das siglas que são LIVROS (baseado na sua 1ª secção)
+const IDS_LIVROS = ["cl", "rr", "wt", "ad", "kj", "lp", "be", "bh", "gh", "sh", "sjj", "sn", "snnw", "ssb", "re", "kl", "lvs", "wcg", "ce", "ct", "jd", "ts", "bhs", "hs", "fy", "hp", "go", "te", "my", "lfb", "ia", "lr", "jr", "jy", "yy", "lv", "sg", "bw", "gt", "ka", "kr", "od", "yp", "yp1", "yp2", "gm", "pm", "tp73", "scl", "jv", "dp", "ip-1", "ip-2", "po", "rs", "sl", "ws", "lff", "su", "bt", "si", "uw", "kc", "cf", "tp", "fl", "pe"];
+// Lista das siglas que são REVISTAS/BROCHURAS (baseado na sua 2ª secção)
+const IDS_REVISTAS = ["w", "wp", "g", "it-1", "it-2", "it-3", "dx", "km", "mwb", "ypq", "lmd", "gf", "wfg", "lc", "fg", "gl", "brfi", "ph", "ol", "hb", "rq", "ed", "lmn", "yc", "sj", "ld", "ll", "sp", "us", "gc", "hf", "je", "hu", "fu", "bp", "ml", "dg", "kp", "th", "bm", "mb", "wi", "na", "pr", "lf", "wj", "we", "ie", "bq", "dn", "sv", "lffi", "og", "jt", "br78", "nc", "td", "ti", "ba", "rk", "pc", "hl", "la", "dy", "le", "rj", "jl"];
+// Lista de VÍDEOS (3ª secção)
+const IDS_VIDEOS = ["jwbvod", "mwbv", "jwb"];
+
+
+
 
 
 // --- 1. INICIALIZAÇÃO E AUTENTICAÇÃO ---
@@ -2727,7 +2736,7 @@ onAuthStateChanged(auth, async (user) => {
         }
 
         if (shield) shield.style.display = 'none';
-await loadLibraryIcons();
+
 
         // --- LÓGICA DE RESTAURO AUTOMÁTICO POR URL ---
         const params = new URLSearchParams(window.location.search);
@@ -2810,86 +2819,50 @@ function renderReading(chapterIdx, sectionId, pubId, forcedData = null) {
     `;
 
 cap.conteudo.forEach(block => {
-        const pNum = block.numero_ref;
-        const blockId = pNum ? `id="p-${pNum}"` : '';
-        const dataAttr = pNum ? `data-pnum="${pNum}"` : '';
-        
-        // PROCESSAMENTO DE LINKS BÍBLICOS
-        const textoFinal = window.linkifyBibleReferences(block.texto || "");
+    const pNum = block.numero_ref;
+    const blockId = pNum ? `id="p-${pNum}"` : '';
+    const dataAttr = pNum ? `data-pnum="${pNum}"` : '';
+    const textoFinal = window.linkifyBibleReferences(block.texto || "");
 
-        // DETEÇÃO AUTOMÁTICA: É pergunta se o tipo for 'pergunta' OU se acabar em '?'
-        const isPergunta = block.tipo === 'pergunta' || (block.texto && block.texto.trim().endsWith('?'));
+    // A PRIORIDADE é o tipo definido no JSON. 
+    // Só deteta por '?' se o tipo for indefinido ou não for parágrafo.
+    const isPergunta = block.tipo === 'pergunta' || 
+                      (block.tipo !== 'paragrafo' && block.texto && block.texto.trim().endsWith('?'));
 
-        // 1. SUBTEMA (COM LÓGICA MWB)
-        if (block.tipo === 'subtema') {
-            let mwbClass = '';
-            // Deteta os emojis do MWB para aplicar cores específicas
-            if (block.texto.includes('💎')) mwbClass = 'mwb-treasures';
-            else if (block.texto.includes('🌾')) mwbClass = 'mwb-ministry';
-            else if (block.texto.includes('🐑')) mwbClass = 'mwb-living';
+    // 1. SUBTEMA
+    if (block.tipo === 'subtema') {
+        let mwbClass = '';
+        if (block.texto.includes('💎')) mwbClass = 'mwb-treasures';
+        else if (block.texto.includes('🌾')) mwbClass = 'mwb-ministry';
+        else if (block.texto.includes('🐑')) mwbClass = 'mwb-living';
+        html += `<div class="block-subtema ${mwbClass}">${textoFinal}</div>`;
+    } 
+    
+    // 2. PERGUNTA (Apenas se o tipo for pergunta ou não tiver número de parágrafo)
+    else if (isPergunta && !block.numero_ref) {
+        const safeText = encodeURIComponent(block.texto);
+        html += `
+            <div class="block-pergunta" data-pnum="${pNum || ''}" style="cursor:pointer;" 
+                 onclick="window.openQuestionEditor('${pNum || ''}', decodeURIComponent('${safeText}'))">
+                <span class="question-dot" id="dot-${pNum || ''}"></span>
+                <div class="pergunta-texto">${textoFinal}</div>
+            </div>`;
+    }
 
-            html += `<div class="block-subtema ${mwbClass}">${textoFinal}</div>`;
-        } 
-        
-        // 2. PERGUNTA
-        else if (isPergunta) {
-            const safeText = encodeURIComponent(block.texto);
-            html += `
-                <div class="block-pergunta" 
-                     id="q-block-${pNum}" 
-                     data-pnum="${pNum}" 
-                     style="cursor:pointer;" 
-                     onclick="window.openQuestionEditor('${pNum || ''}', decodeURIComponent('${safeText}'))">
-                    <span class="question-dot" id="dot-${pNum}"></span>
-                    <div class="pergunta-texto">${textoFinal}</div>
-                </div>`;
-        }
+    // 3. PARÁGRAFO (Se tiver tipo paragrafo ou se tiver número de referência)
+    else {
+        // Se for um bloco do tipo pergunta mas que tem números de parágrafo (ex: "1, 2")
+        // Renderizamos como pergunta mas mantemos a estrutura de parágrafo para aceitar as cores
+        const isQuestionWithNumbers = block.tipo === 'pergunta' && pNum;
+        const blockClass = isQuestionWithNumbers ? 'block-pergunta' : 'block-paragrafo';
 
-        // 3. DISCURSO
-        else if (block.tipo === 'discurso') {
-            html += `
-                <div ${blockId} ${dataAttr} class="block-discurso">
-                    ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
-                    ${textoFinal}
-                </div>`;
-        }
-
-        // 4. VÍDEO
-        else if (block.tipo === 'video') {
-            html += `
-                <div ${blockId} ${dataAttr} class="block-video-segmento">
-                    ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
-                    <span style="font-weight:bold; margin-right:5px;">🎬 VÍDEO:</span> ${textoFinal}
-                </div>`;
-        }
-
-        // 5. MUSICAL
-        else if (block.tipo === 'musical') {
-            html += `
-                <div ${blockId} ${dataAttr} class="block-musical">
-                    ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
-                    <span style="display:block; font-size:1.2em; margin-bottom:5px;">🎵</span>
-                    ${textoFinal}
-                </div>`;
-        }
-
-        // 6. RODAPÉ OU CÂNTICO
-        else if (block.tipo === 'rodape' || (block.texto && block.texto.startsWith("CÂNTICO"))) {
-            const isCantico = block.texto && block.texto.startsWith("CÂNTICO");
-            const extraStyle = isCantico ? 'color:#e67e22; font-weight:bold; border:none; text-align:center;' : '';
-            html += `<div class="block-rodape" style="${extraStyle}">${textoFinal}</div>`;
-        }
-
-        // 7. PARÁGRAFO PADRÃO (Restante)
-        else {
-            html += `
-                <div ${blockId} ${dataAttr} class="block-paragrafo">
-                    ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
-                    ${textoFinal}
-                </div>`;
-        }
-    });
-
+        html += `
+            <div ${blockId} ${dataAttr} class="${blockClass}">
+                ${pNum ? `<span class="ref-num" onclick="window.openSidePanel('${pNum}')">${pNum}</span>` : ''}
+                ${textoFinal}
+            </div>`;
+    }
+});
 
 
 
@@ -3276,30 +3249,31 @@ async function loadLibraryDataForChapter(pubId, chapter) {
         });
 
         // --- PROCESSAMENTO NOTAS ---
-        snapNotas.forEach(docSnap => {
-            const data = docSnap.data();
-            const refName = data.nome; 
+    snapNotas.forEach(docSnap => {
+    const data = docSnap.data();
+    const refName = data.nome; 
 
-            const isMatch = refName.includes(currentBookData.capitulos[currentChapterIdx].referencia) || 
-                          refName.startsWith(`${currentPubId} ${currentChapter}:`);
+    const isMatch = refName.includes(currentBookData.capitulos[currentChapterIdx].referencia) || 
+                  refName.startsWith(`${currentPubId} ${currentChapter}:`);
 
-            if (isMatch) {
-                const match = refName.match(/(?:Parágrafo |:)(\d+)$/);
-                if (match) {
-                    const pNum = match[1];
-                    const pId = `p-${pNum}`;
+    if (isMatch) {
+        // REGEX CORRIGIDA: Captura números individuais ou grupos como "1, 2" ou "3-5"
+        const match = refName.match(/(?:Parágrafo |:)([\d\s,.\-–]+)$/);
+        if (match) {
+            const pNum = match[1].trim();
+            const pId = `p-${pNum}`;
 
-                    if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
+            if (!currentChapterHighlights[pId]) currentChapterHighlights[pId] = [];
 
-                    const hasPuzzle = data.puzzleBoard && data.puzzleBoard.length > 0;
-                    const hasDossie = data.dossie && data.dossie.length > 0;
+            const hasPuzzle = data.puzzleBoard && data.puzzleBoard.length > 0;
+            const hasDossie = data.dossie && data.dossie.length > 0;
 
-                    if (hasPuzzle || hasDossie) {
-                        currentChapterHighlights[pId].hasNoteData = true;
-                    }
-                }
+            if (hasPuzzle || hasDossie) {
+                currentChapterHighlights[pId].hasNoteData = true;
             }
-        });
+        }
+    }
+});
 
         // RE-PINTAR A INTERFACE
         window.refreshVisualHighlights();
@@ -3311,30 +3285,28 @@ async function loadLibraryDataForChapter(pubId, chapter) {
 
 // NOVA FUNÇÃO para pintar os pontinhos baseado no cache
 window.paintQuestionDots = () => {
-    Object.keys(window.currentQuestionsCache).forEach(pNum => {
-        const dot = document.getElementById(`dot-${pNum}`);
-        const color = window.currentQuestionsCache[pNum];
+    Object.keys(window.currentQuestionsCache).forEach(pNumKey => {
+        const color = window.currentQuestionsCache[pNumKey];
         
-        if (dot) {
-            // Caso 1: Vazio ou None -> Esconde o pontinho
-            if (!color || color === 'none') {
-                dot.style.backgroundColor = 'transparent';
-                dot.style.borderColor = 'transparent'; // Fica invisível, ou border #444 se quiseres ver a bolinha vazia
-                dot.style.boxShadow = 'none';
-            } 
-            // Caso 2: Cinzento (Tem texto, sem destaque)
-            else if (color === '#555' || color === 'gray') {
-                dot.style.backgroundColor = '#555';
-                dot.style.borderColor = '#555';
-                dot.style.boxShadow = 'none';
-            } 
-            // Caso 3: Colorido (Tem texto e destaque)
-            else {
-                dot.style.backgroundColor = color;
-                dot.style.borderColor = color;
-                dot.style.boxShadow = `0 0 6px ${color}`;
+        // Lógica inteligente: divide "1, 2" em ["1", "2"]
+        const individualNums = String(pNumKey).split(/[,\-–]/).map(n => n.trim());
+        
+        individualNums.forEach(num => {
+            const dot = document.getElementById(`dot-${num}`) || document.getElementById(`dot-${pNumKey}`);
+            if (dot) {
+                if (!color || color === 'none') {
+                    dot.style.backgroundColor = 'transparent';
+                    dot.style.borderColor = 'transparent';
+                } else if (color === '#555' || color === 'gray') {
+                    dot.style.backgroundColor = '#555';
+                    dot.style.borderColor = '#555';
+                } else {
+                    dot.style.backgroundColor = color;
+                    dot.style.borderColor = color;
+                    dot.style.boxShadow = `0 0 6px ${color}`;
+                }
             }
-        }
+        });
     });
 };
 
@@ -3368,14 +3340,14 @@ function showRoot() {
             <div class="root-left">
                 <h2 class="section-title">Coleções</h2>
                 <div class="grid">
-                    <div class="pub-card type-book" onclick="showList('books')">
-                        <div class="icon-svg-container">${libraryIcons.books}</div>
-                        <span class="pub-title">Livros</span>
-                    </div>
-                    <div class="pub-card type-pub" onclick="showList('magazines')">
-                        <div class="icon-svg-container">${libraryIcons.magazines}</div>
-                        <span class="pub-title">Publicações</span>
-                    </div>
+                   <div class="pub-card type-book" onclick="showList('books')">
+    <div class="icon-svg-container">${libraryIcons.books}</div>
+    <span class="pub-title">Livros</span>
+</div>
+<div class="pub-card type-pub" onclick="showList('magazines')">
+    <div class="icon-svg-container">${libraryIcons.magazines}</div>
+    <span class="pub-title">Publicações</span>
+</div>
                     <div class="pub-card" style="border-top-color: #f1c40f;" onclick="window.showVideoYears()">
                         <div class="icon-svg-container">${libraryIcons.videos}</div>
                         <span class="pub-title">Vídeos</span>
@@ -3391,81 +3363,6 @@ function showRoot() {
     }
 }
 
-// Nível 2: Lista de Publicações na Secção
-function showList(category) {
-    // 1. Limpeza de interface
-    hideSelectionToolbar();
-    
-    // 2. Extração do ID da categoria (trata se receber um objeto ou apenas string)
-    const catId = (typeof category === 'object') ? category.id : category;
-    
-    // 3. Gestão da pilha para o botão "Retroceder"
-    navStack.push(() => showRoot());
-    
-    // 4. Definições de Título e Filtro
-    const isBooks = catId === 'books';
-    const title = isBooks ? 'Livros' : 'Publicações & Revistas';
-    
-    // 5. Atualiza o URL do navegador para permitir deep linking
-    updateLibraryURL({ sec: catId }); 
-    
-    // 6. Prepara o contentor principal
-    container.innerHTML = `
-        <h2 class="section-title">${title}</h2>
-        <div class="grid" id="dynamic-grid"></div>
-    `;
-    
-    const grid = document.getElementById('dynamic-grid');
-
-    // 7. Iterar sobre o dicionário de publicações (SIGLAS_PUBLICACOES)
-    Object.entries(SIGLAS_PUBLICACOES).forEach(([id, fullName]) => {
-        const isMagazine = SIGLAS_REVISTAS.includes(id);
-        
-        // Filtra: se a vista for 'books', ignora revistas. Se for 'magazines', ignora livros.
-        if (isBooks && isMagazine) return;
-        if (!isBooks && !isMagazine) return;
-
-        // Criar o card de publicação
-        const card = document.createElement('div');
-        card.className = `pub-card ${isBooks ? 'type-book' : 'type-pub'}`;
-        
-        // Estética do Card
-        card.innerHTML = `
-            <div style="font-size:0.7em; opacity:0.5; margin-bottom:5px; font-weight:bold;">
-                ${id.toUpperCase()}
-            </div>
-            <span class="pub-title">${fullName}</span>
-        `;
-
-        // Lógica de Clique
-        card.onclick = () => {
-            if (isMagazine) {
-                // Se for revista (w, g, etc), vai para a seleção de anos
-                showYears(id, fullName);
-            } else {
-                // Se for livro, tenta carregar da pasta 'books'
-                loadPublication('books', id).then(ok => { 
-                    if(ok) {
-                        showChapters('books', id); 
-                    } else {
-                        // Fallback: tenta carregar da pasta 'publicacoes' se falhar
-                        loadPublication('publicacoes', id).then(ok2 => {
-                            if(ok2) showChapters('publicacoes', id);
-                        });
-                    }
-                });
-            }
-        };
-        
-        grid.appendChild(card);
-    });
-
-    // 8. Atualiza o cabeçalho da página e a ação do botão voltar
-    updateHeader(title, () => { 
-        const lastAction = navStack.pop(); 
-        if (lastAction) lastAction(); 
-    });
-}
 
 // Nível 3 (Especial): Seleção de Anos para Revistas
 function showYears(sigla, fullName) {
@@ -4210,61 +4107,86 @@ window.refreshVisualHighlights = () => {
     const reader = document.getElementById('reader-area');
     if (!reader) return;
 
-    // Percorremos todos os parágrafos que podem ter destaques
+    const isMagazine = (currentSectionId === 'publicacoes');
     const paragraphs = reader.querySelectorAll('.block-paragrafo, .block-discurso, .block-video-segmento, .block-pergunta');
     
     paragraphs.forEach(paragraphEl => {
-        const pNum = paragraphEl.getAttribute('data-pnum');
-        const pId = `p-${pNum}`;
-        const highlights = currentChapterHighlights[pId];
+        const rawPNum = paragraphEl.getAttribute('data-pnum'); // Ex: "1" ou "1, 2"
+        if (!rawPNum) return;
 
-        // Se não houver destaques, não fazemos nada
-        if (!highlights) return;
+        // --- LÓGICA DE INTERSECÇÃO ---
+        // Extraímos os números individuais deste bloco (ex: "1, 2" -> ["1", "2"])
+        const numsInBlock = rawPNum.split(/[,\-–]/).map(n => n.trim());
+        
+        let highlights = [];
+        let hasNoteData = false;
+
+        // Verificamos no cache se existe alguma nota que mencione este parágrafo
+        Object.keys(currentChapterHighlights).forEach(key => {
+            const keyNum = key.replace('p-', '');
+            const numsInKey = keyNum.split(/[,\-–]/).map(n => n.trim());
+
+            // Se o parágrafo atual está contido na chave do cache (ex: "1" está em "1, 2")
+            const isMatch = numsInBlock.some(n => numsInKey.includes(n));
+
+            if (isMatch) {
+                const data = currentChapterHighlights[key];
+                if (Array.isArray(data)) {
+                    highlights = highlights.concat(data);
+                }
+                if (data.hasNoteData) {
+                    hasNoteData = true;
+                }
+            }
+        });
 
         // 1. Obtemos o texto puro
         let textToProcess = paragraphEl.innerText;
-        if (textToProcess.startsWith(pNum)) {
-            textToProcess = textToProcess.replace(pNum, "").trim();
+        if (textToProcess.startsWith(rawPNum)) {
+            textToProcess = textToProcess.replace(rawPNum, "").trim();
         }
 
-        // 2. Aplicamos as cores (Sublinhados e CLIQUE)
-        const sortedHighlights = [...highlights].sort((a, b) => b.texto.length - a.texto.length);
-        
-        sortedHighlights.forEach(h => {
-            if (!h.texto) return;
-            const escapedText = h.texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(`(${escapedText})(?!\\d)`, 'gi');
+        // 2. Aplicamos as cores e estilos
+        if (highlights.length > 0) {
+            const sortedHighlights = [...highlights].sort((a, b) => b.texto.length - a.texto.length);
+            
+            sortedHighlights.forEach(h => {
+                if (!h.texto) return;
+                const escapedText = h.texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`(${escapedText})(?!\\d)`, 'gi');
 
-            let className = h.temNota ? 'highlight-picotado' : 'direct-highlight';
-            let style = h.temNota 
-                ? `background-image: linear-gradient(to right, ${h.cor} 50%, transparent 50%)`
-                : `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
+                let className = h.temNota ? 'highlight-picotado' : 'direct-highlight';
+                let style = h.temNota 
+                    ? `background-image: linear-gradient(to right, ${h.cor} 50%, transparent 50%)`
+                    : `background-color: ${h.cor}44; border-bottom: 2px solid ${h.cor};`;
 
-            // A MÁGICA ESTÁ AQUI: Adicionado onclick para abrir o painel lateral!
-            textToProcess = textToProcess.replace(regex, 
-                `<span class="${className}" style="${style}" data-is-highlight="true" onclick="window.openSidePanel('${pNum}')">$1</span>`
-            );
-        });
+                textToProcess = textToProcess.replace(regex, 
+                    `<span class="${className}" style="${style}" data-is-highlight="true" onclick="window.openSidePanel('${rawPNum}')">$1</span>`
+                );
+            });
+        }
 
-        // 3. Re-aplicamos os links bíblicos invisíveis
+        // 3. Re-aplicamos os links bíblicos
         if (typeof window.linkifyBibleReferences === 'function') {
             textToProcess = window.linkifyBibleReferences(textToProcess);
         }
 
-        // 4. Montamos o HTML final
-        const hasNotesClass = highlights.hasNoteData ? 'has-data' : '';
+        // 4. Renderização Final separada por tipo
+        const hasNotesClass = hasNoteData ? 'has-data' : '';
         
         if (paragraphEl.classList.contains('block-pergunta')) {
+            // Se for pergunta, mantém o ponto colorido
             paragraphEl.innerHTML = `
-                <span class="question-dot" id="dot-${pNum}"></span>
+                <span class="question-dot" id="dot-${rawPNum}"></span>
                 <div class="pergunta-texto">${textToProcess}</div>
             `;
         } else {
-            paragraphEl.innerHTML = `<span class="ref-num ${hasNotesClass}" onclick="window.openSidePanel('${pNum}')">${pNum}</span> ${textToProcess}`;
+            // Se for parágrafo, usa o Badge (Quadrado) Azul se tiver nota
+            paragraphEl.innerHTML = `<span class="ref-num ${hasNotesClass}" onclick="window.openSidePanel('${rawPNum}')">${rawPNum}</span> ${textToProcess}`;
         }
     });
 
-    // 5. Após reescrevermos o HTML, temos de mandar pintar os pontinhos de novo!
+    // Pintar os pontos das perguntas após renderizar o texto
     if (typeof window.paintQuestionDots === 'function') {
         window.paintQuestionDots();
     }
@@ -8308,13 +8230,71 @@ window.closeSidePanel = () => {
     executeClose();
 };
 
-async function loadLibraryIcons() {
-    try {
-        const resp = await fetch('./icons.json');
-        libraryIcons = await resp.json();
-    } catch (e) {
-        console.error("Erro ao carregar ícones:", e);
+
+async function showList(category) {
+    hideSelectionToolbar();
+    const catId = (typeof category === 'object') ? category.id : category;
+    navStack.push(() => showRoot());
+    
+    updateLibraryURL({ sec: catId }); 
+    
+    const isBooks = catId === 'books';
+    const isMagazines = catId === 'magazines';
+    const title = isBooks ? 'Livros Detetados' : (isMagazines ? 'Publicações & Revistas' : 'Vídeos');
+
+    container.innerHTML = `
+        <h2 class="section-title">${title}</h2>
+        <div id="loading-msg" style="text-align:center; padding:20px; opacity:0.5;">A processar...</div>
+        <div class="grid" id="dynamic-grid"></div>
+    `;
+    
+    const grid = document.getElementById('dynamic-grid');
+
+    if (isBooks) {
+        // --- PROCURAR LIVROS NA PASTA /js/books/ ---
+        const testes = IDS_LIVROS.map(async (sigla) => {
+            try {
+                const resp = await fetch(`./js/books/${sigla}.json`, { method: 'HEAD' });
+                if (resp.ok) return { sigla, titulo: SIGLAS_PUBLICACOES[sigla] };
+            } catch (e) {}
+            return null;
+        });
+
+        const resultados = await Promise.all(testes);
+        document.getElementById('loading-msg').remove();
+
+        resultados.forEach(livro => {
+            if (livro) {
+                const card = criarCard(livro.sigla, livro.titulo, 'type-book', libraryIcons.books);
+                card.onclick = () => loadPublication('books', livro.sigla).then(ok => { if(ok) showChapters('books', livro.sigla); });
+                grid.appendChild(card);
+            }
+        });
+
+    } else if (isMagazines) {
+        // --- MOSTRAR REVISTAS DIRETAMENTE ---
+        document.getElementById('loading-msg').remove();
+        IDS_REVISTAS.forEach(id => {
+            const card = criarCard(id, SIGLAS_PUBLICACOES[id], 'type-pub', libraryIcons.magazines);
+            card.onclick = () => showYears(id, SIGLAS_PUBLICACOES[id]);
+            grid.appendChild(card);
+        });
     }
+    
+    updateHeader(title, () => { const last = navStack.pop(); if (last) last(); });
+}
+
+
+// Função auxiliar para não repetir código de criação de card
+function criarCard(id, titulo, classe, icon) {
+    const card = document.createElement('div');
+    card.className = `pub-card ${classe}`;
+    card.innerHTML = `
+        <div class="icon-svg-container">${icon}</div>
+        <div style="font-size:0.7em; opacity:0.5; margin-bottom:5px; font-weight:bold;">${id.toUpperCase()}</div>
+        <span class="pub-title">${titulo}</span>
+    `;
+    return card;
 }
 
 
