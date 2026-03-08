@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gerador Pro JW (V28 - Priority Fix)</title>
+    <title>Gerador Pro JW (V29 - Pre-Para1 Rule)</title>
     <style>
         :root { --primary: #3498db; --success: #27ae60; --dark: #2c3e50; --bg: #f4f4f9; --pergunta: #e67e22; --danger: #e74c3c; }
         body { font-family: 'Segoe UI', sans-serif; display: flex; height: 100vh; margin: 0; background: var(--bg); overflow: hidden; }
@@ -60,7 +60,7 @@
 
 <div class="panel right">
     <div id="validator" class="val-ok">✅ Sincronizado</div>
-    <h2>Pré-visualização</h2>
+    <h2>Pré-visualização (V29)</h2>
     <div id="previewContainer" style="flex:1; overflow-y:auto; border: 1px solid #ddd; padding: 10px; background: #fff;"></div>
     <button class="btn-generate" onclick="finalizeAll()">🏁 Gerar e Copiar Tudo (JSON)</button>
 </div>
@@ -118,24 +118,19 @@
         let pendingParaNums = [];
         let nextParaNum = 1;
         let subthemeCounter = 0;
+        let paraOneFound = false; // FLAG PARA REGRA PRE-PARA1
 
         const lines = raw.split(/\n+/).filter(l => l.trim() !== "");
 
         lines.forEach(line => {
             let txt = line.trim();
-            
-            // 1. ATIVAÇÃO DE RODAPÉ (Prioridade Máxima)
             if (!isFootnote && txt.startsWith('[')) { isFootnote = true; }
 
-            // 2. ATIVAÇÃO DE QUADRO (Stricter matching para evitar parágrafos)
             const boxHeaders = ["PRINCÍPIOS DA BÍBLIA", "RESUMO", "COMO RESPONDERIA?", "QUADRO", "ENTENDA MELHOR", "EXPERIMENTOU?", "LIÇÕES QUE APRENDEMOS"];
             const isBoxStart = boxHeaders.some(h => txt.toUpperCase() === h || (txt.length < 35 && txt.toUpperCase().startsWith(h)));
             if (!isFootnote && isBoxStart) { isInsideBox = true; }
 
-            // 3. IDENTIFICAÇÃO DE MAIÚSCULAS
             const isAllCaps = txt === txt.toUpperCase() && txt.length > 4 && !/^\d+/.test(txt) && !txt.startsWith('“') && !txt.startsWith('[');
-
-            // 4. REGEX DE NÚMEROS
             const qMatch = txt.match(/^(\d+[\d\s\.,\-\(a-z\)]*?\.)\s+(.*)/);
             const pMatch = txt.match(/^(\d+)\s+(.*)/);
 
@@ -147,28 +142,37 @@
                 if (noteMatch) { numberRef = noteMatch[1]; cleanText = noteMatch[2]; }
                 else { cleanText = txt; }
             } 
-            // PRIORIDADE: Primeiro verifica se é Pergunta ou Parágrafo numerado (resolve erro 33/34)
             else if (qMatch) {
                 type = 'pergunta';
                 numberRef = qMatch[1].replace(/\.$/, '');
                 cleanText = qMatch[2];
                 pendingParaNums = expandRange(numberRef);
-                if (pendingParaNums.length > 0) nextParaNum = Math.max(...pendingParaNums) + 1;
+                // Se a pergunta menciona o 1, a próxima peça de texto será o parágrafo 1
+                if (pendingParaNums.includes(1)) { /* nada a fazer aqui, espera o próximo loop */ }
             } 
             else if (pMatch) {
                 type = 'paragrafo';
                 numberRef = pMatch[1];
                 cleanText = pMatch[2];
+                if (parseInt(numberRef) === 1) paraOneFound = true;
                 nextParaNum = parseInt(numberRef) + 1;
                 pendingParaNums = pendingParaNums.filter(n => n !== parseInt(numberRef));
             } 
-            // Só depois verifica se é Subtema ou Quadro
-            else if (isAllCaps || isInsideBox) {
-                type = 'subtema';
-                subthemeCounter++;
-                numberRef = subthemeCounter.toString();
+            else if (isAllCaps || isInsideBox || !paraOneFound) {
+                // REGRA PRE-PARA1: Se ainda não achamos o parágrafo 1 
+                // E não há números na fila vindos de uma pergunta, vira subtema.
+                if (!paraOneFound && pendingParaNums.length > 0) {
+                    // Se houver fila (ex: pergunta 1), o texto vira parágrafo
+                    type = 'paragrafo';
+                    numberRef = pendingParaNums.shift().toString();
+                    isInferred = true;
+                    if (parseInt(numberRef) === 1) paraOneFound = true;
+                } else {
+                    type = 'subtema';
+                    subthemeCounter++;
+                    numberRef = subthemeCounter.toString();
+                }
             }
-            // Fallback para parágrafo implícito
             else {
                 type = 'paragrafo';
                 if (pendingParaNums.length > 0) {
@@ -191,20 +195,17 @@
         const valDiv = document.getElementById('validator');
         let qCoverage = new Set();
         let pExists = new Set();
-
         blocks.forEach(b => {
             if (b.type === 'pergunta') expandRange(b.number).forEach(n => qCoverage.add(n));
             if (b.type === 'paragrafo') pExists.add(parseInt(b.number));
         });
-
         let missQ = [...pExists].filter(n => !qCoverage.has(n));
         let missP = [...qCoverage].filter(n => !pExists.has(n));
-
         if (missQ.length === 0 && missP.length === 0) {
             valDiv.className = 'val-ok'; valDiv.innerHTML = '✅ Sincronizado';
         } else {
             valDiv.className = 'val-warn';
-            valDiv.innerHTML = `⚠️ ${missQ.length>0?'Párs s/ pergunta: '+missQ.join(','):''} ${missP.length>0?'Refs não existem: '+missP.join(','):''}`;
+            valDiv.innerHTML = `⚠️ ${missQ.length>0?'Párs s/ pergunta: '+missQ.join(','):''} ${missP.length>0?'Refs inexistentes: '+missP.join(','):''}`;
         }
     }
 
