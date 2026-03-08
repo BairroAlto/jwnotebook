@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gerador Pro JW (V26 - Integrity Check)</title>
+    <title>Gerador Pro JW (V27 - Universal Footnote)</title>
     <style>
         :root { --primary: #3498db; --success: #27ae60; --dark: #2c3e50; --bg: #f4f4f9; --pergunta: #e67e22; --danger: #e74c3c; }
         body { font-family: 'Segoe UI', sans-serif; display: flex; height: 100vh; margin: 0; background: var(--bg); overflow: hidden; }
@@ -19,7 +19,6 @@
         input, textarea { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
         textarea { flex: 1; min-height: 150px; resize: none; font-family: monospace; font-size: 0.85em; }
         
-        /* Validador */
         #validator { position: absolute; top: 15px; right: 15px; padding: 8px 12px; border-radius: 8px; font-size: 0.75em; font-weight: bold; z-index: 100; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 200px; }
         .val-ok { background: var(--success); color: white; }
         .val-warn { background: var(--danger); color: white; }
@@ -27,7 +26,7 @@
         .block-item { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px; margin-bottom: 6px; display: flex; gap: 10px; align-items: flex-start; }
         .type-pergunta { border-left: 5px solid var(--pergunta); } .type-paragrafo { border-left: 5px solid var(--primary); }
         .type-subtema { border-left: 5px solid var(--dark); background: #f0f4f8; } 
-        .type-rodape { border-left: 5px solid #95a5a6; color: #666; font-style: italic; background: #f9f9f9; }
+        .type-rodape { border-left: 5px solid #95a5a6; color: #666; font-style: italic; background: #fdfdfd; }
         
         .page-wrapper { display: flex; flex-direction: column; align-items: center; width: 45px; flex-shrink: 0; }
         .page-input { width: 100%; text-align: center; font-weight: bold; border: 2px solid #ddd; padding: 3px; font-size: 0.8em; }
@@ -60,7 +59,7 @@
 </div>
 
 <div class="panel right">
-    <div id="validator" class="val-ok">✅ Tudo Sincronizado</div>
+    <div id="validator" class="val-ok">✅ Sincronizado</div>
     <h2>Pré-visualização</h2>
     <div id="previewContainer" style="flex:1; overflow-y:auto; border: 1px solid #ddd; padding: 10px; background: #fff;"></div>
     <button class="btn-generate" onclick="finalizeAll()">🏁 Gerar e Copiar Tudo (JSON)</button>
@@ -127,52 +126,59 @@
 
         lines.forEach(line => {
             let txt = line.trim();
-            if (txt.toLowerCase().includes('[nota') || txt.toLowerCase().includes('[rodapé]')) { isFootnote = true; return; }
+            
+            // GATILHO UNIVERSAL DE RODAPÉ: Começa com [ ou contém palavras chave
+            if (!isFootnote && (txt.startsWith('[') || txt.toLowerCase().includes('rodapé:'))) { 
+                isFootnote = true; 
+            }
 
             const boxHeaders = ["PRINCÍPIOS DA BÍBLIA", "RESUMO", "COMO RESPONDERIA?", "QUADRO", "ENTENDA MELHOR", "EXPERIMENTOU?", "LIÇÕES QUE APRENDEMOS"];
-            if (boxHeaders.some(h => txt.toUpperCase().includes(h))) { isInsideBox = true; }
+            if (!isFootnote && boxHeaders.some(h => txt.toUpperCase().includes(h))) { isInsideBox = true; }
 
-            const isAllCaps = txt === txt.toUpperCase() && txt.length > 4 && !/^\d+/.test(txt) && !txt.startsWith('“');
-            const qMatch = txt.match(/^(\d+[\d\s\.,\-\(a-z\)]*?\.)\s+(.*)/);
-            const pMatch = txt.match(/^(\d+)\s+(.*)/);
+            const isAllCaps = txt === txt.toUpperCase() && txt.length > 4 && !/^\d+/.test(txt) && !txt.startsWith('“') && !txt.startsWith('[');
 
             let type = '', cleanText = txt, numberRef = null, isInferred = false;
 
             if (isFootnote) {
                 type = 'rodape';
-                const noteMatch = txt.match(/^(\d+)\.\s+(.*)/);
+                // Tenta extrair número apenas se for o formato "1. Texto"
+                const noteMatch = txt.match(/^(\d+)[\.\)]\s+(.*)/);
                 if (noteMatch) { numberRef = noteMatch[1]; cleanText = noteMatch[2]; }
+                else { cleanText = txt; }
             } 
             else if (isAllCaps || isInsideBox) {
                 type = 'subtema';
                 subthemeCounter++;
                 numberRef = subthemeCounter.toString();
-                cleanText = txt;
             }
-            else if (qMatch) {
-                type = 'pergunta';
-                numberRef = qMatch[1].replace(/\.$/, '');
-                cleanText = qMatch[2];
-                pendingParaNums = expandRange(numberRef);
-                if (pendingParaNums.length > 0) nextParaNum = pendingParaNums[0];
-            } 
-            else if (pMatch) {
-                type = 'paragrafo';
-                numberRef = pMatch[1];
-                cleanText = pMatch[2];
-                nextAutoNum = parseInt(numberRef) + 1;
-                pendingParaNums = pendingParaNums.filter(n => n !== parseInt(numberRef));
-            } 
             else {
-                type = 'paragrafo';
-                cleanText = txt;
-                if (pendingParaNums.length > 0) {
-                    numberRef = pendingParaNums.shift().toString();
-                    isInferred = true;
-                } else {
-                    numberRef = nextParaNum.toString();
-                    isInferred = true;
-                    nextParaNum++;
+                const qMatch = txt.match(/^(\d+[\d\s\.,\-\(a-z\)]*?\.)\s+(.*)/);
+                const pMatch = txt.match(/^(\d+)\s+(.*)/);
+
+                if (qMatch) {
+                    type = 'pergunta';
+                    numberRef = qMatch[1].replace(/\.$/, '');
+                    cleanText = qMatch[2];
+                    pendingParaNums = expandRange(numberRef);
+                    if (pendingParaNums.length > 0) nextParaNum = pendingParaNums[0];
+                } 
+                else if (pMatch) {
+                    type = 'paragrafo';
+                    numberRef = pMatch[1];
+                    cleanText = pMatch[2];
+                    nextParaNum = parseInt(numberRef) + 1;
+                    pendingParaNums = pendingParaNums.filter(n => n !== parseInt(numberRef));
+                } 
+                else {
+                    type = 'paragrafo';
+                    if (pendingParaNums.length > 0) {
+                        numberRef = pendingParaNums.shift().toString();
+                        isInferred = true;
+                    } else {
+                        numberRef = nextParaNum.toString();
+                        isInferred = true;
+                        nextParaNum++;
+                    }
                 }
             }
             tempBlocks.push({ type, text: cleanText, number: numberRef, inferred: isInferred });
@@ -188,34 +194,26 @@
         let existingParagraphs = new Set();
 
         blocks.forEach(b => {
-            if (b.type === 'pergunta') {
-                expandRange(b.number).forEach(n => questionCovered.add(n));
-            }
-            if (b.type === 'paragrafo') {
-                existingParagraphs.add(parseInt(b.number));
-            }
+            if (b.type === 'pergunta') expandRange(b.number).forEach(n => questionCovered.add(n));
+            if (b.type === 'paragrafo') existingParagraphs.add(parseInt(b.number));
         });
 
-        // 1. Parágrafos sem pergunta
         let missingQ = [...existingParagraphs].filter(n => !questionCovered.has(n));
-        // 2. Perguntas que apontam para parágrafos inexistentes
         let missingP = [...questionCovered].filter(n => !existingParagraphs.has(n));
 
         if (missingQ.length === 0 && missingP.length === 0) {
-            valDiv.className = 'val-ok';
-            valDiv.innerHTML = '✅ Sincronizado';
+            valDiv.className = 'val-ok'; valDiv.innerHTML = '✅ Sincronizado';
         } else {
             valDiv.className = 'val-warn';
             let msg = '';
-            if (missingQ.length > 0) msg += `Párs. ${missingQ.join(', ')} sem pergunta. `;
-            if (missingP.length > 0) msg += `Pergunta refs. ${missingP.join(', ')} não existem.`;
+            if (missingQ.length > 0) msg += `Párs. ${missingQ.join(', ')} s/ pergunta. `;
+            if (missingP.length > 0) msg += `Pergunta ref. ${missingP.join(', ')} inexistente.`;
             valDiv.innerHTML = `⚠️ ${msg}`;
         }
     }
 
     function renderPreview() {
-        const container = document.getElementById('previewContainer');
-        container.innerHTML = '';
+        const container = document.getElementById('previewContainer'); container.innerHTML = '';
         const blocks = articles[currentIdx].blocks;
         if (blocks.length === 0) return;
 
@@ -230,7 +228,6 @@
             container.appendChild(div);
         });
         updateCascading();
-        validateIntegrity();
     }
 
     function updateCascading() {
@@ -255,7 +252,6 @@
         document.getElementById('jsonOutput').value = jsonStr;
         navigator.clipboard.writeText(jsonStr).then(() => alert("Copiado!"));
     }
-
     switchTab(0);
 </script>
 </body>
