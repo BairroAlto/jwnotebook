@@ -4923,69 +4923,84 @@ const FLASH_PER_PAGE = 30;
  onAuthStateChanged(auth, async (user) => {
     const loader = document.getElementById('app-loader');
 
-    // 1. VERIFICAÇÃO: UTILIZADOR NÃO AUTENTICADO
+    // 1. VERIFICAÇÃO: SE O UTILIZADOR NÃO ESTÁ LOGADO
     if (!user) {
-        console.warn("⛔ Acesso não autorizado. Redirecionando para 404...");
-        window.location.href = '404.html';
+        console.warn("⛔ Acesso não autorizado. Redirecionando para login...");
+        window.location.href = 'index.html'; // Ou 404.html conforme a sua preferência
         return;
     } 
     
     // 2. VERIFICAÇÃO: UTILIZADOR AUTENTICADO
     else {
         try {
-            // Consulta o perfil do utilizador na base de dados
+            console.log("🔐 Autenticado. Verificando permissões de conta...");
+
+            // Consulta o perfil do utilizador na coleção "users" do Firestore
+            const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
             const userDocRef = doc(db, "users", user.uid);
             const userDocSnap = await getDoc(userDocRef);
 
-            // Se o documento não existe ou o campo 'aceite' não é 'on'
+            // Verificação de segurança: Conta existe e está aprovada?
             if (!userDocSnap.exists() || userDocSnap.data().aceite !== "on") {
-                console.warn("⏳ Conta pendente ou inválida. Redirecionando para espera...");
-                window.location.href = "index.html"; // Volta para a tela de "Pendente"
+                console.warn("⏳ Conta pendente de aprovação administrativa.");
+                // Se a conta não estiver aceite, mantemos o loader ou redirecionamos
+                window.location.href = "index.html"; 
                 return;
             }
 
-            // --- SUCESSO: CONTA APROVADA (aceite = "on") ---
-            console.log("🔐 Acesso Confirmado. A carregar biblioteca...");
+            // --- SUCESSO: ACESSO CONFIRMADO ---
+            console.log("✅ Acesso aprovado. Carregando biblioteca...");
 
-            // --- CÓDIGO ORIGINAL DE CARREGAMENTO (AGORA PROTEGIDO) ---
+            // 3. ATUALIZAR INTERFACE COM NOME DO UTILIZADOR
+            const userData = userDocSnap.data();
             const userInfoEl = document.getElementById('user-info');
-            
-            // Atualiza Nome do Utilizador
             if (userInfoEl) {
-                userInfoEl.textContent = (userDocSnap.data().nome) ? 
-                                         userDocSnap.data().nome : user.email;
+                userInfoEl.textContent = userData.nome || user.email;
             }
 
-            // Executa todas as cargas necessárias
+            // 4. CARREGAMENTO PARALELO DE DADOS ESSENCIAIS (Caches e Configurações)
+            // Usamos Promise.all para carregar tudo ao mesmo tempo e ser mais rápido
             await Promise.all([
                 loadSettings(user.uid),
                 loadAllTopicsCache(user.uid),
                 loadHighlightsCache(user.uid)
             ]);
             
-            loadBookStructure(user.uid);
-            renderListsRoot();
+            // 5. CARREGAR ESTRUTURA DE NOTAS (Sidebar)
+            if (typeof loadBookStructure === 'function') {
+                await loadBookStructure(user.uid);
+            }
+
+            // 6. RENDERIZAR LISTAS INICIAIS
+            if (typeof renderListsRoot === 'function') {
+                renderListsRoot();
+            }
 
             // ============================================================
-            // 🚀 A REVELAÇÃO (Só acontece se tudo estiver OK)
+            // 🚀 REVELAÇÃO DO SITE (Resolve o problema da tela negra)
             // ============================================================
+            // Damos um pequeno tempo (1 segundo) para o browser processar o layout
             setTimeout(() => {
-                // Revela o site
+                // Remove a opacidade 0 do CSS
                 document.body.style.opacity = "1";
                 
-                // Remove o painel de carregamento com fade
+                // Esconde e remove o Loader da tela
                 if (loader) {
-                    loader.style.transition = "opacity 0.5s ease";
+                    loader.style.transition = "opacity 0.5s ease, visibility 0.5s";
                     loader.style.opacity = "0";
+                    loader.style.visibility = "hidden";
+                    
+                    // Remove do DOM após a animação de fade
                     setTimeout(() => loader.remove(), 500);
                 }
-                console.log("✨ Biblioteca revelada.");
-            }, 1000); 
+                console.log("✨ Biblioteca pronta e visível.");
+            }, 800); 
 
         } catch (error) { 
-            console.error("Erro crítico no carregamento inicial:", error); 
-            // Em caso de erro de rede ou permissões, manda para o index por segurança
-            window.location.href = "index.html";
+            console.error("❌ Erro crítico no onAuthStateChanged:", error);
+            // Em caso de erro grave, tentamos pelo menos mostrar o site
+            document.body.style.opacity = "1";
+            if (loader) loader.remove();
         }
     }
 });
@@ -5069,32 +5084,36 @@ function renderTopicsIntoContainer(container, topicsData) {
 }
 
 function processContentForReading(htmlContent) {
-    if (!htmlContent) return '<p><em>Nota vazia.</em></p>';
+    if (!htmlContent || htmlContent === "") {
+        return '<p style="padding:20px; opacity:0.5; text-align:center;"><i>Esta nota não possui conteúdo.</i></p>';
+    }
 
-    const isAquarium = window.currentNoteData && window.currentNoteData.tipo === 'aquario';
-
+    // 1. DESCODIFICAÇÃO DE SEGURANÇA
     let decodedContent = htmlContent;
     try {
-        if (htmlContent.includes('%')) decodedContent = decodeURIComponent(htmlContent);
-    } catch (e) { decodedContent = htmlContent; }
+        // Se o conteúdo vier codificado do editor (URI), descodifica.
+        // O check de % evita erros se o texto já estiver limpo.
+        if (htmlContent.includes('%')) {
+            decodedContent = decodeURIComponent(htmlContent);
+        }
+    } catch (e) { 
+        decodedContent = htmlContent; 
+    }
 
+    const isAquarium = window.currentNoteData && window.currentNoteData.tipo === 'aquario';
     const parser = new DOMParser();
     const docDOM = parser.parseFromString(decodedContent, 'text/html');
 
+    // ============================================================
+    // MODO A: AQUÁRIO (🪸 - TEXTO CORRIDO + WIKI REFS)
+    // ============================================================
     if (isAquarium) {
-        // ============================================================
-        // 🪸 MODO AQUÁRIO: PARÁGRAFOS + REFERÊNCIAS [n]
-        // ============================================================
-        let refCounter = 1; // Reinicia o contador para cada nota
+        let refCounter = 1;
         const resultContainer = document.createElement('div');
+        resultContainer.className = "aquarium-render-wrapper";
 
-        // Seleciona todos os blocos fantasmas
+        // Processa blocos fantasmas do editor de aquário
         docDOM.querySelectorAll('.ghost-block').forEach(block => {
-            
-            // 1. Limpeza de ferramentas
-            block.querySelectorAll('.ghost-actions, .ghost-side-controls, .ghost-add-between-btn').forEach(t => t.remove());
-
-            // 2. Identificar a tag correta
             const semantic = block.dataset.semantic || 'p';
             const highlightColor = block.getAttribute('data-highlight');
             
@@ -5107,97 +5126,90 @@ function processContentForReading(htmlContent) {
             paragraph.className = 'aquarium-read-block';
             if (highlightColor) paragraph.style.color = highlightColor;
 
-            // 3. PROCESSAR LINKS DENTRO DESTE BLOCO ANTES DE RENDERIZAR
-            // Criamos um fragmento temporário para manipular os links
-            const tempFragment = document.createElement('div');
-            tempFragment.innerHTML = block.innerHTML;
+            // Processar links internos (Anexos/Wiki)
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = block.innerHTML;
 
-            // Procurar links de anexos ou links silenciosos
-tempFragment.querySelectorAll('a[data-anexo-id], a.silent-link').forEach(link => {
-    const originalText = link.textContent;
-    
-    // 1. Pegamos no ID Único do link
-    const uid = link.getAttribute('data-uid');
-    
-    // 2. Vamos buscar os dados reais ao Registo que veio do Firebase (window.currentNoteData)
-    const registry = (window.currentNoteData && window.currentNoteData.textLinksRegistry) ? window.currentNoteData.textLinksRegistry : {};
-    const linkData = registry[uid] || null;
+            tempDiv.querySelectorAll('a[data-anexo-id], a.silent-link').forEach(link => {
+                const originalText = link.textContent;
+                const uid = link.getAttribute('data-uid');
+                const registry = (window.currentNoteData && window.currentNoteData.textLinksRegistry) ? window.currentNoteData.textLinksRegistry : {};
+                const linkData = registry[uid] || null;
 
-    const textSpan = document.createElement('span');
-    textSpan.className = 'wiki-text-highlight';
-    textSpan.id = `wiki-text-${refCounter}`;
-    textSpan.textContent = originalText;
+                const textSpan = document.createElement('span');
+                textSpan.className = 'wiki-text-highlight';
+                textSpan.id = `wiki-text-${refCounter}`;
+                textSpan.textContent = originalText;
 
-    const refTrigger = document.createElement('span');
-    refTrigger.className = 'wiki-ref-trigger';
-    refTrigger.textContent = `[${refCounter}]`;
-    refTrigger.dataset.refId = refCounter;
-    
-    // Se tivermos dados no registo, passamos para o trigger de forma segura
-    if (linkData) {
-        refTrigger.setAttribute('data-json', encodeURIComponent(JSON.stringify(linkData)));
-    } else {
-        // Fallback: tenta o atributo original se o registo falhar
-        refTrigger.setAttribute('data-json', link.getAttribute('data-json') || "");
-    }
+                const refTrigger = document.createElement('span');
+                refTrigger.className = 'wiki-ref-trigger';
+                refTrigger.textContent = `[${refCounter}]`;
+                refTrigger.dataset.refId = refCounter;
+                
+                if (linkData) {
+                    refTrigger.setAttribute('data-json', encodeURIComponent(JSON.stringify(linkData)));
+                }
 
-    const fragment = document.createDocumentFragment();
-    fragment.appendChild(textSpan);
-    fragment.appendChild(refTrigger);
-    link.replaceWith(fragment);
+                const fragment = document.createDocumentFragment();
+                fragment.appendChild(textSpan);
+                fragment.appendChild(refTrigger);
+                link.replaceWith(fragment);
 
-    refCounter++;
-});
+                refCounter++;
+            });
 
-            // 4. Injetar o conteúdo processado no parágrafo
-            paragraph.innerHTML = tempFragment.innerHTML;
+            paragraph.innerHTML = tempDiv.innerHTML;
             resultContainer.appendChild(paragraph);
         });
 
-        return resultContainer.innerHTML;
+        decodedContent = resultContainer.innerHTML;
+    } 
 
-
-    } else {
-        // ============================================================
-        // 📄 MODO NORMAL: PROCESSAR CAIXAS ORIGINAIS (SUBNOTAS)
-        // ============================================================
+    // ============================================================
+    // MODO B: NORMAL (CAIXAS, QUESTÕES E PLACAS)
+    // ============================================================
+    else {
+        // 1. Processar Subnotas e Questões
         docDOM.querySelectorAll('.mini-note-wrapper').forEach(wrapper => {
-            if (wrapper.classList.contains('processed-journal-sign')) return;
-
             const focusId = wrapper.getAttribute('data-focus');
             const highlightHex = wrapper.getAttribute('data-highlight');
-            const topicsJson = wrapper.getAttribute('data-topics');
-            const linksJson = wrapper.getAttribute('data-box-links') || '{}';
             const isFree = wrapper.classList.contains('free-mode');
             const isQuestion = wrapper.classList.contains('question-mode');
             const isConsultor = wrapper.classList.contains('consultor-mode');
             const contentDiv = wrapper.querySelector('.mini-note-content');
-            const content = contentDiv ? contentDiv.innerHTML : "";
-
+            
             const newDiv = document.createElement('div');
             newDiv.className = "processed-mini-note";
             if (wrapper.id) newDiv.id = wrapper.id;
-            
-            let boxColor = "#4a90e2"; 
-            if (isQuestion) boxColor = "#2ecc71";
-            else if (isFree) boxColor = "#e67e22";
-            else if (isConsultor) boxColor = "#c0392b";
-            if (focusId && FOCUS_COLORS_MAP[focusId]) boxColor = FOCUS_COLORS_MAP[focusId];
+            if (focusId) newDiv.setAttribute('data-focus', focusId);
+            if (highlightHex) {
+                newDiv.setAttribute('data-highlight', highlightHex);
+                newDiv.style.setProperty('--box-highlight-color', highlightHex);
+                newDiv.classList.add('has-highlight');
+            }
 
-            newDiv.style.cssText = `border: 2px dashed ${boxColor} !important; background-color: ${boxColor}0D !important;`;
-
+            // Título
             let titleHTML = "";
             if (!isFree) {
                 const titleInput = wrapper.querySelector('.mini-note-title-input');
-                let titleText = titleInput ? (titleInput.getAttribute('value') || titleInput.value) : (isQuestion ? "Questão" : "SubNota");
-                titleHTML = `<h3 style="color: ${boxColor} !important;">${titleText}</h3>`;
+                const titleText = titleInput ? (titleInput.getAttribute('value') || titleInput.value) : (isQuestion ? "Questão" : "SubNota");
+                titleHTML = `<h3>${titleText}</h3>`;
             }
 
-            newDiv.innerHTML = `${titleHTML}<div class="mini-note-body">${content}</div>`;
+            // Rodapé (Tópicos)
+            const footer = wrapper.querySelector('.mini-note-footer');
+            const footerHTML = footer ? `<div class="mini-note-footer">${footer.innerHTML}</div>` : "";
+
+            newDiv.innerHTML = `
+                ${titleHTML}
+                <div class="mini-note-body">${contentDiv ? contentDiv.innerHTML : ""}</div>
+                ${footerHTML}
+                <button class="share-box-btn" title="Partilhar esta caixa">🔗</button>
+            `;
             wrapper.replaceWith(newDiv);
         });
 
-        // PROCESSAR PLACAS DE JORNAL (🪧)
+        // 2. Processar Placas de Raciocínio (🪧)
         docDOM.querySelectorAll('.journal-sign-wrapper').forEach(wrapper => {
             const titleInp = wrapper.querySelector('.sign-title-input');
             const titleText = titleInp ? titleInp.value || "Raciocínio" : "Raciocínio";
@@ -5210,26 +5222,43 @@ tempFragment.querySelectorAll('a[data-anexo-id], a.silent-link').forEach(link =>
             
             let linksHTML = "";
             links.forEach(link => {
-                linksHTML += `<a href="${link.href}" target="_blank" class="journal-read-link-card">
-                    <span class="link-icon">🔗</span>
-                    <span class="link-text">${link.textContent}</span>
-                    <span class="link-arrow">↗</span>
-                </a>`;
+                linksHTML += `
+                    <a href="${link.href}" target="_blank" class="journal-read-link-card">
+                        <span class="link-icon">🔗</span>
+                        <span class="link-text">${link.textContent}</span>
+                        <span class="link-arrow">↗</span>
+                    </a>`;
             });
 
-            newSign.innerHTML = `<div class="sign-read-header"><span class="sign-read-title">🪧 ${titleText}</span></div>
-                                 <div class="sign-read-content">${contentDiv ? contentDiv.innerHTML : ""}</div>
-                                 <div class="sign-read-links-area">${linksHTML}</div>`;
+            newSign.innerHTML = `
+                <div class="sign-read-header"><span class="sign-read-title">🪧 ${titleText}</span></div>
+                <div class="sign-read-content">${contentDiv ? contentDiv.innerHTML : ""}</div>
+                <div class="sign-read-links-area">${linksHTML}</div>
+            `;
             wrapper.replaceWith(newSign);
         });
+
+        decodedContent = docDOM.body.innerHTML;
     }
 
-    // Limpeza final de qualquer seletor de edição sobrado
-    const finalClean = ['.mini-note-toolbar', '.redator-dock', '.ghost-actions', '.ghost-side-controls', '.ghost-add-between-btn', '.post-it-drag-handle', '.post-it-cut-btn'];
-    finalClean.forEach(s => docDOM.querySelectorAll(s).forEach(el => el.remove()));
+    // ============================================================
+    // 3. LIMPEZA FINAL E INTERATIVIDADE
+    // ============================================================
+    const finalDoc = new DOMParser().parseFromString(decodedContent, 'text/html');
 
-    let finalHTML = docDOM.body.innerHTML;
-    if (window.linkifyBibleReferences) finalHTML = window.linkifyBibleReferences(finalHTML);
+    // Remover botões de edição que possam ter sobrado
+    const selectorsToRemove = [
+        '.mini-note-toolbar', '.redator-dock', '.ghost-actions', 
+        '.ghost-side-controls', '.ghost-add-between-btn', 
+        '.post-it-drag-handle', '.post-it-cut-btn', '.resizer'
+    ];
+    selectorsToRemove.forEach(s => finalDoc.querySelectorAll(s).forEach(el => el.remove()));
+
+    // Transformar referências bíblicas em links clicáveis (Ghost Links)
+    let finalHTML = finalDoc.body.innerHTML;
+    if (typeof window.linkifyBibleReferences === 'function') {
+        finalHTML = window.linkifyBibleReferences(finalHTML);
+    }
 
     return finalHTML;
 }
@@ -5499,145 +5528,169 @@ document.getElementById('btn-copy').addEventListener('click', async function() {
 // FUNÇÃO PRINCIPAL: EXIBIÇÃO DA NOTA (READ MODE)
 // ============================================================
 window.displayNote = async function(noteData, searchTerm = null, skipUrlUpdate = false) {
-    
-     resetWhiteBookMode(); 
+    try {
+        console.log("📖 Abrindo nota:", noteData.nome);
 
-    // 1. ATUALIZAÇÃO DE URL (Deep Linking)
-    if (!skipUrlUpdate) {
-        window.updateAddressBar(noteData.id, 'note');
-    }
-    
-    // 2. RESET TTS E UI
-    if (typeof window.resetTTS === 'function') window.resetTTS();
-    const oradorSelect = document.getElementById('reader-orador');
-    if (oradorSelect) oradorSelect.value = "0"; 
-    
-    // Guardar estado global da nota atual
-    window.currentNoteId = noteData.id; 
-    window.currentNoteData = noteData; 
-    
-    // Ajustar visibilidade para Mobile
-    document.body.classList.add('mobile-reading-active');
-    
-    const placeholder = document.getElementById('empty-placeholder');
-    const readerArea = document.getElementById('reader-area');
-    if (placeholder) placeholder.style.display = 'none';
-    if (readerArea) readerArea.style.display = 'block';
+        // 1. RESETS E SEGURANÇA
+        // Reset do Modo WhiteBook (Nuvens)
+        if (typeof resetWhiteBookMode === 'function') resetWhiteBookMode(); 
+        // Parar Orador (TTS) se estiver ativo
+        if (typeof window.resetTTS === 'function') window.resetTTS();
+        
+        const oradorSelect = document.getElementById('reader-orador');
+        if (oradorSelect) oradorSelect.value = "0"; 
 
-    const readBody = document.getElementById('read-body');
-    const archiveArea = document.getElementById('archive-viewer-area');
-    const readTitle = document.getElementById('read-title');
-    const indexTabBtn = document.getElementById('tab-index-btn');
-    const toolbar = document.getElementById('note-toolbar');
-    const mainTopicsContainer = document.getElementById('note-main-topics');
+        // Guardar estado global da nota ativa
+        window.currentNoteId = noteData.id; 
+        window.currentNoteData = noteData; 
 
-    // 3. LIMPEZA GERAL DE ESTILOS DE MODOS ANTERIORES
-    if (readBody) readBody.classList.remove('is-aquarium');
-    if (readTitle) {
-        readTitle.classList.remove('is-aquarium-title');
-        readTitle.textContent = noteData.nome;
-    }
-
-    // =======================================================
-    // A. MODO ARQUIVO (Feed de Posts)
-    // =======================================================
-    if (noteData.tipo === 'arquivo' || noteData.tipo === 'partilhado') {
-        if (readBody) readBody.style.display = 'none';
-        if (archiveArea) archiveArea.style.display = 'block';
-        if (toolbar) toolbar.style.display = 'none';
-        if (indexTabBtn) indexTabBtn.style.display = 'none';
-
-        const feedContent = document.getElementById('archive-feed-content');
-        if (feedContent) {
-            feedContent.innerHTML = '<div class="sidebar-loading"><div class="spinner"></div><span>A carregar posts...</span></div>';
+        // 2. ATUALIZAÇÃO DE URL (Deep Linking)
+        if (!skipUrlUpdate && typeof window.updateAddressBar === 'function') {
+            window.updateAddressBar(noteData.id, 'note');
         }
 
-        await loadArchivePosts(noteData.id);
-        renderArchiveViewer('prateleira');
-    } 
+        // 3. CONTROLO DE VISIBILIDADE (Evita a tela negra)
+        const placeholder = document.getElementById('empty-placeholder');
+        const readerArea = document.getElementById('reader-area');
+        const readBody = document.getElementById('read-body');
+        const archiveArea = document.getElementById('archive-viewer-area');
+        const readTitle = document.getElementById('read-title');
+        const indexTabBtn = document.getElementById('tab-index-btn');
+        const toolbar = document.getElementById('note-toolbar');
+        const mainTopicsContainer = document.getElementById('note-main-topics');
 
-    // =======================================================
-    // B. MODO AQUÁRIO (🪸 - Estudo com Fontes)
-    // =======================================================
-    else if (noteData.tipo === 'aquario') {
-        if (archiveArea) archiveArea.style.display = 'none';
+        // Forçar visibilidade no Mobile
+        document.body.classList.add('mobile-reading-active');
+        document.body.style.opacity = "1"; // Garante que o corpo está visível
+
+        if (placeholder) placeholder.style.display = 'none';
+        if (readerArea) readerArea.style.display = 'block';
+
+        // Limpeza de classes de modos anteriores
         if (readBody) {
+            readBody.classList.remove('is-aquarium');
             readBody.style.display = 'block';
-            readBody.classList.add('is-aquarium');
-            readBody.innerHTML = processContentForReading(noteData.conteudo || "");
         }
-        if (readTitle) readTitle.classList.add('is-aquarium-title');
-        if (toolbar) toolbar.style.display = 'flex';
-        
-        // Limpa elementos de nota padrão
-        if (mainTopicsContainer) mainTopicsContainer.innerHTML = '';
-        renderBookMargins([]);
-
-        // Configurar Aba "Fontes" na lateral
-        if (indexTabBtn) {
-            indexTabBtn.textContent = "Fontes";
-            indexTabBtn.style.display = 'block';
-        }
-        
-        // Gerar as fontes a partir dos links Wikipedia [1]
-        setTimeout(() => { if (window.generateAquariumSources) window.generateAquariumSources(); }, 100);
-    } 
-
-    // =======================================================
-    // C. MODO NOTA NORMAL (Padrão)
-    // =======================================================
-    else {
-        if (toolbar) toolbar.style.display = 'flex';
-        if (readBody) {
-            readBody.style.display = 'block';
-            readBody.innerHTML = processContentForReading(noteData.conteudo || "");
-        }
-        if (archiveArea) archiveArea.style.display = 'none';
-        
-        // Renderizar Widgets (Calendários e Margens)
-        if (readBody) renderReadOnlyCalendars(readBody);
-        renderBookMargins(noteData.marginElements || []);
-
-        // Renderizar Tópicos Principais
-        if (mainTopicsContainer) {
-            const topics = noteData.topicosSelecionados || {};
-            renderTopicsIntoContainer(mainTopicsContainer, topics);
+        if (readTitle) {
+            readTitle.classList.remove('is-aquarium-title');
+            readTitle.textContent = noteData.nome || "Sem Título";
         }
 
-        // Configurar Aba "Índice" na lateral
-        if (indexTabBtn) {
-            indexTabBtn.textContent = "Índice";
-            generateLocalIndex(); 
-        }
-    }
+        // =======================================================
+        // A. CASO: MODO ARQUIVO OU PARTILHADO (FEED DE POSTS)
+        // =======================================================
+        if (noteData.tipo === 'arquivo' || noteData.tipo === 'partilhado') {
+            if (readBody) readBody.style.display = 'none';
+            if (archiveArea) archiveArea.style.display = 'block';
+            if (toolbar) toolbar.style.display = 'none';
+            if (indexTabBtn) indexTabBtn.style.display = 'none';
 
-    // =======================================================
-    // D. ESTADO DO BOTÃO DE PARTILHA (FIX DE SEGURANÇA)
-    // =======================================================
-    const shareBtn = document.getElementById('btn-share');
-    if (shareBtn) {
-        const isShared = noteData.shareSettings && noteData.shareSettings.shared;
-        if (isShared) {
-            shareBtn.textContent = "🔓 Link Ativo";
-            shareBtn.style.color = "#2ecc71";
-            shareBtn.dataset.isShared = "true"; 
+            const feedContent = document.getElementById('archive-feed-content');
+            if (feedContent) {
+                feedContent.innerHTML = '<div class="sidebar-loading"><div class="spinner"></div><span>A carregar posts...</span></div>';
+            }
+
+            // Carregar posts da sub-coleção
+            if (typeof loadArchivePosts === 'function') {
+                await loadArchivePosts(noteData.id);
+                renderArchiveViewer('prateleira');
+            }
+        } 
+
+        // =======================================================
+        // B. CASO: MODO AQUÁRIO (ESTUDO COM FONTES WIKI)
+        // =======================================================
+        else if (noteData.tipo === 'aquario') {
+            if (archiveArea) archiveArea.style.display = 'none';
+            if (toolbar) toolbar.style.display = 'flex';
+            
+            if (readBody) {
+                readBody.classList.add('is-aquarium');
+                readBody.innerHTML = processContentForReading(noteData.conteudo || "");
+            }
+            if (readTitle) readTitle.classList.add('is-aquarium-title');
+            
+            if (mainTopicsContainer) mainTopicsContainer.innerHTML = '';
+            renderBookMargins([]); // Aquário não costuma usar margens desenhadas
+
+            // Ativar Aba de Fontes na Sidebar
+            if (indexTabBtn) {
+                indexTabBtn.textContent = "Fontes";
+                indexTabBtn.style.display = 'block';
+                // Gerar as fontes a partir dos links [1] processados
+                setTimeout(() => { 
+                    if (typeof window.generateAquariumSources === 'function') window.generateAquariumSources(); 
+                }, 100);
+            }
+        } 
+
+        // =======================================================
+        // C. CASO: NOTA NORMAL (SUBNOTAS, QUESTÕES, ETC)
+        // =======================================================
+        else {
+            if (archiveArea) archiveArea.style.display = 'none';
+            if (toolbar) toolbar.style.display = 'flex';
+            
+            if (readBody) {
+                readBody.innerHTML = processContentForReading(noteData.conteudo || "");
+                // Renderizar Widgets (Calendários e Margens)
+                if (typeof renderReadOnlyCalendars === 'function') renderReadOnlyCalendars(readBody);
+            }
+
+            // Renderizar Margens (Ícones desenhados)
+            if (typeof renderBookMargins === 'function') {
+                renderBookMargins(noteData.marginElements || []);
+            }
+
+            // Renderizar Tópicos Principais no Topo
+            if (mainTopicsContainer) {
+                const topics = noteData.topicosSelecionados || {};
+                renderTopicsIntoContainer(mainTopicsContainer, topics);
+            }
+
+            // Ativar Aba de Índice na Sidebar
+            if (indexTabBtn) {
+                indexTabBtn.textContent = "Índice";
+                indexTabBtn.style.display = 'block';
+                if (typeof generateLocalIndex === 'function') generateLocalIndex(); 
+            }
+        }
+
+        // =======================================================
+        // D. ATUALIZAR BOTÃO DE PARTILHA
+        // =======================================================
+        const shareBtn = document.getElementById('btn-share');
+        if (shareBtn) {
+            const isShared = noteData.shareSettings && noteData.shareSettings.shared;
+            if (isShared) {
+                shareBtn.textContent = "🔓 Link Ativo";
+                shareBtn.style.color = "#2ecc71";
+                shareBtn.dataset.isShared = "true"; 
+            } else {
+                shareBtn.textContent = "🔗 Partilhar";
+                shareBtn.style.color = "";
+                shareBtn.dataset.isShared = "false";
+            }
+        }
+
+        // =======================================================
+        // E. POSICIONAMENTO FINAL (SCROLL)
+        // =======================================================
+        if (searchTerm) {
+            // Se houver um termo de pesquisa, tenta destacar e rolar até ele
+            if (typeof highlightAndScroll === 'function') {
+                highlightAndScroll(searchTerm);
+            }
         } else {
-            shareBtn.textContent = "🔗 Partilhar";
-            shareBtn.style.color = "";
-            shareBtn.dataset.isShared = "false";
+            // Caso contrário, volta ao topo da nota
+            const scrollContainer = document.getElementById('book-content-scroll');
+            if (scrollContainer) scrollContainer.scrollTop = 0;
         }
-    }
 
-    // =======================================================
-    // E. CONTROLO DE SCROLL E DESTAQUE (Search term)
-    // =======================================================
-    if (searchTerm) {
-        highlightAndScroll(searchTerm);
-    } else {
-        const scrollContainer = document.getElementById('book-content-scroll');
-        if (scrollContainer) scrollContainer.scrollTop = 0;
+    } catch (error) {
+        console.error("❌ Erro crítico ao exibir nota:", error);
+        alert("Ocorreu um erro ao carregar o conteúdo da nota.");
     }
-
 };
 
 
