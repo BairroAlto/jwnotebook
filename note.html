@@ -43292,45 +43292,32 @@ if (aqBackBtn) {
     aqBackBtn.parentNode.replaceChild(newBtn, aqBackBtn);
 
     newBtn.addEventListener('click', async () => {
-        // 1. Grava o estado atual (Segurança)
+        // --- ADICIONADO: Criar backup antes de sair ---
+        if (typeof window.createAquariumBackup === 'function') {
+            await window.createAquariumBackup("Saída pelo botão Voltar");
+        }
+
         if (typeof saveAquariumState === 'function') await saveAquariumState();
         
-        // 2. Limpa o ambiente do Aquário e reseta variáveis
         window.resetAquariumState();
         
-        // 3. Esconde o ambiente Aquário
         const env = document.getElementById('aquarium-environment');
         if (env) env.style.display = 'none';
         
-        // 4. Restaura a App Principal (Notebook Container)
         const mainApp = document.querySelector('.notebook-container');
         if (mainApp) mainApp.style.setProperty('display', 'flex', 'important');
         document.body.style.overflow = ''; 
 
-        // ============================================================
-        // AQUI ESTÁ A CORREÇÃO PRINCIPAL
-        // ============================================================
-        
-        // 1. Limpa o ID da nota selecionada para que o sistema saiba que nada está aberto
         selectedNoteId = null;
-
-        // 2. Chama resetEditor() para forçar o aparecimento do Placeholder (O Livro)
-        // e esconder a área de edição.
         resetEditor();
 
-        // 3. Mobile: Garante que volta à lista de pastas e não fica no ecrã branco da direita
         if (window.innerWidth <= 768) {
             document.body.classList.remove('mobile-view-editor');
             document.body.classList.add('mobile-view-middle');
-            
-            // Forçamos o contentor a não estar colapsado
             if (mainApp) mainApp.classList.remove('middle-panel-collapsed');
         }
 
-        // 4. Atualiza a lista da esquerda/meio (False = não tenta reabrir o editor)
         updateNavigationView(false); 
-        
-        console.log("📂 [SAÍDA AQUÁRIO] Reset completo para o Placeholder.");
     });
 }
 
@@ -43349,42 +43336,68 @@ if (jumpBtnFix) {
         e.preventDefault();
         e.stopPropagation();
 
-        // 1. GRAVAÇÃO IMEDIATA DE SEGURANÇA
-        if (typeof window.saveAquariumState === 'function') {
-            updateAquariumStatus('saving');
-            await window.saveAquariumState();
-        }
-        
-        // 2. Abre o popup normalmente
         const popup = document.getElementById('aquarium-jump-popup');
-        if (popup) {
-            if (popup.style.display === 'flex') {
-                popup.style.display = 'none';
-            } else {
-                document.body.appendChild(popup);
-                popup.style.cssText = `
-                    display: flex !important;
-                    position: fixed !important;
-                    z-index: 2147483647 !important;
-                    top: 60px !important;
-                    left: 80px !important;
-                    visibility: visible !important;
-                    opacity: 1 !important;
-                    background-color: #252528 !important; 
-                    box-shadow: 0 10px 50px rgba(0,0,0,1) !important;
-                    border: 1px solid var(--accent-color);
-                    border-radius: 8px;
-                    padding: 10px;
-                    flex-direction: column;
-                    width: 300px;
-                `;
-                
-                const search = document.getElementById('aquarium-jump-search');
-                if (search) {
-                    search.value = "";
-                    search.focus();
-                    search.oninput = (ev) => loadAquariumNotesList(ev.target.value);
-                }
+        if (!popup) return;
+
+        // 1. Se o popup já estiver aberto, apenas o fechamos e saímos
+        if (popup.style.display === 'flex') {
+            popup.style.display = 'none';
+            return;
+        }
+
+        // 2. Feedback visual no botão para o user saber que está a processar
+        const originalIcon = newJumpBtn.textContent;
+        newJumpBtn.textContent = "⌛"; 
+
+        try {
+            // 3. EXECUÇÃO SÍNCRONA DE SEGURANÇA
+            // Tentamos fazer backup e gravar, mas não deixamos que um erro aqui pare a UI
+            console.log("💾 [SALTO] A gerar backup e a gravar estado...");
+            
+            // Fazemos o backup primeiro (a foto do que o user está a ver agora)
+            if (typeof window.createAquariumBackup === 'function') {
+                await window.createAquariumBackup("Troca de nota (Salto 𒆜)");
+            }
+
+            // Grava o estado oficial
+            if (typeof window.saveAquariumState === 'function') {
+                updateAquariumStatus('saving');
+                await window.saveAquariumState();
+            }
+        } catch (err) {
+            console.warn("⚠️ Falha na gravação de segurança, mas a abrir painel na mesma:", err);
+        } finally {
+            // 4. ABRIR O PAINEL (Acontece SEMPRE, mesmo que a gravação falhe)
+            newJumpBtn.textContent = originalIcon; // Restaura o ícone 𒆜
+
+            document.body.appendChild(popup);
+            popup.style.cssText = `
+                display: flex !important;
+                position: fixed !important;
+                z-index: 2147483647 !important;
+                top: 60px !important;
+                left: 20px !important;
+                visibility: visible !important;
+                opacity: 1 !important;
+                background-color: #252528 !important; 
+                box-shadow: 0 10px 50px rgba(0,0,0,1) !important;
+                border: 1px solid var(--accent-color);
+                border-radius: 8px;
+                padding: 10px;
+                flex-direction: column;
+                width: 300px;
+                max-height: 80vh;
+            `;
+            
+            const search = document.getElementById('aquarium-jump-search');
+            if (search) {
+                search.value = "";
+                search.focus();
+                search.oninput = (ev) => loadAquariumNotesList(ev.target.value);
+            }
+
+            // Carrega a lista de notas
+            if (typeof loadAquariumNotesList === 'function') {
                 loadAquariumNotesList();
             }
         }
@@ -57346,6 +57359,48 @@ document.getElementById('aquarium-environment').addEventListener('mousedown', (e
         }
     }
 }, true); // O 'true' é fundamental aqui para capturar o clique antes de todos
+
+// Função para gerar um Backup Automático ao sair ou trocar de nota no Aquário
+window.createAquariumBackup = async function(motivo = "Ação no Aquário") {
+    if (!selectedNoteId) return;
+
+    const canvas = document.getElementById('aquarium-content-canvas');
+    const titleInput = document.getElementById('aquarium-title-input');
+    if (!canvas) return;
+
+    console.log(`🚨 [BACKUP] Gerando cópia de segurança: ${motivo}`);
+
+    try {
+        const { collection, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+        
+        // 1. Limpeza do HTML (Clone para não mexer no que o user vê)
+        const cleanCanvas = canvas.cloneNode(true);
+        cleanCanvas.querySelectorAll('.ghost-actions, .aq-popup-window, .ghost-side-controls, .ghost-add-between-btn').forEach(el => el.remove());
+        
+        cleanCanvas.querySelectorAll('.ghost-block').forEach(block => {
+            block.classList.remove('locked-popup', 'active-selection', 'active-store-target', 'has-next'); 
+            block.style.cssText = ""; 
+            block.setAttribute('contenteditable', 'true');
+        });
+
+        const finalTitle = titleInput ? titleInput.value : "Aquário Sem Título";
+        const finalContent = cleanCanvas.innerHTML;
+
+        // 2. Gravar na sub-coleção de backups da nota
+        const backupsRef = collection(db, 'pastas', selectedNoteId, 'backups');
+        await addDoc(backupsRef, {
+            titulo: finalTitle,
+            conteudo: finalContent,
+            timestamp: serverTimestamp(),
+            isAutoBackup: true,
+            triggerReason: motivo // Aparecerá no histórico para o utilizador saber o que disparou
+        });
+
+        console.log("✅ [BACKUP] Gravado com sucesso.");
+    } catch (e) {
+        console.error("❌ [BACKUP] Erro ao criar cópia:", e);
+    }
+};
 
 
     </script>
