@@ -19,7 +19,7 @@ export const SIGLAS_PUBLICACOES = {
     "re": "Clímax de Revelação",
     "kl": "Conhecimento",
     "lvs": "Continue",
-    "wcg": "Coragem",
+    "wcg": "Seja Corajoso",
     "ce": "Criação",
     "ct": "Criador",
     "jd": "Dia de Jeová",
