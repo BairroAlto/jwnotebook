@@ -43059,109 +43059,58 @@ const postObserver = new IntersectionObserver((entries) => {
 
 // 1. Função para Abrir o Ambiente
 window.openAquariumEnvironment = async function(id, data) {
-    console.group("🪸 [ABERTURA BLINDADA] A trocar para: " + data.nome);
-
-    // 1. LIMPEZA DE POPUPS (NOVO)
     window.closeAllFloatingPopups();
-
-    // 2. PARAGEM DE EMERGÊNCIA
-    if (typeof aqAutoSaveTimer !== 'undefined') clearTimeout(aqAutoSaveTimer);
-    if (typeof aqTitleTimer !== 'undefined') clearTimeout(aqTitleTimer);
     if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
     
-    // 3. GRAVAÇÃO SEGURA DA NOTA ANTERIOR
-    if (selectedNoteId && selectedNoteId !== id) {
-        const isAquariumVisible = document.getElementById('aquarium-environment').style.display !== 'none';
+    // 1. Limpa ouvintes antigos para não duplicar
+    if (unsubscribeCurrentNote) {
+        unsubscribeCurrentNote();
+        unsubscribeCurrentNote = null;
+    }
+
+    selectedNoteId = id;
+
+    // 2. CONFIGURAR ESCUTA ATIVA (onSnapshot)
+    const { doc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+    const noteRef = doc(db, 'pastas', id);
+
+    unsubscribeCurrentNote = onSnapshot(noteRef, (noteSnap) => {
+        if (!noteSnap.exists()) return;
+        const serverData = noteSnap.data();
+
+        // Sincroniza o Título
+        const titleInput = document.getElementById('aquarium-title-input');
+        if (titleInput && document.activeElement !== titleInput) {
+            titleInput.value = serverData.nome || "Sem Título";
+        }
+
+        // --- SINCRONIZAÇÃO DO CONTEÚDO (O CORAÇÃO DO SISTEMA) ---
+        const canvas = document.getElementById('aquarium-content-canvas');
         
-        if (isAquariumVisible) {
-            await window.saveAquariumState();
-        } else {
-            await saveNote(true);
+        // Só atualiza o ecrã se o utilizador NÃO estiver a escrever naquele momento
+        // Isso evita que o texto "pule" enquanto escreves
+        if (document.activeElement.closest('.ghost-block') === null) {
+            console.log("🔄 [SYNC] Conteúdo atualizado pelo servidor.");
+            canvas.innerHTML = serverData.conteudo || '<div class="ghost-block" contenteditable="true"></div>';
+            
+            // Re-aplica as ações dos fantasmas
+            canvas.querySelectorAll('.ghost-block').forEach(g => {
+                if (typeof ensureGhostActions === 'function') ensureGhostActions(g);
+            });
         }
+    });
 
-        if (unsubscribeCurrentNote) {
-            unsubscribeCurrentNote();
-            unsubscribeCurrentNote = null;
-        }
-    }
-
-    // 4. LIMPEZA E TROCA DE ID
-    if (typeof window.resetAquariumState === 'function') window.resetAquariumState();
-    
-    selectedNoteId = id; 
-    window.nextSelectedId = null;
-    
-    // 5. ATUALIZAÇÃO VISUAL
-    
-    // A. Título
-    const titleGroup = document.querySelector('.aquarium-title-group');
-    if (titleGroup) {
-        titleGroup.innerHTML = ''; 
-        const titleInput = document.createElement('input');
-        titleInput.type = 'text';
-        titleInput.id = 'aquarium-title-input';
-        titleInput.className = 'aquarium-header-input';
-        titleInput.value = data.nome || "Sem Título";
-        titleInput.placeholder = "Nome do Aquário...";
-        
-        titleInput.addEventListener('input', (e) => {
-            clearTimeout(window.aqTitleTimer);
-            window.aqTitleTimer = setTimeout(() => {
-                if (typeof window.saveAquariumTitle === 'function') {
-                    window.saveAquariumTitle(e.target.value);
-                }
-            }, 1000);
-        });
-        titleGroup.appendChild(titleInput);
-    }
-    
-    // B. Conteúdo (Canvas)
-    const canvas = document.getElementById('aquarium-content-canvas');
-    if (canvas) {
-        if (data.conteudo && data.conteudo.trim() !== "") {
-            if (typeof DOMPurify !== 'undefined') {
-                canvas.innerHTML = DOMPurify.sanitize(data.conteudo);
-            } else {
-                canvas.innerHTML = data.conteudo;
-            }
-        } else {
-            canvas.innerHTML = '<div class="ghost-block" contenteditable="true" data-placeholder=""></div>';
-        }
-
-        const savedZoom = data.zoomLevel || '100%';
-        const aqZoomSelect = document.getElementById('aq-zoom');
-        if (aqZoomSelect) aqZoomSelect.value = savedZoom;
-        canvas.style.fontSize = savedZoom;
-
-        canvas.querySelectorAll('.ghost-block').forEach(g => {
-            g.classList.remove('locked-popup', 'active-selection', 'active-store-target');
-            g.style.cssText = "";
-            g.setAttribute('contenteditable', 'true');
-            if (typeof ensureGhostActions === 'function') ensureGhostActions(g);
-        });
-    }
-
-    // 6. EXIBIÇÃO
+    // 3. MOSTRAR AMBIENTE (Visual)
     const mainApp = document.querySelector('.notebook-container');
     if (mainApp) mainApp.style.setProperty('display', 'none', 'important');
 
     const env = document.getElementById('aquarium-environment');
-    if (env) {
-        document.body.appendChild(env);
-        env.style.cssText = `
-            display: flex !important;
-            position: fixed !important;
-            top: 0 !important; left: 0 !important; width: 100vw; height: 100vh !important;
-            z-index: 2000000000 !important;
-            background: radial-gradient(circle at center, #2c3e50 0%, #000000 100%) !important;
-            opacity: 0; visibility: visible !important;
-            transition: opacity 0.5s ease;
-        `;
-        requestAnimationFrame(() => { setTimeout(() => { env.style.opacity = '1'; }, 10); });
-    }
-
-    console.log("🏁 Carregamento concluído com segurança.");
-    console.groupEnd();
+    env.style.display = 'flex';
+    env.style.opacity = '1';
+    env.style.visibility = 'visible';
+    
+    // Dispara bolinhas de sucesso
+    if(typeof triggerAquariumBubbles === 'function') triggerAquariumBubbles();
 };
 
 // 2. Corrigir o clique no botão de Salto (Para não gravar duas vezes)
