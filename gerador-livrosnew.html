@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gerador Pro JW (V34 - Correção Antigo)</title>
+    <title>Gerador Pro JW (V35 - Edição Manual de Tipos)</title>
     <style>
         :root { --primary: #3498db; --success: #27ae60; --dark: #2c3e50; --bg: #f4f4f9; --pergunta: #e67e22; --danger: #e74c3c; --section: #9b59b6; }
         body { font-family: 'Segoe UI', sans-serif; display: flex; height: 100vh; margin: 0; background: var(--bg); overflow: hidden; }
@@ -43,10 +43,19 @@
         .type-rodape { border-left: 5px solid #95a5a6; color: #666; font-style: italic; background: #fdfdfd; }
         
         .page-wrapper { display: flex; flex-direction: column; align-items: center; width: 45px; flex-shrink: 0; }
+        .page-wrapper .badge { font-size: 0.6em; font-weight: bold; color: #888; margin-bottom: 2px; }
         .page-input { width: 100%; text-align: center; font-weight: bold; border: 2px solid #ddd; padding: 3px; font-size: 0.8em; }
         .page-input.manual { border-color: var(--success); background: #eafaf1; }
         .content-text { flex: 1; font-size: 0.85em; line-height: 1.4; white-space: pre-wrap; }
-        .type-label { font-size: 0.6em; font-weight: 900; text-transform: uppercase; margin-right: 5px; padding: 2px 4px; border-radius: 3px; background: rgba(0,0,0,0.05); }
+        
+        /* Select interativo na pré-visualização */
+        .type-select { font-size: 0.65em; font-weight: 900; text-transform: uppercase; margin-right: 5px; padding: 2px 4px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; outline: none; }
+        .type-select:hover { border-color: #888; }
+        .type-badge-paragrafo { background: #e3f2fd; color: #1565c0; border-color: #90caf9; }
+        .type-badge-pergunta { background: #fff3e0; color: #e65100; border-color: #ffcc80; }
+        .type-badge-subtema { background: #f3e5f5; color: #6a1b9a; border-color: #ce93d8; }
+        .type-badge-rodape { background: #f5f5f5; color: #616161; border-color: #e0e0e0; }
+
         .num-tag { background: #333; color: white; padding: 1px 5px; border-radius: 4px; font-size: 0.75em; margin-right: 5px; font-weight: bold; }
         .num-tag-sub { background: #8e44ad; color: white; padding: 1px 5px; border-radius: 4px; font-size: 0.75em; margin-right: 5px; font-weight: bold; }
         .num-tag-auto { background: var(--primary); color: white; padding: 1px 5px; border-radius: 4px; font-size: 0.75em; margin-right: 5px; font-weight: bold; border: 1px dashed white; }
@@ -236,9 +245,17 @@
         return str.match(/\d+/g)?.map(Number) || [];
     }
 
+    // Função para alterar manualmente o tipo do bloco na pré-visualização
+    function changeBlockType(blockIndex, newType) {
+        items[currentIdx].blocks[blockIndex].manualType = newType;
+        autoProcess(currentIdx); // Recalcula toda a numeração usando este "override" manual
+        renderPreview();         // Atualiza o ecrã
+    }
+
     function autoProcess(idx) {
         const raw = items[idx].raw;
         const mode = items[idx].mode || 'antigo';
+        const oldBlocks = items[idx].blocks || []; // Guarda estado anterior (para tipos manuais)
         let tempBlocks = [];
         let isFootnote = false;
         let isInsideBox = false;
@@ -252,99 +269,124 @@
             return cleanLine !== "" && cleanLine !== "a sua resposta" && cleanLine !== "sua resposta";
         });
 
-        lines.forEach(line => {
+        lines.forEach((line, lineIdx) => {
             let txt = line.trim();
+            
+            // Verifica se este bloco já tem um tipo definido manualmente (garantindo que a frase não mudou)
+            let manualType = (oldBlocks[lineIdx] && oldBlocks[lineIdx].rawText === txt) ? oldBlocks[lineIdx].manualType : null;
+            let manualPage = (oldBlocks[lineIdx] && oldBlocks[lineIdx].rawText === txt) ? oldBlocks[lineIdx].manualPage : null;
+
             if (!isFootnote && txt.startsWith('[')) { isFootnote = true; }
 
-            let type = '', cleanText = txt, numberRef = null, isInferred = false;
+            const qMatch = txt.match(/^(\d+[\d\s\.,\-\(a-z\)]*?\.)\s+(.*)/);
+            const pMatch = txt.match(/^(\d+)\s+(.*)/);
+            const noteMatch = txt.match(/^(\d+)[\.\)]\s+(.*)/);
 
+            let type = '';
+
+            // 1. Detectar o tipo (Automático)
             if (isFootnote) {
                 type = 'rodape';
-                const noteMatch = txt.match(/^(\d+)[\.\)]\s+(.*)/);
-                if (noteMatch) { numberRef = noteMatch[1]; cleanText = noteMatch[2]; }
-                else { cleanText = txt; }
             } 
             else if (mode === 'antigo') {
-                // LÓGICA ANTIGO
                 const lastChar = txt.slice(-1);
-                
-                // Condições base
                 const hasNoPunctuation = /[a-zA-Z0-9À-ÿ]/.test(lastChar);
                 const isQuestionOrExclam = lastChar === '?' || lastChar === '!';
-                
-                // NOVA CONDIÇÃO: Verifica se o texto é curto ou se não tem ". " no meio (o que indica várias frases = parágrafo)
                 const isSimplePhrase = !txt.includes('. ') && txt.length < 200;
 
                 if ((hasNoPunctuation || isQuestionOrExclam) && isSimplePhrase) {
                     type = 'subtema';
-                    subthemeCounter++;
-                    numberRef = subthemeCounter.toString();
-                    cleanText = txt;
                 } else {
                     type = 'paragrafo';
-                    const pMatch = txt.match(/^(\d+)\s+(.*)/);
-                    if (pMatch) {
-                        numberRef = pMatch[1];
-                        cleanText = pMatch[2];
-                        nextParaNum = parseInt(numberRef) + 1;
-                    } else {
-                        numberRef = nextParaNum.toString();
-                        isInferred = true;
-                        nextParaNum++;
-                        cleanText = txt;
-                    }
                 }
             } 
             else {
-                // LÓGICA MODERNO
                 const boxHeaders = ["PRINCÍPIOS DA BÍBLIA", "RESUMO", "COMO RESPONDERIA?", "QUADRO", "ENTENDA MELHOR", "EXPERIMENTOU?", "LIÇÕES QUE APRENDEMOS"];
                 const isBoxStart = boxHeaders.some(h => txt.toUpperCase() === h || (txt.length < 35 && txt.toUpperCase().startsWith(h)));
                 if (!isFootnote && isBoxStart) { isInsideBox = true; }
 
                 const isAllCaps = txt === txt.toUpperCase() && txt.length > 4 && !/^\d+/.test(txt) && !txt.startsWith('“') && !txt.startsWith('[');
-                const qMatch = txt.match(/^(\d+[\d\s\.,\-\(a-z\)]*?\.)\s+(.*)/);
-                const pMatch = txt.match(/^(\d+)\s+(.*)/);
 
                 if (qMatch) {
                     type = 'pergunta';
+                } else if (pMatch) {
+                    type = 'paragrafo';
+                } else if (isAllCaps || isInsideBox || !paraOneFound) {
+                    if (!paraOneFound && pendingParaNums.length > 0) {
+                        type = 'paragrafo';
+                    } else {
+                        type = 'subtema';
+                    }
+                } else {
+                    type = 'paragrafo';
+                }
+            }
+
+            // 2. Sobrepor caso o utilizador tenha forçado o tipo no Dropdown
+            if (manualType) {
+                type = manualType;
+            }
+
+            // 3. Processar numeração e extração com base no tipo FINAL
+            let cleanText = txt;
+            let numberRef = null;
+            let isInferred = false;
+
+            if (type === 'rodape') {
+                if (noteMatch) { numberRef = noteMatch[1]; cleanText = noteMatch[2]; }
+            } 
+            else if (type === 'subtema') {
+                subthemeCounter++;
+                numberRef = subthemeCounter.toString();
+                if (pMatch) cleanText = pMatch[2];
+                else if (qMatch) cleanText = qMatch[2];
+            } 
+            else if (type === 'pergunta') {
+                if (qMatch) {
                     numberRef = qMatch[1].replace(/\.$/, '');
                     cleanText = qMatch[2];
                     pendingParaNums = expandRange(numberRef);
-                } 
-                else if (pMatch) {
-                    type = 'paragrafo';
+                } else {
+                    const fallbackMatch = txt.match(/^(\d+)[\.\)]?\s+(.*)/);
+                    if (fallbackMatch) {
+                        numberRef = fallbackMatch[1];
+                        cleanText = fallbackMatch[2];
+                        pendingParaNums = expandRange(numberRef);
+                    }
+                }
+            } 
+            else if (type === 'paragrafo') {
+                if (pMatch) {
                     numberRef = pMatch[1];
                     cleanText = pMatch[2];
                     if (parseInt(numberRef) === 1) paraOneFound = true;
                     nextParaNum = parseInt(numberRef) + 1;
                     pendingParaNums = pendingParaNums.filter(n => n !== parseInt(numberRef));
-                } 
-                else if (isAllCaps || isInsideBox || !paraOneFound) {
-                    if (!paraOneFound && pendingParaNums.length > 0) {
-                        type = 'paragrafo';
-                        numberRef = pendingParaNums.shift().toString();
-                        isInferred = true;
-                        if (parseInt(numberRef) === 1) paraOneFound = true;
-                    } else {
-                        type = 'subtema';
-                        subthemeCounter++;
-                        numberRef = subthemeCounter.toString();
-                    }
-                }
-                else {
-                    type = 'paragrafo';
+                } else {
                     if (pendingParaNums.length > 0) {
                         numberRef = pendingParaNums.shift().toString();
                         isInferred = true;
+                        if (parseInt(numberRef) === 1) paraOneFound = true;
                     } else {
                         numberRef = nextParaNum.toString();
                         isInferred = true;
                         nextParaNum++;
                     }
+                    if (qMatch) cleanText = qMatch[2];
                 }
             }
-            tempBlocks.push({ type, text: cleanText, number: numberRef, inferred: isInferred });
+
+            tempBlocks.push({ 
+                type: type, 
+                text: cleanText, 
+                number: numberRef, 
+                inferred: isInferred, 
+                rawText: txt, 
+                manualType: manualType,
+                manualPage: manualPage
+            });
         });
+        
         items[idx].blocks = tempBlocks;
         validateIntegrity();
     }
@@ -383,11 +425,33 @@
         const container = document.getElementById('previewContainer'); container.innerHTML = '';
         const blocks = items[currentIdx].blocks;
         if (blocks.length === 0) return;
+        
         blocks.forEach((block, index) => {
             const div = document.createElement('div');
             div.className = `block-item type-${block.type}`;
+            
             let numTag = block.number ? `<span class="${block.type==='subtema'?'num-tag-sub':(block.inferred?'num-tag-auto':'num-tag')}">${block.type==='subtema'?'ST':''}${block.number}</span>` : '';
-            div.innerHTML = `<div class="page-wrapper"><span class="badge">PÁG</span><input type="text" class="page-input" id="p-${index}" value="${block.manualPage || ''}" oninput="items[currentIdx].blocks[${index}].manualPage = this.value; updateCascading();"></div><div class="content-text"><span class="type-label">${block.type}</span>${numTag} ${block.text}</div>`;
+            
+            // Opções do Select
+            const isP = block.type === 'paragrafo' ? 'selected' : '';
+            const isQ = block.type === 'pergunta' ? 'selected' : '';
+            const isS = block.type === 'subtema' ? 'selected' : '';
+            const isR = block.type === 'rodape' ? 'selected' : '';
+
+            div.innerHTML = `
+                <div class="page-wrapper">
+                    <span class="badge">PÁG</span>
+                    <input type="text" class="page-input" id="p-${index}" value="${block.manualPage || ''}" oninput="items[currentIdx].blocks[${index}].manualPage = this.value; updateCascading();">
+                </div>
+                <div class="content-text">
+                    <select class="type-select type-badge-${block.type}" onchange="changeBlockType(${index}, this.value)">
+                        <option value="paragrafo" ${isP}>PARÁGRAFO</option>
+                        <option value="pergunta" ${isQ}>PERGUNTA</option>
+                        <option value="subtema" ${isS}>SUBTEMA</option>
+                        <option value="rodape" ${isR}>RODAPÉ</option>
+                    </select>
+                    ${numTag} ${block.text}
+                </div>`;
             container.appendChild(div);
         });
         updateCascading();
