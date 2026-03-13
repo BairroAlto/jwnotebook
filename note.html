@@ -23862,84 +23862,107 @@ function formatTimestamp(timestamp) {
 window.restoreBackup = async function(backupId) {
     if (!selectedNoteId) return;
 
-    // 1. Pedir confirmação ao utilizador
-    // Nota: A função showConfirmation deve estar definida no seu código
+    // 1. Pedir confirmação
     const confirmed = await showConfirmation(
         "Restaurar Versão?", 
-        "Esta ação criará uma NOVA nota com o conteúdo desta versão. A nota que tem aberta agora não será alterada."
+        "Esta ação criará uma NOVA cópia com o conteúdo desta versão. A que tem aberta agora não será alterada."
     );
 
     if (!confirmed) return;
 
-    // Feedback visual de processamento
     const historyModal = document.getElementById('history-modal');
     if (historyModal) historyModal.style.opacity = '0.7';
 
     try {
-        // 2. Buscar os dados do backup específico
+        const { doc, getDoc, addDoc, collection, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+
+        // 2. Busca os dados guardados no backup
         const backupRef = doc(db, 'pastas', selectedNoteId, 'backups', backupId);
         const backupSnap = await getDoc(backupRef);
         
         if (!backupSnap.exists()) {
             alert("Erro: O backup selecionado já não existe.");
+            if (historyModal) historyModal.style.opacity = '1';
             return;
         }
         
         const backupData = backupSnap.data();
 
-        // 3. Descobrir a pasta pai (parentId) da nota original para colocar a nova nota no mesmo sítio
+        // 3. Descobre a pasta pai e o TIPO ORIGINAL da nota atual (O Segredo!)
         const originalNoteRef = doc(db, 'pastas', selectedNoteId);
         const originalSnap = await getDoc(originalNoteRef);
-        const parentId = originalSnap.exists() ? originalSnap.data().parentId : null;
+        
+        let parentId = null;
+        let originalType = 'nota'; // Fallback padrão
+        
+        if (originalSnap.exists()) {
+            const origData = originalSnap.data();
+            parentId = origData.parentId;
+            originalType = origData.tipo || 'nota'; // Lê se é 'aquario', 'jornal', etc.
+        }
 
-        // 4. Preparar o novo título com a data da restauração
+        // 4. Prepara o nome da nova cópia
         const backupDate = backupData.timestamp 
             ? new Date(backupData.timestamp.seconds * 1000).toLocaleDateString('pt-PT') 
             : '';
-        const newTitle = `${backupData.titulo} (Restaurado ${backupDate})`;
+        const newTitle = `${backupData.titulo} (Rest. ${backupDate})`;
 
-        // 5. Criar a NOVA nota no Firestore
-        const newDocRef = await addDoc(collection(db, 'pastas'), {
+        // 5. Cria o documento novo na base de dados com o TIPO CORRETO
+        const newDocPayload = {
             nome: newTitle,
-            conteudo: backupData.conteudo,
+            conteudo: backupData.conteudo || "",
             parentId: parentId,
-            tipo: 'nota',
-            userId: auth.currentUser.uid, // Atribui ao utilizador atual
+            tipo: originalType, // <--- APLICA O TIPO (ex: 'aquario') AQUI
+            userId: auth.currentUser.uid,
             estado: 'ativa',
-            ordem: 0, // Coloca no topo da lista
+            ordem: 0 - Date.now(), // Coloca no topo da lista
             createdAt: serverTimestamp(),
             ultimaedicao: serverTimestamp(),
             tags: []
-        });
+        };
 
-        // 6. Finalização e Limpeza
+        const newDocRef = await addDoc(collection(db, 'pastas'), newDocPayload);
+
+        // 6. Limpeza Visual
         if (historyModal) {
             historyModal.style.display = 'none';
             historyModal.style.opacity = '1';
         }
 
-        // 7. Feedback e Sugestão de abertura
+        // 7. Pergunta se quer abrir a cópia agora
         const shouldOpen = await showConfirmation(
             "Cópia Criada!", 
-            `Foi gerada uma nova nota chamada "${newTitle}". Deseja abrir esta nota agora?`
+            `Foi gerada uma nova versão chamada "${newTitle}". Deseja abrir agora?`
         );
 
         if (shouldOpen) {
-            // Se você tiver a função de navegação inteligente, use-a. 
-            // Caso contrário, use o displayNote direto.
-            if (typeof navigateToNoteSmart === 'function') {
-                await navigateToNoteSmart(newDocRef.id);
-            } else {
-                displayNote(newDocRef.id, null);
+            // ROTEAMENTO INTELIGENTE BASEADO NO TIPO
+            if (originalType === 'aquario') {
+                console.log("🪸 [RESTAURO] Abrindo como Aquário...");
+                // Prepara os dados mínimos que a função do Aquário exige
+                const localData = { id: newDocRef.id, ...newDocPayload };
+                window.openAquariumEnvironment(newDocRef.id, localData);
+            } 
+            else if (originalType === 'arquivo' || originalType === 'partilhado') {
+                console.log("🗄️ [RESTAURO] Abrindo como Arquivo...");
+                displayArchive(newDocRef.id, { id: newDocRef.id, ...newDocPayload });
+            } 
+            else {
+                console.log("📄 [RESTAURO] Abrindo como Nota Normal...");
+                if (typeof navigateToNoteSmart === 'function') {
+                    await navigateToNoteSmart(newDocRef.id);
+                } else {
+                    displayNote(newDocRef.id, null);
+                }
             }
         } else {
-            // Apenas atualiza a lista lateral para mostrar a nota nova
+            // Se não quiser abrir, apenas atualiza a lista da esquerda para mostrar o ficheiro novo
             updateNavigationView(true, selectedNoteId);
         }
 
     } catch (error) {
         console.error("Erro crítico no processo de restauro:", error);
-        alert("Ocorreu um erro ao restaurar a nota. Verifique a sua ligação.");
+        alert("Ocorreu um erro ao restaurar a cópia. Verifique a sua ligação.");
         if (historyModal) historyModal.style.opacity = '1';
     }
 };
@@ -28914,7 +28937,11 @@ document.getElementById('right-panel').addEventListener('click', (event) => {
         };
 
         // 3. PREPARAÇÃO DO HTML (SYNC MANUAL)
-        const editor = document.getElementById('note-content-editor');
+       const isAquarium = element.closest('#aquarium-content-canvas') !== null;
+        const editor = isAquarium 
+            ? document.getElementById('aquarium-content-canvas') 
+            : document.getElementById('note-content-editor');
+
         if (editor) {
             editor.querySelectorAll('input, textarea').forEach(t => {
                 if (t.tagName === 'INPUT') t.setAttribute('value', t.value);
@@ -38068,7 +38095,6 @@ document.getElementById('history-tabs').addEventListener('click', (e) => {
 
 // 2. Abrir o Modal (Função Global)
 window.openHistoryModal = async function() {
-    // Usa o ID da nota ou do arquivo atual
     const targetId = selectedNoteId || currentArchiveId;
     if (!targetId) return alert("Selecione um item primeiro.");
 
@@ -38076,21 +38102,22 @@ window.openHistoryModal = async function() {
     const titleEl = document.getElementById('history-modal-title');
     const backupBtn = document.getElementById('backup-now-btn');
     
-    // Detetar se estamos em modo Arquivo ou Nota
-    const isArchiveMode = document.getElementById('archive-area').style.display !== 'none';
+    // Deteção do modo atual
+    const isArchiveMode = document.getElementById('archive-area') && document.getElementById('archive-area').style.display !== 'none';
+    const isAquariumMode = document.getElementById('aquarium-environment') && document.getElementById('aquarium-environment').style.display !== 'none';
 
     if (!modal || !backupBtn) return;
 
-    // 1. Mostrar o Modal
     document.body.appendChild(modal);
     modal.style.display = 'flex';
     modal.style.zIndex = "8000000";
 
-    // Atualiza título do modal
-    titleEl.textContent = isArchiveMode ? "Histórico do Arquivo" : "Histórico da Nota";
+    // Define Título do Modal
+    if (isArchiveMode) titleEl.textContent = "Histórico do Arquivo";
+    else if (isAquariumMode) titleEl.textContent = "Histórico do Aquário";
+    else titleEl.textContent = "Histórico da Nota";
 
-    // 2. Configurar o Botão de Backup (Lógica Dinâmica)
-    // Clonamos para remover listeners antigos
+    // Renova o botão para limpar cliques velhos
     const newBackupBtn = backupBtn.cloneNode(true);
     backupBtn.parentNode.replaceChild(newBackupBtn, backupBtn);
 
@@ -38100,42 +38127,62 @@ window.openHistoryModal = async function() {
         newBackupBtn.textContent = 'A guardar versão...';
 
         try {
+            const { collection, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
             const backupsRef = collection(db, 'pastas', targetId, 'backups');
+            
             let backupPayload = {
                 timestamp: serverTimestamp(),
                 isSafetyBackup: false
             };
 
-            // --- LÓGICA DE DADOS ---
+            // --- LÓGICA DE DADOS (AGORA RECONHECE O AQUÁRIO) ---
             if (isArchiveMode) {
-                // BACKUP DE ARQUIVO (Guarda os posts)
                 const title = document.getElementById('archive-title-input').value || "Arquivo Sem Título";
                 backupPayload.titulo = title;
                 backupPayload.posts = currentArchiveData.posts || []; 
                 backupPayload.deletedPosts = currentArchiveData.deletedPosts || [];
                 backupPayload.type = 'archive_backup';
-            } else {
-                // BACKUP DE NOTA (Guarda o HTML)
+            } 
+            else if (isAquariumMode) {
+                // CAPTURA DO AQUÁRIO
+                const titleInput = document.getElementById('aquarium-title-input');
+                backupPayload.titulo = titleInput ? titleInput.value : "Aquário Sem Título";
+                
+                const canvas = document.getElementById('aquarium-content-canvas');
+                if (canvas) {
+                    // Clona para limpar botões sem estragar o ecrã do user
+                    const cleanCanvas = canvas.cloneNode(true);
+                    cleanCanvas.querySelectorAll('.ghost-actions, .aq-popup-window, .ghost-side-controls, .ghost-add-between-btn').forEach(el => el.remove());
+                    cleanCanvas.querySelectorAll('.ghost-block').forEach(block => {
+                        block.classList.remove('locked-popup', 'active-selection', 'active-store-target', 'has-next'); 
+                        block.style.cssText = ""; 
+                        block.setAttribute('contenteditable', 'true');
+                    });
+                    backupPayload.conteudo = cleanCanvas.innerHTML;
+                } else {
+                    backupPayload.conteudo = "";
+                }
+                backupPayload.type = 'aquarium_backup';
+            }
+            else {
+                // CAPTURA DA NOTA NORMAL
                 const title = document.getElementById('note-title-input').value || "Nota Sem Título";
-                // Sincroniza inputs
                 document.querySelectorAll('.mini-note-title-input').forEach(t => {
                     if (t.tagName === 'TEXTAREA') t.textContent = t.value;
                     else t.setAttribute('value', t.value);
                 });
-                const content = document.getElementById('note-content-editor').innerHTML;
-                
                 backupPayload.titulo = title;
-                backupPayload.conteudo = content;
+                backupPayload.conteudo = document.getElementById('note-content-editor').innerHTML;
                 backupPayload.type = 'note_backup';
             }
 
+            // Grava no Firebase
             await addDoc(backupsRef, backupPayload);
 
-            // Feedback de sucesso
             newBackupBtn.textContent = '✅ Versão Guardada!';
             newBackupBtn.style.backgroundColor = '#27ae60';
-
-            // Recarregar a lista
+            
+            // Atualiza a lista na hora
             await loadHistoryData();
 
             setTimeout(() => {
@@ -38152,11 +38199,9 @@ window.openHistoryModal = async function() {
         }
     };
 
-    // 3. Resetar para a aba Backup e carregar dados
     const tabBackup = document.querySelector('[data-hist-tab="backup"]');
     if(tabBackup) tabBackup.click();
     
-    // Chama a função de carregamento
     await loadHistoryData();
 };
 
@@ -43060,9 +43105,22 @@ const postObserver = new IntersectionObserver((entries) => {
 // 1. Função para Abrir o Ambiente
 window.openAquariumEnvironment = async function(id, data) {
     window.closeAllFloatingPopups();
-    if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
     
-    // 1. Limpa ouvintes antigos para não duplicar
+    // 1. MATAR TODOS OS TEMPORIZADORES (O SEGREDO PARA NÃO SOBRESCREVER DADOS)
+    if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
+    if (typeof aqAutoSaveTimer !== 'undefined') clearTimeout(aqAutoSaveTimer);
+    if (typeof aqLiveTimer !== 'undefined') clearTimeout(aqLiveTimer);
+    
+    // 2. LIMPEZA VISUAL IMEDIATA
+    // Garante que o texto do aquário anterior não é herdado pela nova nota
+    const canvas = document.getElementById('aquarium-content-canvas');
+    if (canvas) {
+        canvas.innerHTML = '<div class="spinner-container" style="padding:40px;"><div class="spinner"></div><span style="color:#888;">A abrir ambiente...</span></div>';
+    }
+
+    // 3. TIRAR O FOCO (Garante que o Firebase consegue desenhar sem bloqueios)
+    if (document.activeElement) document.activeElement.blur();
+    
     if (unsubscribeCurrentNote) {
         unsubscribeCurrentNote();
         unsubscribeCurrentNote = null;
@@ -43070,7 +43128,7 @@ window.openAquariumEnvironment = async function(id, data) {
 
     selectedNoteId = id;
 
-    // 2. CONFIGURAR ESCUTA ATIVA (onSnapshot)
+    // 4. CONFIGURAR ESCUTA ATIVA (onSnapshot)
     const { doc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
     const noteRef = doc(db, 'pastas', id);
 
@@ -43084,33 +43142,33 @@ window.openAquariumEnvironment = async function(id, data) {
             titleInput.value = serverData.nome || "Sem Título";
         }
 
-        // --- SINCRONIZAÇÃO DO CONTEÚDO (O CORAÇÃO DO SISTEMA) ---
-        const canvas = document.getElementById('aquarium-content-canvas');
-        
-        // Só atualiza o ecrã se o utilizador NÃO estiver a escrever naquele momento
-        // Isso evita que o texto "pule" enquanto escreves
-        if (document.activeElement.closest('.ghost-block') === null) {
-            console.log("🔄 [SYNC] Conteúdo atualizado pelo servidor.");
-            canvas.innerHTML = serverData.conteudo || '<div class="ghost-block" contenteditable="true"></div>';
-            
-            // Re-aplica as ações dos fantasmas
-            canvas.querySelectorAll('.ghost-block').forEach(g => {
-                if (typeof ensureGhostActions === 'function') ensureGhostActions(g);
-            });
+        // --- SINCRONIZAÇÃO DO CONTEÚDO ---
+        if (canvas) {
+            // Só atualiza o ecrã se o utilizador NÃO estiver a escrever naquele momento
+            if (!document.activeElement || !document.activeElement.closest('.ghost-block')) {
+                console.log("🔄 [SYNC] Conteúdo do Aquário atualizado pelo servidor.");
+                canvas.innerHTML = serverData.conteudo || '<div class="ghost-block" contenteditable="true" data-placeholder="Comece a escrever..."></div>';
+                
+                // Re-aplica as ações (botões) dos fantasmas
+                canvas.querySelectorAll('.ghost-block').forEach(g => {
+                    if (typeof ensureGhostActions === 'function') ensureGhostActions(g);
+                });
+            }
         }
     });
 
-    // 3. MOSTRAR AMBIENTE (Visual)
+    // 5. MOSTRAR AMBIENTE (Visual)
     const mainApp = document.querySelector('.notebook-container');
     if (mainApp) mainApp.style.setProperty('display', 'none', 'important');
 
     const env = document.getElementById('aquarium-environment');
-    env.style.display = 'flex';
-    env.style.opacity = '1';
-    env.style.visibility = 'visible';
+    if (env) {
+        env.style.display = 'flex';
+        env.style.opacity = '1';
+        env.style.visibility = 'visible';
+    }
     
-    // Dispara bolinhas de sucesso
-    if(typeof triggerAquariumBubbles === 'function') triggerAquariumBubbles();
+    if (typeof triggerAquariumBubbles === 'function') triggerAquariumBubbles();
 };
 
 // 2. Corrigir o clique no botão de Salto (Para não gravar duas vezes)
@@ -44160,19 +44218,20 @@ setTimeout(() => {
                     // manipulando o elemento antes de enviar.
                     ghost.setAttribute('data-archive-type', 'ghost'); 
                     
-                    if (typeof window.archiveMiniNote === 'function') {
-                        // Passamos 'true' para saltar confirmação interna (já fizemos aqui)
+                 if (typeof window.archiveMiniNote === 'function') {
+                        // Passamos 'true' para saltar confirmação interna
                         await window.archiveMiniNote(ghost, true);
                     }
 
-                    // 4. Remover visualmente e limpar
-                    ghost.remove();
+                    // 4. Limpar o estado (o archiveMiniNote já cuida da remoção do HTML)
                     const tools = document.getElementById('aq-context-tools');
                     if (tools) tools.style.setProperty('display', 'none', 'important');
                     window.activeGhost = null;
 
-                    if (typeof window.saveAquariumState === 'function') {
-                        await window.saveAquariumState();
+                    // O archiveMiniNote já faz o save na base de dados,
+                    // mas forçamos a atualização do status visual do Aquário:
+                    if (typeof updateAquariumStatus === 'function') {
+                        updateAquariumStatus('saved');
                     }
                 }
                 
@@ -48386,10 +48445,16 @@ if (aqCanvasLinkHandler) {
 window.moveGhostBlock = function(block, direction) {
     const parent = block.parentNode;
     
-    // Mover para CIMA
+    // Mover para CIMA (▲)
     if (direction === -1) {
-        const prev = block.previousElementSibling;
-        if (prev && prev.classList.contains('ghost-block')) {
+        let prev = block.previousElementSibling;
+        
+        // Pula parágrafos vazios ou <br> até encontrar o verdadeiro bloco anterior
+        while (prev && !prev.classList.contains('ghost-block')) {
+            prev = prev.previousElementSibling;
+        }
+
+        if (prev) {
             // Insere o bloco atual ANTES do anterior
             parent.insertBefore(block, prev);
             
@@ -48400,10 +48465,16 @@ window.moveGhostBlock = function(block, direction) {
             if (typeof window.saveAquariumState === 'function') window.saveAquariumState();
         }
     } 
-    // Mover para BAIXO
+    // Mover para BAIXO (▼)
     else if (direction === 1) {
-        const next = block.nextElementSibling;
-        if (next && next.classList.contains('ghost-block')) {
+        let next = block.nextElementSibling;
+        
+        // Pula parágrafos vazios ou <br> até encontrar o verdadeiro próximo bloco
+        while (next && !next.classList.contains('ghost-block')) {
+            next = next.nextElementSibling;
+        }
+
+        if (next) {
             // Insere o bloco atual DEPOIS do seguinte (ou seja, antes do "seguinte do seguinte")
             parent.insertBefore(block, next.nextSibling);
             
@@ -57289,25 +57360,41 @@ window.addEventListener('mousedown', aquariumIconsShield, { capture: true });
 
 // FORÇA BRUTA: Intercetor de cliques para o botão + do Aquário
 document.getElementById('aquarium-environment').addEventListener('mousedown', (e) => {
-    const btn = e.target.closest('.ghost-add-between-btn');
     
-    if (btn) {
-        
-        // 1. Para tudo o resto (impede o Aquário de desmarcar a caixa)
+    // --- 1. LÓGICA DO BOTÃO ADICIONAR (+) ---
+    const addBtn = e.target.closest('.ghost-add-between-btn');
+    if (addBtn) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
 
-        // 2. Identifica o bloco pai (o fantasma que tem o botão)
-        const ghost = btn.closest('.ghost-block');
-        
+        const ghost = addBtn.closest('.ghost-block');
         if (ghost && typeof window.insertBlockBelow === 'function') {
             window.insertBlockBelow(ghost);
-        } else {
-            console.error("❌ Falha: Bloco pai não encontrado ou função de inserção em falta.");
         }
+        return;
     }
-}, true); // O 'true' é fundamental aqui para capturar o clique antes de todos
+
+    // --- 2. LÓGICA DAS SETAS DE MOVIMENTO (▲ ▼) ---
+    const moveBtn = e.target.closest('.ghost-move-btn');
+    if (moveBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        const ghost = moveBtn.closest('.ghost-block');
+        if (!ghost) return;
+
+        // Deteta a direção com base no ícone do botão
+        const direction = moveBtn.textContent.includes('▲') ? -1 : 1;
+
+        if (typeof window.moveGhostBlock === 'function') {
+            window.moveGhostBlock(ghost, direction);
+        }
+        return;
+    }
+
+}, true);
 
 // Função para gerar um Backup Automático ao sair ou trocar de nota no Aquário
 window.createAquariumBackup = async function(motivo = "Ação no Aquário") {
@@ -57348,6 +57435,160 @@ window.createAquariumBackup = async function(motivo = "Ação no Aquário") {
         console.log("✅ [BACKUP] Gravado com sucesso.");
     } catch (e) {
         console.error("❌ [BACKUP] Erro ao criar cópia:", e);
+    }
+};
+
+// =========================================================================
+// CORREÇÃO CRÍTICA: RESTAURO DE BACKUP DO AQUÁRIO (RACE CONDITION FIX)
+// =========================================================================
+
+// 1. Proteger o Save do Aquário para não gravar o ecrã velho no ID novo
+const originalSaveAquariumState = window.saveAquariumState;
+window.saveAquariumState = async function() {
+    // Se estivermos a meio de uma transição de nota ou restauro, ignora o save automático!
+    if (window.isSwitchingNote) {
+        console.warn("🛡️ [SAVE BLOQUEADO] Transição em curso. Gravação automática abortada para proteger os dados.");
+        return;
+    }
+    if (originalSaveAquariumState) {
+        return await originalSaveAquariumState.apply(this, arguments);
+    }
+};
+
+// 2. Ajustar a Abertura do Aquário para ativar o bloqueio (isSwitchingNote)
+const originalOpenAquarium = window.openAquariumEnvironment;
+window.openAquariumEnvironment = async function(id, data) {
+    window.isSwitchingNote = true; // Bloqueia gravações acidentais da nota anterior
+    
+    // Limpa o canvas IMEDIATAMENTE para que, se um save fantasma passar, 
+    // grave vazio e nunca o texto do aquário anterior.
+    const canvas = document.getElementById('aquarium-content-canvas');
+    if (canvas) canvas.innerHTML = '';
+
+    await originalOpenAquarium.apply(this, arguments);
+
+    // Liberta o bloqueio passado um bocado, quando os novos dados já estiverem injetados
+    setTimeout(() => {
+        window.isSwitchingNote = false;
+    }, 800);
+};
+
+// 3. A ÚNICA Função de Restauro Correta (Substitui e corrige todas as outras)
+window.restoreBackup = async function(backupId) {
+    if (!selectedNoteId) return;
+
+    // 1. Pede confirmação ao utilizador (CORREÇÃO AQUI: removido window.)
+    const confirmed = await showConfirmation(
+        "Restaurar Versão?", 
+        "Isto criará uma NOVA cópia baseada nesta versão do histórico. O documento atual não será apagado."
+    );
+
+    if (!confirmed) return;
+
+    const historyModal = document.getElementById('history-modal');
+    if (historyModal) historyModal.style.opacity = '0.7';
+
+    // 2. SALVA O ESTADO ATUAL ANTES DE QUALQUER MUDANÇA
+    const isAquariumMode = document.getElementById('aquarium-environment') && document.getElementById('aquarium-environment').style.display !== 'none';
+    if (isAquariumMode && typeof originalSaveAquariumState === 'function') {
+        await originalSaveAquariumState();
+    } else if (typeof window.saveNote === 'function') {
+        await window.saveNote(true);
+    }
+
+    // 3. ATIVA O ESCUDO DE NAVEGAÇÃO
+    window.isSwitchingNote = true;
+
+    try {
+        const { doc, getDoc, addDoc, collection, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js");
+
+        // 4. Busca os dados puros do backup
+        const backupRef = doc(db, 'pastas', selectedNoteId, 'backups', backupId);
+        const backupSnap = await getDoc(backupRef);
+        
+        if (!backupSnap.exists()) {
+            alert("Erro: O backup selecionado já não existe.");
+            if (historyModal) historyModal.style.opacity = '1';
+            window.isSwitchingNote = false;
+            return;
+        }
+        
+        const backupData = backupSnap.data();
+
+        // 5. Descobre os metadados da nota original
+        const originalNoteRef = doc(db, 'pastas', selectedNoteId);
+        const originalSnap = await getDoc(originalNoteRef);
+        
+        let parentId = null;
+        let originalType = 'nota'; // Padrão
+        
+        if (originalSnap.exists()) {
+            parentId = originalSnap.data().parentId;
+            originalType = originalSnap.data().tipo || 'nota'; 
+        }
+
+        // 6. Prepara os novos dados a guardar
+        const backupDate = backupData.timestamp 
+            ? new Date(backupData.timestamp.seconds * 1000).toLocaleDateString('pt-PT') 
+            : '';
+        const newTitle = `${backupData.titulo} (Rest. ${backupDate})`;
+
+        const newDocPayload = {
+            nome: newTitle,
+            conteudo: backupData.conteudo || "", 
+            parentId: parentId,
+            tipo: originalType, 
+            userId: auth.currentUser.uid,
+            estado: 'ativa',
+            ordem: 0 - Date.now(),
+            createdAt: serverTimestamp(),
+            ultimaedicao: serverTimestamp(),
+            tags: []
+        };
+
+        // 7. Grava o novo documento na base de dados
+        const newDocRef = await addDoc(collection(db, 'pastas'), newDocPayload);
+
+        // 8. Limpeza Visual do Modal
+        if (historyModal) {
+            historyModal.style.display = 'none';
+            historyModal.style.opacity = '1';
+        }
+
+        // 9. Pergunta se o utilizador quer abrir o restauro agora (CORREÇÃO AQUI: removido window.)
+        const shouldOpen = await showConfirmation(
+            "Versão Restaurada!", 
+            `Foi gerada uma nova cópia chamada "${newTitle}". Deseja abri-la agora?`
+        );
+
+        if (shouldOpen) {
+            if (originalType === 'aquario') {
+                console.log("🪸 A abrir Aquário restaurado...");
+                window.openAquariumEnvironment(newDocRef.id, { id: newDocRef.id, ...newDocPayload });
+            } 
+            else if (originalType === 'arquivo' || originalType === 'partilhado') {
+                window.displayArchive(newDocRef.id, { id: newDocRef.id, ...newDocPayload });
+                window.isSwitchingNote = false;
+            } 
+            else {
+                if (typeof navigateToNoteSmart === 'function') {
+                    await navigateToNoteSmart(newDocRef.id);
+                } else {
+                    window.displayNote(newDocRef.id, null);
+                }
+                window.isSwitchingNote = false;
+            }
+        } else {
+            // Se não quiser abrir, liberta o escudo e atualiza a lista à esquerda
+            window.isSwitchingNote = false;
+            if (typeof updateNavigationView === 'function') updateNavigationView(true, selectedNoteId);
+        }
+
+    } catch (error) {
+        console.error("❌ Erro crítico no restauro:", error);
+        alert("Ocorreu um erro ao restaurar a versão. Tente novamente.");
+        if (historyModal) historyModal.style.opacity = '1';
+        window.isSwitchingNote = false; 
     }
 };
 
