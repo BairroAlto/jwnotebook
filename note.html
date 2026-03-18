@@ -38937,29 +38937,44 @@ function renderPostViewMode(container, post) {
 // 4. ATUALIZAR LISTA LATERAL COM BADGE (Dentro de loadSharedFilesRoot)
 // Substitua o loop .forEach de loadSharedFilesRoot por este:
 async function updateSharedListWithNotifs(resultsMap) {
+    if (currentViewMode !== 'shared') return;
+    
     const myUid = auth.currentUser.uid;
     const fragment = document.createDocumentFragment();
 
- resultsMap.forEach(item => {
+    // Limpa a lista antes de começar a adicionar
+    middlePanelList.innerHTML = '';
+
+    // Ordena os itens por data de edição (mais recentes no topo)
+    const sortedItems = Array.from(resultsMap.values()).sort((a, b) => {
+        const timeA = a.ultimaedicao?.toMillis ? a.ultimaedicao.toMillis() : (a.ultimaedicao || 0);
+        const timeB = b.ultimaedicao?.toMillis ? b.ultimaedicao.toMillis() : (b.ultimaedicao || 0);
+        return timeB - timeA;
+    });
+
+    sortedItems.forEach(item => {
         const li = document.createElement('li');
         li.className = 'list-item';
         
-        // --- ATRIBUTOS ESSENCIAIS (CORREÇÃO AQUI) ---
+        // Atributos de identificação
         li.setAttribute('data-id', item.id);
-        li.setAttribute('data-userid', item.userId); // Já existia, mas é CRÍTICO
-        li.setAttribute('data-partilhado', item.partilhado || 'inativo'); // << NOVO: Guarda o estado (ativo/inativo)
+        li.setAttribute('data-userid', item.userId);
+        li.setAttribute('data-partilhado', item.partilhado || 'inativo');
         li.setAttribute('data-type', item.tipo || 'partilhado');
         li.setAttribute('data-name', item.nome);
         
         li.style.position = "relative"; 
 
-        // Estilo de seleção
-        if (item.id === selectedNoteId) li.classList.add('selected-red');
-        else li.style.borderLeft = "4px solid #e74c3c";
+        // Estilo de seleção (Destaque Vermelho para Share)
+        if (item.id === selectedNoteId) {
+            li.classList.add('selected-red');
+        } else {
+            li.style.borderLeft = "4px solid #e74c3c";
+        }
 
-        // --- LÓGICA DO BADGE DE NÚMERO ---
+        // Lógica de Notificação (Badge de número)
         let notifHTML = "";
-        const unreadCount = window.folderUnreadCounts[item.id] || 0;
+        const unreadCount = window.folderUnreadCounts ? (window.folderUnreadCounts[item.id] || 0) : 0;
 
         if (unreadCount > 0) {
             const displayNum = unreadCount > 9 ? "9+" : unreadCount;
@@ -38969,78 +38984,84 @@ async function updateSharedListWithNotifs(resultsMap) {
         const isOwner = item.userId === myUid;
         
         li.innerHTML = `
-            <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width: 130px;">
-                ${isOwner ? '👑' : '🤝'} ${item.nome}
+            <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex-grow:1;">
+                ${isOwner ? '👑' : '🤝'} ${item.nome || 'Arquivo Sem Nome'}
             </span>
             ${notifHTML}
             <button class="item-menu-btn">…</button>
         `;
         
-        if (isOwner && item.partilhado !== "ativo") li.style.opacity = "0.7";
-
-        // REMOVEMOS O ONCLICK MANUAL DAQUI!
-        // O listener global 'middlePanelList.addEventListener' vai apanhar 
-        // o clique baseando-se nos atributos data-type e data-id que pusemos acima.
+        // Se for o dono e a partilha estiver desligada, fica mais opaco
+        if (isOwner && item.partilhado !== "ativo") li.style.opacity = "0.6";
         
         fragment.appendChild(li);
     });
 
-    middlePanelList.innerHTML = '';
     middlePanelList.appendChild(fragment);
 }
 
 
 
 async function loadSharedFilesRoot() {
-    
+    // 1. LIMPEZA DE SEGURANÇA: Cancela ouvintes redundantes para evitar vazamentos de memória
+    // e conflitos de dados (o motivo principal dos arquivos parecerem cópias uns dos outros).
     if (unsubscribeShared1) { unsubscribeShared1(); unsubscribeShared1 = null; }
     if (unsubscribeShared2) { unsubscribeShared2(); unsubscribeShared2 = null; }
 
+    // 2. CONFIGURAÇÃO DA UI
     middlePanelTitle.textContent = "Arquivos Partilhados";
     
-    middlePanelList.innerHTML = `
-        <div class="panel-loader">
-            <div class="spinner"></div>
-            <span>A carregar partilhas...</span>
-        </div>`;
+    // Verifica se o utilizador ainda está na aba correta antes de processar
+    if (currentViewMode !== 'shared') return;
 
-    const myUid = auth.currentUser.uid;
-    const foldersRef = collection(db, 'pastas');
-    let resultsMap = new Map();
+    // 3. ESTADO DE CARREGAMENTO (Apenas se o cache global ainda estiver vazio)
+    if (!globalFoldersCache || globalFoldersCache.length === 0) {
+        middlePanelList.innerHTML = `
+            <div class="panel-loader">
+                <div class="spinner"></div>
+                <span>A procurar arquivos...</span>
+            </div>`;
+        // Se o cache está vazio, o startGlobalNotificationListener cuidará de chamar 
+        // esta função novamente assim que os dados chegarem.
+        return;
+    }
 
-    try {
-        const readsSnap = await getDocs(collection(db, 'users', myUid, 'archive_reads'));
-        if (currentViewMode !== 'shared') return;
-        readsSnap.forEach(d => userLastSeenArchives[d.id] = d.data().lastSeen || 0);
-    } catch(e) { console.warn("Aviso: Histórico de leitura inacessível."); }
+    // 4. FILTRAGEM E MAPEAMENTO (O SEGREDO ANTI-DUPLICAÇÃO)
+    // Usamos um Map para garantir que cada ID de documento apareça apenas UMA VEZ,
+    // mesmo que o Firebase envie atualizações duplicadas.
+    const resultsMap = new Map();
+    const myUid = auth.currentUser ? auth.currentUser.uid : null;
 
-    const renderUnifiedList = () => {
-        if (currentViewMode !== 'shared') return;
+    globalFoldersCache.forEach(folder => {
+        // Filtra apenas itens do tipo arquivo ou partilhado
+        if (folder.tipo === 'arquivo' || folder.tipo === 'partilhado') {
+            
+            // Regra de Visibilidade:
+            // Sou o dono OU sou colaborador num arquivo que está com partilha "ativa"
+            const isOwner = folder.userId === myUid;
+            const isCollab = folder.colaboradores && folder.colaboradores[myUid] && folder.partilhado === "ativo";
 
-        if (resultsMap.size === 0) {
-            middlePanelList.innerHTML = '<li style="padding:20px; text-align:center; color:#888;">Sem arquivos partilhados.</li>';
-            return;
+            if (isOwner || isCollab) {
+                resultsMap.set(folder.id, folder);
+            }
         }
-        
-        // Em vez de limpar e adicionar um a um, usa a função auxiliar que já cria o HTML
-        // Vamos alterar a `updateSharedListWithNotifs` abaixo para usar Fragmento também.
-        updateSharedListWithNotifs(resultsMap);
-    };
-
-    const q1 = query(foldersRef, where('userId', '==', myUid), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
-    const q2 = query(foldersRef, where(`colaboradores.${myUid}`, '==', true), where('partilhado', '==', 'ativo'), where('tipo', '==', 'partilhado'), where('estado', '==', 'ativa'));
-
-    unsubscribeShared1 = onSnapshot(q1, (snap) => {
-        if (currentViewMode !== 'shared') return;
-        snap.docChanges().forEach(c => resultsMap.set(c.doc.id, { ...c.doc.data(), id: c.doc.id }));
-        renderUnifiedList();
     });
 
-    unsubscribeShared2 = onSnapshot(q2, (snap) => {
-        if (currentViewMode !== 'shared') return;
-        snap.docChanges().forEach(c => resultsMap.set(c.doc.id, { ...c.doc.data(), id: c.doc.id }));
-        renderUnifiedList();
-    });
+    // 5. VALIDAÇÃO DE RESULTADOS VAZIOS
+    if (resultsMap.size === 0) {
+        middlePanelList.innerHTML = `
+            <li style="padding:40px 20px; text-align:center; color:#888; list-style:none;">
+                <div style="font-size:30px; margin-bottom:10px;">🤝</div>
+                <strong>Sem Arquivos Partilhados</strong><br>
+                <small>Arquivos que criar ou for convidado aparecerão aqui.</small>
+            </li>`;
+        return;
+    }
+
+    // 6. RENDERIZAÇÃO FINAL
+    // Chama a função auxiliar que ordena os itens e injeta os badges de notificação
+    console.log(`✅ [SHARED] Renderizando ${resultsMap.size} arquivos únicos.`);
+    updateSharedListWithNotifs(resultsMap);
 }
 
 
@@ -47742,46 +47763,56 @@ function recalcGlobalNotification() {
     
     const myUid = auth.currentUser.uid;
     let totalUnreadGlobal = 0;
+    
+    // Margem de segurança de 2 segundos para ignorar discrepâncias de relógio entre servidor/cliente
     const TIME_BUFFER = 2000; 
 
-    // Limpa contagens anteriores
+    // 1. Limpa os contadores locais antes de recalcular para evitar acumulação de lixo
     window.folderUnreadCounts = {};
 
+    // 2. Varre o cache global de pastas (alimentado pelo startGlobalNotificationListener)
     globalFoldersCache.forEach(folder => {
-        if (folder.tipo !== 'partilhado') return;
+        // Apenas processamos pastas do tipo 'partilhado' ou 'arquivo'
+        if (folder.tipo !== 'partilhado' && folder.tipo !== 'arquivo') return;
 
         const isOwner = folder.userId === myUid;
         const isCollab = folder.colaboradores && folder.colaboradores[myUid];
 
+        // Só nos interessa se eu for o dono ou um colaborador ativo
         if (isOwner || isCollab) {
+            // Recupera quando foi a última vez que eu "abri" este arquivo
             const myLastSeen = userLastSeenArchives[folder.id] || 0;
             
-            // Verifica a última edição da pasta inteira
+            // Converte o timestamp do Firebase para milisegundos
             const folderLastUpdate = folder.ultimaedicao?.toMillis 
                                    ? folder.ultimaedicao.toMillis() 
                                    : (folder.ultimaedicao || 0);
 
-            // Se houve movimento recente que não foi meu
+            // 3. LÓGICA DE NOTIFICAÇÃO:
+            // Se a última edição da pasta for mais recente que a minha última visualização
             if (folderLastUpdate > (myLastSeen + TIME_BUFFER)) {
-                const lastEditor = folder.lastEditorId || "unknown";
+                
+                // 4. SEGURANÇA ANTI-AUTO-NOTIFICAÇÃO:
+                // Só mostramos a bolinha se o último editor NÃO fui eu.
+                const lastEditor = folder.lastEditorId || folder.userId || "unknown";
                 
                 if (lastEditor !== myUid) {
-                    // CÁLCULO ESTIMADO: 
-                    // Como não podemos ler todos os posts de todas as pastas sem gastar muita quota,
-                    // marcamos com "1+" se houver update.
-                    // Se a pasta estiver aberta em memória (currentArchiveData), podemos contar exato.
-                    
-                    let count = 1; // Pelo menos 1 alteração houve
-                    
-                    // Se temos os dados desta pasta carregados, contamos exatamente
+                    /* 
+                       Como não podemos ler todos os posts de todas as pastas sem estourar a cota do Firebase,
+                       atribuímos "1" como sinalizador de que há novidades. 
+                       Se a pasta estiver aberta no ecrã (currentArchiveId), poderíamos contar os posts exatos, 
+                       mas para a lista lateral, o "1" já ativa o badge visual.
+                    */
+                    let count = 1;
+
+                    // Se a pasta for a que está aberta agora, tentamos uma contagem mais precisa
                     if (currentArchiveId === folder.id && currentArchiveData && currentArchiveData.posts) {
-                         count = currentArchiveData.posts.filter(p => {
-                            const pUp = p.updatedAt?.toMillis ? p.updatedAt.toMillis() : p.updatedAt;
+                        const newPosts = currentArchiveData.posts.filter(p => {
+                            const pUp = p.updatedAt?.toMillis ? p.updatedAt.toMillis() : (p.updatedAt || 0);
                             const pUser = p.lastEditorId || p.userId;
                             return pUp > myLastSeen && pUser !== myUid;
-                         }).length;
-                         
-                         if (count === 0) count = 1; // Fallback se o update for no metadado
+                        }).length;
+                        count = newPosts > 0 ? newPosts : 1;
                     }
 
                     window.folderUnreadCounts[folder.id] = count;
@@ -47791,13 +47822,16 @@ function recalcGlobalNotification() {
         }
     });
 
-    // Atualiza a bola vermelha da Aba "Partilhado"
+    // 5. Atualiza o estado global da bolinha vermelha na Aba principal "Share"
     hasGlobalShareNotification = totalUnreadGlobal > 0;
     updateShareTabDot();
     
-    // Se a lista do meio estiver visível, atualiza os números lá também
+    // 6. ATUALIZAÇÃO DA INTERFACE (MUITO IMPORTANTE):
+    // Se o utilizador estiver atualmente na vista de partilha, redesenhamos a lista
+    // para mostrar os números (badges) novos ou removê-los se já leu.
     if (currentViewMode === 'shared') {
-        loadSharedFilesRoot(); // Re-renderiza a lista para mostrar os números
+        // Usamos a função de carga que agora apenas lê do cache globalFoldersCache
+        loadSharedFilesRoot(); 
     }
 }
 
