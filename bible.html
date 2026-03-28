@@ -1784,6 +1784,16 @@ input:checked + .slider:before { transform: translateX(16px); }
     }
 }
 
+.spinner {
+    width: 30px;
+    height: 30px;
+    border: 3px solid rgba(255,255,255,0.1);
+    border-top: 3px solid var(--accent-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    display: inline-block;
+}
+
 </style>
 
 </head>
@@ -1823,7 +1833,7 @@ input:checked + .slider:before { transform: translateX(16px); }
         <div class="modal-header" style="position: relative; justify-content: space-between; height: 50px;">
             
             <!-- ESQUERDA: Contentor para Título e Botão Voltar -->
-            <div style="display: flex; align-items: center; max-width: 30%; overflow: hidden;">
+            <div style="display: flex; align-items: center; max-width: 70%; overflow: hidden;">
                 <!-- Botão Voltar (Escondido por defeito) -->
                 <button id="sidebar-back-btn" onclick="window.returnToVerseDetails()" style="display: none; background:none; border:none; color:white; font-size:1.2rem; cursor:pointer; margin-right: 10px;">⬅</button>
                 
@@ -2432,7 +2442,16 @@ const FOCUS_LABELS = {
     discurso: "Discurso",
     rastreador: "Rastreador"
 };
+// Lista de pastas dentro de js/biblias/ que contêm versões
+const DISPONIVEIS_BIBLIAS = [
+    { id: 'BLH', nome: 'Bíblia Linguagem de Hoje' },
+    { id: 'NVI', nome: 'Nova Versão Internacional' },
+    { id: 'AA',  nome: 'Almeida Atualizada' }
+    // Adicione mais conforme criar as pastas
+];
 
+// Cache para não carregar o mesmo ficheiro várias vezes na mesma sessão
+const biblesVersionsCache = {};
 
 
 
@@ -3008,17 +3027,21 @@ window.openModalForVerse = async (num) => {
         : activeVerseFullName;
 
     const bookmarkBtnHtml = !hasBookmarks 
-        ? `<button class="btn-bookmark" onclick="window.openBibleBookmarkModal('${num}')">+ 🔖</button>` 
-        : ``;
+    ? `<button class="btn-bookmark" onclick="window.openBibleBookmarkModal('${num}')">+ 🔖</button>` 
+    : ``;
 
-    const buttonsHtml = `
-        <div style="display:flex; align-items:center;">
-            <button class="btn-create-note" onclick="window.handleCreateNoteClick()" style="margin: 0;">
-                + 📝
-            </button>
-            ${bookmarkBtnHtml}
-        </div>
-    `;
+// NOVO: Botão de Comparar Bíblias
+const compareBtnHtml = `<button class="btn-bookmark" onclick="window.openBibleVersionsView('${num}')" style="background:#2980b9; border-color:#3498db; margin-left:5px;" title="Ver outras versões">+ 📖</button>`;
+
+const buttonsHtml = `
+    <div style="display:flex; align-items:center;">
+        <button class="btn-create-note" onclick="window.handleCreateNoteClick()" style="margin: 0;">
+            + 📝
+        </button>
+        ${bookmarkBtnHtml}
+        ${compareBtnHtml}
+    </div>
+`;
 
     // 4. Configurar UI do Painel
     titleEl.innerHTML = titleHTML;
@@ -4745,7 +4768,6 @@ window.returnToVerseDetails = () => {
     const vNum = activeVerseFullName.split(':')[1].trim().split('-')[0];
     const data = existingUserData[vNum];
 
-    // 1. Identificar o Modo (PC ou Mobile)
     const isDesktop = window.innerWidth >= 768;
     const sidePanel = document.getElementById('side-panel');
     const contentDiv = document.getElementById('sidebar-content');
@@ -4753,31 +4775,36 @@ window.returnToVerseDetails = () => {
     const centerActions = document.getElementById('sidebar-center-actions');
     const backBtn = document.getElementById('sidebar-back-btn');
 
-    // 2. No Mobile, garantimos que o outro modal (antigo) está fechado para evitar duplicados
-    if (!isDesktop) {
-        document.getElementById('verse-details-modal').style.display = 'none';
-    }
-
-    // 3. Abrir SEMPRE o Side Panel (Unificado)
     sidePanel.classList.add('open');
-    if (!isDesktop) {
-        sidePanel.style.height = '75vh'; // Mantém como Bottom Sheet no Mobile
-    }
+    if (!isDesktop) sidePanel.style.height = '75vh';
 
-    // 4. Reset da UI do Header do Painel
+    // 1. RECONSTRUIR TÍTULO COM ÍCONE DE MARCADOR SE EXISTIR
+    const hasBookmarks = data && data.marcadoresAssociados && Object.keys(data.marcadoresAssociados).length > 0;
+    titleEl.innerHTML = hasBookmarks 
+        ? `<span class="bookmark-icon-title" onclick="window.manageBibleBookmark('${vNum}')" title="Gerir/Remover Marcadores">🔖</span>${activeVerseFullName}`
+        : activeVerseFullName;
+
+    // 2. RECONSTRUIR TODOS OS BOTÕES DO HEADER
     if (backBtn) backBtn.style.display = 'none';
-    if (titleEl) titleEl.innerText = activeVerseFullName;
-
-    // 5. Mostrar botões de ação (Criar Nota)
     if (centerActions) {
         centerActions.style.display = 'block';
-        centerActions.innerHTML = `<button class="btn-create-note" onclick="window.handleCreateNoteClick()">+ 📝</button>`;
+        
+        const bookmarkBtnHtml = !hasBookmarks 
+            ? `<button class="btn-bookmark" onclick="window.openBibleBookmarkModal('${vNum}')">+ 🔖</button>` 
+            : ``;
+            
+        const compareBtnHtml = `<button class="btn-bookmark" onclick="window.openBibleVersionsView('${vNum}')" style="background:#2980b9; border-color:#3498db; margin-left:5px;" title="Ver outras versões">+ 📖</button>`;
+
+        centerActions.innerHTML = `
+            <div style="display:flex; align-items:center;">
+                <button class="btn-create-note" onclick="window.handleCreateNoteClick()" style="margin: 0;">+ 📝</button>
+                ${bookmarkBtnHtml}
+                ${compareBtnHtml}
+            </div>
+        `;
     }
 
-    // 6. Limpa contexto de destaque (voltamos à vista geral)
     activeHighlightContext = null; 
-
-    // 7. Renderiza o conteúdo (Dossié, Puzzle, etc)
     contentDiv.innerHTML = buildVerseHTML(data, vNum);
 };
 
@@ -7550,6 +7577,67 @@ window.toggleMobileNoteMode = () => {
     // Atualiza o visual dos botões no Modal de Configurações imediatamente
     applyConfigToUI();
 };
+
+window.openBibleVersionsView = async (vNum) => {
+    const sidePanel = document.getElementById('side-panel');
+    const contentDiv = document.getElementById('sidebar-content');
+    const backBtn = document.getElementById('sidebar-back-btn');
+    const titleEl = document.getElementById('sidebar-verse-title');
+    const centerActions = document.getElementById('sidebar-center-actions');
+
+    // UI Setup
+    titleEl.innerHTML = `Versões: ${selectedBook.nome} ${selectedChapter}:${vNum}`;
+    backBtn.style.display = 'block'; // Mostra seta para voltar às notas
+    if (centerActions) centerActions.style.display = 'none';
+
+    contentDiv.innerHTML = `<div style="padding:20px; text-align:center;"><div class="spinner"></div><br>A comparar versões...</div>`;
+
+    let html = '<div style="padding:10px;">';
+    const filename = getBibleFilename(selectedBook.nome); // Ex: "genesis"
+
+    // Percorrer cada versão disponível
+    for (const versao of DISPONIVEIS_BIBLIAS) {
+        const cacheKey = `${versao.id}_${filename}`;
+        let bibliaData = biblesVersionsCache[cacheKey];
+
+        if (!bibliaData) {
+            try {
+                // Caminho: js/biblias/BLH/genesis.json
+                const response = await fetch(`./js/biblias/${versao.id}/${filename}.json`);
+                if (response.ok) {
+                    bibliaData = await response.json();
+                    biblesVersionsCache[cacheKey] = bibliaData;
+                }
+            } catch (e) {
+                console.warn(`Versão ${versao.id} não encontrada para este livro.`);
+            }
+        }
+
+        // Tentar extrair o texto do versículo específico
+        let textoVersao = "Texto não disponível nesta versão.";
+        try {
+            // A estrutura deve ser: bibliaData["Génesis"]["1"]["1"]
+            if (bibliaData && bibliaData[selectedBook.nome]) {
+                textoVersao = bibliaData[selectedBook.nome][selectedChapter.toString()][vNum.toString()];
+            }
+        } catch (err) {}
+
+        html += `
+            <div class="detail-card" style="border-left: 4px solid #2980b9; margin-bottom:12px; background: rgba(41, 128, 185, 0.05);">
+                <div style="font-size:0.7rem; color:#3498db; font-weight:bold; text-transform:uppercase; margin-bottom:5px;">
+                    ${versao.nome} (${versao.id})
+                </div>
+                <div style="color:#eee; font-size:0.95rem; line-height:1.5;">
+                    ${textoVersao}
+                </div>
+            </div>
+        `;
+    }
+
+    html += '</div>';
+    contentDiv.innerHTML = html;
+};
+
 
 
 
