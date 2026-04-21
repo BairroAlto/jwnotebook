@@ -376,13 +376,7 @@ function changeMode(val) {
     // Função que transforma texto em blocos sem precisar de botão
 function autoProcess(idx) {
     const art = articles[idx];
-    const ref = document.getElementById('chapRef').value;
-    const title = document.getElementById('chapTitle').value;
-    const raw = document.getElementById('rawInput').value;
-
-    art.ref = ref;
-    art.title = title;
-    art.raw = raw;
+    const raw = art.raw;
 
     if (!raw) {
         art.blocks = [];
@@ -410,82 +404,23 @@ function autoProcess(idx) {
         const up = txt.toUpperCase();
         const lw = txt.toLowerCase();
 
-        // 1. FILTROS DE IGNORE
+        // --- 1. REGRA DE OURO: BULLET POINTS (Sempre Resumo) ---
+        // Verificado antes de tudo para garantir que "•" ganhe de rodapés
+        if (txt.startsWith("•") || txt.startsWith("●")) {
+            tempBlocks.push({ 
+                type: 'resumo', 
+                text: txt.replace(/^[•●]\s*/, ""), 
+                number: null 
+            });
+            return; 
+        }
+
+        // --- 2. FILTROS DE IGNORE ---
         if (frasesParaIgnorar.includes(lw)) return;
         if (lw.startsWith("descrição da imagem:")) return;
 
-        // 2. GATILHOS DE MODO FORÇADO (RODAPÉ)
-        if (art.mode === 'antigo' && txt.startsWith("[")) {
-            forcedFootnoteMode = true;
-        } 
-        else if (art.mode === 'moderno' && (up.includes("[NOTA(S) DE RODAPÉ]") || up.includes("[NOTAS DE RODAPÉ]"))) {
-            forcedFootnoteMode = true;
-        }
-
-        if (forcedFootnoteMode) {
-            tempBlocks.push({ type: 'rodape', text: txt, number: null });
-            return;
-        }
-
-        // 3. REGRAS GLOBAIS
-        const isFootnoteSimple = lw.includes('[nota') || lw.includes('rodapé]') || txt.includes('^');
-        const isCantico = up.startsWith("CÂNTICO");
-        if (isFootnoteSimple || isCantico) {
-            isRecap = false;
-            tempBlocks.push({ type: 'rodape', text: txt, number: null });
-            return;
-        }
-
-        // 4. NOVA REGRA: DETECÇÃO DE BULLET POINT (RESUMO)
-        // Se a linha começar com "•", ela é automaticamente um resumo, independente do modo.
-        if (txt.startsWith("•")) {
-            tempBlocks.push({ 
-                type: 'resumo', 
-                text: txt.replace(/^•\s*/, ""), // Remove o símbolo e o espaço inicial
-                number: null 
-            });
-            return; // Pula para a próxima linha
-        }
-
-        const isInstrucaoLegenda = txt.match(/\(Veja (?:também )?os? parágrafos? \d+/i);
-        if (isInstrucaoLegenda) {
-            if (tempBlocks.length > 0) tempBlocks.pop(); 
-            return;
-        }
-
-        if (art.mode === 'moderno' && lw.startsWith('[')) {
-            isRecap = false;
-            subCounter++;
-            tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
-            return;
-        }
-
-        // --- DIVISÃO POR MODO ---
-
-        if (art.mode === 'antigo') {
-            const endsWithSpecial = txt.endsWith('?') || txt.endsWith('!');
-            const noPeriod = !txt.endsWith('.');
-            const isShort = txt.length < 95;
-
-            if (isShort && (noPeriod || endsWithSpecial)) {
-                subCounter++;
-                tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
-            } else {
-                paraCounter++;
-                tempBlocks.push({ type: 'paragrafo', text: txt, number: paraCounter.toString() });
-            }
-        } 
-        else {
-            // LÓGICA MODO MODERNO
-            const qMatch = txt.match(/^(\d+(?:[\s\-\,\&]+\d+)*)\.\s+(.*)/); 
-            const pMatch = txt.match(/^(\d+)\s+(.*)/); 
-
-            if (isRecap && (qMatch || pMatch)) isRecap = false;
-
-            const temReticencias = /\.\s*\.\s*\.$/.test(txt);
-            const isCapsRecapTrigger = (txt === up && temReticencias && txt.length > 5);
-            
-            const hasRecapTerm = up.includes('PERGUNTAS DE RECAPITULAÇÃO') || 
+        // --- 3. DETECÇÃO DE RECAPITULAÇÃO (Subtema) ---
+        const isRecapTrigger = up.includes('PERGUNTAS DE RECAPITULAÇÃO') || 
                                  up.includes('QUAL É A SUA RESPOSTA?') || 
                                  up.includes('COMO RESPONDERIA?') || 
                                  up.includes('O QUE ACHA?') || 
@@ -512,37 +447,77 @@ function autoProcess(idx) {
                                  up.includes('LEMBRA-SE?') || 
                                  up === 'RESUMO';
 
-            if (hasRecapTerm || isCapsRecapTrigger) {
-                isRecap = true; 
+     
+        if (isRecapTrigger) {
+            forcedFootnoteMode = false; // Se achar recapitulação, sai do modo rodapé
+            isRecap = true; 
+            subCounter++;
+            tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
+            return;
+        }
+
+        // --- 4. GATILHOS DE MODO RODAPÉ ---
+        if (art.mode === 'antigo' && txt.startsWith("[")) {
+            forcedFootnoteMode = true;
+        } 
+        else if (art.mode === 'moderno' && (up.includes("[NOTA(S) DE RODAPÉ]") || up.includes("[NOTAS DE RODAPÉ]"))) {
+            forcedFootnoteMode = true;
+        }
+
+        if (forcedFootnoteMode) {
+            // Mesmo em modo rodapé, se a linha for curta e terminar em ? tratamos como subtema/pergunta
+            // mas por padrão vira rodapé
+            tempBlocks.push({ type: 'rodape', text: txt, number: null });
+            return;
+        }
+
+        // --- 5. REGRAS GLOBAIS (Cânticos e Notas Simples) ---
+        const isFootnoteSimple = lw.includes('[nota') || lw.includes('rodapé]') || txt.includes('^');
+        const isCantico = up.startsWith("CÂNTICO");
+        if (isFootnoteSimple || isCantico) {
+            tempBlocks.push({ type: 'rodape', text: txt, number: null });
+            return;
+        }
+
+        // --- 6. DIVISÃO POR MODO ---
+        if (art.mode === 'antigo') {
+            const endsWithSpecial = txt.endsWith('?') || txt.endsWith('!');
+            const noPeriod = !txt.endsWith('.');
+            const isShort = txt.length < 95;
+
+            if (isShort && (noPeriod || endsWithSpecial)) {
                 subCounter++;
                 tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
-                return;
-            }
-
-            if (isRecap) {
-                tempBlocks.push({ type: 'resumo', text: txt.replace(/^[❑\-\u2022]\s*/, ""), number: null });
             } else {
-                if (qMatch) {
-                    foundFirstQuestion = true;
-                    lastQuestionNum = qMatch[1]; 
-                    tempBlocks.push({ type: 'pergunta', text: qMatch[2], number: qMatch[1] });
-                } 
-                else if (pMatch) {
-                    foundFirstQuestion = true;
-                    tempBlocks.push({ type: 'paragrafo', text: pMatch[2], number: pMatch[1] });
-                } 
-                else {
-                    if (!foundFirstQuestion) {
-                        subCounter++;
-                        tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
+                paraCounter++;
+                tempBlocks.push({ type: 'paragrafo', text: txt, number: paraCounter.toString() });
+            }
+        } 
+        else {
+            // MODO MODERNO
+            const qMatch = txt.match(/^(\d+(?:[\s\-\,\&]+\d+)*)\.\s+(.*)/); 
+            const pMatch = txt.match(/^(\d+)\s+(.*)/); 
+
+            if (qMatch) {
+                foundFirstQuestion = true;
+                lastQuestionNum = qMatch[1]; 
+                tempBlocks.push({ type: 'pergunta', text: qMatch[2], number: qMatch[1] });
+            } 
+            else if (pMatch) {
+                foundFirstQuestion = true;
+                tempBlocks.push({ type: 'paragrafo', text: pMatch[2], number: pMatch[1] });
+            } 
+            else {
+                if (!foundFirstQuestion) {
+                    subCounter++;
+                    tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
+                } else {
+                    if (txt.length > MAX_TITLE_LENGTH && lastQuestionNum !== null) {
+                        tempBlocks.push({ type: 'paragrafo', text: txt, number: lastQuestionNum.split(/[\-\,]/)[0] });
                     } else {
-                        if (txt.length > MAX_TITLE_LENGTH && lastQuestionNum !== null) {
-                            tempBlocks.push({ type: 'paragrafo', text: txt, number: lastQuestionNum.split(/[\-\,]/)[0] });
-                        } else {
-                            subCounter++;
-                            lastQuestionNum = null; 
-                            tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
-                        }
+                        subCounter++;
+                        lastQuestionNum = null; 
+                        tempBlocks.push({ type: 'subtema', text: txt, number: subCounter.toString() });
                     }
                 }
             }
@@ -550,8 +525,8 @@ function autoProcess(idx) {
     });
 
     art.blocks = tempBlocks;
+    syncNumbers(idx); // Garante que a numeração está correta após processar
 }
-
 
     
 
