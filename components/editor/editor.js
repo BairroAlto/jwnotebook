@@ -699,21 +699,8 @@ if (btnTagsGeral) {
     // 3. FUNÇÕES GLOBAIS (PONTES PARA OUTROS MÓDULOS)
     // ========================================================
 
- // 📖 PONTE GLOBAL PARA O SELETOR BÍBLICO (COLA AQUI!)
-    window.abrirSeletorBibliaGlobal = (caixa) => {
-        console.log("🔍 [EDITOR] Chamando Seletor Bíblico para a caixa:", caixa.id);
-        
-        import('./modulos/biblia-selector.js').then(m => {
-            if (typeof m.abrirSelector === 'function') {
-                m.abrirSelector(caixa);
-            } else {
-                console.error("❌ Erro: Função 'abrirSelector' não encontrada.");
-            }
-        }).catch(err => {
-            console.error("❌ Erro ao carregar o módulo biblia-selector.js:", err);
-        });
-    };
-    
+
+
     // Atalhos para os Handlers das ferramentas chamarem funções do Editor
     window.acionarGravacaoGlobal = () => acionarGravacao();
     window.abrirPaletaGlobal = (caixa) => abrirPaleta(caixa);
@@ -730,7 +717,20 @@ window.abrirPopupTagsGlobal = (caixa) => {
 window.alterarModoNota = async (novoModo) => {
     if (!notaAbertaId || !dbRef) return;
 
-
+ // 📖 PONTE GLOBAL PARA O SELETOR BÍBLICO (COLA AQUI!)
+    window.abrirSeletorBibliaGlobal = (caixa) => {
+        console.log("🔍 [EDITOR] Chamando Seletor Bíblico para a caixa:", caixa.id);
+        
+        import('./modulos/biblia-selector.js').then(m => {
+            if (typeof m.abrirSelector === 'function') {
+                m.abrirSelector(caixa);
+            } else {
+                console.error("❌ Erro: Função 'abrirSelector' não encontrada.");
+            }
+        }).catch(err => {
+            console.error("❌ Erro ao carregar o módulo biblia-selector.js:", err);
+        });
+    };
     
     // ============================================================
     // 1. CASO ESPECIAL: PESQUISA GLOBAL (Ação não persistente)
