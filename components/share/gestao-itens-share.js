@@ -117,22 +117,27 @@ btnPin.onclick = async (e) => {
     document.getElementById('popup-confirmar-ocultar-item').classList.add('active');
 
     document.getElementById('btn-confirmar-ocultar-item').onclick = async () => {
-        try {
-            const docRef = doc(db, "Share", id);
-            
-            // Grava a ocultação no modo Share
-            await updateDoc(docRef, { 
-                estado: "desativo",
-                timedelete: new Date().toISOString() 
-            });
+    const db = getFirestore();
+    const uid = getAuth().currentUser.uid;
+    const timestamp = new Date().toISOString();
 
-            // FORÇAR REFRESH
-            location.reload(); 
+    try {
+        // 1. Ocultar a Pasta/Nota principal
+        await updateDoc(doc(db, "Share", itemAlvo.id), { 
+            estado: "desativo", 
+            timedelete: timestamp 
+        });
 
-        } catch (err) {
-            console.error(err);
+        // 2. Se for pasta, ocultar os filhos (baseado na organização deste utilizador)
+        if (itemAlvo.tipo === "pasta") {
+            await ocultarConteudoRecursivoShare(db, itemAlvo.id, uid, timestamp);
         }
-    };
+
+        location.reload();
+    } catch (err) {
+        console.error(err);
+    }
+};
 };
 
         // --- BOTÃO GRAVAR (SALVAR NOME) ---
@@ -351,6 +356,27 @@ async function gerirAtalhoFirebase(db, uid, item, ondeAlvo, acao) {
             });
         } catch (error) {
             console.error("❌ [ATALHO-SHARE] Erro ao remover PIN:", error);
+        }
+    }
+}
+
+/**
+ * Função Auxiliar: Procura e desativa todos os filhos no Share
+ */
+async function ocultarConteudoRecursivoShare(db, pastaId, uid, timestamp) {
+    // No Share, procuramos pelo campo dinâmico: [uid].pastapai
+    const q = query(collection(db, "Share"), where(`${uid}.pastapai`, "==", pastaId));
+    const snap = await getDocs(q);
+
+    for (const docSnap of snap.docs) {
+        // No Share, ocultar para um oculta para todos (regra de Dono)
+        await updateDoc(docSnap.ref, { 
+            estado: "desativo", 
+            timedelete: timestamp 
+        });
+
+        if (docSnap.data().tipo === "pasta") {
+            await ocultarConteudoRecursivoShare(db, docSnap.id, uid, timestamp);
         }
     }
 }
