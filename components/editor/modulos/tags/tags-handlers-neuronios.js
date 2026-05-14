@@ -166,46 +166,76 @@ export async function vincularCosmos(temaIdInterno, temaNome, ctx) {
     const { dbRef, caixaAlvo, persistir, authRef } = ctx;
     const uid = authRef.currentUser.uid;
 
+    // 1. VERIFICAÇÃO DE SEGURANÇA
     if (!caixaAlvo.neuroniosCosmos) caixaAlvo.neuroniosCosmos = [];
-    if (caixaAlvo.neuroniosCosmos.some(t => t.id === temaIdInterno)) return;
+    
+    // Evita duplicar se o utilizador clicar várias vezes
+    if (caixaAlvo.neuroniosCosmos.some(t => t.id === temaIdInterno)) {
+        console.warn("⚠️ [COSMOS] Este tema já está vinculado a este bloco.");
+        return;
+    }
 
     const agora = new Date().toISOString();
 
-    // 1. UI OTIMISTA: Adiciona o UUID à nota na RAM para não desaparecer do ecrã
+    // 2. UI OTIMISTA (INSTANTÂNEA)
+    // Adicionamos logo à memória local para que a pílula apareça sem "piscar"
     const novoVinculoLocal = { 
-        id: temaIdInterno, // Este é o UUID da tua imagem
+        id: temaIdInterno, // O seu UUID (ex: 2f0cc...)
         nome: temaNome 
     };
+    
     caixaAlvo.neuroniosCosmos.push(novoVinculoLocal);
+    
+    // Forçamos o popup a desenhar a nova pílula imediatamente
     renderizarNeuroniosNoPopup(caixaAlvo); 
 
     try {
-        // 2. GRAVAR NA NOTA (LOCAL/SHARE) - Guarda o UUID
+        // 3. GRAVAR NA NOTA (LOCAL OU SHARE)
+        // Persiste o array atualizado no documento da nota onde o bloco vive
         await persistir('neuroniosCosmos', caixaAlvo.neuroniosCosmos);
+        console.log("✅ [COSMOS] UUID guardado na nota.");
 
-        // 3. ATUALIZAR O TEMA (COSMO) 
-        // Procuramos o documento onde o campo 'id' coincide com o UUID e pertence ao utilizador
+        // 4. ATUALIZAR O TEMA NO FIREBASE (VÍNCULO REVERSO)
+        // Procuramos o documento na coleção "Cosmo" que tenha o campo 'id' igual ao UUID
         const q = query(
             collection(dbRef, "Cosmo"), 
-            where("id", "==", temaIdInterno), // Procura pelo UUID interno
-            where("userId", "==", uid)        // Segurança: Só o dono mexe
+            where("id", "==", temaIdInterno), 
+            where("userId", "==", uid) // Segurança: apenas documentos do próprio user
         );
         
         const snap = await getDocs(q);
         
         if (!snap.empty) {
-            const docRef = snap.docs[0].ref; // Pegamos a referência real do Firestore (Ex: Qxa9pq...)
+            const docRef = snap.docs[0].ref; // Referência real do Firestore (ex: Qxa9pq...)
             
-            // Fazemos o update sem tocar no campo 'id' (UUID) original
+            // Atualização atómica de múltiplos campos no Tema
             await updateDoc(docRef, { 
+                // A) Lista geral de caixas vinculadas
                 "caixas": arrayUnion(caixaAlvo.id),
+                
+                // B) Marcar como "Apto" para ser usado nas pastas (Micas) do Dossiê
                 "Dossie.Apto": arrayUnion(caixaAlvo.id),
-                "Puzzle.caixas": arrayUnion({ id: caixaAlvo.id, timestamp: agora })
+                
+                // C) Injetar no Puzzle para espelhamento visual (com timestamp para ordenação)
+                "Puzzle.caixas": arrayUnion({ 
+                    id: caixaAlvo.id, 
+                    timestamp: agora 
+                })
             });
-            console.log("✅ [COSMO] Vínculo gravado usando UUID como âncora.");
+            
+            console.log("🚀 [COSMOS] Sincronização profunda (Puzzle/Dossiê) concluída.");
+        } else {
+            console.error("❌ [COSMOS] Documento mestre não encontrado para o UUID:", temaIdInterno);
         }
+
     } catch (e) {
-        console.error("❌ Erro ao vincular Cosmos:", e);
+        console.error("❌ [COSMOS] Falha crítica na vinculação:", e);
+        
+        // Reversão de emergência na UI caso a gravação falhe (Permissões/Rede)
+        caixaAlvo.neuroniosCosmos = caixaAlvo.neuroniosCosmos.filter(t => t.id !== temaIdInterno);
+        renderizarNeuroniosNoPopup(caixaAlvo);
+        
+        alert("Erro ao vincular tema. Verifica a tua ligação.");
     }
 }
 
