@@ -348,54 +348,96 @@ async function gerirAtalhoFirebase(db, uid, item, ondeAlvo, acao) {
     }
 }
 
+/**
+ * Função Auxiliar: Procura e desativa todos os filhos no Local
+ */
+async function ocultarConteudoRecursivoLocal(db, pastaId, timestamp) {
+    // Procuramos tudo o que tem esta pasta como "pastapai"
+    const q = query(collection(db, "Local"), where("pastapai", "==", pastaId));
+    const snap = await getDocs(q);
+
+    // Criamos uma lista de promessas para processar tudo em paralelo (mais rápido)
+    const promessas = snap.docs.map(async (docSnap) => {
+        const itemData = docSnap.data();
+        const itemRef = docSnap.ref;
+
+        console.log(`  - Ocultando filho: ${itemData.nome} (${docSnap.id})`);
+
+        // A) Desativar o item atual (Nota ou Sub-pasta)
+        await updateDoc(itemRef, { 
+            estado: "desativa", 
+            timedelete: timestamp 
+        });
+
+        // B) Se for uma sub-pasta, mergulhar recursivamente
+        if (itemData.tipo === "pasta") {
+            return ocultarConteudoRecursivoLocal(db, docSnap.id, timestamp);
+        }
+    });
+
+    return Promise.all(promessas);
+}
 
 /**
  * 5. OUVINTE GLOBAL PARA SUB-MENUS (Mover, Ordenar, Ocultar)
  */
 document.addEventListener('click', async (e) => {
+    // Se não houver nenhum item selecionado para gestão, ignoramos o clique
     if (!itemAtual) return;
 
-    // 1. Clicou no botão "Ocultar" do menu principal (Abre o popup de confirmação)
+    // --- A) ABRIR CONFIRMAÇÃO DE OCULTAÇÃO ---
     if (e.target.closest('#btn-gestao-ocultar')) {
-        console.log("⚠️ A abrir confirmação de ocultação para:", itemAtual.id);
-        
-        // Esconde o menu de gestão
         document.getElementById('popup-gestao-item-overlay').classList.remove('active');
-        
-        // Mostra o popup de confirmação (Garante que usas o ID correto do segundo popup)
         const popupConfirm = document.getElementById('popup-confirmar-ocultar-item');
         if (popupConfirm) popupConfirm.classList.add('active');
         return;
     }
 
-    // 2. Clicou no botão "Sim, Ocultar" (Confirmação Final)
-    // Nota: Verifica se o ID no teu HTML é 'btn-confirmar-ocultar-final' ou 'btn-confirmar-ocultar-item'
-    if (e.target.id === 'btn-confirmar-ocultar-final' || e.target.id === 'btn-confirmar-ocultar-item') {
-    const db = getFirestore();
-    const docRef = doc(db, "Local", itemAtual.id);
-
-    try {
-        console.log("🚀 A executar ocultação no Firebase...");
-        
-        // 1. Grava o estado desativo e o timestamp de lixeira
-        await updateDoc(docRef, {
-            estado: "desativa",
-            timedelete: new Date().toISOString()
-        });
-
-        console.log("✅ Nota ocultada com sucesso. Reiniciando sistema...");
-        
-        // 2. FORÇAR REFRESH DA PÁGINA
-        location.reload(); 
-
-    } catch (err) {
-        console.error("Erro ao ocultar nota:", err);
-        alert("Erro ao processar. Verifica a tua ligação.");
-    }
-}
-
-    // 3. Clicou no botão "Cancelar" da ocultação
+    // --- B) FECHAR CONFIRMAÇÃO (CANCELAR) ---
     if (e.target.id === 'btn-cancelar-ocultar-final' || e.target.id === 'btn-cancelar-ocultar-item') {
         document.getElementById('popup-confirmar-ocultar-item').classList.remove('active');
+        return;
+    }
+
+    // --- C) EXECUTAR OCULTAÇÃO DEFINITIVA (CASCATA + REFRESH) ---
+    if (e.target.id === 'btn-confirmar-ocultar-final') {
+        const db = getFirestore();
+        const timestamp = new Date().toISOString();
+        const btn = e.target;
+
+        // Feedback visual de carregamento
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> A processar...';
+
+        try {
+            console.log(`🗑️ [CASCATA] Iniciando ocultação do item: ${itemAtual.id}`);
+
+            // 1. Ocultar o item principal (Pasta ou Nota)
+            const docRef = doc(db, "Local", itemAtual.id);
+            await updateDoc(docRef, {
+                estado: "desativa",
+                timedelete: timestamp
+            });
+
+            // 2. Se for uma pasta, disparar o motor recursivo para limpar o interior
+            if (itemAtual.tipo === "pasta") {
+                console.log("📂 Detetada pasta. Limpando sub-itens...");
+                await ocultarConteudoRecursivoLocal(db, itemAtual.id, timestamp);
+            }
+
+            console.log("✅ Processo concluído. Reiniciando sistema...");
+
+            // 3. FECHAR POPUPS E FAZER REFRESH
+            document.querySelectorAll('.popup-overlay').forEach(p => p.classList.remove('active'));
+            
+            // O refresh garante que o editor central e as listas limpam os dados antigos
+            location.reload();
+
+        } catch (err) {
+            console.error("❌ Erro crítico na ocultação em cascata:", err);
+            alert("Erro ao ocultar itens. Verifica as permissões de administrador.");
+            btn.disabled = false;
+            btn.innerText = "Sim, Ocultar";
+        }
     }
 });
