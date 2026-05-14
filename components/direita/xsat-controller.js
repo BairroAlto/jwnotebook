@@ -1,0 +1,285 @@
+// components/direita/xsat-controller.js
+import { processarPesquisaSat } from './xsat-engine.js';
+
+const estadosCanais = {
+    1: { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' },
+    2: { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' },
+    3: { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' },
+    4: { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' },
+    5: { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' }
+};
+
+let canalSelecionadoUI = null;
+let jumpInProgress = false;
+
+export function iniciarXSat() {
+    const botoesNum = document.querySelectorAll('.xsat-num');
+    const subNav = document.getElementById('xsat-sub-nav');
+
+    botoesNum.forEach(btn => {
+        btn.onclick = () => {
+            const num = btn.dataset.num;
+            canalSelecionadoUI = num;
+            botoesNum.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            if (subNav) subNav.style.display = 'flex';
+
+            const canal = estadosCanais[num];
+            if (canal.ativa) {
+                if (canal.abaAtiva === 'definicoes') renderizarDefinicoesCanal(num);
+                else renderizarResultados(canal.dados[canal.abaAtiva]);
+            } else {
+                mostrarCanalLivre(num);
+            }
+        };
+    });
+
+    const mapAbas = { 'btn-xsat-pub': 'publicacoes', 'btn-xsat-liv': 'livros', 'btn-xsat-vid': 'multimedia', 'btn-xsat-set': 'definicoes' };
+    document.querySelectorAll('#xsat-sub-nav button').forEach(btn => {
+        btn.onclick = () => {
+            if (!canalSelecionadoUI) return;
+            const canal = estadosCanais[canalSelecionadoUI];
+            const abaAlvo = mapAbas[btn.id];
+            canal.abaAtiva = abaAlvo;
+            document.querySelectorAll('#xsat-sub-nav button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            if (abaAlvo === 'definicoes') renderizarDefinicoesCanal(canalSelecionadoUI);
+            else if (canal.dados) renderizarResultados(canal.dados[abaAlvo]);
+        };
+    });
+}
+
+/**
+ * DISPARAR PESQUISA PARABÓLICA (COM DELAY ARTÍSTICO MÍNIMO)
+ */
+/**
+ * DISPARAR PESQUISA PARABÓLICA (COM FEEDBACK INSTANTÂNEO E DELAY ARTÍSTICO)
+ * Chamado por: Antenas das Caixas, Botão Global do Lab, ou Satélite da Biblioteca.
+ */
+export async function dispararPesquisaParabolica(textoBruto, isGlobal = false) {
+    console.log(`🛰️ [X-SAT] Iniciando varredura ${isGlobal ? 'GLOBAL' : 'INDIVIDUAL'}`);
+
+    // 1. FEEDBACK IMEDIATO: Saltar para o painel X-SAT na hora!
+    if (window.switchPanel) {
+        window.switchPanel('xsat');
+    } else {
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById('panel-xsat').classList.add('active');
+    }
+
+    // 2. GESTÃO DE CANAL
+    // Procura o primeiro canal livre ou limpa o Canal 1 se estiverem todos ocupados
+    let canalId = Object.keys(estadosCanais).find(id => estadosCanais[id].ativa === false);
+    if (!canalId) {
+        canalId = "1";
+        estadosCanais[1] = { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' };
+    }
+
+    canalSelecionadoUI = canalId;
+
+    // Ativar visualmente o número do canal no topo
+    document.querySelectorAll('.xsat-num').forEach(b => b.classList.remove('active'));
+    const btnNum = document.querySelector(`.xsat-num[data-num="${canalId}"]`);
+    if (btnNum) btnNum.classList.add('active');
+
+    // 3. INJETAR ANIMAÇÃO ARTÍSTICA IMEDIATAMENTE (Antes de processar o texto)
+    const display = document.getElementById('xsat-display-content');
+    if (!display) return;
+
+    const temaCor = isGlobal ? '#34d399' : '#6366f1';
+    const iconePrincipal = isGlobal ? 'fa-tower-observation' : 'fa-satellite';
+
+    display.innerHTML = `
+        <div class="xsat-sync-wrapper ${isGlobal ? 'global-mode' : ''}">
+            
+            <!-- Chuva de Meteoros (10 elementos para o CSS desenhar) -->
+            <div class="xsat-meteor-rain">
+                ${'<div class="meteor"></div>'.repeat(10)}
+            </div>
+
+            <!-- Núcleo do Satélite e Sistema de Órbita -->
+            <div class="xsat-visual-core">
+                <div class="xsat-radar-wave"></div>
+                <div class="xsat-radar-wave"></div>
+                
+                <div class="xsat-orbital-system">
+                    <div class="orbital-particle p1"></div>
+                    <div class="orbital-particle p2"></div>
+                    <div class="orbital-particle p3"></div>
+                </div>
+
+                <i class="fa-solid ${iconePrincipal} xsat-main-icon"></i>
+            </div>
+
+            <!-- Interface de Sincronização -->
+            <div class="xsat-progress-box">
+                <div class="xsat-bar-container">
+                    <div class="xsat-bar-fill"></div>
+                </div>
+                
+                <div class="xsat-scan-line"></div>
+
+                <div class="xsat-text" style="color: ${temaCor}">
+                    ${isGlobal ? 'GLOBAL NETWORK SYNC' : 'SCANNING SATELLITE...'}
+                </div>
+                
+                <div style="font-size: 8px; color:rgba(255,255,255,0.3); text-align:center; margin-top:8px; font-family:monospace; letter-spacing:1px; font-weight:800;">
+                    ESTABLISHING UPLINK • CANAL ${canalId}
+                </div>
+            </div>
+        </div>`;
+
+    // 4. INICIAR PROCESSAMENTO COM SUSPENSÃO ARTÍSTICA (Min. 2.2 segundos)
+    estadosCanais[canalId].ativa = true;
+    
+    try {
+        // Corremos a pesquisa e o cronómetro de animação em paralelo
+        const [payload] = await Promise.all([
+            processarPesquisaSat(textoBruto, canalId),
+            new Promise(resolve => setTimeout(resolve, 2200)) 
+        ]);
+
+        // 5. VALIDAR RESULTADOS
+        if (!payload || !payload.referencias || payload.referencias.length === 0) {
+            display.innerHTML = `
+                <div style="text-align:center; padding:50px 20px; opacity:0.6;">
+                    <i class="fa-solid fa-satellite-dish" style="font-size:40px; margin-bottom:15px; color:var(--primary);"></i>
+                    <p style="font-size:12px; font-weight:700;">VARREDURA COMPLETA</p>
+                    <p style="font-size:10px; margin-top:5px;">Nenhuma referência bíblica foi detetada para pesquisa.</p>
+                    <button onclick="window.limparCanalX(${canalId})" style="margin-top:20px; background:transparent; border:1px solid var(--border-color); color:white; padding:8px 15px; border-radius:4px; font-size:10px; cursor:pointer;">FECHAR CANAL</button>
+                </div>`;
+            estadosCanais[canalId].ativa = false;
+            return;
+        }
+
+        // 6. MAPEAR DADOS E ATIVAR PICCARDS
+        estadosCanais[canalId].versiculos = payload.referencias.map(ref => ({
+            nome: `${ref.livro} ${ref.cap}:${ref.ver}`,
+            ativo: true 
+        }));
+
+        estadosCanais[canalId].dados = payload.resultados;
+
+        // 7. FINALIZAR: MOSTRAR RESULTADOS (Abre a aba de Publicações por defeito)
+        const btnPub = document.getElementById('btn-xsat-pub');
+        if (btnPub) btnPub.click(); 
+
+    } catch (e) {
+        console.error("❌ [X-SAT] Erro de Sinal:", e);
+        display.innerHTML = `<p style="color:#ef4444; text-align:center; padding:20px; font-size:11px; font-weight:800;">SATELLITE OFFLINE</p>`;
+        estadosCanais[canalId].ativa = false;
+    }
+}
+
+// REGISTO GLOBAL PARA O EDITOR E FERRAMENTAS
+window.dispararPesquisaParabolica = dispararPesquisaParabolica;
+
+function renderizarResultados(lista) {
+    const display = document.getElementById('xsat-display-content');
+    const subNav = document.getElementById('xsat-sub-nav'); // A barra de ícones (Pubs, Livros...)
+
+    if (!canalSelecionadoUI || !lista) return;
+
+    // FORÇAR A BARRA DE NAVEGAÇÃO A APARECER
+    if (subNav) subNav.style.display = 'flex';
+
+    const canal = estadosCanais[canalSelecionadoUI];
+    const refsAtivas = canal.versiculos.filter(v => v.ativo).map(v => v.nome);
+    const filtrados = lista.filter(item => refsAtivas.includes(item.referencia));
+
+    if (filtrados.length === 0) {
+        display.innerHTML = `<p style="text-align:center; color:gray; padding:40px; font-size:12px;">Ativa os Piccards nas definições.</p>`;
+        return;
+    }
+
+    display.innerHTML = filtrados.map((item, idx) => `
+        <div class="indice-card" 
+             onclick="window.saltarParaFonteSat(${idx}, '${canalSelecionadoUI}')" 
+             style="border-left: 4px solid var(--primary); margin-bottom:12px; background:rgba(255,255,255,0.02); cursor:pointer; padding: 15px; display: block !important;">
+            
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <span style="font-size:9px; color:var(--primary); font-weight:900; text-transform:uppercase; display: flex !important; align-items: center; gap: 5px;">
+                    <i class="fa-solid fa-satellite-dish" style="display: inline-block !important;"></i> ${item.contexto}
+                </span>
+                <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:11px; opacity:0.4; display: inline-block !important;"></i>
+            </div>
+
+            <div style="font-size:14px; color:white; font-weight:700; line-height:1.3; margin-bottom:8px;">${item.titulo}</div>
+            
+            <div style="font-size:12px; color:var(--text-muted); line-height:1.6; font-style: italic; opacity:0.8;">
+                "${item.resumo}"
+            </div>
+
+            <div style="margin-top:10px; font-size:10px; color:var(--primary); font-weight:800; text-transform:uppercase; display: flex !important; align-items: center; gap: 5px;">
+                <i class="fa-solid fa-quote-left" style="font-size: 8px; display: inline-block !important;"></i> VIA: ${item.referencia}
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderizarDefinicoesCanal(num) {
+    const display = document.getElementById('xsat-display-content');
+    const canal = estadosCanais[num];
+    display.innerHTML = `
+        <div style="padding:10px;">
+            <p style="font-size:10px; color:var(--text-muted); text-transform:uppercase; font-weight:800; margin-bottom:15px;">Piccards do Canal</p>
+            <div style="display:flex; flex-wrap: wrap; gap:8px; margin-bottom:30px;">
+                ${canal.versiculos.map(v => `
+                    <div class="neuronio-pill" onclick="window.togglePiccard('${num}', '${v.nome}')"
+                         style="background:rgba(255,255,255,0.05); border:1px solid ${v.ativo ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; padding:6px 12px; border-radius:20px; display:flex; align-items:center; gap:10px; cursor:pointer; opacity:${v.ativo ? '1' : '0.4'};">
+                        <span style="font-size:11px; font-weight:700; color:white;">${v.nome}</span>
+                        <i class="fa-solid ${v.ativo ? 'fa-eye' : 'fa-eye-slash'}" style="font-size:10px;"></i>
+                    </div>`).join('')}
+            </div>
+            <button onclick="window.limparCanalX(${num})" style="width:100%; padding:12px; background:rgba(239, 68, 68, 0.1); color:#f87171; border:1px solid #ef4444; border-radius:8px; cursor:pointer; font-weight:700; font-size:11px;">ENCERRAR CANAL ${num}</button>
+        </div>`;
+}
+
+window.togglePiccard = (canalId, nome) => {
+    const canal = estadosCanais[canalId];
+    const v = canal.versiculos.find(x => x.nome === nome);
+    if (v) { v.ativo = !v.ativo; renderizarDefinicoesCanal(canalId); }
+};
+
+window.limparCanalX = (id) => {
+    estadosCanais[id] = { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' };
+    const btn = document.querySelector(`.xsat-num[data-num="${id}"]`);
+    if (btn) btn.click();
+};
+
+window.saltarParaFonteSat = (index, canalId) => {
+    if (jumpInProgress) return;
+    const canal = estadosCanais[canalId];
+    const refsAtivas = canal.versiculos.filter(v => v.ativo).map(v => v.nome);
+    const filtrados = canal.dados[canal.abaAtiva].filter(item => refsAtivas.includes(item.referencia));
+    const item = filtrados[index];
+    if (!item || !item.bridge) return;
+    jumpInProgress = true;
+    const btnLists = Array.from(document.querySelectorAll('#left-buttons button')).find(b => b.innerText.trim().toUpperCase() === 'LISTS');
+    if (btnLists) btnLists.click();
+    setTimeout(() => {
+        import('../lists/bridge-main.js').then(m => {
+            m.abrirReferenciaDireta(item.bridge);
+            setTimeout(() => { jumpInProgress = false; }, 2500);
+        });
+    }, 200);
+};
+
+function ativarBotaoSubNav(aba) {
+    const ids = { 'publicacoes': 'btn-xsat-pub', 'livros': 'btn-xsat-liv', 'multimedia': 'btn-xsat-vid', 'definicoes': 'btn-xsat-set' };
+    const btn = document.getElementById(ids[aba]);
+    if (btn) {
+        document.querySelectorAll('#xsat-sub-nav button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    }
+}
+
+function mostrarCanalLivre(num) {
+    document.getElementById('xsat-display-content').innerHTML = `
+        <div style="text-align:center; margin-top:50px; opacity:0.3;">
+            <i class="fa-solid fa-satellite-dish" style="font-size:40px; margin-bottom:10px; display:block;"></i>
+            <p style="font-size:12px; font-weight:600; text-transform:uppercase;">CANAL ${num} DISPONÍVEL</p>
+        </div>`;
+    document.querySelectorAll('#xsat-sub-nav button').forEach(b => b.classList.remove('active'));
+}
+
