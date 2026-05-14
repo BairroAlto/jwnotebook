@@ -167,27 +167,37 @@ function procurarNoJson(json, referencias, listaDestino, labelExibicao, caminho,
  * EXPORTAÇÃO PRINCIPAL
  */
 export async function processarPesquisaSat(textoBruto, canalId) {
-    console.log("🔍 MOTOR ENGINE: A processar texto ->", textoBruto);
+    console.log("🛰️ [X-SAT] Iniciando varredura inteligente...");
     const referencias = extrairReferencias(textoBruto);
     if (referencias.length === 0) return null;
 
     const resultados = { publicacoes: [], livros: [], multimedia: [] };
     
-    // Scan Livros
+    // 1. SCAN LIVROS (Lógica Direta)
     for (const sigla of DISPONIVEL_LIVROS) {
         const url = `data/livros/${sigla}.json`;
         const dados = await carregarJson(url);
-        if (dados) procurarNoJson(dados, referencias, resultados.livros, `Livro: ${SIGLAS_LIVROS[sigla] || sigla.toUpperCase()}`, url, 'livro');
+        if (dados) procurarNoJson(dados, referencias, resultados.livros, `Livro: ${SIGLAS_LIVROS[sigla]}`, url, 'livro');
     }
 
-    // Scan Publicações
+    // 2. SCAN PUBLICAÇÕES (W, MWB) - APENAS ANOS EXISTENTES
     for (const sigla in SIGLAS_PUBS) {
-        if (['w', 'wp', 'g', 'km', 'mwb'].includes(sigla)) {
-            for (const ano of ANOS_DISPONIVEIS) {
-                // Filtro para não sobrecarregar o browser em anos muito antigos no scan inicial
-                if (ano < 2015) continue; 
-                for (const m of DISPONIVEL_PUBLICACOES) {
-                    const url = `data/publicacoes/${sigla}/${ano}/${m}.json`;
+        if (!['w', 'mwb'].includes(sigla)) continue;
+
+        // FILTRO: Só pesquisa nos anos que realmente temos no repositorio-data.js
+        for (const ano of ANOS_DISPONIVEIS) {
+            
+            // LIMITADOR: Se estiveres a pesquisar algo muito antigo, 
+            // podemos saltar para poupar processamento (ex: < 2020)
+            if (ano < 2020) continue; 
+
+            for (const m of DISPONIVEL_PUBLICACOES) {
+                const url = `data/publicacoes/${sigla}/${ano}/${m}.json`;
+                
+                // VERIFICAÇÃO "HEAD" ANTES DE CARREGAR (Evita 404 na consola)
+                const existe = await fetch(url, { method: 'HEAD' }).then(r => r.ok).catch(() => false);
+                
+                if (existe) {
                     const dados = await carregarJson(url);
                     if (dados) procurarNoJson(dados, referencias, resultados.publicacoes, `${SIGLAS_PUBS[sigla]} ${m}/${ano}`, url, 'publicacao');
                 }
@@ -195,20 +205,20 @@ export async function processarPesquisaSat(textoBruto, canalId) {
         }
     }
 
-    // Scan Vídeos
+    // 3. SCAN VÍDEOS - APENAS ANOS RECENTES
     for (const ano of ANOS_DISPONIVEIS) {
-        if (ano < 2022) continue;
+        if (ano < 2023) continue; // Vídeos só de 2023 para cima
         for (const m of DISPONIVEL_VIDEOS) {
             const url = `data/multimedia/${ano}/${m}.json`;
-            const dados = await carregarJson(url);
-            if (dados) procurarNoJson(dados, referencias, resultados.multimedia, `Vídeo ${m}/${ano}`, url, 'multimedia');
+            const existe = await fetch(url, { method: 'HEAD' }).then(r => r.ok).catch(() => false);
+            if (existe) {
+                const dados = await carregarJson(url);
+                if (dados) procurarNoJson(dados, referencias, resultados.multimedia, `Vídeo ${m}/${ano}`, url, 'multimedia');
+            }
         }
     }
 
-    return {
-        resultados: resultados,
-        referencias: referencias
-    };
+    return { resultados, referencias };
 }
 
 function criarSnippet(texto, termo) {
