@@ -273,22 +273,23 @@ function configurarInputsPesquisa() {
  */
 function exporFuncoesGlobais() {
     
+    
     // --- TÓPICOS E SUBTÓPICOS ---
-    window.setTopicoPai = (id, nome) => {
-        topicoPaiSelecionado = { id, nome };
-        document.getElementById('search-tags-topico').value = "";
-        document.getElementById('results-tags-topico').style.display = 'none';
-        document.getElementById('selected-tags-topico-display').innerHTML = `
-            <div class="neuronio-pill" style="border-color:var(--primary); background:rgba(99, 102, 241, 0.1); margin-bottom:10px;">
-                <i class="fa-solid fa-check"></i> <span>Tópico: ${nome}</span>
-                <i class="fa-solid fa-xmark" style="margin-left:10px; cursor:pointer;" onclick="window.limparTopicoFiltro()"></i>
-            </div>`;
-        
-        // Ativa a secção de subtópicos
-        const secSub = document.getElementById('section-tags-subtopico');
-        secSub.style.opacity = "1";
-        secSub.style.pointerEvents = "auto";
-    };
+ window.setTopicoPai = (id, nome) => {
+    topicoPaiSelecionado = { id, nome };
+    document.getElementById('search-tags-topico').value = "";
+    document.getElementById('results-tags-topico').style.display = 'none';
+    document.getElementById('selected-tags-topico-display').innerHTML = `
+        <div class="neuronio-pill" style="border-color:var(--primary); background:rgba(99, 102, 241, 0.1); margin-bottom:10px;">
+            <i class="fa-solid fa-check"></i> <span>Tópico: ${nome}</span>
+            <i class="fa-solid fa-xmark" style="margin-left:10px; cursor:pointer;" onclick="window.limparTopicoFiltro()"></i>
+        </div>`;
+    
+    // Ativa a secção de subtópicos
+    const secSub = document.getElementById('section-tags-subtopico');
+    secSub.style.opacity = "1";
+    secSub.style.pointerEvents = "auto";
+};
 
 window.formatarInputTempo = (input) => {
     let val = input.value.replace(/\D/g, ''); // Remove lixo
@@ -328,9 +329,42 @@ window.formatarInputTempo = (input) => {
     };
 
     // --- NEURÓNIOS (BÍBLIA E COSMOS) ---
-    window.vincularBiblia = (ref) => NeuronioHandlers.vincularBiblia(ref, getCtx());
+    window.vincularBiblia = (ref) => {
+    NeuronioHandlers.vincularBiblia(ref, getCtx());
+    
+    // RESET UI BÍBLIA
+    const inBiblia = document.getElementById('search-biblia-neuronios');
+    const resBiblia = document.getElementById('results-biblia-neuronios');
+    if (inBiblia) inBiblia.value = "";
+    if (resBiblia) { 
+        resBiblia.innerHTML = ""; 
+        resBiblia.style.display = 'none'; 
+    }
+};
+
+
     window.desvincularBiblia = (ref) => NeuronioHandlers.desvincularBiblia(ref, getCtx());
-    window.vincularCosmos = (id, nome) => NeuronioHandlers.vincularCosmos(id, nome, getCtx());
+    
+    window.vincularCosmos = (id, nome) => {
+    // Executa a lógica de gravação no Firebase e RAM
+    NeuronioHandlers.vincularCosmos(id, nome, getCtx());
+
+    // RESET UI COSMOS (O que pediste)
+    const inCosmos = document.getElementById('search-cosmos-neuronios');
+    const resCosmos = document.getElementById('results-cosmos-neuronios');
+    
+    if (inCosmos) {
+        inCosmos.value = ""; // Limpa o texto "sd" ou qualquer outro
+    }
+    if (resCosmos) {
+        resCosmos.innerHTML = ""; 
+        resCosmos.style.display = 'none'; // Esconde a lista de resultados
+    }
+    
+    console.log("🧹 [TAGS] Pesquisa Cosmos reiniciada após seleção.");
+};
+
+
     window.desvincularCosmos = (id) => NeuronioHandlers.desvincularCosmos(id, getCtx());
 
     // --- ASSOCIAÇÕES (NOTAS E CAIXAS) ---
