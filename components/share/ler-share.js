@@ -185,12 +185,14 @@ function carregarDadosShare() {
     // 6. RENDERIZAR OS ITENS DA LISTA
     itensParaMostrar.forEach(item => {
         const div = document.createElement('div');
+        const docId = item.id;
         
         // Verificação de estados: Selecionado e Top Privado
-        const isAtivo = (item.id === window.itemSelecionadoId);
+        const isAtivo = (docId === window.itemSelecionadoId);
         const souTop = (item[uid]?.Top && item[uid].Top.estado === "ativo");
 
         div.className = `item-local ${isAtivo ? 'active' : ''}`; 
+        div.setAttribute('data-id', docId);
         
         // Estilo visual de destaque para notas/pastas TOP (Vermelho Share)
         if (souTop) {
