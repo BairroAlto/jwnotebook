@@ -100,3 +100,57 @@ function alternarDisplays(elementos, estado) {
         if (el) el.style.display = estado;
     });
 }
+
+/**
+ * SINCRONIZADOR GLOBAL DA BARRA LATERAL
+ */
+window.sincronizarBarraLateralComNota = (idNota, dados, auth) => {
+    const onde = (dados.onde || "local").toUpperCase();
+    const uid = auth.currentUser.uid;
+
+    console.log(`🎯 [SYNC] Sincronizando lateral para: ${onde} | Nota: ${idNota}`);
+
+    // 1. FORÇAR MUDANÇA DE ABA (LOCAL / SHARE / PINS)
+    const botoesAba = document.querySelectorAll('#left-buttons button');
+    botoesAba.forEach(btn => {
+        if (btn.innerText.trim().toUpperCase() === onde) {
+            if (!btn.classList.contains('active')) btn.click();
+        }
+    });
+
+    // 2. VIAJAR PARA A PASTA (Se for diferente da atual)
+    if (onde === "LOCAL") {
+        const pastaDestino = dados.pastapai || "root";
+        if (window.pastaAtual !== pastaDestino) {
+            window.pastaAtual = pastaDestino;
+            window.historicoPastas = [{ id: "root", nome: "Local" }];
+            if (pastaDestino !== "root") window.historicoPastas.push({ id: pastaDestino, nome: "Pasta" });
+            
+            if (typeof window.carregarPastaLocalManual === 'function') {
+                window.carregarPastaLocalManual(pastaDestino);
+            }
+        }
+    } else if (onde === "SHARE") {
+        const pastaDestinoShare = dados[uid]?.pastapai || "home";
+        if (window.pastaShareAtual !== pastaDestinoShare) {
+            window.pastaShareAtual = pastaDestinoShare;
+            window.historicoPastasShare = [{ id: "home", nome: "Share" }];
+            if (pastaDestinoShare !== "home") window.historicoPastasShare.push({ id: pastaDestinoShare, nome: "Pasta" });
+
+            if (typeof window.dispararLeituraShare === 'function') {
+                window.dispararLeituraShare();
+            }
+        }
+    }
+
+    // 3. REFORÇO DE HIGHLIGHT (Tenta agora e tenta daqui a pouco)
+    const aplicarDestaque = () => {
+        document.querySelectorAll('.item-local').forEach(el => {
+            const elId = el.getAttribute('data-id') || el.dataset.itemid;
+            el.classList.toggle('active', elId === idNota);
+        });
+    };
+
+    aplicarDestaque();
+    setTimeout(aplicarDestaque, 500); // Segunda tentativa após o render do Firebase
+};
