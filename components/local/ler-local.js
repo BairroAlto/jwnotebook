@@ -29,10 +29,16 @@ export function inicializarLeituraLocal(db, auth) {
     }
 
     // Função de Teleporte para PINS
-    window.carregarPastaLocalManual = (id) => {
-        carregarPasta(id);
-        atualizarUI();
-    };
+   window.carregarPastaLocalManual = (id) => {
+    // Chama a tua função que já tens para ler o Firebase
+    if (typeof carregarPasta === 'function') {
+        carregarPasta(id); 
+    }
+    // Chama a tua função que atualiza o nome no topo "Voltar a..."
+    if (typeof atualizarUI === 'function') {
+        atualizarUI(); 
+    }
+};
 
     carregarPasta(window.pastaAtual);
     atualizarUI();
@@ -92,58 +98,61 @@ docsParaOrdenar.sort((a, b) => {
 
             // 3. RENDERIZAR OS ITENS JÁ ORDENADOS
             docsParaOrdenar.forEach((d) => {
-                const docId = d.idFirestore; 
-                
-                const item = document.createElement("div");
-                const isAtivo = (docId === window.itemSelecionadoId);
-                item.setAttribute('data-id', docId);
-                const isTop = (d.Top && d.Top.estado === "ativo");
-                
-                item.className = `item-local tipo-${d.tipo} ${isAtivo ? 'active' : ''}`;
-                
-                // Estilo visual diferenciado para itens TOP
-                if (isTop) {
-                    item.style.background = "rgba(251, 191, 36, 0.04)";
-                    item.style.borderRight = "3px solid #fbbf24";
-                }
+    // d é o objeto que contém os dados e o idFirestore
+    const docId = d.idFirestore; 
+    
+    const item = document.createElement("div");
+    
+    // VERIFICAÇÃO DE SELEÇÃO (A lógica que corrigimos)
+    // Comparamos o ID deste item com o ID da nota que está aberta no editor
+    const isAtivo = (docId === window.itemSelecionadoId);
+    
+    item.setAttribute('data-id', docId); // Importante para o sincronizador encontrar o elemento
+    item.className = `item-local tipo-${d.tipo} ${isAtivo ? 'active' : ''}`;
+    
+    // Estilo visual para itens TOP (favoritos da pasta)
+    const isTop = (d.Top && d.Top.estado === "ativo");
+    if (isTop) {
+        item.style.background = "rgba(251, 191, 36, 0.04)";
+        item.style.borderRight = "3px solid #fbbf24";
+    }
 
-                // Configuração de Ícone e Cor
-                let nomeIcone = (d.tipo === "pasta") ? (d.icon || "folder") : "note-sticky";
-                if (!nomeIcone.startsWith('fa-')) nomeIcone = `fa-${nomeIcone}`;
-                let corIcone = (d.tipo === "pasta") ? "#eab308" : "#6366f1";
+    // Configuração de Ícone e Cor
+    let nomeIcone = (d.tipo === "pasta") ? (d.icon || "folder") : "note-sticky";
+    if (!nomeIcone.startsWith('fa-')) nomeIcone = `fa-${nomeIcone}`;
+    let corIcone = (d.tipo === "pasta") ? "#eab308" : "#6366f1";
 
-                const nomeEscapado = d.nome.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    const nomeEscapado = d.nome.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
-            item.innerHTML = `
-    <i class="fa-solid ${nomeIcone}" style="color: ${corIcone};"></i>
-    <div style="flex: 1; display: flex; align-items: center; overflow: hidden;">
-        <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-left-items); font-weight: ${isTop ? '700' : '500'};">
-            ${d.nome}
-        </span>
-    </div>
-    <i class="fa-solid fa-gear btn-edit-item-local" 
-       onclick="event.stopPropagation(); window.abrirEditorItemLocal('${docId}', '${d.tipo}', '${nomeEscapado}')">
-    </i>
-`;
-                
-                item.onclick = () => {
-                    window.itemSelecionadoId = docId;
-                    if (d.tipo === "pasta") {
-                        // Navegação para dentro da pasta
-                        window.historicoPastas.push({ id: docId, nome: d.nome });
-                        window.pastaAtual = docId;
-                        atualizarUI();
-                        carregarPasta(docId); 
-                    } else {
-                        // Abrir nota no editor central
-                        abrirNotaNoEditor(docId, d, dbReferencia, authReferencia);
-                        document.querySelectorAll('#lista-local .item-local').forEach(el => el.classList.remove('active'));
-                        item.classList.add('active');
-                    }
-                };
+    item.innerHTML = `
+        <i class="fa-solid ${nomeIcone}" style="color: ${corIcone};"></i>
+        <div style="flex: 1; display: flex; align-items: center; overflow: hidden;">
+            <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-left-items); font-weight: ${isTop ? '700' : '500'};">
+                ${d.nome}
+            </span>
+        </div>
+        <i class="fa-solid fa-gear btn-edit-item-local" 
+           onclick="event.stopPropagation(); window.abrirEditorItemLocal('${docId}', '${d.tipo}', '${nomeEscapado}')">
+        </i>
+    `;
+    
+    item.onclick = () => {
+        window.itemSelecionadoId = docId; // Guarda o ID ao clicar
+        if (d.tipo === "pasta") {
+            window.historicoPastas.push({ id: docId, nome: d.nome });
+            window.pastaAtual = docId;
+            atualizarUI();
+            carregarPasta(docId); 
+        } else {
+            abrirNotaNoEditor(docId, d, dbReferencia, authReferencia);
+            // Limpa o active de outros e coloca neste
+            document.querySelectorAll('#lista-local .item-local').forEach(el => el.classList.remove('active'));
+            item.classList.add('active');
+        }
+    };
 
-                fragmento.appendChild(item);
-            });
+    fragmento.appendChild(item);
+});
         }
 
         // Injetar o fragmento final na lista
