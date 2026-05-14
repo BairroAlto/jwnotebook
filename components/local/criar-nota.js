@@ -67,6 +67,11 @@ export function inicializarCriacaoNota(db, auth) {
                 // 3. ABRIR NO EDITOR IMEDIATAMENTE
                 await abrirNotaNoEditor(docRef.id, dadosNovaNota, db, auth);
 
+                if (window.innerWidth <= 768) {
+    document.getElementById('area-esquerda').classList.add('closed');
+    document.getElementById('mobile-overlay').classList.remove('active');
+}
+
                 // 4. Limpar UI do Popup
                 if(popupOpcoes) popupOpcoes.classList.remove('active');
                 btnCriarNota.innerHTML = `<i class="fa-solid fa-note-sticky" style="color: #6366f1;"></i> Criar Nota`;
