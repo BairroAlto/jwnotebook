@@ -254,13 +254,31 @@ function configurarEventosPopup() {
         };
     });
 
-  document.getElementById('btn-ocultar-topico').onclick = async () => {
-        const confirmou = await confirmarOcultarPopup();
-        if (confirmou) {
-            await updateDoc(doc(dbRef, "Topico", itemSendoEditadoDocId), { estado: 'desativo' });
+ document.getElementById('btn-ocultar-topico').onclick = async () => {
+    // 1. Pedir confirmação visual ao utilizador
+    const confirmou = await confirmarOcultarPopup();
+    
+    if (confirmou) {
+        console.log("🗑️ [TÓPICOS] Iniciando processo de ocultação...");
+        
+        try {
+            // 2. Gravação de Soft Delete com carimbo de tempo
+            await updateDoc(doc(dbRef, "Topico", itemSendoEditadoDocId), { 
+                estado: 'desativo',
+                timedelete: new Date().toISOString() // O campo que faltava para a reciclagem
+            });
+
+            console.log("✅ [TÓPICOS] Item marcado para reciclagem.");
+
+            // 3. Fechar o popup
             document.getElementById('popup-topicos-overlay').classList.remove('active');
+            
+        } catch (error) {
+            console.error("❌ Erro ao ocultar tópico:", error);
+            alert("Erro de permissão. Verifica a tua ligação.");
         }
-    };
+    }
+};
 
   document.getElementById('btn-gravar-topico').onclick = async () => {
     const btn = document.getElementById('btn-gravar-topico');
