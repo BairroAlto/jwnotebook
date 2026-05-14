@@ -13,19 +13,28 @@ let pinAtualParaGestao = null;
 export function inicializarLeituraPins(db, auth) {
     const listaPins = document.getElementById('lista-pins');
     const btnToggle = document.getElementById('btn-editar-pins-toggle');
+    
     if (!listaPins || !btnToggle) return;
 
-    // TOGGLE MODO EDIÇÃO
-    btnToggle.onclick = () => {
+    // 1. GESTÃO DO MODO EDIÇÃO (Lápis)
+    btnToggle.onclick = (e) => {
+        e.stopPropagation();
         modoEdicaoPins = !modoEdicaoPins;
         btnToggle.classList.toggle('active', modoEdicaoPins);
         listaPins.classList.toggle('lista-modo-edicao', modoEdicaoPins);
     };
 
-    // ESCUTA EM TEMPO REAL
-    const q = query(collection(db, "Atalho"), where("userId", "==", auth.currentUser.uid), orderBy("ordem", "asc"));
+    // 2. ESCUTA EM TEMPO REAL (Snapshot)
+    // Lemos a coleção 'Atalho' filtrada pelo utilizador logado
+    const q = query(
+        collection(db, "Atalho"), 
+        where("userId", "==", auth.currentUser.uid), 
+        orderBy("ordem", "asc")
+    );
+
     onSnapshot(q, (snapshot) => {
-        listaPins.innerHTML = "";
+        const fragmento = document.createDocumentFragment();
+        
         if (snapshot.empty) {
             listaPins.innerHTML = `<p style="text-align:center; color:gray; font-size:11px; padding:30px; opacity:0.6;">Nenhum item fixado.</p>`;
             return;
@@ -33,55 +42,86 @@ export function inicializarLeituraPins(db, auth) {
 
         snapshot.forEach(docSnap => {
             const data = docSnap.data();
-            const idDocFirebase = docSnap.id;
+            const idDocFirebase = docSnap.id; // ID do documento na coleção Atalho
+            const itemIdReal = data.itemId;    // ID da Nota ou Pasta original
+            
             const div = document.createElement('div');
-            const isAtivo = (data.itemId === window.itemSelecionadoId);
-            div.setAttribute('data-itemid', data.itemId); 
+            
+            // --- VERIFICAÇÃO DE SELEÇÃO ATIVA ---
+            // Verifica se este atalho aponta para a nota que está aberta no editor
+            const isAtivo = (itemIdReal === window.itemSelecionadoId);
+            
             div.className = `item-local ${isAtivo ? 'active' : ''}`;
             
-            const cor = data.onde === "Local" ? (data.tipo === "pasta" ? "#eab308" : "#6366f1") : "#ef4444";
+            // Atributos para o sincronizador global conseguir encontrar o elemento
+            div.setAttribute('data-id', itemIdReal);
+            div.setAttribute('data-itemid', itemIdReal); 
+
+            // Definição de Cores e Ícones (Consistente com Local/Share)
+            const cor = data.onde === "Local" 
+                ? (data.tipo === "pasta" ? "#eab308" : "#6366f1") 
+                : "#ef4444"; // Vermelho se vier do Share
+            
             const icone = data.tipo === "pasta" ? "fa-folder" : "fa-note-sticky";
 
             div.innerHTML = `
-                <i class="fa-solid ${icone}" style="color: ${cor};"></i>
-                <div style="flex:1; overflow:hidden;">
-                    <span style="font-size:13.5px; font-weight:500;">${data.nome}</span>
+                <i class="fa-solid ${icone}" style="color: ${cor}; width: 20px; text-align: center;"></i>
+                <div style="flex:1; overflow:hidden; display: flex; align-items: center;">
+                    <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13.5px; font-weight: 500;">
+                        ${data.nome}
+                    </span>
                 </div>
                 <i class="fa-solid fa-gear btn-edit-item-local" 
                    onclick="event.stopPropagation(); window.abrirGestaoPinInterna('${idDocFirebase}', '${data.nome.replace(/'/g, "\\'")}')">
                 </i>
             `;
 
-            div.onclick = () => { if (!modoEdicaoPins) viajarParaItem(data, db, auth); };
-            listaPins.appendChild(div);
+            // Lógica de Clique (Teleporte)
+            div.onclick = () => { 
+                if (!modoEdicaoPins) {
+                    window.itemSelecionadoId = itemIdReal;
+                    viajarParaItem(data, db, auth); 
+                    
+                    // Feedback visual imediato
+                    document.querySelectorAll('#lista-pins .item-local').forEach(el => el.classList.remove('active'));
+                    div.classList.add('active');
+                }
+            };
+
+            fragmento.appendChild(div);
         });
+
+        // Injeção final no DOM
+        listaPins.innerHTML = "";
+        listaPins.appendChild(fragmento);
     });
 
     /**
-     * 2. GESTÃO DO POPUP (LIMPEZA DE CAMPOS)
+     * 3. GESTÃO DO POPUP (CUSTOMIZADO PARA PINS)
+     * Reutiliza o popup de gestão mas esconde o que não faz sentido para atalhos.
      */
     window.abrirGestaoPinInterna = (docId, nome) => {
         pinAtualParaGestao = docId;
         const overlay = document.getElementById('popup-gestao-item-overlay');
 
-        // Referências de elementos para esconder/mostrar
-        const areaNome = document.getElementById('input-gestao-nome').parentElement;
+        // Referências para esconder/mostrar campos
+        const inputNomeArea = document.getElementById('input-gestao-nome').parentElement;
         const btnMover = document.getElementById('btn-gestao-mover');
         const btnOcultar = document.getElementById('btn-gestao-ocultar');
         const btnSalvar = document.getElementById('btn-salvar-gestao-item');
-        const btnRemover = document.getElementById('btn-gestao-pin');
+        const btnRemover = document.getElementById('btn-gestao-pin'); // Usamos este como "Desafixar"
         const btnOrdenar = document.getElementById('btn-gestao-ordenar');
 
-        // Configurar Título e Esconder o que não é PIN
-        document.getElementById('gestao-item-titulo').innerText = "Gerir Atalho (PIN)";
-        if (areaNome) areaNome.style.display = 'none';
+        // Layout específico para Pin
+        document.getElementById('gestao-item-titulo').innerText = "Gerir Atalho";
+        if (inputNomeArea) inputNomeArea.style.display = 'none';
         if (btnMover) btnMover.style.display = 'none';
         if (btnOcultar) btnOcultar.style.display = 'none';
         if (btnSalvar) btnSalvar.style.display = 'none';
 
-        // Configurar Botão Remover
+        // Configura botão de remoção (Desafixar)
         btnRemover.style.display = 'flex';
-        btnRemover.innerHTML = '<i class="fa-solid fa-thumbtack-slash"></i> Remover Pin';
+        btnRemover.innerHTML = '<i class="fa-solid fa-thumbtack-slash"></i> Desafixar';
         btnRemover.classList.add('pin-ativo');
 
         btnRemover.onclick = async (e) => {
@@ -91,27 +131,27 @@ export function inicializarLeituraPins(db, auth) {
             resetPopupLayout();
         };
 
-        // Configurar Botão Ordenar
+        // Configura botão de ordenação (Setas)
         btnOrdenar.onclick = (e) => {
             e.stopPropagation();
             overlay.classList.remove('active');
-            abrirOrdenacaoPins(db, auth);
+            abrirOrdenacaoPins(db, auth); // Motor interno de ordenação de atalhos
         };
 
         overlay.classList.add('active');
 
-        // FUNÇÃO DE RESET: Volta a mostrar tudo para quando o utilizador abrir o Local/Share
+        // RESET: Volta a mostrar tudo para quando o utilizador abrir o Local/Share
         const resetPopupLayout = () => {
-            if (areaNome) areaNome.style.display = 'block';
+            if (inputNomeArea) inputNomeArea.style.display = 'block';
             if (btnMover) btnMover.style.display = 'flex';
             if (btnOcultar) btnOcultar.style.display = 'flex';
             if (btnSalvar) btnSalvar.style.display = 'block';
             btnRemover.classList.remove('pin-ativo');
-            btnRemover.innerHTML = '<i class="fa-solid fa-thumbtack"></i> Fixar Pin';
+            btnRemover.innerHTML = '<i class="fa-solid fa-thumbtack"></i> Pin';
         };
 
-        // Reset ao fechar no X
-        const btnX = overlay.querySelector('.fa-xmark').parentElement;
+        // Escuta o fecho para resetar
+        const btnX = overlay.querySelector('.popup-header button');
         btnX.onclick = () => { overlay.classList.remove('active'); resetPopupLayout(); };
     };
 }
