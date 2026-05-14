@@ -1,3 +1,5 @@
+// components/ui/mobile-bottom-sheet.js
+
 /**
  * GESTOR DE BOTTOM SHEET MOBILE (COLUNA DA DIREITA)
  * Controla o surgimento, fecho e o arrasto (resize) do painel lateral em telemóveis.
