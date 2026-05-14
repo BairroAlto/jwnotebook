@@ -371,33 +371,28 @@ document.addEventListener('click', async (e) => {
     // 2. Clicou no botão "Sim, Ocultar" (Confirmação Final)
     // Nota: Verifica se o ID no teu HTML é 'btn-confirmar-ocultar-final' ou 'btn-confirmar-ocultar-item'
     if (e.target.id === 'btn-confirmar-ocultar-final' || e.target.id === 'btn-confirmar-ocultar-item') {
-        const db = getFirestore();
-        const docRef = doc(db, "Local", itemAtual.id);
+    const db = getFirestore();
+    const docRef = doc(db, "Local", itemAtual.id);
 
-        try {
-            console.log("🚀 A executar ocultação definitiva no Firebase...");
-            
-            await updateDoc(docRef, {
-                estado: "desativa",
-                timedelete: new Date().toISOString() // O teu novo campo
-            });
+    try {
+        console.log("🚀 A executar ocultação no Firebase...");
+        
+        // 1. Grava o estado desativo e o timestamp de lixeira
+        await updateDoc(docRef, {
+            estado: "desativa",
+            timedelete: new Date().toISOString()
+        });
 
-            console.log("✅ Nota ocultada.");
-            
-            // Fechar todos os popups
-            document.querySelectorAll('.popup-overlay').forEach(p => p.classList.remove('active'));
-            
-            // Opcional: Recarregar a página ou a lista para refletir a mudança
-            if (typeof inicializarLeituraLocal === 'function') {
-                // Se tiveres uma função de refresh, chama-a aqui, senão usa o reload
-                location.reload(); 
-            }
+        console.log("✅ Nota ocultada com sucesso. Reiniciando sistema...");
+        
+        // 2. FORÇAR REFRESH DA PÁGINA
+        location.reload(); 
 
-        } catch (err) {
-            console.error("Erro ao ocultar nota:", err);
-            alert("Erro de permissão ao ocultar.");
-        }
+    } catch (err) {
+        console.error("Erro ao ocultar nota:", err);
+        alert("Erro ao processar. Verifica a tua ligação.");
     }
+}
 
     // 3. Clicou no botão "Cancelar" da ocultação
     if (e.target.id === 'btn-cancelar-ocultar-final' || e.target.id === 'btn-cancelar-ocultar-item') {
