@@ -24,15 +24,16 @@ export function criarCitacaoBiblica(caixa, onApagar, onMover, onAddAbaixo, onAbr
     `;
 
     // --- NOVA LÓGICA DO CLIQUE ---
-    const btnLupa = header.querySelector('.btn-lupa');
-    btnLupa.onclick = (e) => {
-        e.stopPropagation();
-        if (typeof window.abrirSeletorBibliaGlobal === 'function') {
-            window.abrirSeletorBibliaGlobal(caixa);
-        } else {
-            console.error("❌ Erro: A ponte global 'abrirSeletorBibliaGlobal' não foi inicializada.");
-        }
-    };
+const btnLupa = header.querySelector('.btn-lupa');
+btnLupa.onclick = (e) => {
+    e.stopPropagation();
+    // Verifica se a ponte existe antes de chamar para não dar erro fatal
+    if (typeof window.abrirSeletorBibliaGlobal === 'function') {
+        window.abrirSeletorBibliaGlobal(caixa);
+    } else {
+        console.error("❌ Erro: A ponte global 'abrirSeletorBibliaGlobal' não foi inicializada no editor.js.");
+    }
+};
 
 
    // ... (o resto da função renderContent mantém-se igual) ...
