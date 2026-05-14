@@ -174,24 +174,82 @@ async function fecharAba(idAlvo, ondeAba) {
 
 async function carregarNotasParaBrowser() {
     const container = document.getElementById('arvore-browser');
+    const labelInfo = document.getElementById('browser-label-info');
+    
+    if (!container) return;
+
     container.innerHTML = `<div style="text-align:center; padding:30px;"><i class="fa-solid fa-circle-notch fa-spin"></i></div>`;
+    
+    if (labelInfo) {
+        labelInfo.innerText = `Seleciona uma nota ${abaBrowserAtiva}`;
+    }
+
     try {
         const uid = authRef.currentUser.uid;
-        let q = (abaBrowserAtiva === "Local") 
-            ? query(collection(dbRef, "Local"), where("userId", "==", uid), where("tipo", "==", "nota"))
-            : query(collection(dbRef, "Share"), and(where("estado", "==", "ativo"), or(where("userId", "==", uid), where("aprovado", "array-contains", uid))));
+        let q;
+
+        // --- FILTRAGEM POR ABA SELECIONADA ---
+        if (abaBrowserAtiva === "Local") {
+            // Apenas notas do utilizador, que sejam do tipo nota e estejam ATIVAS
+            q = query(
+                collection(dbRef, "Local"), 
+                where("userId", "==", uid), 
+                where("tipo", "==", "nota"),
+                where("estado", "==", "ativa") // 🛡️ Filtro Anti-Lixeira
+            );
+        } else {
+            // Notas partilhadas onde o user é dono ou colaborador e estejam ATIVAS
+            q = query(
+                collection(dbRef, "Share"), 
+                and(
+                    where("estado", "==", "ativo"), // 🛡️ Filtro Anti-Lixeira
+                    where("tipo", "==", "nota"),
+                    or(
+                        where("userId", "==", uid), 
+                        where("aprovado", "array-contains", uid)
+                    )
+                )
+            );
+        }
 
         const snap = await getDocs(q);
         container.innerHTML = "";
-        snap.forEach(d => {
-            if (d.id === notaMaeIdLocal) return;
+
+        if (snap.empty) {
+            container.innerHTML = `<p style="text-align:center; color:gray; padding:30px; font-size:11px;">Nenhuma nota encontrada nesta categoria.</p>`;
+            return;
+        }
+
+        const fragmento = document.createDocumentFragment();
+
+        snap.forEach(docSnap => {
+            const data = docSnap.data();
+            
+            // Ignorar a nota que já está aberta no editor principal
+            if (docSnap.id === notaMaeIdLocal) return;
+
             const item = document.createElement('div');
             item.className = "menu-item-list";
-            item.innerHTML = `<i class="fa-solid fa-file-lines" style="color:${abaBrowserAtiva === 'Local' ? '#6366f1' : '#ef4444'}; margin-right:10px;"></i><span>${d.data().nome}</span>`;
-            item.onclick = () => adicionarAba(d.id, abaBrowserAtiva.toLowerCase());
-            container.appendChild(item);
+            
+            const corNota = (abaBrowserAtiva === 'Local') ? '#6366f1' : '#ef4444';
+
+            item.innerHTML = `
+                <i class="fa-solid fa-file-lines" style="color:${corNota}; margin-right:12px; font-size:13px;"></i>
+                <span style="font-size:13px; color:white; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                    ${data.nome}
+                </span>
+            `;
+
+            item.onclick = () => adicionarAba(docSnap.id, abaBrowserAtiva.toLowerCase());
+            fragmento.appendChild(item);
         });
-    } catch (e) { container.innerHTML = "Erro ao carregar."; }
+
+        container.appendChild(fragmento);
+
+    } catch (e) { 
+        console.error("Erro ao carregar browser de notas:", e);
+        container.innerHTML = `<p style="color:#ef4444; font-size:10px; text-align:center; padding:20px;">Erro ao aceder à base de dados.</p>`;
+    }
 }
 
 async function abrirPopupEscolha() {
