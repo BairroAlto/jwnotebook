@@ -1,7 +1,7 @@
 // components/direita/biblia-brain.js
 import { query, collection, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { VERSOES_BIBLIA } from '../lists/repositorio-data.js';
-import { acaoBotaoTextoBiblia, renderizarPuzzleBiblia, limparPuzzleBiblia } from './biblia-puzzle.js';
+import { renderizarPuzzleBiblia, limparPuzzleBiblia } from './biblia-puzzle.js';
 import { renderizarFontesBiblia, limparFontesBiblia, abrirPopupFontesBiblia } from './biblia-fontes.js';
 import { renderizarDossieBiblia, limparDossieBiblia, abrirPopupMica, abrirPopupRefApta } from './biblia-dossie.js';
 import { abrirPopupMarcadores } from './biblia-marcador.js';
@@ -79,24 +79,21 @@ const atualizarBotaoAcao = (dentroDeMica = false) => {
     const btnStyle = `width: 28px; height: 28px; border-radius: 4px; border: none; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 12px; transition: 0.2s;`;
 
     if (abaAtivaBiblia === 'puzzle') {
-        // DISPARA O EVENTO 'bible:adicionarTexto'
+        // Sem onclick. O index.html deteta o ícone fa-plus.
         btnCont.innerHTML = `<button style="${btnStyle} background:#818cf8;" title="Adicionar Texto"><i class="fa-solid fa-plus"></i></button>`;
-        btnCont.querySelector('button').onclick = () => {
-            window.dispatchEvent(new CustomEvent('bible:adicionarTexto'));
-        };
     } 
     else if (abaAtivaBiblia === 'links') {
         btnCont.innerHTML = `<button style="${btnStyle} background:#34d399;" title="Adicionar Fontes"><i class="fa-solid fa-link"></i></button>`;
-        btnCont.querySelector('button').onclick = () => abrirPopupFontesBiblia();
     } 
     else if (abaAtivaBiblia === 'dossie') {
         const cor = dentroDeMica ? "#10b981" : "#f59e0b";
         const icon = dentroDeMica ? "fa-plus" : "fa-folder-plus";
         btnCont.innerHTML = `<button style="${btnStyle} background:${cor};"><i class="fa-solid ${icon}"></i></button>`;
         
+        // Mantemos os onclicks que abrem popups simples, pois não conflituam com o Puzzle
         btnCont.querySelector('button').onclick = () => {
-            if (dentroDeMica) abrirPopupRefApta(db);
-            else abrirPopupMica(db, auth);
+            if (dentroDeMica) abrirPopupRefApta(currentDb);
+            else abrirPopupMica(currentDb, currentAuth);
         };
     }
     else {
