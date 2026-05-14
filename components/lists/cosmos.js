@@ -12,6 +12,8 @@ let modoPesquisaAtivo = false;
 let filtroPesquisa = "";
 let temaSendoEditadoId = null;
 let temaSelecionadoId = null;
+let cacheTemasCosmos = [];
+let unsubCosmos = null; 
 
 const ICON_LIST = {
     "Animais": ["dragon", "cat", "dog", "fish", "crow", "hippo", "horse", "frog", "spider"],
@@ -37,8 +39,10 @@ export function renderizarNavegacaoCosmos() {
     const container = document.getElementById('lista-lists');
     if (!container) return;
 
+    // Guardar estado para o Memory Bridge
     if (!window.htmlListaAntiga) window.htmlListaAntiga = container.innerHTML;
 
+    // 1. DESENHAR A ESTRUTURA BASE (Uma única vez)
     container.innerHTML = `
         <div style="display: flex; flex-direction: column; border-bottom: 1px solid var(--border-color); background: var(--bg-panel); position: sticky; top: 0; z-index: 5;">
             <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px;">
@@ -58,6 +62,7 @@ export function renderizarNavegacaoCosmos() {
                 </div>
             </div>
             
+            <!-- A BARRA DE PESQUISA (O display depende da variável) -->
             <div id="search-bar-container" style="display: ${modoPesquisaAtivo ? 'block' : 'none'}; padding: 0 12px 12px 12px;">
                 <input type="text" id="input-search-cosmos" placeholder="Procurar tema..." value="${filtroPesquisa}" style="width: 100%; padding: 8px; font-size: 12px; background: var(--bg-body); border: 1px solid var(--primary); border-radius: 4px; color: white; outline: none;">
             </div>
@@ -65,41 +70,62 @@ export function renderizarNavegacaoCosmos() {
         <div id="cosmos-items-list" style="flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 15px;"></div>
     `;
 
- document.getElementById('btn-cosmos-voltar').onclick = () => {
-    if (window.htmlListaAntiga) {
+    // 2. ATRIBUIR EVENTOS AOS BOTÕES
+    
+    // Botão Voltar
+    document.getElementById('btn-cosmos-voltar').onclick = () => {
         container.innerHTML = window.htmlListaAntiga;
         window.htmlListaAntiga = null;
-    } else {
-        window.renderizarMenuPrincipalLists();
-    }
-};
+    };
 
+    // --- LÓGICA DA LUPA (CORRIGIDA) ---
+    const btnSearch = document.getElementById('btn-search-cosmos');
+    const searchBar = document.getElementById('search-bar-container');
+    const inputSearch = document.getElementById('input-search-cosmos');
+
+    btnSearch.onclick = (e) => {
+        e.stopPropagation();
+        // Inverte o estado
+        modoPesquisaAtivo = !modoPesquisaAtivo;
+
+        if (modoPesquisaAtivo) {
+            searchBar.style.display = 'block';
+            btnSearch.style.background = 'var(--primary)';
+            setTimeout(() => inputSearch.focus(), 50); // Foco imediato
+        } else {
+            searchBar.style.display = 'none';
+            btnSearch.style.background = 'rgba(255,255,255,0.05)';
+            filtroPesquisa = ""; // Limpa a busca ao fechar
+            inputSearch.value = "";
+            renderizarListaFiltrada(); // Volta a mostrar todos os itens
+        }
+    };
+
+    // Evento de escrita na pesquisa
+    inputSearch.oninput = (e) => {
+        filtroPesquisa = e.target.value.toLowerCase();
+        renderizarListaFiltrada(); // Filtra a cache local
+    };
+
+    // Outros botões (+ e Lápis)
     document.getElementById('btn-add-cosmos-tema').onclick = () => abrirPopupNovoTema();
     
     document.getElementById('btn-edit-mode-cosmos').onclick = () => {
         modoEdicaoAtivo = !modoEdicaoAtivo;
-        renderizarNavegacaoCosmos();
+        renderizarNavegacaoCosmos(); // Este redesenha para mostrar/esconder os ícones de edição
     };
 
-    document.getElementById('btn-search-cosmos').onclick = () => {
-        modoPesquisaAtivo = !modoPesquisaAtivo;
-        if(!modoPesquisaAtivo) filtroPesquisa = ""; 
-        renderizarNavegacaoCosmos();
-        if(modoPesquisaAtivo) document.getElementById('input-search-cosmos').focus();
-    };
-
-    if(modoPesquisaAtivo) {
-        document.getElementById('input-search-cosmos').oninput = (e) => {
-            filtroPesquisa = e.target.value.toLowerCase();
-            escutarTemasCosmos(); 
-        };
-    }
-
+    // 3. INICIAR ESCUTA DO FIREBASE (Carrega a cache e desenha a lista)
     escutarTemasCosmos();
 }
 
+ 
+
 function escutarTemasCosmos() {
     if (!authRef.currentUser) return;
+
+    // 1. Limpar ouvinte anterior para evitar fugas de memória
+    if (unsubCosmos) unsubCosmos();
 
     const q = query(
         collection(dbRef, "Cosmo"), 
@@ -108,79 +134,23 @@ function escutarTemasCosmos() {
         where("estado", "==", "ativo")
     );
 
-    onSnapshot(q, (snapshot) => {
-        const listDiv = document.getElementById('cosmos-items-list');
-        if (!listDiv) return;
-        listDiv.innerHTML = "";
-
-        const grupos = {};
-        snapshot.forEach(docSnap => {
-            const data = docSnap.data();
-            const docIdFirebase = docSnap.id; 
-            if (filtroPesquisa && !data.nome.toLowerCase().includes(filtroPesquisa)) return;
-            const cat = data.categoria || "SEM CATEGORIA";
-            if (!grupos[cat]) grupos[cat] = [];
-            grupos[cat].push({ docIdFirebase, ...data });
-        });
-
-        const nomesCategorias = Object.keys(grupos).sort((a, b) => {
-            if (a === "SEM CATEGORIA") return 1;
-            if (b === "SEM CATEGORIA") return -1;
-            return a.localeCompare(b);
-        });
-
-        nomesCategorias.forEach(catNome => {
-            const seccao = document.createElement('div');
-            seccao.innerHTML = `<p style="font-size: 10px; color: var(--primary); font-weight: 800; text-transform: uppercase; margin-bottom: 8px; padding-left: 5px;">${catNome}</p>`;
-            
-            const containerItens = document.createElement('div');
-            containerItens.style.cssText = "display: flex; flex-direction: column; gap: 4px;";
-
-            grupos[catNome].forEach(itemData => {
-                // 1. VERIFICAR SE ESTE ITEM ESTÁ ATIVO
-                const isAtivo = itemData.id === temaSelecionadoId;
-
-                const item = document.createElement('div');
-                item.className = `menu-item-list ${isAtivo ? 'active' : ''}`;
-                item.style.justifyContent = "space-between";
-
-                // 2. APLICAR ESTILO VISUAL DE SELEÇÃO
-                if (isAtivo) {
-                    item.style.background = "rgba(99, 102, 241, 0.1)";
-                    item.style.borderLeft = "3px solid var(--primary)";
-                }
-
-                item.innerHTML = `
-                    <div style="display:flex; align-items:center; gap:12px; overflow: hidden; pointer-events: none;">
-                        <i class="fa-solid fa-${itemData.simbolo}" style="color: ${isAtivo ? 'white' : 'var(--text-main)'}; font-size: 14px; width: 20px; text-align: center;"></i>
-                        <span style="font-size: 13.5px; font-weight: ${isAtivo ? '700' : '500'}; color: ${isAtivo ? 'white' : 'inherit'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                            ${itemData.nome}
-                        </span>
-                    </div>
-                    ${modoEdicaoAtivo ? `<i class="fa-solid fa-pen-to-square" style="font-size: 12px; color: var(--primary); cursor: pointer; padding: 5px;"></i>` : ''}
-                `;
-
-                item.onclick = () => {
-                    if (modoEdicaoAtivo) {
-                        abrirPopupEdicao(itemData.docIdFirebase, itemData);
-                    } else {
-                        // 3. ATUALIZAR O ID SELECIONADO E RE-RENDERIZAR
-                        temaSelecionadoId = itemData.id;
-                        escutarTemasCosmos(); 
-                        abrirTemaNoBrain(itemData, dbRef, authRef);
-                    }
-                };
-
-                containerItens.appendChild(item);
-            });
-
-            seccao.appendChild(containerItens);
-            listDiv.appendChild(seccao);
-        });
+    // 2. Abrir o Snapshot (Escuta Ativa)
+    unsubCosmos = onSnapshot(q, (snapshot) => {
+        console.log("📡 [COSMOS] Sincronizando cache com Firebase...");
         
-        if (snapshot.empty) {
-            listDiv.innerHTML = `<p style="text-align:center; color:var(--text-muted); font-size:12px; margin-top:40px;">Cosmos vazio.</p>`;
-        }
+        cacheTemasCosmos = [];
+        snapshot.forEach(docSnap => {
+            cacheTemasCosmos.push({ 
+                docIdFirebase: docSnap.id, 
+                ...docSnap.data() 
+            });
+        });
+
+        // 3. Sempre que os dados mudam no servidor, redesenhamos a lista
+        renderizarListaFiltrada();
+        
+    }, (error) => {
+        console.error("❌ Erro na escuta do Cosmos:", error);
     });
 }
 
@@ -461,6 +431,81 @@ function perguntarConfirmacaoOcultar() {
         btnSim.onclick = () => fechar(true);
         btnNao.onclick = () => fechar(false);
     });
+}
+
+function renderizarListaFiltrada() {
+    const listDiv = document.getElementById('cosmos-items-list');
+    if (!listDiv) return;
+
+    listDiv.innerHTML = "";
+    const grupos = {};
+
+    // 1. FILTRAGEM NA MEMÓRIA (INSTANTÂNEA)
+    const itensFiltrados = cacheTemasCosmos.filter(item => {
+        if (!filtroPesquisa) return true;
+        const busca = filtroPesquisa.toLowerCase();
+        return item.nome.toLowerCase().includes(busca) || 
+               (item.categoria && item.categoria.toLowerCase().includes(busca));
+    });
+
+    // 2. AGRUPAMENTO POR CATEGORIAS
+    itensFiltrados.forEach(item => {
+        const cat = item.categoria || "SEM CATEGORIA";
+        if (!grupos[cat]) grupos[cat] = [];
+        grupos[cat].push(item);
+    });
+
+    // 3. CONSTRUÇÃO DO HTML
+    const nomesCategorias = Object.keys(grupos).sort((a, b) => {
+        if (a === "SEM CATEGORIA") return 1;
+        if (b === "SEM CATEGORIA") return -1;
+        return a.localeCompare(b);
+    });
+
+    nomesCategorias.forEach(catNome => {
+        const seccao = document.createElement('div');
+        seccao.style.marginBottom = "15px";
+        seccao.innerHTML = `<p style="font-size: 10px; color: var(--primary); font-weight: 800; text-transform: uppercase; margin-bottom: 8px; padding-left: 5px; opacity: 0.7;">${catNome}</p>`;
+        
+        const containerItens = document.createElement('div');
+        containerItens.style.cssText = "display: flex; flex-direction: column; gap: 4px;";
+
+        grupos[catNome].forEach(itemData => {
+            const isAtivo = itemData.id === temaSelecionadoId;
+            const item = document.createElement('div');
+            item.className = `menu-item-list ${isAtivo ? 'active' : ''}`;
+            
+            item.innerHTML = `
+                <div style="display:flex; align-items:center; gap:12px; overflow: hidden; pointer-events: none; flex: 1;">
+                    <i class="fa-solid fa-${itemData.simbolo}" style="color: ${isAtivo ? 'white' : 'var(--text-main)'}; font-size: 14px; width: 20px; text-align: center;"></i>
+                    <span style="font-size: 13.5px; font-weight: ${isAtivo ? '700' : '500'}; color: ${isAtivo ? 'white' : 'inherit'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        ${itemData.nome}
+                    </span>
+                </div>
+                ${modoEdicaoAtivo ? `<i class="fa-solid fa-pen-to-square btn-edit-trigger" style="font-size: 12px; color: var(--primary); cursor: pointer; padding: 5px;"></i>` : ''}
+            `;
+
+            item.onclick = (e) => {
+                if (e.target.classList.contains('btn-edit-trigger')) {
+                    abrirPopupEdicao(itemData.docIdFirebase, itemData);
+                } else {
+                    temaSelecionadoId = itemData.id;
+                    renderizarListaFiltrada(); // Destaque visual imediato
+                    abrirTemaNoBrain(itemData, dbRef, authRef);
+                }
+            };
+
+            containerItens.appendChild(item);
+        });
+
+        seccao.appendChild(containerItens);
+        listDiv.appendChild(seccao);
+    });
+
+    // Estado Vazio
+    if (itensFiltrados.length === 0) {
+        listDiv.innerHTML = `<p style="text-align:center; color:var(--text-muted); font-size:12px; margin-top:40px; opacity:0.5;">Nenhum tema encontrado para "${filtroPesquisa}".</p>`;
+    }
 }
 
 /**
