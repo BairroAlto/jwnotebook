@@ -8,8 +8,11 @@ export const MobileBottomSheet = {
      * Inicializa os elementos e os ouvintes de eventos.
      * Deve ser chamado no index.html após o carregamento dos componentes.
      */
-    iniciar: () => {
-        const rightCol = document.getElementById('area-direita');
+   iniciar: () => {
+    // SÓ EXECUTA A INJEÇÃO SE FOR REALMENTE MOBILE
+    if (window.innerWidth > 768) return; 
+
+    const rightCol = document.getElementById('area-direita');
         const overlay = document.getElementById('mobile-overlay');
         
         if (!rightCol || !overlay) {
