@@ -190,9 +190,13 @@ function abrirPopupEdicao(docId, data) {
     temaSendoEditadoId = docId;
     simboloSelecionado = data.simbolo || "dragon";
     document.querySelector('#popup-tema-cosmos-overlay h3').innerText = "Editar Tema";
-    document.getElementById('cosmos-tema-nome').value = data.nome;
+    const btnGravar = document.getElementById('btn-gravar-cosmos');
+    btnGravar.innerText = "Atualizar Tema";
+    const btnOcultar = document.getElementById('btn-ocultar-cosmos');
+    if (btnOcultar) btnOcultar.style.display = "block";
+    document.getElementById('cosmos-tema-nome').value = data.nome || "";
     document.getElementById('cosmos-tema-desc').value = data.descricao || "";
-    renderizarIconesSeletor();
+    renderizarIconesSeletor(); 
     carregarCategoriasDropdown(data.categoria);
     document.getElementById('popup-tema-cosmos-overlay').classList.add('active');
 }
@@ -201,74 +205,151 @@ function abrirPopupNovoTema() {
     temaSendoEditadoId = null;
     simboloSelecionado = "dragon";
     document.querySelector('#popup-tema-cosmos-overlay h3').innerText = "Novo Tema Cosmos";
+    const btnGravar = document.getElementById('btn-gravar-cosmos');
+    btnGravar.innerText = "Criar Tema";
+    const btnOcultar = document.getElementById('btn-ocultar-cosmos');
+    if (btnOcultar) btnOcultar.style.display = "none";
     document.getElementById('cosmos-tema-nome').value = "";
     document.getElementById('cosmos-tema-desc').value = "";
     renderizarIconesSeletor();
-    carregarCategoriasDropdown();
-    document.getElementById('popup-tema-cosmos-overlay').classList.add('active');
+    carregarCategoriasDropdown(); // Sem passar argumento para não selecionar nenhuma
+    const overlay = document.getElementById('popup-tema-cosmos-overlay');
+    overlay.classList.add('active');
+    setTimeout(() => {
+        document.getElementById('cosmos-tema-nome').focus();
+    }, 100);
 }
 
 function configurarEventosPopups() {
+    // 1. EVENTOS DE FECHO / CANCELAR
     document.getElementById('btn-fechar-cosmos').onclick = () => document.getElementById('popup-tema-cosmos-overlay').classList.remove('active');
     document.getElementById('btn-cancelar-cat-x').onclick = () => document.getElementById('popup-categoria-cosmos-overlay').classList.remove('active');
+    
+    // Botão para abrir o sub-popup de criação de categoria
     document.getElementById('btn-abrir-criar-categoria').onclick = () => document.getElementById('popup-categoria-cosmos-overlay').classList.add('active');
 
-   document.getElementById('btn-gravar-cosmos').onclick = async () => {
-    const nome = document.getElementById('cosmos-tema-nome').value.trim();
-    const desc = document.getElementById('cosmos-tema-desc').value.trim();
-    const cat = document.getElementById('cosmos-tema-categoria').value;
-    if (!nome) return alert("Define um nome.");
+    // 2. LÓGICA DE OCULTAR TEMA (Lixeira / Reciclagem)
+   const btnOcultar = document.getElementById('btn-ocultar-cosmos');
+if (btnOcultar) {
+    btnOcultar.onclick = async () => {
+        if (!temaSendoEditadoId) return;
 
-    const dados = { 
-        nome, 
-        descricao: desc, 
-        categoria: cat, 
-        simbolo: simboloSelecionado, 
-        timestampUpdate: serverTimestamp() 
+        // --- SUBSTITUÍDO: Agora usa o Popup customizado ---
+        const confirmou = await perguntarConfirmacaoOcultar();
+        
+        if (confirmou) {
+            try {
+                const temaRef = doc(dbRef, "Cosmo", temaSendoEditadoId);
+                
+                await updateDoc(temaRef, { 
+                    estado: "desativo",
+                    timedelete: new Date().toISOString() 
+                });
+
+                console.log("✅ [COSMOS] Tema ocultado visualmente.");
+                
+                // Fecha o popup principal de edição
+                document.getElementById('popup-tema-cosmos-overlay').classList.remove('active');
+                
+            } catch (error) {
+                console.error("Erro ao ocultar:", error);
+                alert("Erro de permissão.");
+            }
+        }
+    };
+}
+
+    // 3. LÓGICA DE GRAVAR / ATUALIZAR TEMA
+    document.getElementById('btn-gravar-cosmos').onclick = async () => {
+        const btn = document.getElementById('btn-gravar-cosmos');
+        const nome = document.getElementById('cosmos-tema-nome').value.trim();
+        const desc = document.getElementById('cosmos-tema-desc').value.trim();
+        const cat = document.getElementById('cosmos-tema-categoria').value;
+
+        if (!nome) {
+            alert("O nome do tema é obrigatório.");
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i>';
+
+        try {
+            const dadosBase = { 
+                nome, 
+                descricao: desc, 
+                categoria: cat, 
+                simbolo: simboloSelecionado, 
+                timestampUpdate: serverTimestamp() 
+            };
+
+            if (temaSendoEditadoId) {
+                // --- MODO EDIÇÃO (updateDoc) ---
+                const temaRef = doc(dbRef, "Cosmo", temaSendoEditadoId);
+                const snapAtual = await getDoc(temaRef);
+                const idInternoUUID = snapAtual.data().id;
+
+                await updateDoc(temaRef, dadosBase);
+                
+                // Disparar sincronização em cascata (atualiza nomes nas notas que usam este tema)
+                if (typeof sincronizarNomeCosmosEmCascata === 'function') {
+                    sincronizarNomeCosmosEmCascata(idInternoUUID, nome);
+                }
+                console.log("✅ [COSMOS] Tema atualizado.");
+
+            } else {
+                // --- MODO CRIAÇÃO (addDoc) ---
+                await addDoc(collection(dbRef, "Cosmo"), { 
+                    ...dadosBase, 
+                    id: crypto.randomUUID(), 
+                    userId: authRef.currentUser.uid, 
+                    tipo: "cosmos", 
+                    estado: "ativo", 
+                    timestamp: serverTimestamp(),
+                    caixas: [],
+                    Puzzle: { quadros: [] },
+                    Dossie: { mica: {}, Apto: [] }
+                });
+                console.log("🌟 [COSMOS] Novo tema criado.");
+            }
+
+            document.getElementById('popup-tema-cosmos-overlay').classList.remove('active');
+
+        } catch (err) {
+            console.error("Erro ao gravar no Cosmos:", err);
+            alert("Erro ao salvar dados. Verifica a tua ligação.");
+        } finally {
+            btn.disabled = false;
+            btn.innerText = temaSendoEditadoId ? "Atualizar Tema" : "Criar Tema";
+        }
     };
 
-    if (temaSendoEditadoId) {
-        // --- 1. BUSCAR DADOS ATUAIS PARA TER O ID INTERNO (UUID) ---
-        const snapAtual = await getDoc(doc(dbRef, "Cosmo", temaSendoEditadoId));
-        const idInterno = snapAtual.data().id;
-
-        // --- 2. ATUALIZAR O DOCUMENTO DO TEMA ---
-        await updateDoc(doc(dbRef, "Cosmo", temaSendoEditadoId), dados);
-
-        // --- 3. DISPARAR A CASCATA (Sem travar a interface do utilizador) ---
-        sincronizarNomeCosmosEmCascata(idInterno, nome);
-
-    } else {
-        // Lógica de criação de novo tema (mantém igual)
-        await addDoc(collection(dbRef, "Cosmo"), { 
-            ...dados, 
-            id: crypto.randomUUID(), 
-            userId: authRef.currentUser.uid, 
-            tipo: "cosmos", 
-            estado: "ativo", 
-            timestamp: serverTimestamp(),
-            caixas: [],
-            Puzzle: { quadros: [] },
-            Dossie: { mica: {}, Apto: [] }
-        });
-    }
-    document.getElementById('popup-tema-cosmos-overlay').classList.remove('active');
-};
-
+    // 4. LÓGICA DE CRIAR NOVA CATEGORIA
     document.getElementById('btn-confirmar-categoria').onclick = async () => {
-        const nome = document.getElementById('cosmos-cat-nome').value.trim();
+        const input = document.getElementById('cosmos-cat-nome');
+        const nome = input.value.trim();
+
         if (!nome) return;
-        await addDoc(collection(dbRef, "Cosmo"), { 
-            id: crypto.randomUUID(), 
-            userId: authRef.currentUser.uid, 
-            nome, 
-            tipo: "categoria", 
-            estado: "ativo", 
-            timestamp: serverTimestamp() 
-        });
-        document.getElementById('popup-categoria-cosmos-overlay').classList.remove('active');
-        document.getElementById('cosmos-cat-nome').value = "";
-        carregarCategoriasDropdown();
+
+        try {
+            await addDoc(collection(dbRef, "Cosmo"), { 
+                id: crypto.randomUUID(), 
+                userId: authRef.currentUser.uid, 
+                nome, 
+                tipo: "categoria", 
+                estado: "ativo", 
+                timestamp: serverTimestamp() 
+            });
+            
+            document.getElementById('popup-categoria-cosmos-overlay').classList.remove('active');
+            input.value = "";
+            
+            // Recarregar a lista de categorias no dropdown do tema
+            carregarCategoriasDropdown(nome);
+
+        } catch (e) {
+            console.error("Erro ao criar categoria:", e);
+        }
     };
 }
 
@@ -354,6 +435,32 @@ async function sincronizarNomeCosmosEmCascata(temaIdInterno, novoNome) {
         }
     }
     console.log("🏁 [CASCATA] Sincronização concluída.");
+}
+
+/**
+ * PROMISE: Abre o popup de confirmação e aguarda a escolha do utilizador
+ */
+function perguntarConfirmacaoOcultar() {
+    return new Promise((resolve) => {
+        const overlay = document.getElementById('popup-confirmar-ocultar-cosmos');
+        const btnSim = document.getElementById('btn-confirmar-ocultar-cosmos-final');
+        const btnNao = document.getElementById('btn-cancelar-ocultar-cosmos');
+
+        if (!overlay) return resolve(false);
+
+        overlay.classList.add('active');
+
+        // Função para limpar eventos e fechar
+        const fechar = (resposta) => {
+            overlay.classList.remove('active');
+            btnSim.onclick = null;
+            btnNao.onclick = null;
+            resolve(resposta);
+        };
+
+        btnSim.onclick = () => fechar(true);
+        btnNao.onclick = () => fechar(false);
+    });
 }
 
 /**
