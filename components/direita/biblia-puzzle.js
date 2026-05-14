@@ -5,49 +5,52 @@ import { FOCOS_BASE, FOCOS_SUBNOTA, FOCOS_QUESTAO, FOCOS_RACIOCINIO } from '../e
 import { abrirNotaNoEditor } from '../editor/editor.js';
 import { SharedPuzzleUI } from './shared-puzzle-ui.js';
 
-
-// --- ESTADO LOCAL (PARIDADE TOTAL COM COSMOS) ---
+// --- ESTADO GLOBAL DO MÓDULO (Persiste entre aberturas de versículos) ---
 let unsubPuzzle = null;
-let unsubLocal = null; 
-let ferramentasMapaInterno = {}; 
+let unsubLocal = null;
 let dadosEstruturaVersiculo = null; 
-let estaAEscrever = false; 
-let ultimoJsonRenderizado = ""; 
-let infoVersiculoLocal = null; 
+let estaAEscrever = false;
+let ferramentasMapaInterno = {};
+let ultimoJsonRenderizado = "";
+let infoVersiculoAtivo = null;
+let currentUid = null;
+let currentDb = null;
+let currentAuth = null;
 
 /**
- * LIMPEZA
+ * LIMPEZA DE MEMÓRIA
  */
 export function limparPuzzleBiblia() {
-    if (unsubPuzzle) unsubPuzzle(); if (unsubLocal) unsubLocal();
-    ferramentasMapaInterno = {}; dadosEstruturaVersiculo = null;
-    estaAEscrever = false; ultimoJsonRenderizado = ""; infoVersiculoLocal = null;
+    if (unsubPuzzle) unsubPuzzle();
+    if (unsubLocal) unsubLocal();
+    dadosEstruturaVersiculo = null;
+    ultimoJsonRenderizado = "";
+    estaAEscrever = false;
 }
 
 /**
- * INICIALIZAÇÃO
+ * INICIALIZAÇÃO PRINCIPAL (Chamada ao abrir um versículo no Brain)
  */
 export async function renderizarPuzzleBiblia(info, container, db, auth) {
     const nomeCompleto = `${info.livro} ${info.cap}:${info.ver}`;
-    const uid = auth.currentUser.uid;
-    
-    // Reset de segurança
-    if (unsubPuzzle) unsubPuzzle();
-    if (unsubLocal) unsubLocal();
-    dadosEstruturaVersiculo = null; 
-    ultimoJsonRenderizado = "";
+    currentUid = auth.currentUser.uid;
+    currentDb = db;
+    currentAuth = auth;
+    infoVersiculoAtivo = info;
 
-    console.log(`%c📡 [BRAIN] Sintonizando: ${nomeCompleto}`, "color: #818cf8; font-weight: bold;");
+    limparPuzzleBiblia();
 
-    // --- ESCUTA 1: FERRAMENTAS NAS NOTAS ---
-    unsubLocal = onSnapshot(query(collection(db, "Local"), where("userId", "==", uid)), (snap) => {
+    console.log(`%c📡 [BRAIN-PUZZLE] Sintonizando: ${nomeCompleto}`, "color: #818cf8; font-weight: bold;");
+
+    // 1. ESCUTA: FERRAMENTAS NAS NOTAS (Espelhamento In Live)
+    unsubLocal = onSnapshot(query(collection(db, "Local"), where("userId", "==", currentUid)), (snap) => {
         ferramentasMapaInterno = {};
         snap.forEach(docN => {
-            const d = docN.data();
-            if (d.estado === "ativa" && d.caixas) {
-                d.caixas.forEach(c => {
+            const nData = docN.data();
+            if (nData.estado === "ativa" && nData.caixas) {
+                nData.caixas.forEach(c => {
                     if (c.estado === "ativa" && c.neuroniosBiba?.includes(nomeCompleto)) {
-                        ferramentasMapaInterno[c.id] = { ...c, notaDocId: docN.id, notaDadosCompletos: d };
+                        ferramentasMapaInterno[c.id] = { ...c, notaDocId: docN.id, notaDadosCompletos: nData };
                     }
                 });
             }
@@ -55,120 +58,114 @@ export async function renderizarPuzzleBiblia(info, container, db, auth) {
         rebuildPuzzleUI(container, db, auth);
     });
 
-    // --- ESCUTA 2: DOCUMENTO DO VERSÍCULO ---
-    const q = query(collection(db, "TextosBiblia"), where("userId", "==", uid), where("nome", "==", nomeCompleto));
+    // 2. ESCUTA: DOCUMENTO DO VERSÍCULO (Anotações do Brain)
+    const q = query(collection(db, "TextosBiblia"), where("userId", "==", currentUid), where("nome", "==", nomeCompleto));
     unsubPuzzle = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
         
         if (snapshot.empty) {
-            console.log("ℹ️ Versículo sem documento mestre. Pronto para criação.");
             container.innerHTML = `<p style="color:gray; text-align:center; margin-top:30px; font-size:11px; opacity:0.5;">Usa o + para anotar este versículo.</p>`;
-            // Guardamos apenas os metadados para saber que temos de usar addDoc
-            dadosEstruturaVersiculo = { isNew: true, nome: nomeCompleto, info: info };
+            dadosEstruturaVersiculo = { isNew: true, nome: nomeCompleto };
             return;
         }
 
         const docSnap = snapshot.docs[0];
-        if (docSnap.metadata.hasPendingWrites) return;
+        const dadosServidor = docSnap.data();
 
-        dadosEstruturaVersiculo = { ref: docSnap.ref, data: docSnap.data(), isNew: false };
+        // BLINDAGEM: Se o Firebase ainda está a processar a nossa escrita, ignoramos o sinal de volta
+        if (docSnap.metadata.hasPendingWrites) {
+            dadosEstruturaVersiculo = { ref: docSnap.ref, data: dadosServidor, isNew: false };
+            return; 
+        }
+
+        // FUSÃO DE SEGURANÇA: Se estivermos a escrever, não deixamos o servidor apagar o texto local
+        if (estaAEscrever && dadosEstruturaVersiculo) {
+            dadosServidor.Puzzle.quadros = dadosServidor.Puzzle.quadros.map(sq => {
+                const itemNaRam = dadosEstruturaVersiculo.data.Puzzle.quadros.find(l => l.id === sq.id);
+                return itemNaRam ? { ...sq, conteudo: itemNaRam.conteudo } : sq;
+            });
+        }
+
+        dadosEstruturaVersiculo = { ref: docSnap.ref, data: dadosServidor, isNew: false };
         rebuildPuzzleUI(container, db, auth);
     });
 
-    // --- LÓGICA DO BOTÃO + (GIRAR A CHAVE) ---
-const acaoBotaoPlusBiblia = async () => {
-    console.log("➕ [PUZZLE] Clique detetado.");
+    // 3. REGISTO DO EVENTO PLUS (Disparado pelo index.html)
+    window.removeEventListener('bible:adicionarTexto', window._bibliaHandlerPlus);
+    window._bibliaHandlerPlus = acaoBotaoPlusBiblia;
+    window.addEventListener('bible:adicionarTexto', (e) => {
+        // Passamos as referências do container para a função conseguir agir
+        window._bibliaHandlerPlus(container);
+    });
+}
 
-    // 1. Bloqueio de segurança para não disparar 10 vezes no mesmo milissegundo
-    if (estaAEscrever) {
-        console.warn("⏳ Aguarda... gravação em curso.");
-        return;
-    }
-    
+/**
+ * LÓGICA DE ADIÇÃO (UI OTIMISTA)
+ */
+async function acaoBotaoPlusBiblia(container) {
+    if (window._brainLock) return; // Trava contra cliques triplos
+    window._brainLock = true;
+    setTimeout(() => { window._brainLock = false; }, 500);
+
+    console.log("➕ [PUZZLE] Criando nova caixa...");
+
     estaAEscrever = true;
+    ultimoJsonRenderizado = ""; // Força o refresh visual
 
-    // 2. Preparar a nova caixa
     const novoId = crypto.randomUUID();
     const novoObjeto = { 
-        id: novoId, 
-        userId: uid, 
-        timestamp: new Date().toISOString(), 
-        estado: "ativo", 
-        tipo: "caixatexto", 
-        conteudo: "" 
+        id: novoId, userId: currentUid, timestamp: new Date().toISOString(), 
+        estado: "ativo", tipo: "caixatexto", conteudo: "" 
     };
 
     try {
-        // --- CENÁRIO A: VERSÍCULO NOVO ---
         if (!dadosEstruturaVersiculo || dadosEstruturaVersiculo.isNew) {
-            console.log("🌟 Criando documento mestre e primeira caixa...");
-            
-            // UI Otimista: Forçamos a visualização imediata
-            container.innerHTML = ""; // Limpa o aviso de "Vazio"
-            
+            // CRIAR PRIMEIRO REGISTO
             const novoDocData = {
-                  id: crypto.randomUUID(),
-                    userId: uid,
-                    nome: nomeCompleto,
-                    livro: info.livro,
-                    capitulo: info.cap,
-                    versiculo: info.ver,
-                    tipo: "textobiblico",
-                    estado: "ativo",
-                    timestamp: serverTimestamp(),
-                    Puzzle: { quadros: [novoObjeto] },
-                    caixas: [],
-                    Dossie: { mica: {}, Apto: [] }
+                id: crypto.randomUUID(), userId: currentUid, nome: infoVersiculoAtivo.livro + " " + infoVersiculoAtivo.cap + ":" + infoVersiculoAtivo.ver,
+                livro: infoVersiculoAtivo.livro, capitulo: infoVersiculoAtivo.cap, versiculo: infoVersiculoAtivo.ver,
+                tipo: "textobiblico", estado: "ativo", timestamp: serverTimestamp(),
+                Puzzle: { quadros: [novoObjeto] }, caixas: [], Dossie: { mica: {}, Apto: [] }
             };
 
-            // Guardamos na memória local ANTES de enviar para o Firebase
+            // Atualização Local (RAM)
             dadosEstruturaVersiculo = { data: novoDocData, isNew: false };
-            rebuildPuzzleUI(container, db, auth);
+            rebuildPuzzleUI(container, currentDb, currentAuth);
 
-            const docRef = await addDoc(collection(db, "TextosBiblia"), novoDocData);
-            dadosEstruturaVersiculo.ref = docRef; // Atualiza a referência para o próximo clique
-        } 
-        // --- CENÁRIO B: ADICIONAR A DOCUMENTO EXISTENTE ---
-        else {
-            console.log("📝 Adicionando mais uma caixa...");
-            
+            // Gravar no Firebase
+            const docRef = await addDoc(collection(currentDb, "TextosBiblia"), novoDocData);
+            dadosEstruturaVersiculo.ref = docRef;
+        } else {
+            // ATUALIZAR EXISTENTE
             const listaAtual = [...(dadosEstruturaVersiculo.data.Puzzle?.quadros || [])];
             listaAtual.push(novoObjeto);
-
-            // Atualização Local Imediata (RAM)
+            
             dadosEstruturaVersiculo.data.Puzzle.quadros = listaAtual;
-            ultimoJsonRenderizado = ""; // Reset do cache de renderização
-            rebuildPuzzleUI(container, db, auth);
+            rebuildPuzzleUI(container, currentDb, currentAuth);
 
-            // Envia para o Firebase em background
             await updateDoc(dadosEstruturaVersiculo.ref, { "Puzzle.quadros": listaAtual });
         }
 
-        // 3. Focar e Scroll
+        // Foco e Scroll
         setTimeout(() => {
             container.scrollTo({ top: 0, behavior: 'smooth' });
             const ta = container.querySelector(`textarea[data-id="${novoId}"]`);
             if (ta) ta.focus();
-            estaAEscrever = false; // Liberta para o próximo clique
-        }, 100);
+            estaAEscrever = false;
+        }, 150);
 
     } catch (e) {
-        console.error("❌ Erro no motor do Puzzle:", e);
+        console.error("Erro no motor:", e);
         estaAEscrever = false;
     }
-};
-
-    window.removeEventListener('bible:adicionarTexto', window._handlerBiblia);
-    window._handlerBiblia = acaoBotaoPlusBiblia;
-    window.addEventListener('bible:adicionarTexto', acaoBotaoPlusBiblia);
 }
 
 /**
- * RENDERIZAÇÃO
+ * MOTOR DE RENDERIZAÇÃO (ORDENAÇÃO PELO TOPO)
  */
 function rebuildPuzzleUI(container, db, auth) {
-    if (!dadosEstruturaVersiculo || !container) return;
+    if (!dadosEstruturaVersiculo || !container || !dadosEstruturaVersiculo.data) return;
 
-    const { data, ref } = dadosEstruturaVersiculo;
+    const data = dadosEstruturaVersiculo.data;
     const caixasVinculo = data.caixas || [];
     const quadrosManuais = data.Puzzle?.quadros || [];
 
@@ -178,40 +175,29 @@ function rebuildPuzzleUI(container, db, auth) {
         return vivo ? { ...vivo, timestamp: cv.timestamp || vivo.timestamp, _tipoItem: 'ferramenta' } : null;
     }).filter(f => f);
 
-    // --- MUDANÇA AQUI: Ordenar do mais recente para o mais antigo (b - a) ---
+    // ORDENAÇÃO: Mais recente no TOPO (b - a)
     const listaFinal = [
         ...quadrosManuais.map(q => ({ ...q, _tipoItem: 'quadro' })), 
         ...ferramentas
     ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
-    // Forçar limpeza de cache visual para garantir que a nova caixa aparece
-    if (estaAEscrever) {
-        ultimoJsonRenderizado = ""; 
-    }
 
     const assinatura = JSON.stringify(listaFinal.map(i => ({id: i.id, txt: i.conteudo})));
     if (assinatura === ultimoJsonRenderizado) return;
     ultimoJsonRenderizado = assinatura;
 
     container.innerHTML = "";
-    
     listaFinal.forEach((item, index) => {
         if (item._tipoItem === 'quadro') {
-            const el = SharedPuzzleUI.renderQuadroManual(item, index, listaFinal, ref, {
+            const el = SharedPuzzleUI.renderQuadroManual(item, index, listaFinal, dadosEstruturaVersiculo.ref, {
                 setEstaAEscrever: (val) => { estaAEscrever = val; },
-                moverItem: (idx, dir) => moverItemBiblia(idx, dir, listaFinal, ref),
-                apagarItem: (id) => executarApagarManual(id, ref)
+                moverItem: (idx, dir) => moverItemBiblia(idx, dir, listaFinal, dadosEstruturaVersiculo.ref),
+                apagarItem: (id) => executarApagarManual(id, dadosEstruturaVersiculo.ref)
             });
             container.appendChild(el);
         } else {
-            container.appendChild(renderFerramentaVinculadaUI(item, index, listaFinal, ref, db, auth));
+            container.appendChild(renderFerramentaVinculadaUI(item, index, listaFinal, dadosEstruturaVersiculo.ref, db, auth));
         }
     });
-
-    // UX Mobile: Se acabámos de criar uma caixa, garantir que o scroll vai para o topo
-    if (estaAEscrever) {
-        container.scrollTo({ top: 0, behavior: 'smooth' });
-    }
 }
 
 /**
@@ -227,8 +213,6 @@ function renderFerramentaVinculadaUI(c, index, todos, ref, db, auth) {
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background: ${corFoco}15;">
             <div style="font-size:10px; font-weight:800; color:${corFoco}; text-transform:uppercase; display:flex; align-items:center; gap:6px;"><i class="${config.icon}"></i> ${c.tipo}</div>
             <div style="display:flex; gap:14px; color:rgba(255,255,255,0.25); font-size:11px; align-items:center;">
-                <i class="fa-solid fa-chevron-up btn-up" style="cursor:pointer;"></i>
-                <i class="fa-solid fa-chevron-down btn-down" style="cursor:pointer;"></i>
                 <i class="fa-solid fa-arrow-up-right-from-square btn-viajar" style="cursor:pointer; color:#818cf8;"></i>
                 <i class="fa-solid fa-trash-can btn-remove" style="color:#f87171; cursor:pointer;"></i>
             </div>
@@ -238,39 +222,11 @@ function renderFerramentaVinculadaUI(c, index, todos, ref, db, auth) {
             <div style="opacity:0.9; white-space: pre-wrap;">${c.conteudo}</div>
         </div>`;
 
-    div.querySelector('.btn-remove').onclick = async () => {
-        if(await SharedPuzzleUI.confirmarAcao("Remover Vínculo?", "Desvincular este versículo em ambos os lados?")) {
-            const nomeVersiculo = `${infoVersiculoLocal.livro} ${infoVersiculoLocal.cap}:${infoVersiculoLocal.ver}`;
-            const snap = await getDoc(ref);
-            const novasCaixas = (snap.data().caixas || []).filter(item => (typeof item === 'object' ? item.id : item) !== c.id);
-            await updateDoc(ref, { caixas: novasCaixas });
-
-            const colecao = (c.notaDadosCompletos.onde === "share") ? "Share" : "Local";
-            const notaRef = doc(db, colecao, c.notaDocId);
-            const snapNota = await getDoc(notaRef);
-            if(snapNota.exists()){
-                const caixasNota = snapNota.data().caixas.map(cx => {
-                    if(cx.id === c.id) {
-                        cx.neuroniosBiba = (cx.neuroniosBiba || []).filter(v => v !== nomeVersiculo);
-                        const overlayTags = document.getElementById('popup-tags-overlay');
-                        if (overlayTags && overlayTags.classList.contains('active')) {
-                             import('../editor/modulos/tags/tags-ui.js').then(m => m.renderizarNeuroniosNoPopup(cx));
-                        }
-                    }
-                    return cx;
-                });
-                await updateDoc(notaRef, { caixas: caixasNota });
-            }
-            ultimoJsonRenderizado = ""; 
-        }
-    };
     div.querySelector('.btn-viajar').onclick = () => abrirNotaNoEditor(c.notaDocId, c.notaDadosCompletos, db, auth, c.id);
     return div;
 }
 
-/**
- * AUXILIARES
- */
+// --- AUXILIARES ---
 async function moverItemBiblia(index, direcao, todos, ref) {
     const novoIdx = index + direcao;
     if (novoIdx < 0 || novoIdx >= todos.length) return;
@@ -290,8 +246,3 @@ async function executarApagarManual(id, refDoc) {
     await updateDoc(refDoc, { "Puzzle.quadros": novos });
 }
 
-// Mantido para compatibilidade com o botão do cabeçalho original
-export async function acaoBotaoTextoBiblia(info, db, auth) {
-    // Dispara o evento específico da Bíblia
-    window.dispatchEvent(new CustomEvent('bible:adicionarTexto'));
-}
