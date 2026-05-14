@@ -3,6 +3,10 @@ import { getFirestore } from "https://www.gstatic.com/firebasejs/10.8.1/firebase
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { LockManager } from '../editor/modulos/lock-manager.js';
 
+let timeoutDestaque = null;
+
+window._syncLateralTimeout = null;
+
 /**
  * Controlador principal da navegação lateral esquerda.
  * Gere a troca de estados entre Local, Share, Pins e Lists.
@@ -106,23 +110,34 @@ function alternarDisplays(elementos, estado) {
  */
 window.sincronizarBarraLateralComNota = (idNota, dados, auth) => {
     const onde = (dados.onde || "local").toUpperCase();
-    const uid = auth.currentUser.uid;
+    const userActual = auth?.currentUser || window.auth?.currentUser;
+    
+    if (!userActual) return;
+    const uid = userActual.uid;
 
-    console.log(`🎯 [SYNC] Sincronizando lateral para: ${onde} | Nota: ${idNota}`);
+    console.log(`🎯 [SYNC] Iniciando sincronização: ${idNota} (${onde})`);
 
-    // 1. FORÇAR MUDANÇA DE ABA (LOCAL / SHARE / PINS)
+    // 1. FONTE DA VERDADE: Definir o ID selecionado globalmente de imediato
+    window.itemSelecionadoId = idNota;
+
+    // 2. MUDANÇA DE ABA (LOCAL / SHARE / PINS)
+    // Procuramos o botão da aba e clicamos apenas se ele não estiver ativo
     const botoesAba = document.querySelectorAll('#left-buttons button');
     botoesAba.forEach(btn => {
         if (btn.innerText.trim().toUpperCase() === onde) {
-            if (!btn.classList.contains('active')) btn.click();
+            if (!btn.classList.contains('active')) {
+                console.log(`📑 [SYNC] Trocando para aba ${onde}`);
+                btn.click();
+            }
         }
     });
 
-    // 2. VIAJAR PARA A PASTA (Se for diferente da atual)
+    // 3. NAVEGAÇÃO FÍSICA (VIAGEM ENTRE PASTAS)
     if (onde === "LOCAL") {
         const pastaDestino = dados.pastapai || "root";
         if (window.pastaAtual !== pastaDestino) {
             window.pastaAtual = pastaDestino;
+            // Reconstrói histórico para o botão "Voltar" funcionar
             window.historicoPastas = [{ id: "root", nome: "Local" }];
             if (pastaDestino !== "root") window.historicoPastas.push({ id: pastaDestino, nome: "Pasta" });
             
@@ -130,7 +145,8 @@ window.sincronizarBarraLateralComNota = (idNota, dados, auth) => {
                 window.carregarPastaLocalManual(pastaDestino);
             }
         }
-    } else if (onde === "SHARE") {
+    } 
+    else if (onde === "SHARE") {
         const pastaDestinoShare = dados[uid]?.pastapai || "home";
         if (window.pastaShareAtual !== pastaDestinoShare) {
             window.pastaShareAtual = pastaDestinoShare;
@@ -143,14 +159,38 @@ window.sincronizarBarraLateralComNota = (idNota, dados, auth) => {
         }
     }
 
-    // 3. REFORÇO DE HIGHLIGHT (Tenta agora e tenta daqui a pouco)
-    const aplicarDestaque = () => {
-        document.querySelectorAll('.item-local').forEach(el => {
-            const elId = el.getAttribute('data-id') || el.dataset.itemid;
-            el.classList.toggle('active', elId === idNota);
+    // 4. LÓGICA DE PINTURA BLINDADA (ESTABILIZADOR)
+    const aplicarDestaqueEstrito = () => {
+        // SEGURANÇA MÁXIMA: Se entretanto o utilizador já clicou noutra nota (ID mudou), 
+        // abortamos esta pintura para evitar o efeito de flutuação/vai-e-vem.
+        if (window.itemSelecionadoId !== idNota) {
+            console.log("🚫 [SYNC] Pintura cancelada: Utilizador já mudou de nota.");
+            return;
+        }
+
+        const itens = document.querySelectorAll('.item-local');
+        itens.forEach(el => {
+            // Verifica o ID no atributo data-id (Local/Share) ou itemid (Pins)
+            const elId = el.getAttribute('data-id') || el.dataset.itemid || el.dataset.id;
+            
+            if (elId === idNota) {
+                el.classList.add('active');
+                // UX: Garante que a nota selecionada está visível na barra lateral (Scroll auto)
+                el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            } else {
+                el.classList.remove('active');
+            }
         });
     };
 
-    aplicarDestaque();
-    setTimeout(aplicarDestaque, 500); // Segunda tentativa após o render do Firebase
+    // CANCELAR QUALQUER PINTURA PENDENTE (Evita conflito de cliques rápidos)
+    if (window._syncLateralTimeout) {
+        clearTimeout(window._syncLateralTimeout);
+    }
+
+    // Execução 1: Imediata (Para notas já visíveis na aba atual)
+    aplicarDestaqueEstrito();
+
+    // Execução 2: Atrasada (Para dar tempo ao Firebase de renderizar após mudar de aba/pasta)
+    window._syncLateralTimeout = setTimeout(aplicarDestaqueEstrito, 400);
 };
