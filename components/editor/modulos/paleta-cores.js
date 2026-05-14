@@ -85,6 +85,7 @@ function vincularCliquesAbas() {
 export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques") {
     caixaParaColorir = caixaAlvo;
 
+    // 1. GARANTIR INSTÂNCIAS (Fallback de segurança)
     if (!dbReferencia && window.db) { 
         dbReferencia = window.db; 
         uidLogado = window.auth.currentUser.uid; 
@@ -98,55 +99,105 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques") {
 
     if (!overlay) return;
 
-    // --- CORREÇÃO AQUI: Abre na aba que o utilizador estava ---
+    // 2. SINCRONIZAR ABAS (Memória visual)
     vincularCliquesAbas();
     const selectorAba = document.querySelector(`.tab-cor[data-target="${abaAlvo}"]`);
-    if (selectorAba) selectorAba.click();
+    if (selectorAba) {
+        // Simula o clique para ativar o CSS e esconder a aba oposta
+        document.querySelectorAll('.tab-cor').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.cor-tab-content').forEach(c => c.style.display = 'none');
+        selectorAba.classList.add('active');
+        document.getElementById(abaAlvo).style.display = 'block';
+    }
 
+    // 3. BOTÃO REMOVER (Borracha)
     if (btnRemover) {
         btnRemover.onclick = () => {
             caixaParaColorir.destaques = "";
             if (typeof callbackAtualizarEditor === 'function') callbackAtualizarEditor();
-            if (document.querySelector('.cosmos-brain-wrapper')) overlay.classList.remove('active');
-            else abrirPaleta(caixaParaColorir, "tab-destaques"); // Mantém na aba atual
+            // No Brain ou Mobile, fecha logo. No PC, mantém aberto.
+            if (document.querySelector('.cosmos-brain-wrapper') || window.innerWidth <= 768) {
+                overlay.classList.remove('active');
+            } else {
+                abrirPaleta(caixaParaColorir, "tab-destaques");
+            }
         };
     }
 
-    if (btnFechar) btnFechar.onclick = () => overlay.classList.remove('active');
+    // 4. BOTÃO FECHAR (X)
+    if (btnFechar) {
+        btnFechar.onclick = () => overlay.classList.remove('active');
+    }
 
-    // RENDER DESTAQUES
+    // 5. RENDERIZAÇÃO DA ABA DESTAQUES (CORES)
     if (listaDest) {
         listaDest.innerHTML = "";
         CORES_BASE.forEach(corObj => {
             const nomeReal = nomesCoresCustom[corObj.code] || corObj.name;
             const isSel = (caixaParaColorir.destaques === corObj.code);
+            
             const div = document.createElement("div");
             div.className = "card-cor-item";
-            div.style.cssText = `display:flex; flex-direction:column; background:${isSel ? 'rgba(255,255,255,0.08)' : 'var(--bg-panel)'}; border:2px solid ${isSel ? corObj.code : 'transparent'}; border-radius:6px; overflow:hidden; cursor:pointer;`;
-            
+            div.style.cssText = `display:flex; flex-direction:column; background:${isSel ? 'rgba(255,255,255,0.08)' : 'var(--bg-panel)'}; border:2px solid ${isSel ? corObj.code : 'transparent'}; border-radius:6px; overflow:hidden; cursor:pointer; transition:0.2s;`;
+
             div.innerHTML = `
                 <div style="height:8px; width:100%; background-color:${corObj.code};"></div>
-                <div class="click-area" style="display:flex; align-items:center; justify-content:space-between; padding:12px 10px;">
-                    <div style="display:flex; align-items:center; gap:10px; pointer-events:none;">
-                        <div style="width:18px; height:18px; border-radius:50%; background:${corObj.code}; display:flex; align-items:center; justify-content:center;">
+                <div class="click-area" style="display:flex; align-items:center; justify-content:space-between; padding:12px 10px; gap:10px;">
+                    <div style="display:flex; align-items:center; gap:10px; pointer-events:none; flex:1; overflow:hidden;">
+                        <div style="width:18px; height:18px; border-radius:50%; background:${corObj.code}; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
                             ${isSel ? '<i class="fa-solid fa-check" style="color:white; font-size:9px;"></i>' : ''}
                         </div>
-                        <span style="font-size:12px; color:${isSel ? 'white' : 'var(--text-muted)'};">${nomeReal}</span>
+                        <span style="font-size:12px; font-weight:600; color:${isSel ? 'white' : 'var(--text-muted)'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${nomeReal}</span>
                     </div>
+                    <i class="fa-solid fa-pen btn-edit-cor" style="font-size:11px; color:var(--primary); opacity:0.5; padding:5px;"></i>
                 </div>`;
 
-            div.querySelector('.click-area').onclick = () => {
+            // AÇÃO: Aplicar Cor
+            div.querySelector('.click-area').onclick = (e) => {
+                if (e.target.classList.contains('btn-edit-cor')) return; // Ignora se clicou no lápis
                 caixaParaColorir.destaques = isSel ? "" : corObj.code; 
                 if (typeof callbackAtualizarEditor === 'function') callbackAtualizarEditor();
-                
                 if (window.innerWidth <= 768) overlay.classList.remove('active');
-                else abrirPaleta(caixaParaColorir, "tab-destaques"); // MANTÉM NA ABA DESTAQUES
+                else abrirPaleta(caixaParaColorir, "tab-destaques");
             };
+
+            // AÇÃO: Abrir Edição de Nome (Lápis)
+            div.querySelector('.btn-edit-cor').onclick = (e) => {
+                e.stopPropagation();
+                corSendoEditada = corObj.code;
+                const editOverlay = document.getElementById('popup-editar-cor-overlay');
+                const inputNome = document.getElementById('input-nome-cor');
+                const btnGuardar = document.getElementById('btn-guardar-nome-cor');
+                const btnCancelar = document.getElementById('btn-cancelar-nome-cor');
+
+                document.getElementById('amostra-cor-edicao').style.backgroundColor = corObj.code;
+                inputNome.value = nomeReal;
+                overlay.classList.remove('active');
+                editOverlay.classList.add('active');
+
+                // Lógica dinâmica dos botões do sub-popup
+                btnGuardar.onclick = async () => {
+                    const n = inputNome.value.trim();
+                    if (!n) return;
+                    nomesCoresCustom[corSendoEditada] = n;
+                    await setDoc(doc(dbReferencia, "users", uidLogado), { caixadestaques: nomesCoresCustom }, { merge: true });
+                    editOverlay.classList.remove('active');
+                    abrirPaleta(caixaParaColorir, "tab-destaques");
+                };
+
+                btnCancelar.onclick = () => {
+                    editOverlay.classList.remove('active');
+                    overlay.classList.add('active');
+                };
+
+                setTimeout(() => inputNome.focus(), 150);
+            };
+            
             listaDest.appendChild(div);
         });
     }
 
-    // RENDER FOCOS
+    // 6. RENDERIZAÇÃO DA ABA FOCOS (SEMÂNTICA)
     if (listaFoco) {
         listaFoco.innerHTML = "";
         const mapa = (caixaParaColorir.tipo === 'subnota') ? FOCOS_SUBNOTA : 
@@ -156,20 +207,26 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques") {
         Object.entries(mapa).forEach(([key, obj]) => {
             const isSelF = (caixaParaColorir.foco === key || (!caixaParaColorir.foco && key === "original"));
             const row = document.createElement("div");
-            row.style.cssText = `display:flex; align-items:center; gap:12px; padding:12px; background:${isSelF ? 'rgba(255,255,255,0.05)' : 'var(--bg-panel)'}; border:2px solid ${isSelF ? obj.corForte : 'var(--border-color)'}; border-radius:8px; cursor:pointer; margin-bottom:8px;`;
+            row.style.cssText = `display:flex; align-items:center; gap:12px; padding:12px; background:${isSelF ? 'rgba(255,255,255,0.05)' : 'var(--bg-panel)'}; border:2px solid ${isSelF ? obj.corForte : 'var(--border-color)'}; border-radius:8px; cursor:pointer; margin-bottom:8px; transition: 0.2s;`;
             
-            row.innerHTML = `<div style="width:20px; height:20px; border-radius:4px; background:${obj.corForte}; display:flex; align-items:center; justify-content:center;">${isSelF?'<i class="fa-solid fa-check" style="color:white; font-size:10px;"></i>':''}</div><span style="font-size:13px; color:white;">${obj.nome}</span>`;
+            row.innerHTML = `
+                <div style="width:20px; height:20px; border-radius:4px; background:${obj.corForte}; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                    ${isSelF ? '<i class="fa-solid fa-check" style="color:white; font-size:10px;"></i>' : ''}
+                </div>
+                <div style="display:flex; flex-direction:column;">
+                    <span style="font-size:13px; font-weight:700; color:white;">${obj.nome}</span>
+                </div>`;
             
             row.onclick = () => {
                 caixaParaColorir.foco = key;
                 if (typeof callbackAtualizarEditor === 'function') callbackAtualizarEditor();
-                
                 if (window.innerWidth <= 768) overlay.classList.remove('active');
-                else abrirPaleta(caixaParaColorir, "tab-focos"); // MANTÉM NA ABA FOCOS
+                else abrirPaleta(caixaParaColorir, "tab-focos");
             };
             listaFoco.appendChild(row);
         });
     }
 
+    // 7. EXIBIR FINAL
     overlay.classList.add('active');
 }
