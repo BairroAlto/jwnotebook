@@ -141,19 +141,28 @@ function configurarBotaoShare(notaId, dadosNota, auth) {
  * ABRIR UMA NOTA NO EDITOR
  */
 export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco = null, maeIdOverride = null) {
+    console.log(`🚀 [EDITOR] Abrindo nota: ${dadosNota.nome} (${notaId})`);
 
-     // --- ADICIONA ESTA LINHA LOGO NO TOPO ---
+    // 1. GESTÃO DE ESTADO E SELEÇÃO VISUAL NA BARRA LATERAL
+    // Guardamos o ID globalmente para que todas as listas saibam quem iluminar
+    window.itemSelecionadoId = notaId; 
+
+    // 2. UX MOBILE: Fechar menus e limpar overlay (baço)
+    // MobileUI.fecharColunaEsquerda já trata de esconder o menu e desativar o fundo baço
     if (typeof MobileUI !== 'undefined') {
         MobileUI.fecharColunaEsquerda();
     } else {
-        // Fallback caso o módulo não esteja carregado
         document.getElementById('area-esquerda')?.classList.add('closed');
         document.getElementById('mobile-overlay')?.classList.remove('active');
     }
-    
-    window.itemSelecionadoId = notaId; 
-    MobileUI.fecharColunaEsquerda();
-    // 1. GESTÃO DE TELAS DE LOADING
+
+    // 3. SINCRONIZAÇÃO DA BARRA LATERAL (Navegação Inteligente)
+    // Faz a coluna da esquerda viajar até à aba (Local/Share) e pasta corretas
+    if (typeof window.sincronizarBarraLateralComNota === 'function') {
+        window.sincronizarBarraLateralComNota(notaId, dadosNota, auth);
+    }
+
+    // 4. GESTÃO DE TELAS DE CARREGAMENTO
     const placeholder = document.getElementById('editor-placeholder');
     const container = document.getElementById('editor-container');
     const loading = document.getElementById('editor-loading');
@@ -162,11 +171,11 @@ export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco
     if (container) container.style.display = 'none';
     if (loading) loading.style.display = 'flex';
 
-    // 2. SEGURANÇA: GRAVAR NOTA ANTERIOR
-    // Se havia uma gravação pendente da nota que estava aberta antes, forçamos agora.
+    // 5. SEGURANÇA DE DADOS: Gravar nota anterior
+    // Antes de mudar de nota, garantimos que qualquer alteração pendente foi salva
     await forcarGravacaoImediata(); 
 
-    // 3. ATUALIZAR ESTADO GLOBAL DO EDITOR
+    // 6. ATUALIZAR ESTADO GLOBAL DO EDITOR
     dbRef = db; 
     authRef = auth;
     notaAbertaId = notaId;
@@ -177,7 +186,7 @@ export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco
     window.caixasAtuais = caixasAtuais; 
     notaMaeAtualId = maeIdOverride || notaId;
 
-    // 4. INICIALIZAÇÃO ÚNICA DE MOTORES (Apenas na primeira vez que abre qualquer nota)
+    // 7. INICIALIZAÇÃO ÚNICA DE MOTORES (Apenas se ainda não foram iniciados)
     if (!eventosIniciados) {
         iniciarShareController(db, auth, () => guardarNotaNoFirebase());
         iniciarSelectorBiblia(() => atualizarFeedEGravar(true));
@@ -189,66 +198,58 @@ export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco
         eventosIniciados = true;
     }
 
-    // 5. GESTÃO DE SESSÃO E LOCKS (Notas Share)
+    // 8. GESTÃO DE SESSÃO SHARE (Metadados e Trancas)
     if (dadosNota.onde === "share") {
-        const uid = auth.currentUser.uid;
-        window.sessaoUltimaLeitura = dadosNota[uid]?.ultimaLeitura || 0;
-        try {
-            await updateDoc(doc(db, "Share", notaId), { 
-                vistoPor: arrayUnion(uid),
-                [`${uid}.ultimaLeitura`]: new Date().toISOString()
-            });
-        } catch (e) { console.warn("Erro ao atualizar metadados share"); }
+        const userActual = auth.currentUser || window.auth?.currentUser;
+        if (userActual) {
+            const uid = userActual.uid;
+            window.sessaoUltimaLeitura = dadosNota[uid]?.ultimaLeitura || 0;
+            try {
+                await updateDoc(doc(db, "Share", notaId), { 
+                    vistoPor: arrayUnion(uid),
+                    [`${uid}.ultimaLeitura`]: new Date().toISOString()
+                });
+            } catch (e) { console.warn("⚠️ [EDITOR] Erro ao atualizar metadados share"); }
+        }
     }
     
-    // Ativar aba Índice por defeito na coluna EYE (Direita)
-    if (window.switchEyeTab) window.switchEyeTab('indice');
-
-    // Ativar vigilância de tranca (Lock Manager)
+    // Inicia a vigilância de quem está a editar (Lock Manager)
     await gerirSessaoShare(notaId, dadosNota);
 
-    // 6. CONFIGURAÇÃO DO TÍTULO E MODOS (ARQUIVO / NORMAL)
+    // 9. CONFIGURAÇÃO DA UI DO EDITOR
     const tituloEditor = document.getElementById('editor-titulo');
     if (tituloEditor) tituloEditor.innerText = dadosNota.nome || "Sem Título";
 
-    // --- LÓGICA DE CORREÇÃO DO MODO ARQUIVO ---
+    // 10. GESTÃO DE MODOS (ARQUIVO / FEED NORMAL)
     const modosAtivos = Array.isArray(dadosNota.modo) ? dadosNota.modo : [dadosNota.modo || 'normal'];
     const tabsArquivoUI = document.getElementById('arquivo-tabs-container');
 
     if (modosAtivos.includes('arquivo')) {
-        // A) Garantir integridade dos dados (se a nota for antiga e não tiver o objeto Arquivo)
-        if (!dadosNota.Arquivo) {
-            dadosNota.Arquivo = { gavetas: {} };
-        }
-
-        // B) Resetar o Navegador de Arquivo (Garante que abres na Raiz e não dentro de uma gaveta da nota anterior)
+        if (!dadosNota.Arquivo) dadosNota.Arquivo = { gavetas: {} };
         iniciarArquivo(db, auth, () => atualizarFeedEGravar(true));
-
-        // C) Mostrar a barra de abas FEED | ARQUIVO
         if (tabsArquivoUI) tabsArquivoUI.style.display = 'block';
-        console.log("📁 Modo Arquivo Ativado para esta nota.");
     } else {
-        // Esconder a barra de abas se não for modo arquivo
         if (tabsArquivoUI) tabsArquivoUI.style.display = 'none';
     }
 
-    // 7. RENDERIZAR O CONTEÚDO (FEED OU ARQUIVO)
-    // Passamos false para não disparar uma gravação imediata apenas por abrir a nota
+    // 11. RENDERIZAÇÃO DO CONTEÚDO
+    // Atualiza a tela sem disparar uma gravação automática apenas por abrir
     await atualizarFeedEGravar(false); 
 
-    // 8. CARREGAR SUBSISTEMAS DE NOTA
-    iniciarAbaAncora(notaId, db, auth); // Temas ancorados (EYE)
-    carregarAbasDaNota(notaMaeAtualId, dadosNota, notaId); // Tabs superiores
-    configurarBotaoShare(notaId, dadosNota, auth); // Lógica de Clonagem vs Colaboração
+    // 12. CARREGAR SUBSISTEMAS DA NOTA
+    if (window.switchEyeTab) window.switchEyeTab('indice'); // Ativa Índice por defeito
+    iniciarAbaAncora(notaId, db, auth); // Carrega temas do Cosmos ancorados
+    carregarAbasDaNota(notaMaeAtualId, dadosNota, notaId); // Sincroniza abas superiores (Browser)
+    configurarBotaoShare(notaId, dadosNota, auth); // Configura botão de Cópia ou Colaboração
 
-    // 9. FINALIZAR CARREGAMENTO E AJUSTAR UI
+    // 13. FINALIZAR CARREGAMENTO E AJUSTAR LAYOUT
     container.style.visibility = 'hidden';
     container.style.display = 'block';
     
-    // Aguardar o próximo frame para o browser calcular os scrollHeights
+    // Pequeno delay para o browser calcular as dimensões antes de mostrar
     await new Promise(res => requestAnimationFrame(res));
     
-    // Ajustar automaticamente a altura de todos os campos de texto
+    // Ajustar automaticamente a altura de todos os campos de texto da nota
     const campos = document.querySelectorAll('.tool-title-input, #editor-feed textarea');
     campos.forEach(el => { 
         el.style.height = 'auto'; 
@@ -258,12 +259,12 @@ export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco
     container.style.visibility = 'visible';
     if (loading) loading.style.display = 'none';
 
-    // 10. SCROLL PARA CAIXA ESPECÍFICA (Se houver um teleporte ativo)
+    // 14. TELEPORTE (SCROLL PARA BLOCO ESPECÍFICO)
     if (idCaixaFoco) {
         setTimeout(() => {
             const elAlvo = document.getElementById(`bloco-${idCaixaFoco}`);
             if (elAlvo) elAlvo.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 300);
+        }, 450); // Delay ligeiramente maior para garantir que o render terminou
     }
 }
 
