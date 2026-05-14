@@ -41,7 +41,7 @@ export function iniciarShareController(db, auth, callbackGravar) {
  * GESTÃO DE SESSÃO (CHAMADA AO ABRIR UMA NOTA)
  */
 export async function gerirSessaoShare(notaId, dadosNota) {
-    // 1. Limpeza de estado da nota anterior
+    // 1. Limpeza de estado anterior
     if (state.editandoAtivo) await forcarFinalizacaoEdicao();
     if (state.unsubLock) { 
         state.unsubLock(); 
@@ -56,23 +56,31 @@ export async function gerirSessaoShare(notaId, dadosNota) {
 
     // 2. SE FOR NOTA LOCAL
     if (dadosNota.onde !== "share") {
-        console.log("🏠 [SHARE-CONTROL] Nota Local detetada.");
         state.editandoAtivo = false;
         if (btn) btn.style.display = "none";
-        LockUI.libertarEditor(); // Notas locais estão sempre abertas
+        LockUI.libertarEditor(); 
         return;
     }
 
-    // 3. SE FOR NOTA SHARE
-    console.log("📂 [SHARE-CONTROL] Nota Share detetada. Iniciando vigilância de Lock.");
-    const meuId = state.auth.currentUser.uid;
+    // 3. SE FOR NOTA SHARE - DETEÇÃO BLINDADA DO UTILIZADOR
+    // Tenta obter o auth do estado interno, se for null tenta o global da window
+    const authInstance = state.auth || window.auth;
+    
+    if (!authInstance || !authInstance.currentUser) {
+        console.warn("⚠️ [SHARE-CONTROL] Auth ainda não está pronto. Re-tentando em breve...");
+        // Se o utilizador acabou de logar, esperamos 500ms e tentamos de novo
+        setTimeout(() => gerirSessaoShare(notaId, dadosNota), 500);
+        return;
+    }
 
-    // Escuta em tempo real o campo 'editando' no Firebase
+    const meuId = authInstance.currentUser.uid;
+    console.log("📂 [SHARE-CONTROL] Nota Share detetada. Iniciando vigilância para:", meuId);
+
+    // 4. Escuta em tempo real o campo 'editando' no Firebase
     state.unsubLock = LockManager.vigiarLock(state.db, notaId, (statusLock) => {
         let editorUid = "";
         let editorNome = "";
 
-        // Normalização do campo 'editando' (Tratando String ou Objeto)
         if (statusLock && typeof statusLock === 'object') {
             editorUid = statusLock.uid || "";
             editorNome = statusLock.nome || "";
@@ -81,20 +89,17 @@ export async function gerirSessaoShare(notaId, dadosNota) {
         }
 
         if (editorUid !== "" && editorUid !== meuId) {
-            // CENÁRIO A: Outra pessoa está a editar
             state.editandoAtivo = false;
             if (btn) btn.style.display = "none"; 
             LockUI.mostrarAvisoBloqueio(editorNome || "Outro utilizador", true); 
         } 
         else if (editorUid === meuId && meuId !== "") {
-            // CENÁRIO B: EU estou a editar (Botão Verde)
             state.editandoAtivo = true;
             configurarBotaoUI("ativo");
             LockUI.libertarEditor();
             resetTimerInatividade();
         } 
         else {
-            // CENÁRIO C: A nota está livre (BOTÃO VERMELHO DEVE APARECER)
             state.editandoAtivo = false;
             configurarBotaoUI("livre");
             LockUI.mostrarAvisoBloqueio("Sessão Protegida", false); 
