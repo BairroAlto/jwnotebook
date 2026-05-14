@@ -48,16 +48,21 @@ function carregarPasta(idPasta) {
     const listaLocal = document.getElementById('lista-local');
     if (!listaLocal) return;
 
-    // Mostrar loading inicial
-    listaLocal.innerHTML = `<div style="text-align:center; padding:30px; opacity:0.5;"><i class="fa-solid fa-circle-notch fa-spin"></i></div>`;
+    // 1. ESTADO DE CARREGAMENTO (Visual)
+    listaLocal.innerHTML = `
+        <div style="text-align:center; padding:30px; opacity:0.5;">
+            <i class="fa-solid fa-circle-notch fa-spin" style="color: var(--primary);"></i>
+        </div>`;
 
-    // Limpar listener anterior para evitar duplicados
+    // 2. LIMPEZA DE SEGURANÇA
+    // Mata o "ouvinte" anterior para não haver conflitos de dados de pastas diferentes
     if (unsubscribeAtual) unsubscribeAtual();
 
     const userId = authReferencia.currentUser.uid;
     const localRef = collection(dbReferencia, "Local");
 
-    // Query base: filtramos por pasta pai, utilizador e estado ativo
+    // 3. QUERY DO FIREBASE
+    // Filtramos por utilizador, localização (pastapai) e apenas itens ativos (não ocultos)
     const q = query(
         localRef, 
         where("pastapai", "==", idPasta),
@@ -76,88 +81,91 @@ function carregarPasta(idPasta) {
             fragmento.appendChild(aviso);
         } else {
             
-            // 1. RECOLHER DADOS NUM ARRAY PARA PODERMOS REORDENAR NO CLIENTE
-// 1. RECOLHER DADOS
-const docsParaOrdenar = [];
-snapshot.forEach((docSnap) => {
-    docsParaOrdenar.push({ idFirestore: docSnap.id, ...docSnap.data() });
-});
+            // 3.1 RECOLHER E ORDENAR (Lógica TOP + ORDEM)
+            const itensParaDesenhar = [];
+            snapshot.forEach((docSnap) => {
+                itensParaDesenhar.push({ idFirestore: docSnap.id, ...docSnap.data() });
+            });
 
-// 2. LÓGICA DE ORDENAÇÃO MELHORADA
-docsParaOrdenar.sort((a, b) => {
-    const aTop = (a.Top && a.Top.estado === "ativo") ? 1 : 0;
-    const bTop = (b.Top && b.Top.estado === "ativo") ? 1 : 0;
+            // Ordenação: Itens marcados como TOP sobem, o resto respeita a ordem manual
+            itensParaDesenhar.sort((a, b) => {
+                const aTop = (a.Top && a.Top.estado === "ativo") ? 1 : 0;
+                const bTop = (b.Top && b.Top.estado === "ativo") ? 1 : 0;
+                if (aTop !== bTop) return bTop - aTop;
+                return (a.ordem || 0) - (b.ordem || 0);
+            });
 
-    // REGRA 1: Se um for TOP e o outro não, o TOP sobe (Fica no topo da pasta atual)
-    if (aTop !== bTop) return bTop - aTop;
+            // 3.2 RENDERIZAÇÃO DOS ITENS
+            itensParaDesenhar.forEach((d) => {
+                const docId = d.idFirestore; 
+                const item = document.createElement("div");
+                
+                // --- VERIFICAÇÃO DE SELEÇÃO ATIVA ---
+                // Crucial para manter o destaque visual quando o Firebase redesenha a lista
+                const isAtivo = (docId === window.itemSelecionadoId);
+                
+                // Configuração de Identidade do Elemento
+                item.className = `item-local tipo-${d.tipo} ${isAtivo ? 'active' : ''}`;
+                item.setAttribute('data-id', docId); // Usado pelo sincronizador global
+                
+                // Estilo Especial para Itens TOP
+                const isTop = (d.Top && d.Top.estado === "ativo");
+                if (isTop) {
+                    item.style.background = "rgba(251, 191, 36, 0.04)";
+                    item.style.borderRight = "3px solid #fbbf24";
+                }
 
-    // REGRA 2: Se ambos tiverem o mesmo status de TOP, respeita estritamente a 'ordem'
-    // Não importa se é pasta ou nota, quem tiver o número menor de ordem fica acima.
-    return (a.ordem || 0) - (b.ordem || 0);
-});
+                // Definição de Ícones e Cores
+                let nomeIcone = (d.tipo === "pasta") ? (d.icon || "folder") : "note-sticky";
+                if (!nomeIcone.startsWith('fa-')) nomeIcone = `fa-${nomeIcone}`;
+                let corIcone = (d.tipo === "pasta") ? "#eab308" : "#6366f1";
 
-            // 3. RENDERIZAR OS ITENS JÁ ORDENADOS
-            docsParaOrdenar.forEach((d) => {
-    // d é o objeto que contém os dados e o idFirestore
-    const docId = d.idFirestore; 
-    
-    const item = document.createElement("div");
-    
-    // VERIFICAÇÃO DE SELEÇÃO (A lógica que corrigimos)
-    // Comparamos o ID deste item com o ID da nota que está aberta no editor
-    const isAtivo = (docId === window.itemSelecionadoId);
-    
-    item.setAttribute('data-id', docId); // Importante para o sincronizador encontrar o elemento
-    item.className = `item-local tipo-${d.tipo} ${isAtivo ? 'active' : ''}`;
-    
-    // Estilo visual para itens TOP (favoritos da pasta)
-    const isTop = (d.Top && d.Top.estado === "ativo");
-    if (isTop) {
-        item.style.background = "rgba(251, 191, 36, 0.04)";
-        item.style.borderRight = "3px solid #fbbf24";
-    }
+                const nomeEscapado = d.nome.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
-    // Configuração de Ícone e Cor
-    let nomeIcone = (d.tipo === "pasta") ? (d.icon || "folder") : "note-sticky";
-    if (!nomeIcone.startsWith('fa-')) nomeIcone = `fa-${nomeIcone}`;
-    let corIcone = (d.tipo === "pasta") ? "#eab308" : "#6366f1";
+                item.innerHTML = `
+                    <i class="fa-solid ${nomeIcone}" style="color: ${corIcone};"></i>
+                    <div style="flex: 1; display: flex; align-items: center; overflow: hidden;">
+                        <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-left-items); font-weight: ${isTop ? '700' : '500'};">
+                            ${d.nome}
+                        </span>
+                    </div>
+                    <i class="fa-solid fa-gear btn-edit-item-local" 
+                       onclick="event.stopPropagation(); window.abrirEditorItemLocal('${docId}', '${d.tipo}', '${nomeEscapado}')">
+                    </i>
+                `;
+                
+                // LÓGICA DE CLIQUE
+                item.onclick = () => {
+                    // Atualiza o ID global para que outros Snapshots saibam que esta nota foi selecionada
+                    window.itemSelecionadoId = docId; 
 
-    const nomeEscapado = d.nome.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                    if (d.tipo === "pasta") {
+                        // Navegação para dentro da pasta
+                        window.historicoPastas.push({ id: docId, nome: d.nome });
+                        window.pastaAtual = docId;
+                        atualizarUI(); // Muda o rótulo do topo "Voltar a..."
+                        carregarPasta(docId); 
+                    } else {
+                        // Abrir nota no editor central
+                        abrirNotaNoEditor(docId, d, dbReferencia, authReferencia);
+                        
+                        // Atualização visual imediata (limpa outros e acende este)
+                        document.querySelectorAll('.item-local').forEach(el => el.classList.remove('active'));
+                        item.classList.add('active');
+                    }
+                };
 
-    item.innerHTML = `
-        <i class="fa-solid ${nomeIcone}" style="color: ${corIcone};"></i>
-        <div style="flex: 1; display: flex; align-items: center; overflow: hidden;">
-            <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-left-items); font-weight: ${isTop ? '700' : '500'};">
-                ${d.nome}
-            </span>
-        </div>
-        <i class="fa-solid fa-gear btn-edit-item-local" 
-           onclick="event.stopPropagation(); window.abrirEditorItemLocal('${docId}', '${d.tipo}', '${nomeEscapado}')">
-        </i>
-    `;
-    
-    item.onclick = () => {
-        window.itemSelecionadoId = docId; // Guarda o ID ao clicar
-        if (d.tipo === "pasta") {
-            window.historicoPastas.push({ id: docId, nome: d.nome });
-            window.pastaAtual = docId;
-            atualizarUI();
-            carregarPasta(docId); 
-        } else {
-            abrirNotaNoEditor(docId, d, dbReferencia, authReferencia);
-            // Limpa o active de outros e coloca neste
-            document.querySelectorAll('#lista-local .item-local').forEach(el => el.classList.remove('active'));
-            item.classList.add('active');
+                fragmento.appendChild(item);
+            });
         }
-    };
 
-    fragmento.appendChild(item);
-});
-        }
-
-        // Injetar o fragmento final na lista
+        // 4. INJEÇÃO FINAL NO DOM (Limpando o loader)
         listaLocal.innerHTML = "";
         listaLocal.appendChild(fragmento);
+
+    }, (error) => {
+        console.error("❌ [LOCAL] Erro no Listener:", error);
+        listaLocal.innerHTML = `<p style="color:#ef4444; font-size:10px; text-align:center; padding:20px;">Erro de ligação ou permissão.</p>`;
     });
 }
 
