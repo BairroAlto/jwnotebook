@@ -158,58 +158,64 @@ function vincularEventosUI(container, caixa, docRef, studyId) {
 
     // --- LÓGICA DE CORES (LIVE) ---
 window.colorirAnotacaoEspecial = () => {
+    // 1. Abre a paleta global passando a referência da caixa atual
     if (typeof window.abrirPaletaGlobal === 'function') {
         window.abrirPaletaGlobal(caixa);
         
         const overlay = document.getElementById('popup-cores-overlay');
         if (!overlay) return;
 
+        // 2. LÓGICA DE ESCUTA PARA MOBILE/BRAIN
+        // Como a paleta é um popup partilhado, adicionamos um ouvinte temporário
+        // para detetar quando o utilizador faz uma escolha.
         overlay.onclick = (e) => {
-            // 1. Ignorar cliques nas abas
-            if (e.target.closest('.tab-cor')) {
-                return; 
-            }
+            // Ignorar cliques que sejam apenas nas abas (Destaques/Focos)
+            if (e.target.closest('.tab-cor')) return;
 
-            // 2. Botão Fechar (X)
-            if (e.target.closest('#btn-fechar-cores')) {
-                overlay.classList.remove('active');
-                return;
-            }
-
-            // 3. Detetar Alvos de Seleção
+            // Detetar se clicou num item de cor, no botão remover ou num item de foco
             const clicouCor = e.target.closest('.click-area');
             const clicouRemover = e.target.closest('#btn-remover-cor');
             const clicouFoco = e.target.closest('#lista-cores-foco > div');
 
             if (clicouCor || clicouRemover || clicouFoco) {
-                // Se for remover, limpamos o dado localmente para gravação imediata
-                if (clicouRemover) caixa.destaques = "";
+                console.log("📡 [BRAIN-COLOR] Escolha detetada. Sincronizando...");
 
+                // Se clicou em remover, limpamos a cor na memória local antes de gravar
+                if (clicouRemover) {
+                    caixa.destaques = "";
+                }
+
+                // Pequeno delay para garantir que os dados da paleta-cores.js 
+                // já atualizaram o objeto 'caixa'
                 setTimeout(async () => {
                     try {
-                        console.log("📡 [BRAIN-SAVE] Gravando alteração e fechando...");
-
-                        // Gravação na Biblioteca
+                        // 3. GRAVAÇÃO NO FIREBASE (Coleção Biblioteca)
+                        // docRef é a referência ao estudo atual definida no início da função renderAnotacoes
                         await updateDoc(docRef, { 
                             "anotacaoEspecial.destaques": caixa.destaques || "",
                             "anotacaoEspecial.foco": caixa.foco || "original"
                         });
-                        
-                        // Se mudou o FOCO, limpamos o cache para o título atualizar no ecrã
+
+                        console.log("✅ [BRAIN-COLOR] Cor e Foco gravados na Biblioteca.");
+
+                        // 4. FEEDBACK MOBILE: Fechar o popup
+                        // Isto é vital no mobile para o utilizador ver a nota mudar
+                        overlay.classList.remove('active');
+
+                        // Se mudou o foco, resetamos o estado local para forçar 
+                        // a atualização do título (CAPSLOCK) na renderização
                         if (clicouFoco) {
                             statusLocal.focoAtivo = null; 
                         }
 
-                        // --- AQUI ESTÁ A MUDANÇA: ---
-                        // Removemos o "else" e forçamos o fecho em qualquer uma das seleções
-                        overlay.classList.remove('active');
-
                     } catch (err) {
-                        console.error("Erro ao gravar na Biblioteca:", err);
+                        console.error("❌ Erro ao gravar cor no Brain:", err);
                     }
-                }, 150);
+                }, 100);
             }
         };
+    } else {
+        console.error("❌ Motor de cores (abrirPaletaGlobal) não encontrado.");
     }
 };
 
