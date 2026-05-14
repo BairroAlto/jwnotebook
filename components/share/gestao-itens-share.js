@@ -110,16 +110,30 @@ btnPin.onclick = async (e) => {
 
         // --- BOTÃO OCULTAR (LIXEIRA SHARE) ---
         document.getElementById('btn-gestao-ocultar').onclick = (e) => {
-            e.stopPropagation();
-            if (itemAlvo.userId !== uid) return alert("Apenas o dono pode ocultar esta nota.");
-            overlay.classList.remove('active');
-            document.getElementById('popup-confirmar-ocultar-item').classList.add('active');
+    e.stopPropagation();
+    if (itemAlvo.userId !== uid) return alert("Apenas o dono pode ocultar esta nota.");
+    
+    overlay.classList.remove('active');
+    document.getElementById('popup-confirmar-ocultar-item').classList.add('active');
 
-            document.getElementById('btn-confirmar-ocultar-item').onclick = async () => {
-                await updateDoc(doc(db, "Share", id), { estado: "desativo" });
-                document.getElementById('popup-confirmar-ocultar-item').classList.remove('active');
-            };
-        };
+    document.getElementById('btn-confirmar-ocultar-item').onclick = async () => {
+        try {
+            const docRef = doc(db, "Share", id);
+            
+            // Grava a ocultação no modo Share
+            await updateDoc(docRef, { 
+                estado: "desativo",
+                timedelete: new Date().toISOString() 
+            });
+
+            // FORÇAR REFRESH
+            location.reload(); 
+
+        } catch (err) {
+            console.error(err);
+        }
+    };
+};
 
         // --- BOTÃO GRAVAR (SALVAR NOME) ---
         document.getElementById('btn-salvar-gestao-item').onclick = async (e) => {
