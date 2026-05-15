@@ -11,35 +11,35 @@ const CORES_BASE = [
 
 export const FOCOS_BASE = {
     "original": { nome: "Original", corForte: "#ea580c" },
-    "reflexao": { nome: "Reflexão", corForte: "#9a3412" },
-    "comentario": { nome: "Comentário", corForte: "#D69834" },
-    "desafio": { nome: "Desafio", corForte: "#ca8a04" },
-    "exemplo": { nome: "Exemplo", corForte: "#854d0e" },
+    "comentario": { nome: "Comentário", corForte: "#F86B44" }, 
     "transcricao": { nome: "Transcrição", corForte: "#f97316" },
+    "reflexao": { nome: "Reflexão", corForte: "#C23515" },
+    "desafio": { nome: "Desafio", corForte: "#9a3412" },
     "rascunho": { nome: "Rascunho", corForte: "#573516" },
+    "exemplo": { nome: "Exemplo", corForte: "#854d0e" },
     "camaleao": { nome: "Camaleão", corForte: "var(--bg-body)" }
 };
 
 export const FOCOS_SUBNOTA = {
     "original": { nome: "Original", corForte: "#2563eb" },
-    "resumo": { nome: "Resumo", corForte: "#1a3a5f" },
-    "estudo": { nome: "Estudo", corForte: "#4169E1" },
     "perola": { nome: "Pérola", corForte: "#0032FD" },
-    "ponto_chave": { nome: "Chave", corForte: "#85C1E9" },
-    "palestra": { nome: "Palestra", corForte: "#5c6bc0" }
+    "estudo": { nome: "Estudo", corForte: "#4169E1" },
+    "resumo": { nome: "Resumo", corForte: "#1a3a5f" },
+    "palestra": { nome: "Palestra", corForte: "#5c6bc0" },
+    "ponto_chave": { nome: "Chave", corForte: "#85C1E9" }
 };
 
 export const FOCOS_QUESTAO = {
     "original": { nome: "Original", corForte: "#10b981" },
-    "revisao": { nome: "Revisão", corForte: "#2B6467" },
-    "dilema": { nome: "Dilema", corForte: "#052c1e" },
-    "hipotese": { nome: "Hipótese", corForte: "#27ae60" },
-    "paradoxo": { nome: "Paradoxo", corForte: "#82e0aa" }
+    "paradoxo": { nome: "Paradoxo", corForte: "#82e0aa" },
+    "dilema": { nome: "Dilema", corForte: "#D1E491" },
+    "hipotese": { nome: "Hipótese", corForte: "#607455" },
+    "revisao": { nome: "Revisão", corForte: "#2B4B44" }
 };
 
 export const FOCOS_RACIOCINIO = {
     "original": { nome: "Original", corForte: "#f59e0b" },
-    "socratico": { nome: "Socrático", corForte: "#b45309" }
+    "socratico": { nome: "Socrático", corForte: "#FFD155" }
 };
 
 let nomesCoresCustom = {};
