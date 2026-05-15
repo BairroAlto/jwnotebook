@@ -2,69 +2,74 @@
 import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
 import { FOCOS_BASE, FOCOS_SUBNOTA, FOCOS_QUESTAO, FOCOS_RACIOCINIO } from '../editor/modulos/paleta-cores.js';
 
-let isManualScrolling = false; // Trava para evitar conflito ao clicar
+let isManualScrolling = false; 
+let notaIdCacheIndice = ""; 
 
 /**
- * RENDERIZAR O ÍNDICE (GPS)
+ * RENDERIZAR O ÍNDICE (GPS DA NOTA)
+ * Lógica inteligente que distingue entre reconstrução total e atualização de texto.
  */
-// Localiza a função renderizarIndice em components/direita/indice.js e atualiza-a:
-
 export function renderizarIndice(caixas, isModoPost = false) {
     const container = document.getElementById('indice-nota-container');
-    if (!container) return;
+
+    const notaIdAtual = window.notaAbertaId; 
+    const ativas = caixas.filter(c => c.estado === 'ativa');
+    
+    // 1. GERAR ASSINATURA DA ESTRUTURA
+    // Identifica se a ordem ou o número de blocos mudou
+    const assinaturaAtual = ativas.map(c => c.id).join('|') + (isModoPost ? '_post' : '_normal');
+
+    // --- 🚀 DETETOR DE TROCA DE NOTA ---
+    // Se o ID da nota mudou, forçamos o reset total para não mostrar dados da nota antiga
+    if (notaIdAtual !== notaIdCacheIndice) {
+        notaIdCacheIndice = notaIdAtual;
+        container.dataset.lastSignature = ""; 
+    }
+
+    // 2. VERIFICAÇÃO DE ASSINATURA (ANTI-FLICKER)
+    // Se a estrutura e a nota forem as mesmas, apenas atualizamos o texto dos cards existentes
+    if (container.dataset.lastSignature === signatureSanitize(assinaturaAtual)) {
+        sincronizarConteudoCards(ativas);
+        return;
+    }
+
+    // 3. RECONSTRUÇÃO TOTAL (Mudar de nota, mudar ordem ou adicionar/remover blocos)
+    container.innerHTML = "";
+    container.dataset.lastSignature = signatureSanitize(assinaturaAtual);
 
     const minhaUltimaLeituraAnterior = window.sessaoUltimaLeitura ? new Date(window.sessaoUltimaLeitura).getTime() : 0;
     const isNotaShare = (window.dadosNotaOriginal && window.dadosNotaOriginal.onde === "share");
 
-    const ativas = caixas.filter(c => c.estado === 'ativa');
-    
-    if (isModoPost) {
-        ativas.sort((a, b) => (b.ordem || 0) - (a.ordem || 0));
-    } else {
-        // Ordenação normal: a-b ou b-a conforme o teu padrão atual
-        // Mantendo b-a para consistência com o teu feed
-        caixas.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
-    }
-    
+    // Ordenação Dinâmica (Respeita o Modo Post do Laboratório)
+    if (isModoPost) ativas.sort((a, b) => (b.ordem || 0) - (a.ordem || 0));
+    else ativas.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+
     if (ativas.length === 0) {
-        container.innerHTML = `<div style="text-align:center; padding:40px; color:var(--text-muted); font-size:11px; opacity:0.5;">Nota sem blocos de conteúdo.</div>`;
+        container.innerHTML = `<div style="text-align:center; padding:40px; color:var(--text-muted); font-size:11px; opacity:0.5;">Nota sem blocos ativos.</div>`;
         return;
     }
 
-    container.innerHTML = "";
+    // Gerar o HTML dos Cards
+    const fragmento = document.createDocumentFragment();
 
-    for (const caixa of ativas) {
+    ativas.forEach(caixa => {
         const config = IDENTIDADE_FERRAMENTAS[caixa.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
         
-        const mapaFocos = 
-            (caixa.tipo === 'subnota') ? FOCOS_SUBNOTA : 
-            (caixa.tipo === 'questao') ? FOCOS_QUESTAO : 
-            (caixa.tipo === 'raciocinio') ? FOCOS_RACIOCINIO : FOCOS_BASE;
+        // Mapeamento de cores baseado no FOCO
+        const mapaFocos = (caixa.tipo === 'subnota') ? FOCOS_SUBNOTA : 
+                         (caixa.tipo === 'questao') ? FOCOS_QUESTAO : 
+                         (caixa.tipo === 'raciocinio') ? FOCOS_RACIOCINIO : FOCOS_BASE;
 
         const fKey = caixa.foco || "original";
-
-        let labelParaMostrar = config.nome;
-        let corFinal = config.cor;
-
-        if (fKey !== "original" && mapaFocos[fKey]) {
-            labelParaMostrar = fKey.toUpperCase().replace('_', ' ');
-            corFinal = mapaFocos[fKey].corForte;
-        }
-
-        let resumo = "";
-        if (caixa.tipo === "contentor") {
-            resumo = caixa.conteudo || "Escrita livre...";
-        } else if (caixa.tipo === "elevador") {
-            resumo = (caixa.pastapai && caixa.pastapai[0]) ? caixa.pastapai[0].nome : "Elevador de Links";
-        } else {
-            resumo = caixa.titulo || `Nova ${config.nome}`;
-        }
+        const corFinal = (mapaFocos[fKey]?.corForte) || config.cor;
+        const labelParaMostrar = (fKey !== "original") ? fKey.toUpperCase().replace('_', ' ') : config.nome;
 
         const card = document.createElement('div');
         card.id = `nav-card-${caixa.id}`;
         card.className = "indice-card";
         card.style.borderLeftColor = corFinal;
 
+        // Indicador de novidades (Share)
         if (isNotaShare && minhaUltimaLeituraAnterior > 0) {
             const dataCaixa = new Date(caixa.timestamp).getTime();
             if (dataCaixa > (minhaUltimaLeituraAnterior + 1000)) {
@@ -73,15 +78,15 @@ export function renderizarIndice(caixas, isModoPost = false) {
         }
 
         card.innerHTML = `
-            <div class="label-tipo" style="color:${corFinal}; filter: brightness(1.3);">
+            <div class="label-tipo" style="color:${corFinal}; filter: brightness(1.2);">
                 <i class="${config.icon}"></i>
                 <span>${labelParaMostrar}</span>
             </div>
-            <div class="resumo-texto">
-                ${resumo}
-            </div>
+            <!-- ID único para atualização cirúrgica de texto -->
+            <div class="resumo-texto" id="idx-txt-${caixa.id}">...</div>
         `;
 
+        // Clique para Teleporte (Scroll suave até ao bloco)
         card.onclick = (e) => {
             e.stopPropagation();
             const el = document.getElementById(`bloco-${caixa.id}`);
@@ -93,28 +98,66 @@ export function renderizarIndice(caixas, isModoPost = false) {
             }
         };
 
-        container.appendChild(card);
-    }
+        fragmento.appendChild(card);
+    });
 
+    container.appendChild(fragmento);
+
+    // Primeira sincronização de texto
+    sincronizarConteudoCards(ativas);
     configurarScrollSpy();
 }
 
+/**
+ * ATUALIZAÇÃO CIRÚRGICA DE CONTEÚDO
+ * Altera apenas o texto do elemento sem apagar o card ou perder o scroll do utilizador.
+ */
+function sincronizarConteudoCards(ativas) {
+    ativas.forEach(caixa => {
+        const elTexto = document.getElementById(`idx-txt-${caixa.id}`);
+        if (elTexto) {
+            let resumo = "";
+            
+            // Lógica Especial: Elevador
+            if (caixa.tipo === "elevador") {
+                resumo = (caixa.pastapai && caixa.pastapai[0] && caixa.pastapai[0].nome) 
+                         ? caixa.pastapai[0].nome 
+                         : "Elevador de Links";
+            } 
+            // Lógica Padrão: Título ou fallback para Conteúdo (Resolve o bug das ferramentas)
+            else {
+                resumo = caixa.titulo || (caixa.conteudo ? caixa.conteudo.substring(0, 80) : `Nova ${caixa.tipo}`);
+            }
+
+            // Só atualiza o DOM se o texto mudou efetivamente
+            if (elTexto.innerText !== resumo) {
+                elTexto.innerText = resumo;
+            }
+        }
+    });
+}
 
 /**
- * CONFIGURAR O SEGUIMENTO DE SCROLL
+ * MOTOR DE SEGUIMENTO (SCROLL-SPY)
+ * Usa addEventListener para ser compatível com a aba IA.
  */
 function configurarScrollSpy() {
     const editor = document.querySelector('.center-col');
-    if (!editor) return;
+    if (!editor || window._indiceScrollInited) return;
 
-    editor.onscroll = () => {
+    editor.addEventListener('scroll', () => {
         if (isManualScrolling) return;
+
+        const indiceCont = document.getElementById('indice-nota-container');
+        if (!indiceCont || indiceCont.offsetParent === null) return;
+
         const blocos = document.querySelectorAll('[id^="bloco-"]');
         let blocoMaisProximo = null;
         let menorDistancia = Infinity;
 
         blocos.forEach(bloco => {
             const rect = bloco.getBoundingClientRect();
+            // Ponto de mira: 40% da altura da tela
             const distancia = Math.abs(rect.top - (window.innerHeight / 2.5));
             if (distancia < menorDistancia) {
                 menorDistancia = distancia;
@@ -125,42 +168,43 @@ function configurarScrollSpy() {
         if (blocoMaisProximo) {
             atualizarDestaqueIndice(blocoMaisProximo);
         }
-    };
+    });
+
+    window._indiceScrollInited = true;
 }
 
-
 /**
- * ATUALIZAR O DESTAQUE VISUAL NO ÍNDICE
+ * APLICA O DESTAQUE VISUAL AO CARD ATIVO
  */
-function atualizarDestaqueIndice(caixaId) {
+export function atualizarDestaqueIndice(caixaId) {
     document.querySelectorAll('.indice-card').forEach(c => c.classList.remove('active'));
     const activeCard = document.getElementById(`nav-card-${caixaId}`);
     
     if (activeCard) {
-        // 1. Destacar visualmente o card
         activeCard.classList.add('active');
         
-        // --- 2. CORREÇÃO DO BUG MOBILE ---
-        // Verifica se é mobile (largura <= 768px)
+        // No mobile, só faz scroll automático na lista se a aba lateral estiver visível
         const isMobile = window.innerWidth <= 768;
-        
-        // Verifica se a coluna da direita está atualmente visível (com a classe 'active')
         const colunaDireita = document.getElementById('area-direita');
-        const direitaAberta = colunaDireita && colunaDireita.classList.contains('active');
+        const direitaAberta = colunaDireita && (colunaDireita.classList.contains('active') || colunaDireita.style.bottom === '0px');
 
-        // Só executa o scroll automático se estivermos no Desktop 
-        // OU se estivermos no Mobile mas com a aba da direita fisicamente aberta.
         if (!isMobile || direitaAberta) {
             activeCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
     }
 }
 
-
+/**
+ * LIMPA O ÍNDICE E OS CACHES
+ */
 export function ocultarIndice() {
     const container = document.getElementById('indice-nota-container');
     if (container) {
         container.innerHTML = "";
-        container.style.display = 'none';
+        container.dataset.lastSignature = "";
+        notaIdCacheIndice = ""; 
     }
 }
+
+// Auxiliar para limpar caracteres estranhos da assinatura
+function signatureSanitize(s) { return s.replace(/\s/g, ''); }
