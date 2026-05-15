@@ -17,10 +17,20 @@ let itemSendoEditadoDocId = null;
 let subtopicoSelecionadoId = null;
 
 const CORES_TOPICO = [
-    { nome: "Vermelho", hex: "#ef4444" }, { nome: "Amarelo", hex: "#f59e0b" },
-    { nome: "Laranja", hex: "#ea580c" }, { nome: "Castanho", hex: "#78350f" },
-    { nome: "Azul", hex: "#3b82f6" }, { nome: "Lilás", hex: "#a855f7" },
-    { nome: "Cinzento", hex: "#6b7280" }
+    { nome: "Vermelho", hex: "#ef4444" },
+    { nome: "Laranja", hex: "#ea580c" },
+    { nome: "Amarelo", hex: "#f59e0b" },
+    { nome: "Verde Claro", hex: "#4ade80" },
+    { nome: "Verde Escuro", hex: "#166534" },
+    { nome: "Azul", hex: "#3b82f6" },
+    { nome: "Azul Escuro", hex: "#1e40af" },
+    { nome: "Roxo", hex: "#6b21a8" },
+    { nome: "Lilás", hex: "#a855f7" },
+    { nome: "Rosa Choque", hex: "#db2777" },
+    { nome: "Castanho", hex: "#78350f" },
+    { nome: "Cinzento", hex: "#6b7280" },
+    { nome: "Preto", hex: "#000000" },
+    { nome: "Branco", hex: "#ffffff" }
 ];
 
 export function iniciarTopicos(db, auth) {
