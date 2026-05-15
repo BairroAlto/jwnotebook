@@ -1,12 +1,15 @@
 // components/direita/xsat-controller.js
 import { processarPesquisaSat } from './xsat-engine.js';
+import { AIController } from './ai-controller.js';
+
 
 const estadosCanais = {
     1: { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' },
     2: { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' },
     3: { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' },
     4: { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' },
-    5: { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' }
+    5: { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' },
+    6: { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' } 
 };
 
 let canalSelecionadoUI = null;
@@ -16,20 +19,15 @@ export function iniciarXSat() {
     const botoesNum = document.querySelectorAll('.xsat-num');
     const subNav = document.getElementById('xsat-sub-nav');
 
-    botoesNum.forEach(btn => {
+   botoesNum.forEach(btn => {
         btn.onclick = () => {
             const num = btn.dataset.num;
-            canalSelecionadoUI = num;
-            botoesNum.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            if (subNav) subNav.style.display = 'flex';
-
-            const canal = estadosCanais[num];
-            if (canal.ativa) {
-                if (canal.abaAtiva === 'definicoes') renderizarDefinicoesCanal(num);
-                else renderizarResultados(canal.dados[canal.abaAtiva]);
+            if (num === "6") {
+                // Remove a sub-barra de ícones (sentinela/livros) para o modo IA
+                document.getElementById('xsat-sub-nav').style.display = 'none';
+                AIController.renderizarLista();
             } else {
-                mostrarCanalLivre(num);
+                // Lógica dos outros canais 1-5 ...
             }
         };
     });
@@ -283,3 +281,124 @@ function mostrarCanalLivre(num) {
     document.querySelectorAll('#xsat-sub-nav button').forEach(b => b.classList.remove('active'));
 }
 
+window.dispararNexoAI = (texto) => {
+    if (!texto || texto.trim().length < 5) return;
+
+    // 1. Ir para o Canal 6
+    if (window.switchPanel) window.switchPanel('xsat');
+    const btn6 = document.querySelector('.xsat-num[data-num="6"]');
+    if (btn6) btn6.click();
+
+    const display = document.getElementById('xsat-display-content');
+
+    // 2. DESENHAR O MENU DE PROTOCOLO
+    display.innerHTML = `
+        <div style="padding: 10px;">
+            <p style="font-size:10px; color:#10b981; font-weight:900; text-transform:uppercase; letter-spacing:2px; margin-bottom:20px; text-align:center;">PROTOCOLO NEXO ATIVADO</p>
+            
+            <div style="display:flex; flex-direction:column; gap:12px;">
+                <!-- OPÇÃO 1: MELHORAR -->
+                <button onclick="window.executarProtocoloAI(\`${texto.replace(/`/g, '\\`').replace(/\${/g, '\\${')}\`, 'melhorar')" 
+                        style="background:rgba(16,185,129,0.1); border:1px solid #10b981; color:white; padding:15px; border-radius:10px; cursor:pointer; text-align:left; transition:0.2s;">
+                    <div style="display:flex; align-items:center; gap:12px;">
+                        <i class="fa-solid fa-wand-magic-sparkles" style="color:#10b981; font-size:18px;"></i>
+                        <div>
+                            <b style="display:block; font-size:13px;">Melhorar Escrita</b>
+                            <span style="font-size:10px; opacity:0.6;">Gramática, fluidez e elegância.</span>
+                        </div>
+                    </div>
+                </button>
+
+                <!-- OPÇÃO 2: INVESTIGAR -->
+                <button onclick="window.executarProtocoloAI(\`${texto.replace(/`/g, '\\`').replace(/\${/g, '\\${')}\`, 'investigar')" 
+                        style="background:rgba(99, 102, 241, 0.1); border:1px solid #6366f1; color:white; padding:15px; border-radius:10px; cursor:pointer; text-align:left; transition:0.2s;">
+                    <div style="display:flex; align-items:center; gap:12px;">
+                        <i class="fa-solid fa-microscope" style="color:#6366f1; font-size:18px;"></i>
+                        <div>
+                            <b style="display:block; font-size:13px;">Investigar Contexto</b>
+                            <span style="font-size:10px; opacity:0.6;">História, Bíblia e conexões profundas.</span>
+                        </div>
+                    </div>
+                </button>
+            </div>
+            
+            <p style="margin-top:20px; font-size:9px; color:gray; text-align:center;">O Nexo está a aguardar as tuas ordens...</p>
+        </div>
+    `;
+};
+
+// 3. FUNÇÃO QUE FAZ O TRABALHO APÓS A ESCOLHA
+window.executarProtocoloAI = async (texto, modo) => {
+    const display = document.getElementById('xsat-display-content');
+    const cor = modo === 'melhorar' ? '#10b981' : '#6366f1';
+
+    display.innerHTML = `
+        <div style="text-align:center; padding:50px 20px; color:${cor};">
+            <i class="fa-solid fa-robot fa-bounce" style="font-size:40px; margin-bottom:20px;"></i>
+            <p style="font-family:monospace; font-size:10px; font-weight:800;">EXECUTANDO PROTOCOLO: ${modo.toUpperCase()}...</p>
+        </div>`;
+
+    const resposta = await NexoAI.analisarTexto(texto, modo);
+
+    display.innerHTML = `
+        <div class="indice-card" style="border-left: 4px solid ${cor}; background: rgba(255,255,255,0.02); padding:20px; display:block !important; cursor:default;">
+            <p style="font-size:10px; color:${cor}; font-weight:900; text-transform:uppercase; margin-bottom:10px;">
+                <i class="fa-solid fa-robot"></i> Nexo: ${modo === 'melhorar' ? 'Escrita Aperfeiçoada' : 'Relatório de Investigação'}
+            </p>
+            <div style="font-size:13.5px; color:white; line-height:1.7; white-space:pre-wrap;">${resposta}</div>
+        </div>
+        <button onclick="window.dispararNexoAI(\`${texto.replace(/`/g, '\\`').replace(/\${/g, '\\${')}\`)" 
+                style="width:100%; margin-top:10px; background:transparent; border:1px solid rgba(255,255,255,0.1); color:gray; padding:10px; border-radius:8px; cursor:pointer; font-size:10px;">
+            <i class="fa-solid fa-arrow-left"></i> VOLTAR AOS PROTOCOLOS
+        </button>
+    `;
+};
+
+function renderizarInterfaceVaziaAI() {
+    const display = document.getElementById('xsat-display-content');
+    if (display.innerHTML.includes('Inteligência Nexo') || display.innerHTML.includes('fa-bounce')) return;
+    display.innerHTML = `
+    <div style="padding: 10px;">
+        <p style="font-size:10px; color:#10b981; font-weight:900; text-transform:uppercase; letter-spacing:2px; margin-bottom:15px; text-align:center;">MENU DE PROTOCOLOS</p>
+        
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+            
+            <!-- MELHORAR -->
+            <button class="btn-protocolo" onclick="window.executarProtocoloAI(\`${texto}\`, 'melhorar')" style="border-color:#10b981;">
+                <i class="fa-solid fa-wand-magic-sparkles" style="color:#10b981;"></i>
+                <span>Melhorar</span>
+            </button>
+
+            <!-- INVESTIGAR -->
+            <button class="btn-protocolo" onclick="window.executarProtocoloAI(\`${texto}\`, 'investigar')" style="border-color:#6366f1;">
+                <i class="fa-solid fa-microscope" style="color:#6366f1;"></i>
+                <span>Investigar</span>
+            </button>
+
+            <!-- SOCRÁTICO -->
+            <button class="btn-protocolo" onclick="window.executarProtocoloAI(\`${texto}\`, 'socratico')" style="border-color:#f59e0b;">
+                <i class="fa-solid fa-lightbulb" style="color:#f59e0b;"></i>
+                <span>Desafiar</span>
+            </button>
+
+            <!-- SÍNTESE -->
+            <button class="btn-protocolo" onclick="window.executarProtocoloAI(\`${texto}\`, 'sintese')" style="border-color:#fbbf24;">
+                <i class="fa-solid fa-atom" style="color:#fbbf24;"></i>
+                <span>Resumir</span>
+            </button>
+
+            <!-- ORIGENS -->
+            <button class="btn-protocolo" onclick="window.executarProtocoloAI(\`${texto}\`, 'origens')" style="border-color:#a855f7;">
+                <i class="fa-solid fa-language" style="color:#a855f7;"></i>
+                <span>Léxico</span>
+            </button>
+
+            <!-- COSMOS -->
+            <button class="btn-protocolo" onclick="window.executarProtocoloAI(\`${texto}\`, 'cosmos')" style="border-color:#db2777;">
+                <i class="fa-solid fa-meteor" style="color:#db2777;"></i>
+                <span>Cosmos</span>
+            </button>
+
+        </div>
+    </div>`;
+}
