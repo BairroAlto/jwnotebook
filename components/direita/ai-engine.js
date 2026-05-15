@@ -38,7 +38,7 @@ export const NexoEngine = {
                 body: JSON.stringify({
                     "model": "deepseek/deepseek-chat",
                     "messages": [
-                        { "role": "system", "content": `Tu és o BookAI. ${prompts[modo]}` },
+                        { "role": "system", "content": `Tu és o BookAI. ${prompts[modo]} Importante: Usa apenas negrito com ** e títulos com ### para organizar a resposta.` },
                         { "role": "user", "content": texto }
                     ]
                 })
