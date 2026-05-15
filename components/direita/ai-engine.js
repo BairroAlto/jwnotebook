@@ -15,26 +15,26 @@ const _restore = (s) => s.split("").reverse().join("");
 
 export const NexoEngine = {
     perguntar: async (texto, modo) => {
-        
-        // Montagem da chave apenas em tempo de execução (RAM)
         const _k = _P1 + _P2 + _P3;
 
-  const prompts = {
-            "melhorar": "Reescreve o texto para ser mais claro e elegante.",
-            "investigar": "Fornece contexto histórico e referências sobre o texto.",
-            "socratico": "Gera 3 perguntas profundas sobre este texto.",
-            "sintese": "Faz um resumo atómico do texto num parágrafo curto.",
-            "origens": "Explica o significado das palavras no contexto original.",
-            "cosmos": "Sugere em que categoria do Cosmos isto se encaixa melhor."
+        const prompts = {
+            "melhorar": "Reescreve para ser mais claro e elegante. Mantém a essência.",
+            "investigar": "Fornece contexto histórico e referências sobre o tema.",
+            "socratico": "Gera 3 perguntas profundas para meditação.",
+            "sintese": "Faz um resumo atómico num parágrafo curto.",
+            "origens": "Explica o significado no contexto original grego/hebraico.",
+            "cosmos": "Sugere uma categoria do Cosmos para este texto.",
+            // NOVOS PROTOCOLOS
+            "teocratico": "Atua como especialista em pesquisa teocrática. Baseia a tua resposta exclusivamente no estilo e lógica encontrados em jw.org e wol.jw.org.",
+            "ilustrar": "Cria uma analogia ou ilustração poderosa para ajudar a explicar este conceito a outra pessoa.",
+            "critico": "Apresenta 2 possíveis dúvidas ou objeções que alguém teria sobre este texto e como respondê-las.",
+            "pratico": "Sugere 2 formas práticas de aplicar esta informação na vida pessoal ou no ministério."
         };
 
         try {
             const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
                 method: "POST",
-                headers: {
-                    "Authorization": "Bearer " + _k,
-                    "Content-Type": "application/json"
-                },
+                headers: { "Authorization": "Bearer " + _k, "Content-Type": "application/json" },
                 body: JSON.stringify({
                     "model": "deepseek/deepseek-chat",
                     "messages": [
@@ -43,16 +43,8 @@ export const NexoEngine = {
                     ]
                 })
             });
-
             const data = await response.json();
-
-            if (response.status === 401) {
-                return "❌ Erro 401: A chave foi invalidada. Se o repositório é público, o histórico de commits pode ter exposto a chave.";
-            }
-
             return data.choices[0].message.content;
-        } catch (error) {
-            return "❌ Erro de ligação.";
-        }
+        } catch (e) { return "❌ Erro de ligação."; }
     }
 };
