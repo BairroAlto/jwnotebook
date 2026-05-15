@@ -72,12 +72,14 @@ async function buscarECarregarCosmos(ancorasIds, db, auth) {
     if (!feed || !uid) return;
 
     try {
-        // Obter definições das Âncoras (Dono apenas)
+        // --- ADICIONADO FILTRO DE ESTADO AQUI ---
         const qAncoras = query(
             collection(db, "Ancora"), 
             where("userId", "==", uid), 
+            where("estado", "==", "ativo"), // 🛡️ Apenas âncoras vivas
             where("id", "in", ancorasIds)
         );
+        
         const snapAncoras = await getDocs(qAncoras);
         
         let cosmosIdsSet = new Set();
@@ -87,18 +89,18 @@ async function buscarECarregarCosmos(ancorasIds, db, auth) {
 
         const idsArray = Array.from(cosmosIdsSet);
         if (idsArray.length === 0) {
-            feed.innerHTML = `<p style="text-align:center; color:gray; font-size:11px; margin-top:20px;">Nenhum tema encontrado nestas categorias.</p>`;
+            feed.innerHTML = `<p style="text-align:center; color:gray; font-size:11px; margin-top:20px;">Nenhum tema ativo encontrado.</p>`;
             return;
         }
 
         limparListenersCosmos();
 
-        // Operador 'in' limitado a 30 itens
         for (let i = 0; i < idsArray.length; i += 30) {
             const chunk = idsArray.slice(i, i + 30);
             const qCosmos = query(
                 collection(db, "Cosmo"), 
                 where("userId", "==", uid),
+                where("estado", "==", "ativo"), // 🛡️ Garante que o tema também está ativo
                 where("id", "in", chunk)
             );
             
@@ -110,7 +112,7 @@ async function buscarECarregarCosmos(ancorasIds, db, auth) {
             });
             unsubsCosmosAtivos.push(unsub);
         }
-    } catch (e) { console.error("Erro Ancora Cross:", e); }
+    } catch (e) { console.error("Erro Ancora Filter:", e); }
 }
 
 /**
@@ -188,12 +190,18 @@ async function abrirPopupSelecaoAncoras(notaId, ancorasAtuais, db, auth) {
     overlay.classList.add('active');
     container.innerHTML = `<div style="text-align:center; padding:20px;"><i class="fa-solid fa-spinner fa-spin"></i></div>`;
 
-    const q = query(collection(db, "Ancora"), where("userId", "==", auth.currentUser.uid), where("estado", "==", "ativo"));
+    // --- REFORÇO DO FILTRO DE ESTADO ---
+    const q = query(
+        collection(db, "Ancora"), 
+        where("userId", "==", auth.currentUser.uid), 
+        where("estado", "==", "ativo") // 🛡️ Não mostrar "fantasmas" na seleção
+    );
+    
     const snap = await getDocs(q);
 
     container.innerHTML = "";
     if (snap.empty) {
-        container.innerHTML = `<p style="color:gray; font-size:12px; text-align:center; padding:20px;">Crie primeiro categorias Âncora no menu Cosmos.</p>`;
+        container.innerHTML = `<p style="color:gray; font-size:12px; text-align:center; padding:20px;">Não tens categorias Âncora ativas.</p>`;
         return;
     }
 
