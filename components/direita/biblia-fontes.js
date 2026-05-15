@@ -35,13 +35,34 @@ export async function renderizarFontesBiblia(info, container, db, auth) {
     currentUid = auth.currentUser.uid;
     limparFontesBiblia();
 
-    // --- SOLUÇÃO DO ERRO: Expor a função ao objeto global window ---
-    window.abrirPopupFontesBiblia = abrirPopupFontesBiblia;
-    window.editarCodexBiblia = editarCodexBiblia;
-
+    // 1. CONFIGURAR ALVOS PARA O POPUP GLOBAL
+    // Guardamos o ID do versículo para que, quando o popup de links abrir, ele saiba onde gravar
     const docId = await obterDocIdBiblia(nomeCompleto, currentUid, db);
+    
+    if (docId) {
+        currentRef = doc(db, "TextosBiblia", docId);
+    }
+
+    // 2. REGISTAR O OUVINTE DO BOTÃO VERDE (HEADER)
+    // O index.html dispara 'brain:abrirPopupFontes'
+    window.removeEventListener('brain:abrirPopupFontes', window._handlerBibliaFontes);
+    
+    window._handlerBibliaFontes = () => {
+        console.log("📥 [FONTES-BIBLIA] Abrindo configurador de fontes...");
+        
+        // Antes de abrir, dizemos ao sistema que o alvo é o Versículo
+        window.colecaoAlvoFontes = "TextosBiblia";
+        window.idAlvoFontes = docId; 
+        
+        // Chamamos a função de abertura que já tens no ficheiro
+        abrirPopupFontesBiblia();
+    };
+    
+    window.addEventListener('brain:abrirPopupFontes', window._handlerBibliaFontes);
+
+    // 3. SE O DOC NÃO EXISTE, AVISAR
     if (!docId) {
-        container.innerHTML = `<p style="color:gray; text-align:center; margin-top:30px; font-size:11px; opacity:0.5;">Adiciona fontes ou mapeamentos Codex.</p>`;
+        container.innerHTML = `<p style="color:gray; text-align:center; margin-top:30px; font-size:11px; opacity:0.5;">Cria primeiro uma anotação (aba +) para poderes adicionar fontes.</p>`;
         return;
     }
 
