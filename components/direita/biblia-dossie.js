@@ -57,30 +57,32 @@ export async function renderizarDossieBiblia(info, container, db, auth, onNavega
     infoVersiculoAtual = info;
     const nomeCompleto = `${info.livro} ${info.cap}:${info.ver}`;
     currentUid = auth.currentUser.uid;
+
+    // --- 1. SINTONIZAR COM A TORRE DE CONTROLO (index.html) ---
     
-    // --- ESCUTA 1: NOTAS LOCAIS (Filtro In Live) ---
-    const qLocal = query(collection(db, "Local"), where("userId", "==", currentUid));
-    if (unsubLocal) unsubLocal();
-    unsubLocal = onSnapshot(qLocal, (snap) => {
-        ferramentasMapaVico = {};
-        snap.forEach(docN => {
-            const d = docN.data();
-            if (d.estado !== "ativa") return; // 🛡️ Filtro Nota Oculta
+    // A) Comando para Nova Pasta (Mica) - Ícone Laranja Folder-Plus
+    window.removeEventListener('brain:abrirMicaPopup', window._handlerMicaBiblia);
+    window._handlerMicaBiblia = () => {
+        console.log("📥 [DOSSIÊ-BIBLIA] Abrindo criador de Mica...");
+        abrirPopupMica(db, auth);
+    };
+    window.addEventListener('brain:abrirMicaPopup', window._handlerMicaBiblia);
 
-            if(d.caixas) d.caixas.forEach(c => {
-                if (c.estado !== "ativa") return; // 🛡️ Filtro Caixa Oculta
-                ferramentasMapaVico[c.id] = { ...c, notaDocId: docN.id, notaDadosCompletos: d };
-            });
-        });
-        if (micaAbertaId) executarDesenhoDossie(container, db, auth, onNavegacaoMica);
-    });
+    // B) Comando para Nova Referência - Ícone Verde Plus
+    window.removeEventListener('brain:abrirReferenciaMica', window._handlerRefBiblia);
+    window._handlerRefBiblia = () => {
+        console.log("📥 [DOSSIÊ-BIBLIA] Abrindo seletor de referências...");
+        abrirPopupRefApta(db);
+    };
+    window.addEventListener('brain:abrirReferenciaMica', window._handlerRefBiblia);
 
-    // --- ESCUTA 2: ESTRUTURA DO DOSSIÊ ---
+
+    // --- 2. ESCUTA DO DOCUMENTO MESTRE ---
     const qDossie = query(collection(db, "TextosBiblia"), where("userId", "==", currentUid), where("nome", "==", nomeCompleto));
     const snapDossie = await getDocs(qDossie);
     
     if (snapDossie.empty) {
-        container.innerHTML = `<p style="color:gray; text-align:center; margin-top:30px; font-size:11px; opacity:0.5;">Cria uma Mica para organizar este versículo.</p>`;
+        container.innerHTML = `<p style="color:gray; text-align:center; margin-top:30px; font-size:11px; opacity:0.5;">Cria primeiro uma anotação (aba +) para poderes usar o Dossiê.</p>`;
         return;
     }
 
