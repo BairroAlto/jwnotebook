@@ -90,7 +90,7 @@ header.querySelector('.btn-parabolica').onclick = () => {
     inputTitulo.addEventListener("input", (e) => {
         ajustarAlturaTitulo();
         caixa.titulo = e.target.value;
-        onTextoAlterado();
+        onTextoAlterado(caixa);
     });
 
     // --- CORPO (ÁREA DE TEXTO) ---
@@ -118,7 +118,7 @@ if (caixa.destaques) corTxt = "#000";
     corpo.addEventListener("input", (e) => {
         ajustarAlturaCorpo(); 
         caixa.conteudo = e.target.value; 
-        onTextoAlterado(); 
+        onTextoAlterado(caixa);
     });
 
     // Ajustes de altura iniciais
