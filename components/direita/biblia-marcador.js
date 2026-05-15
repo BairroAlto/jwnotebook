@@ -84,37 +84,55 @@ async function renderizarLista(lista) {
 async function vincularVersiculoMarcador(marcador, vincular) {
     let verseId = await obterIdVersiculoAtual();
 
-    // Se o versículo não tem documento, criamos agora
+    // 1. Garantir que o versículo tem um documento mestre
     if (!verseId) {
         const docRef = await addDoc(collection(currentDb, "TextosBiblia"), {
             id: crypto.randomUUID(),
             nome: `${currentVerseInfo.livro} ${currentVerseInfo.cap}:${currentVerseInfo.ver}`,
-            livro: currentVerseInfo.livro, capitulo: currentVerseInfo.cap, versiculo: currentVerseInfo.ver,
-            userId: currentAuth.currentUser.uid, estado: "ativo", tipo: "textobiblico", timestamp: serverTimestamp(),
-            marcador: "nao"
+            livro: currentVerseInfo.livro, 
+            capitulo: currentVerseInfo.cap, 
+            versiculo: currentVerseInfo.ver,
+            userId: currentAuth.currentUser.uid, 
+            estado: "ativo", 
+            tipo: "textobiblico", 
+            timestamp: serverTimestamp(),
+            marcador: "sim" // Já nasce marcado
         });
-        verseId = (await getDoc(docRef)).data().id;
+        const novoSnap = await getDoc(docRef);
+        verseId = novoSnap.data().id;
     }
 
+    // 2. Atualizar a Categoria (Array de Versículos)
     const marcadorRef = doc(currentDb, "Marcador", marcador.docId);
-    
-    // 1. Atualizar o Marcador (Array de Versículos)
     await updateDoc(marcadorRef, {
         textosbiblia: vincular ? arrayUnion(verseId) : arrayRemove(verseId)
     });
 
-    // 2. Verificar se o versículo ainda tem algum marcador para atualizar o campo "marcador"
-    const q = query(collection(currentDb, "Marcador"), 
-                    where("userId", "==", currentAuth.currentUser.uid), 
-                    where("textosbiblia", "array-contains", verseId));
+    // 3. ATUALIZAÇÃO CRUCIAL: Verificar se ainda resta algum marcador para este versículo
+    // Procuramos em todas as categorias do utilizador se este verseId aparece
+    const qCheck = query(
+        collection(currentDb, "Marcador"), 
+        where("userId", "==", currentAuth.currentUser.uid), 
+        where("textosbiblia", "array-contains", verseId)
+    );
     
-    const snap = await getDocs(q);
-    const hasAny = !snap.empty;
+    const snapCheck = await getDocs(qCheck);
+    const aindaTemMarcadores = !snapCheck.empty;
 
-    const qVerse = query(collection(currentDb, "TextosBiblia"), where("id", "==", verseId));
+    // 4. Atualizar o campo "marcador" no documento mestre do versículo
+    // Isto é o que faz o ícone no topo mudar de cor
+    const qVerse = query(
+        collection(currentDb, "TextosBiblia"), 
+        where("id", "==", verseId),
+        where("userId", "==", currentAuth.currentUser.uid)
+    );
     const snapVerse = await getDocs(qVerse);
+    
     if (!snapVerse.empty) {
-        await updateDoc(snapVerse.docs[0].ref, { marcador: hasAny ? "sim" : "nao" });
+        await updateDoc(snapVerse.docs[0].ref, { 
+            marcador: aindaTemMarcadores ? "sim" : "nao" 
+        });
+        console.log(`✅ Status mestre atualizado: ${aindaTemMarcadores ? 'Marcado' : 'Desmarcado'}`);
     }
 }
 
