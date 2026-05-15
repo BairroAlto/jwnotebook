@@ -343,15 +343,16 @@ function abrirPopupForm(tipo, gId = null, dadosExistentes = null) {
 
     btnCancelar.onclick = () => overlay.classList.remove('active');
 
-    btnConfirmar.onclick = async () => {
+   btnConfirmar.onclick = async () => {
         const nome = input.value.trim();
         if (!nome) return;
 
+        // 1. Obter a estrutura atual ou criar uma nova
         const arquivo = notaCache.Arquivo || { gavetas: {} };
         const agora = new Date().toISOString();
 
         if (dadosExistentes) {
-            // EDITAR
+            // MODO EDIÇÃO
             if (tipo === 'gaveta') {
                 arquivo.gavetas[dadosExistentes.id].nome = nome;
                 arquivo.gavetas[dadosExistentes.id].cor = corSelecionada;
@@ -359,18 +360,49 @@ function abrirPopupForm(tipo, gId = null, dadosExistentes = null) {
                 arquivo.gavetas[gId].prateleiras[dadosExistentes.id].nome = nome;
             }
         } else {
-            // CRIAR NOVO
+            // MODO CRIAÇÃO (NOVO)
             const id = crypto.randomUUID();
             if (tipo === 'gaveta') {
-                arquivo.gavetas[id] = { id, nome, cor: corSelecionada, timestamp: agora, userId: authRef.currentUser.uid, estado: "ativo", prateleiras: {}, caixas: [] };
+                arquivo.gavetas[id] = { 
+                    id, nome, cor: corSelecionada, 
+                    timestamp: agora, 
+                    userId: authRef.currentUser.uid, 
+                    estado: "ativo", 
+                    prateleiras: {}, 
+                    caixas: [] 
+                };
             } else {
-                arquivo.gavetas[gId].prateleiras[id] = { id, nome, estado: 'ativo', caixas: [], timestamp: agora };
+                // Nova Prateleira dentro de uma Gaveta
+                if (!arquivo.gavetas[gId].prateleiras) arquivo.gavetas[gId].prateleiras = {};
+                arquivo.gavetas[gId].prateleiras[id] = { 
+                    id, nome, estado: 'ativo', 
+                    caixas: [], 
+                    timestamp: agora 
+                };
             }
         }
 
-        await updateDoc(doc(dbRef, "Local", idFirestoreNota), { "Arquivo": arquivo });
+        // ========================================================
+        // 🚀 O SEGREDO PARA APARECER LOGO:
+        // ========================================================
+        
+        // A) Atualizar a nota em memória local IMEDIATAMENTE
+        notaCache.Arquivo = arquivo; 
+
+        // B) Gravar no Firebase em background
+        try {
+            await updateDoc(doc(dbRef, "Local", idFirestoreNota), { "Arquivo": arquivo });
+            console.log(`✅ [ARQUIVO] ${tipo} salva no Firebase.`);
+        } catch (e) {
+            console.error("Erro ao gravar arquivo:", e);
+        }
+
+        // C) Fechar o popup
         overlay.classList.remove('active');
-        triggerGlobalUpdate();
+
+        // D) FORÇAR O REDESENHO DA INTERFACE NA HORA
+        // Isto faz com que a nova gaveta apareça sem teres de sair da nota
+        renderizarModoArquivo(idFirestoreNota, notaCache);
     };
 }
 
