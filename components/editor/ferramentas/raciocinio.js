@@ -101,7 +101,7 @@ header.querySelector('.btn-parabolica').onclick = () => {
     inputTitulo.addEventListener("input", (e) => {
         ajustarAlturaTitulo();
         caixa.titulo = e.target.value;
-        onTextoAlterado();
+        onTextoAlterado(caixa);
     });
 
     tituloContainer.appendChild(numeroEl);
