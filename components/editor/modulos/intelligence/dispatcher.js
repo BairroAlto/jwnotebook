@@ -1,39 +1,56 @@
 // components/editor/modulos/intelligence/dispatcher.js
 
 /**
- * Orquestra a atualização de todos os módulos da coluna EYE (Direita).
- * @param {Array} caixas - O array de caixas atual.
- * @param {Object} nota - Os dados originais da nota (para ver modos).
- * @param {Object} db - Instância do Firestore.
- * @param {Object} auth - Instância do Auth.
+ * DESPACHANTE DE INTELIGÊNCIA (EYE / X-SAT)
+ * Centraliza as ordens de atualização para as colunas inteligentes.
  */
+
+// DECLARAÇÃO GLOBAL DA VARIÁVEL (Resolve o erro do Uncaught ReferenceError)
+let timerDebounce = null;
+
 export function despacharInteligenciaEye(caixas, nota, db, auth) {
     if (!caixas || !nota) return;
 
-    const modos = Array.isArray(nota.modo) ? nota.modo : [nota.modo || 'normal'];
-    const isModoPost = modos.includes('post');
+    // 1. ESTRATÉGIA DE DEBOUNCE (100ms)
+    // Evita sobrecarga ao digitar e agrupa as mudanças.
+    clearTimeout(timerDebounce);
 
-    console.log("🛰️ [EYE-DISPATCHER] Sincronizando abas inteligentes...");
+    timerDebounce = setTimeout(() => {
+        const modos = Array.isArray(nota.modo) ? nota.modo : [nota.modo || 'normal'];
+        const isModoPost = modos.includes('post');
 
-    // 1. Atualizar Índice (GPS)
-    import('../../../direita/indice.js').then(m => 
-        m.renderizarIndice(caixas, isModoPost)
-    );
+        console.log("🛰️ [DISPATCHER] Sincronizando todos os sistemas de inteligência...");
 
-    // 2. Atualizar Resumo de Fontes (Links e Codex)
-    import('../../../direita/eye-fontes-nota.js').then(m => 
-        m.carregarFontesGlobaisDaNota(caixas)
-    );
+        // A) Atualizar Índice (GPS)
+        import('../../../direita/indice.js').then(m => {
+            if (m.renderizarIndice) m.renderizarIndice(caixas, isModoPost);
+        });
 
-    // 3. Atualizar Detetor Bíblico
-    import('../../../direita/eye-textos-biblia.js').then(m => 
-        m.detectarEExibirTextosBiblicos(caixas)
-    );
+        // B) Atualizar Scanner de IA (Nexo)
+        import('../../../direita/ai-controller.js').then(m => {
+            if (m.AIController && m.AIController.renderizarLista) {
+                m.AIController.renderizarLista(); 
+            }
+        });
 
-    // 4. Atualizar Caixas Associadas
-    if (auth?.currentUser) {
-        import('../../../direita/caixas-associadas.js').then(m => 
-            m.carregarCaixasAssociadas(caixas, db, auth.currentUser.uid)
-        );
-    }
+        // C) Atualizar Fontes (Links e Codex)
+        import('../../../direita/eye-fontes-nota.js').then(m => {
+            if (m.carregarFontesGlobaisDaNota) m.carregarFontesGlobaisDaNota(caixas);
+        });
+
+        // D) Atualizar Detetor Bíblico (Aba de Textos)
+        import('../../../direita/eye-textos-biblia.js').then(m => {
+            if (m.detectarEExibirTextosBiblicos) m.detectarEExibirTextosBiblicos(caixas);
+        });
+
+        // E) Atualizar Caixas Associadas
+        if (auth?.currentUser) {
+            import('../../../direita/caixas-associadas.js').then(m => {
+                if (m.carregarCaixasAssociadas) {
+                    m.carregarCaixasAssociadas(caixas, db, auth.currentUser.uid);
+                }
+            });
+        }
+
+    }, 100); 
 }
