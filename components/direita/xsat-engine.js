@@ -27,32 +27,65 @@ const _SATELLITE_DATA_CACHE = new Map();
 function extrairReferencias(texto) {
     const achados = [];
     const textoLimpo = texto.toLowerCase();
+    
+    // Preparar dicionário para busca rápida
     const dictLower = {};
     Object.keys(BIBLE_ABBREVIATIONS).forEach(k => { dictLower[k.toLowerCase()] = BIBLE_ABBREVIATIONS[k]; });
     
     const nomesOrdenados = Object.keys(BIBLE_ABBREVIATIONS).sort((a, b) => b.length - a.length);
     const patternLivros = nomesOrdenados.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-    const numWords = Object.keys(WORDS_TO_NUMS).join('|');
-    const digitOrWord = `(\\d+|${numWords})`;
 
-    const regexDireta = new RegExp(`(${patternLivros})\\.?\\s*(?:cap[íi]tulo|cap\\.?|c\\.?|)?\\s*${digitOrWord}\\s*(?:[:\\s,;]|vers[íi]culo|ver\\.?|v\\.?|e\\s+o|e\\s+)?\\s*${digitOrWord}`, 'gi');
-    const regexInversa = new RegExp(`(?:o\\s+)?vers[íi]culo\\s+${digitOrWord}\\s+(?:do\\s+cap[íi]tulo|do\\s+cap|do\\s+c|do)\\s+${digitOrWord}\\s+de\\s+(${patternLivros})`, 'gi');
+    // Regex atualizada para capturar intervalos (ex: 1:1-10 ou 1:1,2,5)
+    const regexFull = new RegExp(`(${patternLivros})\\.?\\s*(\\d+)[:\\s](\\d+(?:[\\d\\s\\-,]*)?)`, 'gi');
 
     let m;
-    while ((m = regexDireta.exec(textoLimpo)) !== null) {
+    while ((m = regexFull.exec(textoLimpo)) !== null) {
         const livroOficial = dictLower[m[1].toLowerCase()];
-        const cap = isNaN(m[2]) ? WORDS_TO_NUMS[m[2]] : parseInt(m[2]);
-        const ver = isNaN(m[3]) ? WORDS_TO_NUMS[m[3]] : parseInt(m[3]);
-        if (livroOficial && cap && ver) achados.push({ livro: livroOficial, abrev: m[1], cap, ver });
-    }
+        const cap = parseInt(m[2]);
+        const versiculosBrutos = m[3];
 
-    while ((m = regexInversa.exec(textoLimpo)) !== null) {
-        const livroOficial = dictLower[m[3].toLowerCase()];
-        const ver = isNaN(m[1]) ? WORDS_TO_NUMS[m[1]] : parseInt(m[1]);
-        const cap = isNaN(m[2]) ? WORDS_TO_NUMS[m[2]] : parseInt(m[2]);
-        if (livroOficial && cap && ver) achados.push({ livro: livroOficial, abrev: m[3], cap, ver });
+        // --- MOTOR DE EXPANSÃO DE INTERVALO ---
+        // Ex: "1-3, 5" -> [1, 2, 3, 5]
+        const listaVersiculos = expandirVersiculos(versiculosBrutos);
+
+        listaVersiculos.forEach(vNum => {
+            achados.push({ 
+                livro: livroOficial, 
+                abrev: m[1], 
+                cap: cap, 
+                ver: vNum 
+            });
+        });
     }
     return achados;
+}
+
+/**
+ * AUXILIAR: Transforma strings de intervalo em arrays de números
+ * "1-3" -> [1, 2, 3]
+ */
+function expandirVersiculos(str) {
+    const resultados = new Set();
+    const partes = str.split(/[,;]/);
+
+    partes.forEach(p => {
+        const trecho = p.trim();
+        if (trecho.includes('-')) {
+            const range = trecho.split('-');
+            const inicio = parseInt(range[0]);
+            const fim = parseInt(range[1]);
+            if (!isNaN(inicio) && !isNaN(fim)) {
+                for (let i = Math.min(inicio, fim); i <= Math.max(inicio, fim); i++) {
+                    resultados.add(i);
+                }
+            }
+        } else {
+            const n = parseInt(trecho);
+            if (!isNaN(n)) resultados.add(n);
+        }
+    });
+
+    return Array.from(resultados).sort((a, b) => a - b);
 }
 
 /**
