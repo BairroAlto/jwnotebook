@@ -16,7 +16,7 @@ export function inicializarLeituraPins(db, auth) {
     
     if (!listaPins || !btnToggle) return;
 
-    // 1. GESTÃO DO MODO EDIÇÃO (Lápis)
+    // TOGGLE MODO EDIÇÃO (Lápis)
     btnToggle.onclick = (e) => {
         e.stopPropagation();
         modoEdicaoPins = !modoEdicaoPins;
@@ -24,44 +24,62 @@ export function inicializarLeituraPins(db, auth) {
         listaPins.classList.toggle('lista-modo-edicao', modoEdicaoPins);
     };
 
-    // 2. ESCUTA EM TEMPO REAL (Snapshot)
-    // Lemos a coleção 'Atalho' filtrada pelo utilizador logado
-    const q = query(
-        collection(db, "Atalho"), 
-        where("userId", "==", auth.currentUser.uid), 
-        orderBy("ordem", "asc")
-    );
+    // ESCUTA EM TEMPO REAL (Snapshot)
+    const q = query(collection(db, "Atalho"), where("userId", "==", auth.currentUser.uid), orderBy("ordem", "asc"));
+    
+    onSnapshot(q, async (snapshot) => {
+        // --- MOTOR DE VERIFICAÇÃO DE INTEGRIDADE (Anti-Fantasmas) ---
+        // Verificamos em paralelo se a nota/pasta original ainda está ativa
+        const verificacoes = snapshot.docs.map(async (docSnap) => {
+            const data = docSnap.data();
+            const idAtalho = docSnap.id;
+            
+            try {
+                // Tenta ler o documento de origem (na coleção Local ou Share)
+                const refOrigem = doc(db, data.onde, data.itemId);
+                const snapOrigem = await getDoc(refOrigem);
 
-    onSnapshot(q, (snapshot) => {
-        const fragmento = document.createDocumentFragment();
+                if (snapOrigem.exists()) {
+                    const status = snapOrigem.data().estado;
+                    // Só retorna como válido se o estado for "ativa" (Local) ou "ativo" (Share)
+                    if (status === "ativa" || status === "ativo") {
+                        return { idAtalho, data, valido: true };
+                    }
+                }
+                return { idAtalho, valido: false };
+            } catch (e) {
+                return { idAtalho, valido: false };
+            }
+        });
+
+        // Aguarda que todas as consultas ao Firebase terminem
+        const resultados = await Promise.all(verificacoes);
+        const pinsValidos = resultados.filter(r => r.valido);
+
+        // RENDERIZAÇÃO
+        listaPins.innerHTML = "";
         
-        if (snapshot.empty) {
-            listaPins.innerHTML = `<p style="text-align:center; color:gray; font-size:11px; padding:30px; opacity:0.6;">Nenhum item fixado.</p>`;
+        if (pinsValidos.length === 0) {
+            listaPins.innerHTML = `<p style="text-align:center; color:gray; font-size:11px; padding:30px; opacity:0.6;">Nenhum item ativo fixado.</p>`;
             return;
         }
 
-        snapshot.forEach(docSnap => {
-            const data = docSnap.data();
-            const idDocFirebase = docSnap.id; // ID do documento na coleção Atalho
-            const itemIdReal = data.itemId;    // ID da Nota ou Pasta original
+        const fragmento = document.createDocumentFragment();
+
+        pinsValidos.forEach(itemObj => {
+            const { data, idAtalho } = itemObj;
+            const itemIdReal = data.itemId;
             
             const div = document.createElement('div');
-            
-            // --- VERIFICAÇÃO DE SELEÇÃO ATIVA ---
-            // Verifica se este atalho aponta para a nota que está aberta no editor
+            // Verifica se esta nota é a que está aberta no editor para iluminar
             const isAtivo = (itemIdReal === window.itemSelecionadoId);
             
             div.className = `item-local ${isAtivo ? 'active' : ''}`;
-            
-            // Atributos para o sincronizador global conseguir encontrar o elemento
             div.setAttribute('data-id', itemIdReal);
             div.setAttribute('data-itemid', itemIdReal); 
 
-            // Definição de Cores e Ícones (Consistente com Local/Share)
-            const cor = data.onde === "Local" 
-                ? (data.tipo === "pasta" ? "#eab308" : "#6366f1") 
-                : "#ef4444"; // Vermelho se vier do Share
-            
+            // Estilo visual consistente
+            const cor = data.onde === "Local" ? (data.tipo === "pasta" ? "#eab308" : "#6366f1") : "#ef4444";
             const icone = data.tipo === "pasta" ? "fa-folder" : "fa-note-sticky";
 
             div.innerHTML = `
@@ -72,54 +90,45 @@ export function inicializarLeituraPins(db, auth) {
                     </span>
                 </div>
                 <i class="fa-solid fa-gear btn-edit-item-local" 
-                   onclick="event.stopPropagation(); window.abrirGestaoPinInterna('${idDocFirebase}', '${data.nome.replace(/'/g, "\\'")}')">
+                   onclick="event.stopPropagation(); window.abrirGestaoPinInterna('${idAtalho}', '${data.nome.replace(/'/g, "\\'")}')">
                 </i>
             `;
 
-            // Lógica de Clique (Teleporte)
             div.onclick = () => { 
                 if (!modoEdicaoPins) {
                     window.itemSelecionadoId = itemIdReal;
                     viajarParaItem(data, db, auth); 
-                    
                     // Feedback visual imediato
                     document.querySelectorAll('#lista-pins .item-local').forEach(el => el.classList.remove('active'));
                     div.classList.add('active');
                 }
             };
-
             fragmento.appendChild(div);
         });
 
-        // Injeção final no DOM
-        listaPins.innerHTML = "";
         listaPins.appendChild(fragmento);
     });
 
     /**
-     * 3. GESTÃO DO POPUP (CUSTOMIZADO PARA PINS)
-     * Reutiliza o popup de gestão mas esconde o que não faz sentido para atalhos.
+     * 2. GESTÃO DO POPUP (CUSTOMIZADO PARA PINS)
      */
     window.abrirGestaoPinInterna = (docId, nome) => {
         pinAtualParaGestao = docId;
         const overlay = document.getElementById('popup-gestao-item-overlay');
 
-        // Referências para esconder/mostrar campos
-        const inputNomeArea = document.getElementById('input-gestao-nome').parentElement;
+        const inputNomeArea = document.getElementById('input-gestao-nome')?.parentElement;
         const btnMover = document.getElementById('btn-gestao-mover');
         const btnOcultar = document.getElementById('btn-gestao-ocultar');
         const btnSalvar = document.getElementById('btn-salvar-gestao-item');
-        const btnRemover = document.getElementById('btn-gestao-pin'); // Usamos este como "Desafixar"
+        const btnRemover = document.getElementById('btn-gestao-pin'); 
         const btnOrdenar = document.getElementById('btn-gestao-ordenar');
 
-        // Layout específico para Pin
         document.getElementById('gestao-item-titulo').innerText = "Gerir Atalho";
         if (inputNomeArea) inputNomeArea.style.display = 'none';
         if (btnMover) btnMover.style.display = 'none';
         if (btnOcultar) btnOcultar.style.display = 'none';
         if (btnSalvar) btnSalvar.style.display = 'none';
 
-        // Configura botão de remoção (Desafixar)
         btnRemover.style.display = 'flex';
         btnRemover.innerHTML = '<i class="fa-solid fa-thumbtack-slash"></i> Desafixar';
         btnRemover.classList.add('pin-ativo');
@@ -131,16 +140,14 @@ export function inicializarLeituraPins(db, auth) {
             resetPopupLayout();
         };
 
-        // Configura botão de ordenação (Setas)
         btnOrdenar.onclick = (e) => {
             e.stopPropagation();
             overlay.classList.remove('active');
-            abrirOrdenacaoPins(db, auth); // Motor interno de ordenação de atalhos
+            import('./ler-pins.js').then(() => abrirOrdenacaoPins(db, auth));
         };
 
         overlay.classList.add('active');
 
-        // RESET: Volta a mostrar tudo para quando o utilizador abrir o Local/Share
         const resetPopupLayout = () => {
             if (inputNomeArea) inputNomeArea.style.display = 'block';
             if (btnMover) btnMover.style.display = 'flex';
@@ -150,7 +157,6 @@ export function inicializarLeituraPins(db, auth) {
             btnRemover.innerHTML = '<i class="fa-solid fa-thumbtack"></i> Pin';
         };
 
-        // Escuta o fecho para resetar
         const btnX = overlay.querySelector('.popup-header button');
         btnX.onclick = () => { overlay.classList.remove('active'); resetPopupLayout(); };
     };
@@ -186,7 +192,6 @@ async function abrirOrdenacaoPins(db, auth) {
         if (target < 0 || target >= lista.length) return;
         [lista[idx], lista[target]] = [lista[target], lista[idx]];
         render();
-        // Gravar no Firebase (Corrigido: agora updateDoc está definido)
         for (let i = 0; i < lista.length; i++) {
             await updateDoc(doc(db, "Atalho", lista[i].id), { ordem: i + 1 });
         }
@@ -194,12 +199,13 @@ async function abrirOrdenacaoPins(db, auth) {
     render();
 }
 
+  
 /**
  * 4. NAVEGAÇÃO AUTOMÁTICA
  */
 async function viajarParaItem(data, db, auth) {
     const { itemId, tipo, onde, nome } = data;
-    window.itemSelecionadoId = itemId;
+    const uid = auth.currentUser.uid;
 
     const botoesEsquerda = document.querySelectorAll('#left-buttons button');
     const btnAlvo = Array.from(botoesEsquerda).find(b => b.innerText.trim().toUpperCase() === onde.toUpperCase());
@@ -207,11 +213,10 @@ async function viajarParaItem(data, db, auth) {
 
     try {
         if (tipo === "nota") {
-            const docRef = doc(db, onde, itemId);
-            const docSnap = await getDoc(docRef);
+            const docSnap = await getDoc(doc(db, onde, itemId));
             if (docSnap.exists()) {
                 const d = docSnap.data();
-                const pastaDaNota = (onde === "Local") ? d.pastapai : (d[auth.currentUser.uid]?.pastapai || "home");
+                const pastaDaNota = (onde === "Local") ? d.pastapai : (d[uid]?.pastapai || "home");
                 
                 if (onde === "Local") {
                     window.pastaAtual = pastaDaNota;
@@ -227,7 +232,6 @@ async function viajarParaItem(data, db, auth) {
                 abrirNotaNoEditor(docSnap.id, d, db, auth);
             }
         } else {
-            // Lógica de Pasta
             if (onde === "Local") {
                 window.pastaAtual = itemId;
                 window.historicoPastas = [{ id: "root", nome: "Local" }, { id: itemId, nome: nome }];
