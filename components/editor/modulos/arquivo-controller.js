@@ -425,13 +425,12 @@ function desenharFeedManual(lista, target) {
         caixasAtuais: lista,
         feed: target,
         dadosNota: notaCache,
-        acionarGravacao: window.acionarGravacaoGlobal, // Gravação sem redesenhar
+        acionarGravacao: window.acionarGravacaoGlobal,
         
-        // CORREÇÃO AQUI: Chama a função global do editor
+        // --- INTERCEPTAÇÃO AQUI ---
         onApagar: (caixa) => {
-            if (window.prepararOcultarGlobal) {
-                window.prepararOcultarGlobal(caixa);
-            }
+            // Em vez de ocultar logo, abre o popup de decisão do arquivo
+            abrirGestaoRemocaoArquivo(caixa);
         },
 
         abrirPaleta: window.abrirPaletaGlobal,
@@ -440,6 +439,55 @@ function desenharFeedManual(lista, target) {
         abrirPopupTags: window.abrirPopupTagsGlobal,
         abrirPopupPartilhar: window.abrirPopupPartilharGlobal
     });
+}
+
+/**
+ * LÓGICA DO POPUP DE REMOÇÃO (ARQUIVO)
+ */
+function abrirGestaoRemocaoArquivo(caixaAlvo) {
+    const overlay = document.getElementById('popup-confirmar-arquivo-remover');
+    const btnApenasArquivo = document.getElementById('btn-rem-apenas-arquivo');
+    const btnNotaTotal = document.getElementById('btn-rem-nota-total');
+
+    if (!overlay) return;
+    overlay.classList.add('active');
+
+    // OPÇÃO 1: REMOVER APENAS DESTE LOCAL (GAVETA OU PRATELEIRA)
+    btnApenasArquivo.onclick = async () => {
+        const arquivo = notaCache.Arquivo;
+        const gId = navState.gavetaId;
+        const pId = navState.prateleiraId;
+
+        console.log(`📂 [ARQUIVO] Removendo vínculo do bloco: ${caixaAlvo.id}`);
+
+        if (pId) {
+            // Remover da Prateleira
+            arquivo.gavetas[gId].prateleiras[pId].caixas = 
+                arquivo.gavetas[gId].prateleiras[pId].caixas.filter(id => id !== caixaAlvo.id);
+        } else {
+            // Remover da Gaveta
+            arquivo.gavetas[gId].caixas = 
+                arquivo.gavetas[gId].caixas.filter(id => id !== caixaAlvo.id);
+        }
+
+        // Atualizar Firebase e Cache Local
+        await updateDoc(doc(dbRef, "Local", idFirestoreNota), { "Arquivo": arquivo });
+        notaCache.Arquivo = arquivo;
+        
+        overlay.classList.remove('active');
+        renderizarModoArquivo(idFirestoreNota, notaCache);
+    };
+
+    // OPÇÃO 2: OCULTAR DA NOTA (GLOBAL)
+    btnNotaTotal.onclick = async () => {
+        // Fecha este popup e abre o de confirmação global (ou executa direto)
+        overlay.classList.remove('active');
+        
+        // Chama a função original do editor que oculta o bloco de vez
+        if (window.prepararOcultarGlobal) {
+            window.prepararOcultarGlobal(caixaAlvo);
+        }
+    };
 }
 
 /**
