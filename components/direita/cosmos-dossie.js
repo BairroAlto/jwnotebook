@@ -238,20 +238,127 @@ export function abrirPopupMica(mica = null) {
 export function abrirPopupRef() {
     const overlay = document.getElementById('popup-mica-ref-overlay');
     const container = document.getElementById('mica-ref-content');
-    if (!overlay || !micaAbertaId) return;
+    
+    // 1. VERIFICAÇÃO DE SEGURANÇA
+    if (!overlay || !micaAbertaId || !cacheDadosTema) {
+        console.warn("⚠️ [COSMOS-DOSSIÊ] Não é possível abrir o seletor sem uma Mica ativa.");
+        return;
+    }
+
+    // 2. CONFIGURAÇÃO DE INTERFACE (CONTEXTO COSMOS)
+    const tabBiblia = overlay.querySelector('.tab-mica-ref[data-target="ref-biblia"]');
+    const tabContainer = overlay.querySelector('.sub-tabs');
+
+    // ✅ No Cosmos, a aba Bíblia é OBRIGATÓRIA
+    if (tabBiblia) tabBiblia.style.display = 'inline-flex';
+    if (tabContainer) tabContainer.style.display = 'flex';
+
     overlay.classList.add('active');
+    
+    // 3. GESTÃO DE CLIQUES NAS ABAS DO POPUP
     const tabs = overlay.querySelectorAll('.tab-mica-ref');
-    tabs.forEach(tab => tab.onclick = () => {
-        const t = tab.dataset.target;
-        if (t === 'ref-biblia') {
-            window.micaAbertaIdParaSelector = micaAbertaId; overlay.classList.remove('active');
-            import('../editor/modulos/biblia-selector.js').then(m => m.abrirSelector({ ...cacheDadosTema, docIdFirebase: currentTemaRef.id }));
-        } else {
-            tabs.forEach(x => x.classList.remove('active')); tab.classList.add('active');
-            renderizarListaCaixasAptas(container);
-        }
+    tabs.forEach(tab => {
+        tab.onclick = () => {
+            const target = tab.dataset.target;
+            
+            // Limpar estados das abas
+            tabs.forEach(x => x.classList.remove('active'));
+            tab.classList.add('active');
+
+            if (target === 'ref-biblia') {
+                // --- CENÁRIO A: SELECIONAR VERSÍCULOS ---
+                // Guardamos o ID da Mica na window para o seletor saber onde devolver os dados
+                window.micaAbertaIdParaSelector = micaAbertaId; 
+                overlay.classList.remove('active'); 
+                
+                // Abre o seletor bíblico global enviando os dados do tema atual
+                import('../editor/modulos/biblia-selector.js').then(m => {
+                    m.abrirSelector({ 
+                        ...cacheDadosTema, 
+                        docIdFirebase: currentTemaRef.id,
+                        tipo: "cosmos" // Contexto para o seletor saber que é Cosmos
+                    });
+                });
+            } else {
+                // --- CENÁRIO B: SELECIONAR BLOCOS DE NOTAS ---
+                renderizarListaCaixasAptasLocal(container);
+            }
+        };
     });
-    tabs[0].click();
+
+    // Abrir por defeito na aba de Caixas (Anotações)
+    const tabDefault = overlay.querySelector('.tab-mica-ref[data-target="ref-caixas"]');
+    if (tabDefault) tabDefault.click();
+}
+
+function renderizarListaCaixasAptasLocal(container) {
+    container.innerHTML = `<div style="text-align:center; padding:30px;"><i class="fa-solid fa-circle-notch fa-spin"></i><p style="font-size:10px; margin-top:10px;">A SINTONIZAR...</p></div>`;
+
+    // 1. Identificar o que está "Apto" para este tema e o que já está nesta Mica
+    const aptos = cacheDadosTema.Dossie?.Apto || [];
+    const jaNaMicaRaw = cacheDadosTema.Dossie.mica[micaAbertaId].caixas || [];
+    
+    // Normalizar IDs (suporta se a mica tiver strings ou objetos)
+    const jaNaMicaIds = jaNaMicaRaw.map(item => typeof item === 'object' ? item.id : item);
+
+    // 2. Cruzamento com as Notas Locais (ferramentasMapaVico é filtrado por userId e estado)
+    const caixasExibir = aptos
+        .filter(uuid => !jaNaMicaIds.includes(uuid))
+        .map(uuid => ferramentasMapaVico[uuid])
+        .filter(c => c !== undefined);
+
+    if (caixasExibir.length === 0) {
+        container.innerHTML = `
+            <div style="text-align:center; padding:40px; opacity:0.5;">
+                <i class="fa-solid fa-ghost" style="font-size:30px; margin-bottom:15px;"></i>
+                <p style="font-size:11px;">Não existem novos blocos mapeados.</p>
+            </div>`;
+        return;
+    }
+
+    // 3. DESENHAR A LISTA
+    container.innerHTML = caixasExibir.map(c => {
+        const config = IDENTIDADE_FERRAMENTAS[c.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
+        return `
+            <div class="ref-select-card" data-uuid="${c.id}" data-selected="false"
+                 style="padding:12px; background:rgba(255,255,255,0.03); border-radius:8px; margin-bottom:8px; cursor:pointer; border:1px solid rgba(255,255,255,0.1); border-left: 4px solid ${config.cor}; transition:0.2s;">
+                <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                    <span style="font-size:9px; color:${config.cor}; font-weight:800; text-transform:uppercase;">${c.tipo}</span>
+                    <i class="fa-solid fa-check-circle check-icon" style="color:transparent; font-size:14px;"></i>
+                </div>
+                <div style="font-size:12px; color:white; opacity:0.9; line-height:1.4;">
+                    ${c.titulo ? `<b>${c.titulo}</b><br>` : ''}${c.conteudo.substring(0,80)}...
+                </div>
+            </div>`;
+    }).join('');
+
+    // 4. LOGICA DE SELEÇÃO VISUAL
+    container.querySelectorAll('.ref-select-card').forEach(card => {
+        card.onclick = () => {
+            const isSelected = card.getAttribute('data-selected') === "true";
+            const newStatus = !isSelected;
+            card.setAttribute('data-selected', newStatus);
+            
+            card.style.borderColor = newStatus ? '#6366f1' : 'rgba(255,255,255,0.1)';
+            card.querySelector('.check-icon').style.color = newStatus ? '#6366f1' : 'transparent';
+            card.style.background = newStatus ? "rgba(99, 102, 241, 0.05)" : "rgba(255,255,255,0.03)";
+        };
+    });
+
+    // 5. BOTÃO CONFIRMAR (ATUALIZA O FIREBASE)
+    document.getElementById('btn-confirmar-ref-mica').onclick = async () => {
+        const selecionados = Array.from(container.querySelectorAll('.ref-select-card'))
+            .filter(c => c.getAttribute('data-selected') === "true")
+            .map(c => ({ id: c.dataset.uuid, timestamp: new Date().toISOString() }));
+
+        if (selecionados.length > 0) {
+            const listaFinal = [...jaNaMicaRaw, ...selecionados];
+            await updateDoc(currentTemaRef, { 
+                [`Dossie.mica.${micaAbertaId}.caixas`]: listaFinal 
+            });
+        }
+        document.getElementById('popup-mica-ref-overlay').classList.remove('active');
+    };
 }
 
 function renderizarListaCaixasAptas(container) {
