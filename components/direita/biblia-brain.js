@@ -104,22 +104,35 @@ const atualizarBotaoAcao = (dentroDeMica = false) => {
     /**
      * VIGIAR STATUS DO MARCADOR
      */
-    const vigiarStatusMarcador = () => {
-        if(unsubStatusMarcador) unsubStatusMarcador();
-        const q = query(collection(db, "TextosBiblia"), where("userId", "==", auth.currentUser.uid), where("nome", "==", `${livro} ${cap}:${ver}`));
-        unsubStatusMarcador = onSnapshot(q, (snapshot) => {
-            const icon = document.getElementById('icon-marcador-biblia');
-            if (!icon) return;
-            const marcado = !snapshot.empty && snapshot.docs[0].data().marcador === "sim";
-            if (marcado) {
-                icon.className = "fa-solid fa-bookmark";
-                icon.style.color = "#ef4444"; 
-            } else {
-                icon.className = "fa-regular fa-bookmark";
-                icon.style.color = "#64748b"; 
-            }
-        });
-    };
+ const vigiarStatusMarcador = () => {
+    if(unsubStatusMarcador) unsubStatusMarcador();
+    
+    const uid = auth.currentUser.uid;
+    const nomeBusca = `${livro} ${cap}:${ver}`;
+    
+    const q = query(
+        collection(db, "TextosBiblia"), 
+        where("userId", "==", uid), 
+        where("nome", "==", nomeBusca)
+    );
+
+    unsubStatusMarcador = onSnapshot(q, (snapshot) => {
+        const icon = document.getElementById('icon-marcador-biblia');
+        if (!icon) return;
+
+        // Se o documento existe e o campo marcador é "sim"
+        const isMarcado = !snapshot.empty && snapshot.docs[0].data().marcador === "sim";
+
+        if (isMarcado) {
+            console.log("📌 Versículo marcado!");
+            icon.className = "fa-solid fa-bookmark"; // Ícone preenchido
+            icon.style.color = "#ef4444";           // Cor vermelha
+        } else {
+            icon.className = "fa-regular fa-bookmark"; // Ícone contorno
+            icon.style.color = "#64748b";             // Cor cinza original
+        }
+    });
+};
 
     document.getElementById('icon-marcador-biblia').onclick = () => abrirPopupMarcadores(versiculoAtivoMemoria, db, auth);
 
