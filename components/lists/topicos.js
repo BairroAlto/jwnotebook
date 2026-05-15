@@ -18,6 +18,7 @@ let subtopicoSelecionadoId = null;
 
 const CORES_TOPICO = [
     { nome: "Vermelho", hex: "#ef4444" },
+    { nome: "Castanho", hex: "#78350f" },
     { nome: "Laranja", hex: "#ea580c" },
     { nome: "Amarelo", hex: "#f59e0b" },
     { nome: "Verde Claro", hex: "#4ade80" },
@@ -27,7 +28,6 @@ const CORES_TOPICO = [
     { nome: "Roxo", hex: "#6b21a8" },
     { nome: "Lilás", hex: "#a855f7" },
     { nome: "Rosa Choque", hex: "#db2777" },
-    { nome: "Castanho", hex: "#78350f" },
     { nome: "Cinzento", hex: "#6b7280" },
     { nome: "Preto", hex: "#000000" },
     { nome: "Branco", hex: "#ffffff" }
