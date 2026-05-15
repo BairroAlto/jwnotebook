@@ -71,8 +71,10 @@ export async function renderizarDossieBiblia(info, container, db, auth, onNavega
     // B) Comando para Nova Referência - Ícone Verde Plus
     window.removeEventListener('brain:abrirReferenciaMica', window._handlerRefBiblia);
     window._handlerRefBiblia = () => {
-        console.log("📥 [DOSSIÊ-BIBLIA] Abrindo seletor de referências...");
-        abrirPopupRefApta(db);
+        // Esta função deve abrir o popup de seleção (Micas/Aptos)
+        if (typeof abrirPopupRefApta === 'function') {
+            abrirPopupRefApta(db);
+        }
     };
     window.addEventListener('brain:abrirReferenciaMica', window._handlerRefBiblia);
 
