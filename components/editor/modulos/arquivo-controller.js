@@ -427,10 +427,26 @@ function desenharFeedManual(lista, target) {
         dadosNota: notaCache,
         acionarGravacao: window.acionarGravacaoGlobal,
         
-        // --- INTERCEPTAÇÃO AQUI ---
+        // --- LÓGICA CONTEXTUAL DA LIXEIRA ---
         onApagar: (caixa) => {
-            // Em vez de ocultar logo, abre o popup de decisão do arquivo
-            abrirGestaoRemocaoArquivo(caixa);
+            /**
+             * Se o utilizador estiver na aba GESTÃO (dentro de gavetas ou prateleiras),
+             * abrimos o popup de escolha (Tirar do local vs Ocultar geral).
+             */
+            if (navState.subTab === 'gestao') {
+                console.log("🗑️ Contexto: Gestão de Arquivo. Abrindo popup de decisão.");
+                abrirGestaoRemocaoArquivo(caixa);
+            } 
+            /**
+             * Se o utilizador estiver na aba FEED (vista geral),
+             * ignoramos o popup de arquivo e vamos diretos para a ocultação geral.
+             */
+            else {
+                console.log("🗑️ Contexto: Feed Geral. Abrindo confirmação de ocultação total.");
+                if (window.prepararOcultarGlobal) {
+                    window.prepararOcultarGlobal(caixa);
+                }
+            }
         },
 
         abrirPaleta: window.abrirPaletaGlobal,
