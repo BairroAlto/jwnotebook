@@ -92,7 +92,7 @@ export function criarSubNotaAzul(caixa, onTextoAlterado, onApagar, onPaleta, onP
     inputTitulo.addEventListener("input", (e) => {
         ajustarAlturaTitulo();
         caixa.titulo = e.target.value;
-        onTextoAlterado();
+        onTextoAlterado(caixa);
     });
 
     // --- CORPO (ÁREA DE TEXTO) ---
@@ -120,7 +120,7 @@ if (caixa.destaques) corTxt = "#000";
     corpo.addEventListener("input", (e) => {
         ajustarAlturaCorpo(); 
         caixa.conteudo = e.target.value; 
-        onTextoAlterado(caixa); 
+        onTextoAlterado(caixa);
     });
 
     // Ajustes iniciais de altura após renderização
