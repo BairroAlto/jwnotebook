@@ -33,13 +33,13 @@ export const AIController = {
 
         const assinaturaAtual = ativas.map(c => c.id).join('|') + (isModoPost ? '_post' : '_normal');
 
-        // Atualização cirúrgica se a estrutura for a mesma
+        // Atualização cirúrgica se a estrutura for a mesma (Anti-Flicker)
         if (document.getElementById(listContId) && assinaturaAtual === ultimaAssinaturaEstrutura) {
             AIController.sincronizarTextosLive(ativas);
             return;
         }
 
-        ultimaAssinaturaEstrutura = signatureSanitize(assinaturaAtual);
+        ultimaAssinaturaEstrutura = assinaturaAtual;
 
         display.innerHTML = `
             <div class="ai-container" id="ai-container-main">
@@ -52,7 +52,7 @@ export const AIController = {
 
         const listCont = document.getElementById(listContId);
 
-        // Ordenação
+        // Ordenação Dinâmica
         if (isModoPost) ativas.sort((a, b) => (b.ordem || 0) - (a.ordem || 0));
         else ativas.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
 
@@ -121,6 +121,9 @@ export const AIController = {
     /**
      * VISTA 3: RESULTADO (ANIMAÇÃO DO MACACO)
      */
+   /**
+     * VISTA 3: RESULTADO (ANIMAÇÃO DO MACACO SVG)
+     */
     executar: async (modo) => {
         const display = document.getElementById('xsat-display-content');
         const cores = { melhorar: '#10b981', investigar: '#6366f1', teocratico: '#3b82f6', socratico: '#f59e0b', ilustrar: '#22d3ee', sintese: '#fbbf24', origens: '#a855f7', critico: '#f87171', pratico: '#22c55e', cosmos: '#db2777' };
@@ -131,7 +134,8 @@ export const AIController = {
                 <p style="font-family:monospace; font-size:10px; font-weight:800; letter-spacing:2px;">BOOKAI A PROCESSAR SINAPSE...</p>
             </div>`;
 
-         const resposta = await NexoEngine.perguntar(caixaEmAnalise.conteudo, modo);
+         const respostaBruta = await NexoEngine.perguntar(caixaEmAnalise.conteudo, modo);
+        const respostaFormatada = AIController.formatarResposta(respostaBruta);
 
         display.innerHTML = `
             <div class="ai-container">
@@ -142,10 +146,22 @@ export const AIController = {
                     <p style="font-size:10px; color:${cores[modo]}; font-weight:900; text-transform:uppercase; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
                         <i class="fa-solid fa-robot"></i> Resultado BookAI
                     </p>
-                    <div style="font-size:13.5px; color:white; line-height:1.7; white-space:pre-wrap;">${resposta}</div>
+                    <div style="font-size:13.5px; color:#f1f5f9; line-height:1.7; white-space:pre-wrap;">${respostaFormatada}</div>
                 </div>
             </div>
         `;
+    },
+
+    /**
+     * CONVERSOR MARKDOWN -> HTML
+     */
+    formatarResposta: (texto) => {
+        return texto
+            .replace(/^### (.*$)/gim, '<h4 style="color:#10b981; margin:15px 0 5px 0; font-weight:800; text-transform:uppercase; font-size:11px;">$1</h4>')
+            .replace(/^## (.*$)/gim, '<h3 style="color:#10b981; margin:15px 0 5px 0; font-weight:800;">$1</h3>')
+            .replace(/\*\*(.*?)\*\*/g, '<b style="color:#ffffff; font-weight:700;">$1</b>')
+            .replace(/\*(.*?)\*/g, '<i style="opacity:0.9;">$1</i>')
+            .replace(/^\s*[\-\*]\s+(.*)$/gim, '<div style="margin-left:10px; margin-bottom:5px; display:flex; gap:8px;"><span style="color:#10b981;">•</span><span>$1</span></div>');
     },
 
     /**
@@ -156,7 +172,7 @@ export const AIController = {
             const el = document.getElementById(`ai-txt-${c.id}`);
             if (el) {
                 let txt = "";
-                if (c.tipo === "elevador") txt = (c.pastapai && c.pastapai[0]) ? c.pastapai[0].nome : "Elevador";
+                if (c.tipo === "elevador") txt = (c.pastapai && c.pastapai[0] && c.pastapai[0].nome) ? c.pastapai[0].nome : "Elevador";
                 else txt = c.titulo || (c.conteudo ? c.conteudo.substring(0, 60) : `Nova ${c.tipo}`);
                 if (el.innerText !== txt) el.innerText = txt;
             }
@@ -193,5 +209,4 @@ export const AIController = {
     }
 };
 
-function signatureSanitize(s) { return s.replace(/\s/g, ''); }
 window.AIController = AIController;
