@@ -53,9 +53,12 @@ export const XRayUI = {
         });
 
         // --- B) AGRUPAMENTO POR PALAVRA-CHAVE (SEMÂNTICA) ---
-        if (state.resultadosPalavrasCache && Object.keys(state.resultadosPalavrasCache).length > 0) {
-    Object.entries(state.resultadosPalavrasCache).forEach(([palavra, itens]) => {
-                // Filtrar itens que pertencem à aba (filtro) atual
+     if (state.resultadosPalavrasCache) {
+            Object.entries(state.resultadosPalavrasCache).forEach(([palavra, itens]) => {
+                
+                // 🚀 NOVO FILTRO: Verifica se a palavra está silenciada nas definições
+                if (state.config.silenciadosPalavras.has(palavra)) return;
+
                 const itensDaAba = itens.filter(it => {
                     const ctx = it.bridge.contexto;
                     return (filtro === 'publicacoes' && ctx === 'publicacao') || 
