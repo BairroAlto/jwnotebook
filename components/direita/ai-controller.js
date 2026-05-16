@@ -142,14 +142,15 @@ export const AIController = {
                 <button class="btn-voltar-ai" onclick="window.AIController.abrirProtocolos()">
                     <i class="fa-solid fa-arrow-left"></i> Voltar aos Protocolos
                 </button>
-                <div class="ai-target-card" style="border-left: 4px solid ${cores[modo]}">
-                    <p style="font-size:10px; color:${cores[modo]}; font-weight:900; text-transform:uppercase; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
-                        <i class="fa-solid fa-robot"></i> Resultado BookAI
-                    </p>
-                    <div style="font-size:13.5px; color:#f1f5f9; line-height:1.7; white-space:pre-wrap;">${respostaFormatada}</div>
-                </div>
-            </div>
-        `;
+               <div class="ai-target-card" style="border-left: 4px solid ${cores[modo]}">
+            <p class="ai-target-label" style="color:${cores[modo]};">
+                <i class="fa-solid fa-robot"></i> Resultado BookAI
+            </p>
+            <!-- Removido font-size fixo daqui -->
+            <div style="color:#f1f5f9; white-space:pre-wrap;">${respostaFormatada}</div>
+        </div>
+    </div>
+`;
     },
 
     /**
