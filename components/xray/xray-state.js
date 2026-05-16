@@ -7,8 +7,9 @@ export const state = {
     palavrasDetetadas: [],       // NOVO: Lista de palavras limpas
     modoResumo: "linhas", 
     config: {
-        silenciados: new Set(),
-        fontesOcultas: new Set(),
+         silenciados: new Set(),         // Versículos (ex: "Jó 1:1")
+        silenciadosPalavras: new Set(), // Termos (ex: "batismo")
+        fontesOcultas: new Set(),       // Fontes (ex: "w_2024_01")
         leituraDireita: false
     }
 };
