@@ -85,7 +85,7 @@ export async function dispararPesquisaParabolica(textoBruto, isGlobal = false) {
     if (!display) return;
 
     const temaCor = isGlobal ? '#34d399' : '#6366f1';
-    const iconePrincipal = isGlobal ? 'fa-tower-observation' : 'fa-satellite';
+    const iconePrincipal = isGlobal ? 'fa-satellite' : 'fa-satellite';
 
     display.innerHTML = `
         <div class="xsat-sync-wrapper ${isGlobal ? 'global-mode' : ''}">
