@@ -1,71 +1,117 @@
 // components/editor/editor.js
-import { doc, updateDoc, getDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+// components/editor/editor.js
+import { doc, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { processarAberturaNota, configurarBotaoShare } from './modulos/nota-viewer.js';
 
-// Importação dos sub-módulos do editor
+// Sub-módulos (Mantemos os imports para o state manager usar)
 import { renderizarFeed } from './modulos/editor-render.js';
 import { moverCaixa, prepararInsercao } from './modulos/editor-actions.js';
 import { LockManager } from './modulos/lock-manager.js';
 import { LockUI } from './modulos/lock-ui.js';
-
-// Outros módulos e Popups
-import { iniciarSistemaCores, abrirPaleta } from './modulos/paleta-cores.js';
-import { iniciarSistemaRecuperacao, abrirCentroRecuperacao } from './modulos/recuperacao.js';
-import { iniciarSistemaPartilha, abrirPopupPartilhar } from './modulos/partilhar.js';
-import { iniciarSistemaBrowser, carregarAbasDaNota } from './modulos/browser.js';
-import { iniciarSistemaTags, abrirPopupTags } from './modulos/tags/tags-controller.js';
-
-import { renderizarIndice, ocultarIndice } from '../direita/indice.js';
-import { carregarCaixasAssociadas } from '../direita/caixas-associadas.js';
-import { carregarFontesGlobaisDaNota } from '../direita/eye-fontes-nota.js';
-import { detectarEExibirTextosBiblicos } from '../direita/eye-textos-biblia.js';
-import { iniciarAbaAncora } from '../direita/eye-ancora.js';
-import { iniciarArquivo, renderizarModoArquivo } from './modulos/arquivo-controller.js';
-import { atualizarIconeLab } from './modulos/lab-status.js';
-import { despacharInteligenciaEye } from './modulos/intelligence/dispatcher.js';
 import { iniciarShareController, gerirSessaoShare, isEdicaoAtiva } from './modulos/share-controller.js';
 import { abrirSelector, iniciarSelectorBiblia } from './modulos/biblia-selector.js';
 import { EditorUI } from './modulos/ui-utils.js';
-import { SyncLogic } from './modulos/sync-logic.js';
-import { ModoManager } from './modulos/modo-manager.js';
-import { MobileUI } from '../ui/mobile-manager.js';
-import { processarAberturaNota, configurarBotaoShare } from './modulos/nota-viewer.js';
 
-
-
-// ESTADO GLOBAL DO EDITOR
-let timerGravacao = null; 
-let notaAbertaId = null;
-let notaMaeAtualId = null;
-let caixasAtuais = [];
-let dadosNotaOriginal = null; 
-let dbRef = null;
-let authRef = null;
-let userLogado = null;
+// ESTADO GLOBAL DO EDITOR (As variáveis que os outros módulos lêem)
+export let notaAbertaId = null;
+export let caixasAtuais = [];
+export let dadosNotaOriginal = null;
+let dbRef, authRef, notaMaeAtualId;
 let eventosIniciados = false;
-let aCriarCaixa = false;
-let caixaParaOcultar = null;
-let editandoAtivo = false;
-let unsubLock = null;
-let timerInatividade = null;
+let timerGravacao = null;
 let notaComAlteracoes = false;
 
+/**
+ * FUNÇÃO PRINCIPAL: Agora é apenas um organizador de dados
+ */
+export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco = null, maeIdOverride = null) {
+    dbRef = db; 
+    authRef = auth;
 
+    // 1. Gravar nota anterior antes de mudar
+    await forcarGravacaoImediata();
 
+    // 2. Chamar o Viewer (A parte visual que espera pelo HTML)
+    await processarAberturaNota({
+        notaId, dadosNota, db, auth, idCaixaFoco, maeIdOverride,
+        stateManager: {
+            inicializarDadosNota: async (id, dados, maeId) => {
+                // Atualizar estado interno
+                notaAbertaId = id;
+                window.notaAbertaId = id;
+                dadosNotaOriginal = dados;
+                window.dadosNotaOriginal = dados;
+                caixasAtuais = dados.caixas || [];
+                window.caixasAtuais = caixasAtuais;
+                notaMaeAtualId = maeId || id;
 
-const TEMPO_LIMITE_INATIVIDADE = 30 * 60 * 1000;
+                // Motores
+                if (!eventosIniciados) {
+                    iniciarShareController(db, auth, () => guardarNotaNoFirebase());
+                    iniciarSelectorBiblia(() => atualizarFeedEGravar(true));
+                    configurarEventosFixos();
+                    eventosIniciados = true;
+                }
 
+                await gerirSessaoShare(id, dados);
+                configurarBotaoShare(id, dados, auth);
+                
+                return await atualizarFeedEGravar(false);
+            }
+        }
+    });
 
-window.abrirPaletaGlobal = (caixa) => {
-    import('./modulos/paleta-cores.js').then(m => m.abrirPaleta(caixa));
-};
-
-window.abrirPopupPartilharGlobal = (caixa, id) => {
-    import('./modulos/partilhar.js').then(m => m.abrirPopupPartilhar(caixa, id));
-};
+    // 3. Inteligência em background
+    import('./modulos/intelligence/dispatcher.js').then(m => {
+        m.despacharInteligenciaEye(caixasAtuais, dadosNotaOriginal, db, auth);
+    });
+}
 
 /**
- * GRAVAÇÃO IMEDIATA (Evita perda de dados ao trocar de nota ou criar nova)
+ * REDESENHAR FEED
  */
+export async function atualizarFeedEGravar(dispararGravacao = true) {
+    const feed = document.getElementById('editor-feed');
+    if (!feed) return;
+
+    const modos = Array.isArray(dadosNotaOriginal?.modo) ? dadosNotaOriginal.modo : [dadosNotaOriginal?.modo || 'normal'];
+    
+    // Se estiver no modo arquivo, o arquivo-controller assume
+    if (modos.includes('arquivo')) {
+        const m = await import('./modulos/arquivo-controller.js');
+        m.renderizarModoArquivo(notaAbertaId, dadosNotaOriginal);
+    } else {
+        renderizarFeed({
+            caixasAtuais,
+            dadosNota: dadosNotaOriginal,
+            feed: feed,
+            acionarGravacao: (c) => acionarGravacao(c),
+            onApagar: (c) => { window.prepararOcultarGlobal(c); },
+            abrirPaleta: (c) => window.abrirPaletaGlobal(c),
+            abrirPopupPartilhar: (c) => window.abrirPopupPartilharGlobal(c),
+            moverCaixa: (c, dir) => moverCaixa(caixasAtuais, c, dir, () => atualizarFeedEGravar(false)),
+            abrirPopupTags: (c) => window.abrirPopupTagsGlobal(c),
+            prepararInsercao,
+            abrirLupaBiblia: (c) => abrirSelector(c),
+            notaAbertaId
+        });
+    }
+
+    if (dispararGravacao) acionarGravacao();
+}
+
+/**
+ * GESTÃO DE GRAVAÇÃO
+ */
+function acionarGravacao(caixa = null) {
+    notaComAlteracoes = true;
+    if (caixa) caixa.timestamp = new Date().toISOString();
+    
+    document.getElementById('editor-info-text').innerText = "A guardar...";
+    clearTimeout(timerGravacao);
+    timerGravacao = setTimeout(() => guardarNotaNoFirebase(), 1500);
+}
+
 export async function forcarGravacaoImediata() {
     if (timerGravacao) {
         clearTimeout(timerGravacao);
@@ -73,378 +119,21 @@ export async function forcarGravacaoImediata() {
     }
 }
 
-
-// No editor.js, a função abrirNotaNoEditor agora é apenas um "despachante"
-export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco = null, maeIdOverride = null) {
-    
-    // Antes de mudar, garante que a nota anterior está salva
-    await forcarGravacaoImediata();
-
-    // Envia para o novo módulo lidar com a parte visual
-    await processarAberturaNota({
-        notaId, dadosNota, db, auth, idCaixaFoco, maeIdOverride,
-        stateManager: {
-            // Esta função interna vai atualizar as variáveis globais do editor.js
-            inicializarDadosNota: async (id, dados, maeId) => {
-                notaAbertaId = id;
-                dadosNotaOriginal = dados;
-                window.dadosNotaOriginal = dados;
-                caixasAtuais = dados.caixas || [];
-                window.caixasAtuais = caixasAtuais;
-                notaMaeAtualId = maeId || id;
-                dbRef = db; 
-                authRef = auth;
-
-                // Inicializa os motores se necessário
-                if (!eventosIniciados) {
-                    await inicializarMotoresInternos();
-                    eventosIniciados = true;
-                }
-
-                // Sincroniza abas e share
-                await gerirSessaoShare(id, dados);
-                configurarBotaoShare(id, dados, auth);
-                
-                // Redesenha o feed
-                return await atualizarFeedEGravar(false);
-            }
-        }
-    });
-
-    // Iniciar subsistemas de inteligência
-    import('./modulos/intelligence/dispatcher.js').then(m => {
-        m.despacharInteligenciaEye(caixasAtuais, dadosNotaOriginal, db, auth);
-    });
-}
-
-// Crie esta função auxiliar para organizar os disparos de boot
-async function inicializarMotoresInternos() {
-    iniciarShareController(dbRef, authRef, () => guardarNotaNoFirebase());
-    iniciarSelectorBiblia(() => atualizarFeedEGravar(true));
-    iniciarSistemaRecuperacao(dbRef, authRef); 
-    await iniciarSistemaCores(dbRef, authRef.currentUser, () => atualizarFeedEGravar(true));
-    iniciarSistemaTags(dbRef, authRef); 
-    iniciarSistemaBrowser(dbRef, authRef);
-    configurarEventosFixos(); 
-}
-
-/**
- * GESTOR DE GRAVAÇÃO (ADAPTADO)
- */
-function acionarGravacao(caixa = null) {
-    const info = document.getElementById('editor-info-text');
-    if (!info) return;
-
-    // 1. MARCAR ALTERAÇÃO
-    notaComAlteracoes = true; 
-
-    if (caixa && typeof caixa === 'object') {
-        caixa.timestamp = new Date().toISOString();
-    }
-
-    // --- NOVO: DISPARO DA INTELIGÊNCIA "IN LIVE" ---
-    // Isto faz com que o Índice e o Detetor Bíblico atualizem enquanto digitas
-    import('./modulos/intelligence/dispatcher.js').then(m => {
-        m.despacharInteligenciaEye(caixasAtuais, dadosNotaOriginal, dbRef, authRef);
-    });
-
-    // 2. VERIFICAÇÃO DE PERMISSÃO E GRAVAÇÃO (DEBOUNCE)
-    const isLocal = (dadosNotaOriginal.onde !== "share");
-    const podeGravarNoShare = (dadosNotaOriginal.onde === "share" && isEdicaoAtiva());
-
-    if (isLocal || podeGravarNoShare) {
-        info.innerText = "A guardar...";
-        
-        clearTimeout(timerGravacao);
-        timerGravacao = setTimeout(() => {
-            guardarNotaNoFirebase();
-        }, 1500); 
-    } else {
-        info.innerHTML = `<i class="fa-solid fa-lock"></i> Modo Leitura`;
-        info.style.color = "#ef4444";
-    }
-}
-
-/**
- * PONTE GLOBAL PARA AS FERRAMENTAS
- * Permite que os ficheiros das ferramentas (contentor.js, subnota.js, etc.) 
- * chamem o auto-save passando a referência da própria caixa.
- */
-window.acionarGravacaoGlobal = (caixa) => {
-    acionarGravacao(caixa);
-};
-
-
-// ADICIONA ESTA FUNÇÃO ANTES DO desenhar()
-const abrirLupaBiblia = (caixa) => {
-    console.log("🔍 [BRIDGE] Abrindo selector para:", caixa.id);
-    abrirSelector(caixa);
-};
-
-/**
- * RENDERIZAÇÃO DO FEED
- */
-function desenhar() {
-    renderizarFeed({
-        caixasAtuais,
-        dadosNota: dadosNotaOriginal,
-        feed: document.getElementById('editor-feed'),
-        acionarGravacao,
-        onApagar: (c) => { 
-            caixaParaOcultar = c; 
-            document.getElementById('popup-confirmar-overlay').classList.add('active'); 
-        },
-        abrirPaleta,
-        
-        // CORREÇÃO AQUI: 
-        // Injetamos o notaAbertaId diretamente, sem esperar que a ferramenta o envie
-        abrirPopupPartilhar: (c) => {
-            import('./modulos/partilhar.js').then(m => {
-                m.abrirPopupPartilhar(c, notaAbertaId, atualizarFeedEGravar);
-            });
-        },
-
-        moverCaixa: (c, dir) => moverCaixa(caixasAtuais, c, dir, atualizarFeedEGravar),
-        abrirPopupTags: (c) => {
-            import('./modulos/tags/tags-controller.js').then(m => {
-                m.abrirPopupTags(c, notaMaeAtualId, dadosNotaOriginal.onde);
-            });
-        },
-        prepararInsercao,
-        abrirLupaBiblia: abrirLupaBiblia, 
-        notaAbertaId // Mantém este se necessário para outros módulos
-    });
-}
-
-/**
- * INSERIR NOVA FERRAMENTA
- * Aqui definimos os campos padrão de cada tipo de bloco
- */
-export function inserirFerramentaNoEditor(tipo) {
-    // 1. BLOQUEIO DE SEGURANÇA: Evita que múltiplos cliques criem várias caixas
-    if (aCriarCaixa) return;
-    aCriarCaixa = true;
-    notaComAlteracoes = true; 
-
-    console.log(`➕ [EDITOR] Criando nova ferramenta: ${tipo}`);
-
-    // 2. CAPTURAR POSIÇÃO ATUAL: Evita que o scroll salte para o topo
-    const scrollContainer = document.querySelector('.center-col');
-    const posicaoOriginal = scrollContainer ? scrollContainer.scrollTop : 0;
-
-    // 3. CONGELAR ALTURA: Evita o "flicker" visual durante o render
-    const feed = document.getElementById('editor-feed');
-    if (feed) feed.style.minHeight = feed.offsetHeight + 'px';
-
-    // 4. PREPARAR DADOS
-    // Ordenar primeiro para garantir que a nova ordem faz sentido
-    caixasAtuais.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
-
-    const novaCaixa = { 
-        id: crypto.randomUUID(), 
-        tipo: tipo, 
-        conteudo: "", 
-        estado: "ativa", 
-        timestamp: new Date().toISOString(), 
-        protecao: "fechado" 
-    };
-
-    // Inicializar campos específicos conforme o tipo
-    if (["subnota", "questao", "raciocinio", "cartaovisita"].includes(tipo)) novaCaixa.titulo = "";
-    if (tipo === "elevador") novaCaixa.pastapai = [];
-    if (tipo === "cartaovisita") { 
-        novaCaixa.url = ""; 
-        novaCaixa.urldimensao = "pequena"; 
-    }
-    if (tipo === "citacaobiblica") novaCaixa.textosanexados = [];
-
-    // 5. INSERIR NA POSIÇÃO CORRETA
-    if (window.idReferenciaInsercao) {
-        // Se foi usado o botão "+" entre dois blocos
-        const idxAlvo = caixasAtuais.findIndex(c => c.id === window.idReferenciaInsercao);
-        caixasAtuais.splice(idxAlvo + 1, 0, novaCaixa);
-        window.idReferenciaInsercao = null; // Limpar referência de inserção
-    } else {
-        // Caso contrário, adiciona ao fim da lista
-        caixasAtuais.push(novaCaixa);
-    }
-
-    // 6. RE-INDEXAR ORDENS: Garante que o Firebase recebe uma sequência limpa (1, 2, 3...)
-    caixasAtuais.forEach((c, i) => { c.ordem = i + 1; });
-
-    // 7. ATUALIZAR E GRAVAR
-    // A função atualizarFeedEGravar(true) vai disparar a gravação no Firebase.
-    // Graças ao "hasPendingWrites" que adicionámos ao nota-watcher.js, 
-    // o sistema não vai duplicar a caixa ao receber o eco do servidor.
-    atualizarFeedEGravar(true);
-
-    // 8. FECHAR POPUP DE FERRAMENTAS
-    const popup = document.getElementById('popup-ferramentas-inline');
-    if (popup) popup.classList.remove('active');
-
-    // 9. LIMPEZA FINAL E FOCO
-    setTimeout(() => {
-        // Restaurar scroll original
-        if (scrollContainer) scrollContainer.scrollTop = posicaoOriginal;
-        
-        // Libertar altura mínima
-        if (feed) feed.style.minHeight = '';
-
-        // Tentar focar no novo bloco criado
-        const elNovo = document.getElementById(`bloco-${novaCaixa.id}`);
-        if (elNovo) {
-            elNovo.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            const input = elNovo.querySelector('textarea, input');
-            if (input) input.focus({ preventScroll: true });
-        }
-
-        // Libertar o bloqueio para permitir novas criações
-        aCriarCaixa = false;
-    }, 150);
-}
-
-/**
- * ATUALIZAÇÃO E PERSISTÊNCIA
- */
-async function atualizarFeedEGravar(dispararGravacao = true) {
-    if (!dadosNotaOriginal) return;
-
-    // 1. Guardar posição do scroll antes de reconstruir o DOM
-    if (window.caixasAtuais) dadosNotaOriginal.caixas = window.caixasAtuais;
-    const estadoScroll = EditorUI.capturarEstadoScroll();
-
-    // 2. Determinar Modos Ativos (Garante que é sempre um Array)
-    const modosAtivos = Array.isArray(dadosNotaOriginal.modo) 
-        ? dadosNotaOriginal.modo 
-        : [dadosNotaOriginal.modo || 'normal'];
-    
-    // Atualiza o ícone do frasco (Lab) no topo
-    if (typeof atualizarIconeLab === 'function') atualizarIconeLab(modosAtivos);
-
-    // Gestão de visibilidade das abas do Modo Arquivo
-    const tabsArquivoUI = document.getElementById('arquivo-tabs-container');
-    if (tabsArquivoUI) {
-        tabsArquivoUI.style.display = modosAtivos.includes('arquivo') ? 'block' : 'none';
-    }
-
-    // 3. Renderização Condicional (Arquivo vs Feed Normal)
-    if (modosAtivos.includes('arquivo')) {
-        const m = await import('./modulos/arquivo-controller.js');
-        m.iniciarArquivo(dbRef, authRef, atualizarFeedEGravar);
-        m.renderizarModoArquivo(notaAbertaId, dadosNotaOriginal);
-    } else {
-        // Ordenação baseada no modo (Post: mais recentes primeiro | Normal: sequência direta)
-        const isModoPost = modosAtivos.includes('post');
-        if (isModoPost) {
-            caixasAtuais.sort((a, b) => (b.ordem || 0) - (a.ordem || 0));
-        } else {
-            caixasAtuais.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
-        }
-        await desenhar(); // Desenha os blocos
-    }
-
-    // 4. 🚀 SOLUÇÃO DO BUG DE COMPACTAÇÃO (Auto-Resize Inteligente)
-    // Forçamos o browser a recalcular as alturas de todos os blocos após a pintura do DOM.
-    requestAnimationFrame(() => {
-        // Primeiro ajuste imediato
-        if (typeof EditorUI.forçarAjusteAlturas === 'function') {
-            EditorUI.forçarAjusteAlturas();
-        }
-
-        // Segundo ajuste com pequeno delay para garantir que o layout estabilizou (Imagens, Fontes, etc)
-        setTimeout(() => {
-            if (typeof EditorUI.forçarAjusteAlturas === 'function') {
-                EditorUI.forçarAjusteAlturas();
-            }
-            // Restaurar o scroll apenas depois de as caixas terem a altura final correta
-            EditorUI.restaurarScroll(estadoScroll);
-        }, 120);
-    });
-
-    // 5. Disparar Inteligência da Coluna Direita (Índice, IA, Fontes...)
-    import('./modulos/intelligence/dispatcher.js').then(m => {
-        m.despacharInteligenciaEye(caixasAtuais, dadosNotaOriginal, dbRef, authRef);
-    });
-
-    // 6. Salvar no Firebase se necessário
-    if (dispararGravacao) acionarGravacao();
-
-    return Promise.resolve();
-}
-
-
 async function guardarNotaNoFirebase() {
-    if (!notaAbertaId || !dbRef || !authRef.currentUser) return;
-    if (!notaComAlteracoes) return; 
-
-    const uid = authRef.currentUser.uid;
-    const isShare = (dadosNotaOriginal.onde === "share");
-    const colecaoAlvo = isShare ? "Share" : "Local";
+    if (!notaAbertaId || !notaComAlteracoes) return;
+    const colecao = (dadosNotaOriginal.onde === "share") ? "Share" : "Local";
+    const notaRef = doc(dbRef, colecao, notaAbertaId);
     
     try {
-        const novoNome = document.getElementById('editor-titulo').innerText.trim();
-        const notaRef = doc(dbRef, colecaoAlvo, notaAbertaId);
-
-        // GARANTIR QUE NÃO ENVIAMOS UNDEFINED
-        const updateData = { 
-            nome: novoNome, 
-            caixas: caixasAtuais || [],
-            // Adicionamos proteção para os metadados
-            vincTopicos: dadosNotaOriginal.vincTopicos || [] 
-        };
-
-        if (isShare) {
-            updateData.vistoPor = [uid]; 
-            updateData[`${uid}.ultimaLeitura`] = new Date().toISOString();
-        }
-
-        await updateDoc(notaRef, updateData);
-        notaComAlteracoes = false; 
-
-        // 🚀 GATILHO DO GPS: Indexar após gravar com sucesso
-        import('./modulos/ai-search-indexer.js').then(m => {
-            m.dispararIndexacao(dbRef, uid, notaAbertaId, {
-                nome: novoNome,
-                caixas: caixasAtuais,
-                vincTopicos: dadosNotaOriginal.vincTopicos || []
-            });
+        await updateDoc(notaRef, { 
+            nome: document.getElementById('editor-titulo').innerText,
+            caixas: caixasAtuais 
         });
-
-        const info = document.getElementById('editor-info-text');
-        if (info) info.innerText = "Sincronizado";
-
-    } catch (e) {
-        console.error(`❌ Erro ao gravar:`, e);
-    }
+        notaComAlteracoes = false;
+        document.getElementById('editor-info-text').innerText = "Sincronizado";
+    } catch (e) { console.error("Erro ao gravar:", e); }
 }
 
-/**
- * Lógica para o botão NEXO dentro do Laboratório
- */
-window.abrirFerramentasDoNexo = () => {
-    // 1. Fechar o popup do Laboratório
-    const popupLab = document.getElementById('popup-lab-overlay');
-    if (popupLab) popupLab.classList.remove('active');
-
-    // 2. Resetar a referência de inserção (para que o novo bloco vá para o fim da lista)
-    window.idReferenciaInsercao = null;
-
-    // 3. Abrir o popup de ferramentas inline
-    const popupFerramentas = document.getElementById('popup-ferramentas-inline');
-    if (popupFerramentas) {
-        popupFerramentas.classList.add('active');
-    }
-    
-    console.log("🔗 Nexo: A abrir seletor de ferramentas para nota vazia.");
-};
-
-/**
- * CONFIGURAÇÃO DE EVENTOS FIXOS DA UI
- */
-/**
- * CONFIGURAÇÃO DE EVENTOS FIXOS DA UI
- * Centraliza os eventos do Lab, Histórico, Tags e expõe funções para o Controlador de Arquivo.
- */
 function configurarEventosFixos() {
     
     // ========================================================
