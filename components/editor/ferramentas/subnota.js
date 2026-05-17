@@ -85,9 +85,9 @@ export function criarSubNotaAzul(caixa, onTextoAlterado, onApagar, onPaleta, onP
 
     // Função de ajuste de altura do título
     const ajustarAlturaTitulo = () => {
-        inputTitulo.style.height = 'auto';
-        inputTitulo.style.height = inputTitulo.scrollHeight + 'px';
-    };
+    inputTitulo.style.height = 'auto';
+    inputTitulo.style.height = (inputTitulo.scrollHeight + 2) + 'px'; // Adicionado + 2
+};
 
     inputTitulo.addEventListener("input", (e) => {
         ajustarAlturaTitulo();
@@ -113,9 +113,9 @@ if (caixa.destaques) corTxt = "#000";
     `;
 
     const ajustarAlturaCorpo = () => {
-        corpo.style.height = 'auto'; 
-        corpo.style.height = corpo.scrollHeight + 'px'; 
-    };
+    corpo.style.height = 'auto'; 
+    corpo.style.height = (corpo.scrollHeight + 2) + 'px'; // Adicionado + 2
+};
 
     corpo.addEventListener("input", (e) => {
         ajustarAlturaCorpo(); 
@@ -125,9 +125,9 @@ if (caixa.destaques) corTxt = "#000";
 
     // Ajustes iniciais de altura após renderização
     setTimeout(() => {
-        ajustarAlturaTitulo();
-        ajustarAlturaCorpo();
-    }, 50);
+    ajustarAlturaTitulo();
+    ajustarAlturaCorpo();
+}, 150); 
 
     caixaDiv.appendChild(header);
     caixaDiv.appendChild(inputTitulo);
