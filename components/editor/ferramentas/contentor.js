@@ -50,12 +50,16 @@ export function criarContentorLaranja(caixa, onTextoAlterado, onApagar, onPaleta
             <!-- SEPARADOR VISUAL -->
             <div style="width: 1px; height: 14px; background: rgba(255,255,255,0.15); margin: 0 2px;"></div>
 
+
             <!-- BOTÃO "+" VERDE PARA INSERIR ABAIXO -->
             <i class="fa-solid fa-plus btn-add-abaixo" title="Inserir ferramenta abaixo" 
                style="cursor:pointer; color: #34d399; font-size: 15px; display: flex; align-items: center; justify-content: center; transition: 0.2s;"></i>
                <i class="fa-solid fa-satellite-dish btn-parabolica" title="Pesquisa X-SAT" style="cursor:pointer; color: #818cf8; font-size: 14px; margin-left:5px;"></i>
 
+               
                </div>
+
+               
         <div style="display: flex; gap: 16px; font-size: 13px; align-items: center; opacity: 0.8;">
             <i class="fa-solid fa-tag btn-tag" title="Conexões" style="cursor:pointer; transition: 0.2s;"></i>
             <i class="fa-solid fa-paper-plane btn-partilhar" title="Partilhar" style="cursor:pointer; transition: 0.2s;"></i>
@@ -106,10 +110,10 @@ header.querySelector('.btn-parabolica').onclick = () => {
         transition: background-color 0.3s;
     `;
 
-    const ajustarAltura = () => {
-        corpo.style.height = 'auto'; 
-        corpo.style.height = (corpo.scrollHeight) + 'px'; 
-    };
+  const ajustarAltura = () => {
+    corpo.style.height = 'auto'; 
+    corpo.style.height = (corpo.scrollHeight + 2) + 'px'; 
+};
 
     corpo.addEventListener("input", (e) => {
         ajustarAltura(); 
@@ -117,7 +121,7 @@ header.querySelector('.btn-parabolica').onclick = () => {
         onTextoAlterado(caixa);
     });
 
-    setTimeout(ajustarAltura, 20);
+    setTimeout(ajustarAltura, 150);
 
     caixaDiv.appendChild(header);
     caixaDiv.appendChild(corpo);
