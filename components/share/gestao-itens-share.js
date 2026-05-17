@@ -116,28 +116,29 @@ btnPin.onclick = async (e) => {
     overlay.classList.remove('active');
     document.getElementById('popup-confirmar-ocultar-item').classList.add('active');
 
-    document.getElementById('btn-confirmar-ocultar-item').onclick = async () => {
-    const db = getFirestore();
-    const uid = getAuth().currentUser.uid;
-    const timestamp = new Date().toISOString();
+   const btnFinal = document.getElementById('btn-confirmar-ocultar-final');
+if (btnFinal) {
+    btnFinal.onclick = async () => {
+        const db = getFirestore();
+        const uid = getAuth().currentUser.uid;
+        const timestamp = new Date().toISOString();
 
-    try {
-        // 1. Ocultar a Pasta/Nota principal
-        await updateDoc(doc(db, "Share", itemAlvo.id), { 
-            estado: "desativo", 
-            timedelete: timestamp 
-        });
+        try {
+            await updateDoc(doc(db, "Share", itemAlvo.id), { 
+                estado: "desativo", 
+                timedelete: timestamp 
+            });
 
-        // 2. Se for pasta, ocultar os filhos (baseado na organização deste utilizador)
-        if (itemAlvo.tipo === "pasta") {
-            await ocultarConteudoRecursivoShare(db, itemAlvo.id, uid, timestamp);
+            if (itemAlvo.tipo === "pasta") {
+                await ocultarConteudoRecursivoShare(db, itemAlvo.id, uid, timestamp);
+            }
+
+            location.reload();
+        } catch (err) {
+            console.error(err);
         }
-
-        location.reload();
-    } catch (err) {
-        console.error(err);
-    }
-};
+    };
+}
 };
 
         // --- BOTÃO GRAVAR (SALVAR NOME) ---
