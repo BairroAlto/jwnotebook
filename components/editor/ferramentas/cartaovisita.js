@@ -95,10 +95,10 @@ export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onA
         overflow: hidden; font-family: inherit; line-height: 1.3;
     `;
 
-    const ajustarAlturaTit = () => {
-        inputTit.style.height = 'auto';
-        inputTit.style.height = inputTit.scrollHeight + 'px';
-    };
+ const ajustarAlturaTit = () => {
+    inputTit.style.height = 'auto';
+    inputTit.style.height = (inputTit.scrollHeight + 2) + 'px';
+};
 
     inputTit.oninput = () => {
         ajustarAlturaTit();
@@ -118,10 +118,10 @@ export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onA
     resize: none; min-height: 60px; font-family: inherit; overflow: hidden;
 `;
     
-    const ajustarAlturaCorpo = () => { 
-        areaTexto.style.height = 'auto'; 
-        areaTexto.style.height = areaTexto.scrollHeight + 'px'; 
-    };
+const ajustarAlturaCorpo = () => { 
+    areaTexto.style.height = 'auto'; 
+    areaTexto.style.height = (areaTexto.scrollHeight + 2) + 'px'; 
+};
     
     areaTexto.oninput = () => { 
         ajustarAlturaCorpo();
@@ -140,10 +140,10 @@ export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onA
     caixaDiv.appendChild(corpo);
     
     // Ajustes iniciais de altura
-    setTimeout(() => {
-        ajustarAlturaTit();
-        ajustarAlturaCorpo();
-    }, 50);
+setTimeout(() => {
+    ajustarAlturaTit();
+    ajustarAlturaCorpo();
+}, 150);
 
     return caixaDiv;
 }
