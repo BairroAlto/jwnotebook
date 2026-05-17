@@ -111,8 +111,17 @@ header.querySelector('.btn-parabolica').onclick = () => {
     `;
 
   const ajustarAltura = () => {
+    // 1. Bloqueia a altura atual da caixa para ela não encolher para zero
+    const alturaAtual = corpo.offsetHeight;
+    corpo.style.minHeight = alturaAtual + 'px'; 
+
+    // 2. Faz o reset e mede
     corpo.style.height = 'auto'; 
-    corpo.style.height = (corpo.scrollHeight + 2) + 'px'; 
+    const novaAltura = corpo.scrollHeight + 2;
+
+    // 3. Aplica a nova altura e liberta a tranca
+    corpo.style.height = novaAltura + 'px';
+    corpo.style.minHeight = ''; 
 };
 
     corpo.addEventListener("input", (e) => {
