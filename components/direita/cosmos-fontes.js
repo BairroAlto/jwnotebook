@@ -214,12 +214,17 @@ function criarCardLinkCosmos(link, ref, listaOriginal) {
 
     // Ocultar (Popup)
     div.querySelector('.btn-del').onclick = async () => {
-        const confirmou = await confirmarFonteAcao("Ocultar Link?", "Deseja ocultar esta coleção de links da lista?", "Sim, Ocultar");
-        if(confirmou) {
-            const novaLista = listaOriginal.map(l => l.timestamp === link.timestamp ? {...l, estado: "desativo"} : l);
-            await updateDoc(ref, { "Fontes.Links": novaLista });
-        }
-    };
+    const confirmou = await confirmarFonteAcao("Ocultar Link?", "Deseja mover este link para a reciclagem?");
+    if(confirmou) {
+        const timestamp = new Date().toISOString();
+        const novaLista = listaOriginal.map(l => 
+            l.timestamp === link.timestamp 
+            ? {...l, estado: "desativo", timedelete: timestamp} // 🚀 Adiciona timedelete
+            : l
+        );
+        await updateDoc(ref, { "Fontes.Links": novaLista });
+    }
+};
     return div;
 }
 
@@ -264,19 +269,21 @@ function criarCardCodexCosmos(item, ref, listaOriginal) {
     };
 
     // Evento: Remover Codex (Popup + Limpeza Biblioteca)
-    actions.querySelector('.btn-del').onclick = async (e) => {
-        e.stopPropagation();
-        const confirmou = await confirmarFonteAcao(
-            "Remover Codex?", 
-            "Ao ocultar esta fonte, o vínculo será removido da tua Biblioteca Global.", 
-            "Sim, Remover"
+   actions.querySelector('.btn-del').onclick = async (e) => {
+    e.stopPropagation();
+    const confirmou = await confirmarFonteAcao("Remover Codex?", "Mover este mapeamento para a reciclagem?");
+    if(confirmou) {
+        const timestamp = new Date().toISOString();
+        const novaLista = listaOriginal.map(c => 
+            c.id === item.id 
+            ? {...c, estado: "desativo", timedelete: timestamp} // 🚀 Adiciona timedelete
+            : c
         );
-        if(confirmou) {
-            const novaLista = listaOriginal.map(c => c.id === item.id ? {...c, estado: "desativo"} : c);
-            await updateDoc(ref, { "Fontes.codex": novaLista });
-            await limparVincúloBibliotecaGlobal(item.id, item.referencia);
-        }
-    };
+        await updateDoc(ref, { "Fontes.codex": novaLista });
+        // Mantém a limpeza da biblioteca global
+        await limparVincúloBibliotecaGlobal(item.id, item.referencia);
+    }
+};
 
     div.appendChild(actions);
     return div;
