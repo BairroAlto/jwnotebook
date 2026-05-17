@@ -10,9 +10,8 @@ export async function renderizarFeed(params) {
 
     if (!feed) return;
 
-    // --- BLOQUEIO DE ENCOLHIMENTO ---
-    // Em vez de medir o feed, medimos a área total de scroll (scrollHeight) 
-    // do pai para garantir que o scroll tenha onde "ficar encostado".
+    // --- 🚀 BLOQUEIO DE SALTO DE SCROLL ---
+    // Antes de limpar, trancamos a altura do feed para o scroll não subir ao apagar blocos
     const scrollContainer = document.querySelector('.center-col');
     if (scrollContainer) {
         feed.style.minHeight = scrollContainer.scrollHeight + "px";
@@ -23,9 +22,9 @@ export async function renderizarFeed(params) {
     const auth = getAuth();
     const user = auth.currentUser;
 
-    // ... (lógica de ordenação e metadados igual ao anterior) ...
     const modos = Array.isArray(dadosNota?.modo) ? dadosNota.modo : [dadosNota?.modo || 'normal'];
     const isModoPost = modos.includes('post');
+    
     if (isModoPost) caixasAtuais.sort((a, b) => (b.ordem || 0) - (a.ordem || 0));
     else caixasAtuais.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
 
@@ -35,12 +34,9 @@ export async function renderizarFeed(params) {
     }
     const raciociniosVivos = caixasAtuais.filter(c => c.estado === "ativa" && c.tipo === "raciocinio");
 
-    // Processar caixas (Aguardar renderização de todas)
     const promessasDeRender = caixasAtuais.map(async (caixa) => {
         if (caixa.estado === "desativa") return null;
 
-        // Fábrica de Ferramentas (Switch Case...)
-        // ... (Mantém o teu switch case aqui como estava) ...
         let modulo;
         let elementoResultante;
         switch (caixa.tipo) {
@@ -91,42 +87,21 @@ export async function renderizarFeed(params) {
         }
     });
 
-    // --- LIBERTAÇÃO DO BLOQUEIO ---
-    // Só removemos a altura forçada depois de todos os elementos estarem no DOM
+    // --- LIBERTAÇÃO DA TRANCA (Com Delay de Segurança) ---
     requestAnimationFrame(() => {
-        feed.style.minHeight = "";
+        setTimeout(() => {
+            feed.style.minHeight = "";
+        }, 200); // Dá 200ms para estabilizar antes de tirar o "chão"
     });
 }
 
-/**
- * Aplica o efeito visual de "Caixa Atualizada"
- */
 function aplicarEstiloNovidade(el) {
     el.style.boxShadow = "0 0 15px rgba(239, 68, 68, 0.25)";
     el.style.borderLeftWidth = "6px";
     el.style.transition = "all 0.5s ease";
-
     const badge = document.createElement('div');
-    badge.style.cssText = `
-        position: absolute;
-        top: -8px;
-        right: 15px;
-        background: #ef4444;
-        color: white;
-        font-size: 9px;
-        font-weight: 900;
-        padding: 2px 8px;
-        border-radius: 4px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
-        z-index: 10;
-        pointer-events: none;
-        letter-spacing: 0.5px;
-    `;
+    badge.style.cssText = `position: absolute; top: -8px; right: 15px; background: #ef4444; color: white; font-size: 9px; font-weight: 900; padding: 2px 8px; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); z-index: 10; pointer-events: none; letter-spacing: 0.5px;`;
     badge.innerText = "NOVO";
-
-    if (el.style.position !== "relative") {
-        el.style.position = "relative";
-    }
-    
+    if (el.style.position !== "relative") el.style.position = "relative";
     el.appendChild(badge);
 }
