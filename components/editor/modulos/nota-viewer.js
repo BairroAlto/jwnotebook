@@ -54,15 +54,15 @@ export function configurarBotaoShare(notaId, dadosNota, auth) {
 export async function processarAberturaNota(ctx) {
     const { notaId, dadosNota, db, auth, idCaixaFoco, maeIdOverride, stateManager } = ctx;
 
-    const placeholder = document.getElementById('editor-placeholder');
-    const container = document.getElementById('editor-container');
-    const loading = document.getElementById('editor-loading');
+    // USAR QUERYSELECTOR PARA SER MAIS ESPECÍFICO
+    const container = document.querySelector('#editor-container');
+    const loading = document.querySelector('#editor-loading');
 
-    // 🛡️ PROTEÇÃO ANTI-CRASH (Se o HTML ainda não carregou no GitHub Pages)
     if (!container || !loading) {
-        console.warn("⏳ [VIEWER] HTML do editor ausente. Re-tentando...");
-        setTimeout(() => processarAberturaNota(ctx), 150);
-        return;
+        console.warn("⏳ [VIEWER] HTML não encontrado. Tentando forçar render do DOM...");
+        // Pequeno truque: se não encontra, pode ser que o innerHTML ainda esteja a ser processado
+        await new Promise(res => setTimeout(res, 300)); 
+        return processarAberturaNota(ctx); 
     }
 
     // 1. UI Setup
