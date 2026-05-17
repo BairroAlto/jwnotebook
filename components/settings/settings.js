@@ -1,7 +1,7 @@
 // components/settings/settings.js
 import { doc, getDoc, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-import { inicializarAmigos } from './components/settings/amigos.js';
+import { inicializarAmigos } from './amigos.js';
 import { abrirNotaNoEditor } from '../editor/editor.js'; // 🚀 CAMINHO CORRIGIDO AQUI
 import { AISearchEngine } from '../direita/ai-search-engine.js';
 
