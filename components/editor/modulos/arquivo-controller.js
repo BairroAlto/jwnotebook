@@ -324,16 +324,25 @@ function abrirPopupForm(tipo, gId = null, dadosExistentes = null) {
         btnRemover.style.display = "block";
         
         btnRemover.onclick = async () => {
-            if (confirm(`Desejas ocultar esta ${tipo}?`)) {
-                const arquivo = notaCache.Arquivo;
-                if (tipo === 'gaveta') arquivo.gavetas[dadosExistentes.id].estado = "desativo";
-                else arquivo.gavetas[gId].prateleiras[dadosExistentes.id].estado = "desativo";
-                
-                await updateDoc(doc(dbRef, "Local", idFirestoreNota), { "Arquivo": arquivo });
-                overlay.classList.remove('active');
-                triggerGlobalUpdate();
-            }
-        };
+    if (confirm(`Desejas mover esta ${tipo} para a reciclagem?`)) {
+        const timestamp = new Date().toISOString(); // 🚀 Hora da morte
+        const arquivo = notaCache.Arquivo;
+
+        if (tipo === 'gaveta') {
+            arquivo.gavetas[dadosExistentes.id].estado = "desativo";
+            arquivo.gavetas[dadosExistentes.id].timedelete = timestamp; // 🚀 Registo
+        } else {
+            arquivo.gavetas[gId].prateleiras[dadosExistentes.id].estado = "desativo";
+            arquivo.gavetas[gId].prateleiras[dadosExistentes.id].timedelete = timestamp; // 🚀 Registo
+        }
+        
+        // Grava no Firebase
+        await updateDoc(doc(dbRef, "Local", idFirestoreNota), { "Arquivo": arquivo });
+        
+        overlay.classList.remove('active');
+        triggerGlobalUpdate(); // Redesenha o editor
+    }
+};
     } else if (btnRemover) {
         btnRemover.style.display = "none";
     }
