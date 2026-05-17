@@ -451,7 +451,7 @@ export function inserirFerramentaNoEditor(tipo) {
 async function atualizarFeedEGravar(dispararGravacao = true) {
     if (!dadosNotaOriginal) return;
 
-    // 1. Guardar posição do scroll antes de limpar o HTML
+    // 1. Guardar posição do scroll antes de reconstruir o DOM
     if (window.caixasAtuais) dadosNotaOriginal.caixas = window.caixasAtuais;
     const estadoScroll = EditorUI.capturarEstadoScroll();
 
@@ -460,49 +460,56 @@ async function atualizarFeedEGravar(dispararGravacao = true) {
         ? dadosNotaOriginal.modo 
         : [dadosNotaOriginal.modo || 'normal'];
     
-    // Atualiza o ícone do frasco no topo (Verde, Amarelo ou Cinza)
+    // Atualiza o ícone do frasco (Lab) no topo
     if (typeof atualizarIconeLab === 'function') atualizarIconeLab(modosAtivos);
 
-    // --- LÓGICA DE VISIBILIDADE DAS ABAS (O QUE ESTAVA A FALTAR) ---
+    // Gestão de visibilidade das abas do Modo Arquivo
     const tabsArquivoUI = document.getElementById('arquivo-tabs-container');
     if (tabsArquivoUI) {
-        if (modosAtivos.includes('arquivo')) {
-            tabsArquivoUI.style.display = 'block'; // Força o aparecimento das abas
-        } else {
-            tabsArquivoUI.style.display = 'none';  // Esconde se voltarmos ao normal
-        }
+        tabsArquivoUI.style.display = modosAtivos.includes('arquivo') ? 'block' : 'none';
     }
 
-    // 3. Renderização Condicional
+    // 3. Renderização Condicional (Arquivo vs Feed Normal)
     if (modosAtivos.includes('arquivo')) {
-        // Carrega o controlador de arquivo e desenha a estrutura de gavetas
         const m = await import('./modulos/arquivo-controller.js');
         m.iniciarArquivo(dbRef, authRef, atualizarFeedEGravar);
         m.renderizarModoArquivo(notaAbertaId, dadosNotaOriginal);
     } else {
-        // Ordenação para Feed Normal (b-a para Post, a-b para Normal)
+        // Ordenação baseada no modo (Post: mais recentes primeiro | Normal: sequência direta)
         const isModoPost = modosAtivos.includes('post');
         if (isModoPost) {
             caixasAtuais.sort((a, b) => (b.ordem || 0) - (a.ordem || 0));
         } else {
             caixasAtuais.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
         }
-        await desenhar(); // Desenha o feed de blocos padrão
+        await desenhar(); // Desenha os blocos
     }
 
-    // 4. Disparar Inteligência da Coluna Direita (Async)
+    // 4. 🚀 SOLUÇÃO DO BUG DE COMPACTAÇÃO (Auto-Resize Inteligente)
+    // Forçamos o browser a recalcular as alturas de todos os blocos após a pintura do DOM.
+    requestAnimationFrame(() => {
+        // Primeiro ajuste imediato
+        if (typeof EditorUI.forçarAjusteAlturas === 'function') {
+            EditorUI.forçarAjusteAlturas();
+        }
+
+        // Segundo ajuste com pequeno delay para garantir que o layout estabilizou (Imagens, Fontes, etc)
+        setTimeout(() => {
+            if (typeof EditorUI.forçarAjusteAlturas === 'function') {
+                EditorUI.forçarAjusteAlturas();
+            }
+            // Restaurar o scroll apenas depois de as caixas terem a altura final correta
+            EditorUI.restaurarScroll(estadoScroll);
+        }, 120);
+    });
+
+    // 5. Disparar Inteligência da Coluna Direita (Índice, IA, Fontes...)
     import('./modulos/intelligence/dispatcher.js').then(m => {
         m.despacharInteligenciaEye(caixasAtuais, dadosNotaOriginal, dbRef, authRef);
     });
 
-    // 5. Salvar no Firebase se necessário
+    // 6. Salvar no Firebase se necessário
     if (dispararGravacao) acionarGravacao();
-
-    // 6. Restaurar Scroll e Ajustar Alturas de Títulos
-    EditorUI.restaurarScroll(estadoScroll);
-    requestAnimationFrame(() => {
-        EditorUI.ajustarTitulos();
-    });
 
     return Promise.resolve();
 }
