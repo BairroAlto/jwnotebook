@@ -1,7 +1,6 @@
 // components/editor/ferramentas/questao.js
 import { FOCOS_QUESTAO } from '../modulos/paleta-cores.js';
 
-
 /**
  * Fábrica de Questões (Blocos Verdes com Título dinâmico)
  */
@@ -55,20 +54,9 @@ export function criarQuestaoVerde(caixa, onTextoAlterado, onApagar, onPaleta, on
         </div>
     `;
 
-    header.querySelector('.btn-cima').onclick = () => onMover(caixa, "cima");
-    header.querySelector('.btn-baixo').onclick = () => onMover(caixa, "baixo");
-    header.querySelector('.btn-add-abaixo').onclick = () => onAddAbaixo(caixa.id);
-    header.querySelector('.btn-tag').onclick = () => onTags(caixa);
-    header.querySelector('.btn-partilhar').onclick = () => onPartilhar(caixa);
-    header.querySelector('.btn-paleta').onclick = () => onPaleta(caixa);
-    header.querySelector('.btn-lixeira').onclick = () => onApagar(caixa);
-header.querySelector('.btn-parabolica').onclick = () => {
-    window.dispararPesquisaParabolica(caixa.conteudo + " " + (caixa.titulo || ""));
-};
-
-    // --- CAMPO DE TÍTULO (MUDADO PARA TEXTAREA) ---
+    // --- CAMPO DE TÍTULO ---
     const inputTitulo = document.createElement("textarea");
-    inputTitulo.className = "tool-title-input"; // Necessário para o CSS de colapso
+    inputTitulo.className = "tool-title-input"; 
     inputTitulo.value = caixa.titulo || "";
     inputTitulo.placeholder = "Título da Questão...";
     inputTitulo.rows = 1;
@@ -81,11 +69,13 @@ header.querySelector('.btn-parabolica').onclick = () => {
         display: block; line-height: 1.4;
     `;
 
-    // Ajuste automático de altura para o título
-   const ajustarAlturaTitulo = () => {
-    inputTitulo.style.height = 'auto';
-    inputTitulo.style.height = (inputTitulo.scrollHeight + 2) + 'px'; 
-};
+    // 🚀 Ajuste Anti-Salto para o Título
+    const ajustarAlturaTitulo = () => {
+        caixaDiv.style.minHeight = caixaDiv.offsetHeight + 'px'; // Tranca o contentor
+        inputTitulo.style.height = 'auto';
+        inputTitulo.style.height = (inputTitulo.scrollHeight + 2) + 'px';
+        requestAnimationFrame(() => { caixaDiv.style.minHeight = ''; }); // Destranca
+    };
 
     inputTitulo.addEventListener("input", (e) => {
         ajustarAlturaTitulo();
@@ -96,11 +86,12 @@ header.querySelector('.btn-parabolica').onclick = () => {
     // --- CORPO (ÁREA DE TEXTO) ---
     const corpo = document.createElement("textarea");
     corpo.value = caixa.conteudo || "";
-    aplicarEscudoBloqueio(caixa, corpo, caixaDiv);
+    if (typeof window.aplicarEscudoBloqueio === 'function') {
+        window.aplicarEscudoBloqueio(caixa, corpo, caixaDiv);
+    }
     corpo.placeholder = "Escreve a pergunta ou dilema...";
     
-    let corTxt = "var(--text-main)";
-if (caixa.destaques) corTxt = "#000";
+    let corTxt = caixa.destaques ? "#000" : "var(--text-main)";
 
     corpo.style.cssText = `
         width: 100%; min-height: 80px; padding: 15px 18px; 
@@ -110,10 +101,13 @@ if (caixa.destaques) corTxt = "#000";
         font-family: inherit; line-height: 1.6; transition: background-color 0.3s;
     `;
 
-  const ajustarAlturaCorpo = () => {
-    corpo.style.height = 'auto'; 
-    corpo.style.height = (corpo.scrollHeight + 2) + 'px'; 
-};
+    // 🚀 Ajuste Anti-Salto para o Corpo
+    const ajustarAlturaCorpo = () => {
+        caixaDiv.style.minHeight = caixaDiv.offsetHeight + 'px'; // Tranca o contentor
+        corpo.style.height = 'auto'; 
+        corpo.style.height = (corpo.scrollHeight + 2) + 'px';
+        requestAnimationFrame(() => { caixaDiv.style.minHeight = ''; }); // Destranca
+    };
 
     corpo.addEventListener("input", (e) => {
         ajustarAlturaCorpo(); 
@@ -121,11 +115,21 @@ if (caixa.destaques) corTxt = "#000";
         onTextoAlterado(caixa);
     });
 
+    // Atribuição de Funções da Toolbar
+    header.querySelector('.btn-cima').onclick = () => onMover(caixa, "cima");
+    header.querySelector('.btn-baixo').onclick = () => onMover(caixa, "baixo");
+    header.querySelector('.btn-add-abaixo').onclick = () => onAddAbaixo(caixa.id);
+    header.querySelector('.btn-tag').onclick = () => onTags(caixa);
+    header.querySelector('.btn-partilhar').onclick = () => onPartilhar(caixa);
+    header.querySelector('.btn-paleta').onclick = () => onPaleta(caixa);
+    header.querySelector('.btn-lixeira').onclick = () => onApagar(caixa);
+    header.querySelector('.btn-parabolica').onclick = () => window.dispararPesquisaParabolica(caixa.conteudo + " " + (caixa.titulo || ""));
+
     // Ajustes de altura iniciais
-setTimeout(() => {
-    ajustarAlturaTitulo();
-    ajustarAlturaCorpo();
-}, 150);
+    setTimeout(() => {
+        ajustarAlturaTitulo();
+        ajustarAlturaCorpo();
+    }, 150);
 
     caixaDiv.appendChild(header);
     caixaDiv.appendChild(inputTitulo);
