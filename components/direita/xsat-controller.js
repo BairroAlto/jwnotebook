@@ -15,36 +15,68 @@ const estadosCanais = {
 let canalSelecionadoUI = null;
 let jumpInProgress = false;
 
+
 export function iniciarXSat() {
     const botoesNum = document.querySelectorAll('.xsat-num');
     const subNav = document.getElementById('xsat-sub-nav');
 
-   botoesNum.forEach(btn => {
+    botoesNum.forEach(btn => {
         btn.onclick = () => {
             const num = btn.dataset.num;
+            
+            // 1. ATUALIZAÇÃO VISUAL DOS BOTÕES (CRUCIAL)
+            botoesNum.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            canalSelecionadoUI = num;
+
+            // 2. LÓGICA DE CANAL
             if (num === "6") {
-                // Remove a sub-barra de ícones (sentinela/livros) para o modo IA
-                document.getElementById('xsat-sub-nav').style.display = 'none';
+                // MODO IA: Esconde sub-nav e desenha lista
+                if (subNav) subNav.style.display = 'none';
                 AIController.renderizarLista();
             } else {
-                // Lógica dos outros canais 1-5 ...
+                // MODO SATÉLITE (1-5): Mostra sub-nav e resultados
+                if (subNav) subNav.style.display = 'flex';
+                
+                const canal = estadosCanais[num];
+                if (canal && canal.ativa) {
+                    // Sincronizar botões da sub-nav com a aba guardada do canal
+                    document.querySelectorAll('#xsat-sub-nav button').forEach(b => b.classList.remove('active'));
+                    const btnAba = document.getElementById(getAbaId(canal.abaAtiva));
+                    if (btnAba) btnAba.classList.add('active');
+                    
+                    renderizarResultados(canal.dados[canal.abaAtiva]);
+                } else {
+                    mostrarCanalLivre(num);
+                }
             }
         };
     });
 
+    // Delegar cliques da sub-nav (Publicações, Livros, etc.)
     const mapAbas = { 'btn-xsat-pub': 'publicacoes', 'btn-xsat-liv': 'livros', 'btn-xsat-vid': 'multimedia', 'btn-xsat-set': 'definicoes' };
     document.querySelectorAll('#xsat-sub-nav button').forEach(btn => {
         btn.onclick = () => {
-            if (!canalSelecionadoUI) return;
+            if (!canalSelecionadoUI || canalSelecionadoUI === "6") return;
+            
             const canal = estadosCanais[canalSelecionadoUI];
             const abaAlvo = mapAbas[btn.id];
+            
             canal.abaAtiva = abaAlvo;
             document.querySelectorAll('#xsat-sub-nav button').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
+            
             if (abaAlvo === 'definicoes') renderizarDefinicoesCanal(canalSelecionadoUI);
             else if (canal.dados) renderizarResultados(canal.dados[abaAlvo]);
         };
     });
+}
+
+
+function getAbaId(nome) {
+    const ids = { 'publicacoes': 'btn-xsat-pub', 'livros': 'btn-xsat-liv', 'multimedia': 'btn-xsat-vid', 'definicoes': 'btn-xsat-set' };
+    return ids[nome];
 }
 
 /**
