@@ -1,12 +1,12 @@
 // components/settings/settings.js
-import { doc, getDoc, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { inicializarAmigos } from './amigos.js';
-
-let timerGravacao = null;
+import { abrirNotaNoEditor } from '../editor/editor.js';
+import { AISearchEngine } from '../direita/ai-search-engine.js';
 
 /**
- * Atualiza o ícone de definições no topo do site (Avatar do utilizador)
+ * Atualiza o ícone de definições no topo (Avatar)
  */
 function atualizarIconeBotaoTopo(avatar) {
     const btnDefinicoes = document.getElementById('btnDefinicoes');
@@ -14,11 +14,10 @@ function atualizarIconeBotaoTopo(avatar) {
     const icone = btnDefinicoes.querySelector('i');
     if (!icone) return;
 
-    // Se o avatar for 'gear', usa o ícone padrão, caso contrário usa o símbolo escolhido
     if (!avatar || avatar === "" || avatar === "gear") {
         icone.className = "fa-solid fa-gear";
     } else {
-        const prefixo = (avatar === 'discord' || avatar === 'xbox' || avatar === 'mailchimp') ? 'fa-brands' : 'fa-solid';
+        const prefixo = (avatar === 'discord' || avatar === 'xbox') ? 'fa-brands' : 'fa-solid';
         icone.className = `${prefixo} fa-${avatar}`;
     }
 }
@@ -35,58 +34,25 @@ export async function inicializarSettings(db, auth) {
     const btnAbrir = document.getElementById('btnDefinicoes');
     const btnFechar = document.getElementById('btn-fechar-settings');
     
-    // Elementos de Toggles
-    const checkColapso = document.getElementById('check-colapso-titulos');
-    const checkShare = document.getElementById('check-partilhar-respostas');
+    // --- GESTÃO DE ABERTURA ---
+    if (btnAbrir) btnAbrir.onclick = () => overlay.classList.add('active');
+    if (btnFechar) btnFechar.onclick = () => overlay.classList.remove('active');
 
-    // 1. GARANTIR VISIBILIDADE DO BOTÃO
-    if (btnAbrir) btnAbrir.style.display = 'flex';
-
-    // 2. CARREGAR PREFERÊNCIAS DO UTILIZADOR (Firebase -> UI)
+    // 1. CARREGAR PREFERÊNCIAS
     try {
         const snap = await getDoc(userRef);
         if (snap.exists()) {
             const dados = snap.data();
-
-            // A) Aplicar Tamanhos de Letra Guardados
             if (dados.tamanholetra) {
                 Object.entries(dados.tamanholetra).forEach(([varName, value]) => {
-                    // Aplica no CSS Global
                     document.documentElement.style.setProperty(varName, value + 'px');
-                    // Sincroniza a posição do slider no popup
-                    const input = document.querySelector(`input[data-var="${varName}"]`);
-                    if (input) input.value = value;
                 });
             }
-
-            // B) Estado do Colapso de Títulos
-            if (dados.colapsoTitulos) {
-                if (checkColapso) checkColapso.checked = true;
-                document.body.classList.add('modo-colapso-titulos');
-            }
-
-            // C) Estado da Rede de Respostas
-            if (dados.shareAnswers) {
-                if (checkShare) checkShare.checked = true;
-            }
-
-            // D) Aplicar Avatar Escolhido
-            const avatarAtual = dados.avatar || "gear";
-            atualizarIconoBotaoTopo(avatarAtual);
-            const avatarItem = document.querySelector(`.avatar-item[data-avatar="${avatarAtual}"]`);
-            if (avatarItem) {
-                document.querySelectorAll('.avatar-item').forEach(i => i.classList.remove('active'));
-                avatarItem.classList.add('active');
-            }
+            atualizarIconeBotaoTopo(dados.avatar || "gear");
         }
-    } catch (e) { 
-        console.error("❌ [SETTINGS] Erro ao carregar perfil:", e); 
-    }
+    } catch (e) { console.error(e); }
 
-    // 3. GESTÃO DE ABERTURA E ABAS
-    if (btnAbrir) btnAbrir.onclick = () => overlay.classList.add('active');
-    if (btnFechar) btnFechar.onclick = () => overlay.classList.remove('active');
-
+    // 2. GESTÃO DE ABAS
     const tabs = document.querySelectorAll('.tab-settings');
     tabs.forEach(tab => {
         tab.onclick = () => {
@@ -97,101 +63,92 @@ export async function inicializarSettings(db, auth) {
             const targetContent = document.getElementById(targetId);
             if (targetContent) targetContent.style.display = 'block';
 
-            // Se for a aba de reciclagem, carrega os dados específicos
             if (targetId === 'set-reciclagem') {
                 import('./recycle-manager.js').then(m => m.carregarTodaReciclagem(db, user.uid));
             }
         };
     });
 
-    // 4. TOGGLE: REDE DE RESPOSTAS (Sincronização Social)
-    if (checkShare) {
-        checkShare.onchange = async (e) => {
-            const ativo = e.target.checked;
-            const uid = user.uid;
-            try {
-                // Grava no perfil do utilizador
-                await updateDoc(userRef, { shareAnswers: ativo });
-                // Grava na coleção pública de descoberta
-                const shareRef = doc(db, "Partilharcom", uid);
-                await setDoc(shareRef, { userId: uid, shareAnswers: ativo, lastUpdate: new Date().toISOString() }, { merge: true });
-                
-                // Notifica o sistema para atualizar abas sociais se necessário
-                window.dispatchEvent(new CustomEvent('sync:rede-respostas', { detail: { ativa: ativo } }));
-            } catch (err) {
-                console.error("❌ [SETTINGS] Erro ao gravar partilha:", err);
-                checkShare.checked = !ativo; 
-            }
-        };
-    }
+    // 3. LÓGICA DE BUSCA SEMÂNTICA (NEXO GPS) COM ANIMAÇÃO DO MACACO
+    const btnBusca = document.getElementById('btn-executar-tab-search');
+    const inputBusca = document.getElementById('input-tab-search');
 
-    // 5. TOGGLE: COLAPSO DE TÍTULOS (Recarregar para aplicar classes complexas)
-    if (checkColapso) {
-        checkColapso.onchange = async (e) => {
-            const ativo = e.target.checked;
-            checkColapso.disabled = true;
-            try {
-                await updateDoc(userRef, { colapsoTitulos: ativo });
-                window.location.reload(); // Refresh necessário para re-processar alturas dos títulos
-            } catch (err) {
-                checkColapso.disabled = false;
-            }
-        };
-    }
+    if (btnBusca) {
+        btnBusca.onclick = async () => {
+            const query = inputBusca.value.trim();
+            if (!query) return;
 
-    // 6. SELEÇÃO DE AVATAR (Ícone do Topo)
-    document.querySelectorAll('.avatar-item').forEach(item => {
-        item.onclick = async () => {
-            const novoAvatar = item.dataset.avatar;
-            atualizarIconeBotaoTopo(novoAvatar);
+            const status = document.getElementById('search-status-info');
+            const listaUI = document.getElementById('list-results-gps');
+
+            // --- ESTADO DE CARREGAMENTO (O MACACO A SALTAR) ---
+            btnBusca.disabled = true;
+            btnBusca.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
+            listaUI.innerHTML = "";
             
+            status.innerHTML = `
+                <div style="text-align:center; padding:20px; color:var(--primary); animation: fadeIn 0.3s ease;">
+                    <i class="fa-brands fa-mailchimp fa-bounce" style="font-size:35px; margin-bottom:15px; display:block;"></i>
+                    <p style="font-family:monospace; font-size:10px; font-weight:800; letter-spacing:2px; text-transform:uppercase;">
+                        O BOOKAi ESTÁ A PROCESSAR SINAPSE...
+                    </p>
+                </div>
+            `;
+
             try {
-                await updateDoc(userRef, { avatar: novoAvatar });
-                document.querySelectorAll('.avatar-item').forEach(i => i.classList.remove('active'));
-                item.classList.add('active');
-            } catch (e) {
-                console.error("❌ Erro ao guardar avatar:", e);
-            }
-        };
-    });
+                // Executar a procura no motor DeepSeek
+                const resultados = await AISearchEngine.procurar(query, db, user.uid);
 
-    // 7. SLIDERS DE FONTES (INTELIGÊNCIA VISUAL)
-    // Gere --fs-left-items, --fs-right-results (Índice/IA), --fs-editor-texto, etc.
-    document.querySelectorAll('.field-font input[type="range"]').forEach(slider => {
-        slider.oninput = (e) => {
-            const varName = e.target.getAttribute('data-var');
-            const valor = e.target.value;
+                if (!resultados || resultados.length === 0) {
+                    status.innerHTML = `<span style="color:#f87171;"><i class="fa-solid fa-ghost"></i> Nenhuma nota encontrada com esse significado.</span>`;
+                } else {
+                    status.innerHTML = `<i class="fa-solid fa-circle-check" style="color:#22c55e;"></i> Encontrei <b>${resultados.length}</b> correspondências:`;
+                    
+                    resultados.forEach(nota => {
+                        const card = document.createElement('div');
+                        card.className = "menu-item-list";
+                        card.style.cssText = "background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.2); border-left: 4px solid var(--primary); margin-bottom: 8px; justify-content: space-between; padding: 12px 15px; cursor: pointer; transition: 0.2s;";
+                        
+                        card.innerHTML = `
+                            <div style="display:flex; align-items:center; gap:12px; overflow:hidden; pointer-events:none;">
+                                <i class="fa-solid fa-file-lines" style="color:var(--primary);"></i>
+                                <span style="font-weight:700; color:white; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${nota.title}</span>
+                            </div>
+                            <i class="fa-solid fa-arrow-right-to-bracket" style="opacity:0.4; pointer-events:none;"></i>
+                        `;
+                        
+                        // Efeito de hover manual no card
+                        card.onmouseenter = () => card.style.background = "rgba(99, 102, 241, 0.15)";
+                        card.onmouseleave = () => card.style.background = "rgba(99, 102, 241, 0.08)";
 
-            // APLICAÇÃO IMEDIATA (Para o utilizador ver o resultado enquanto arrasta)
-            document.documentElement.style.setProperty(varName, valor + 'px');
-            
-            // DEBOUNCE: Só grava no Firebase 1.5 segundos após o utilizador parar de mexer
-            clearTimeout(timerGravacao);
-            timerGravacao = setTimeout(async () => {
-                const novaConfig = {};
-                // Recolhe todos os valores atuais dos sliders para guardar o pacote completo
-                document.querySelectorAll('.field-font input[type="range"]').forEach(i => {
-                    novaConfig[i.getAttribute('data-var')] = i.value;
-                });
-
-                try {
-                    await updateDoc(userRef, { tamanholetra: novaConfig });
-                    console.log("💾 [SETTINGS] Tamanhos de fonte sincronizados com a nuvem.");
-                } catch (err) {
-                    console.error("❌ Erro ao guardar fontes:", err);
+                        card.onclick = async () => {
+                            overlay.classList.remove('active');
+                            const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js");
+                            
+                            let snap = await getDoc(doc(db, "Local", nota.id));
+                            if (!snap.exists()) snap = await getDoc(doc(db, "Share", nota.id));
+                            
+                            if (snap.exists()) {
+                                abrirNotaNoEditor(nota.id, snap.data(), db, auth);
+                            }
+                        };
+                        listaUI.appendChild(card);
+                    });
                 }
-            }, 1500);
+            } catch (err) {
+                console.error("Erro na busca:", err);
+                status.innerHTML = `<span style="color:#f87171;">Erro na ligação ao Nexo.</span>`;
+            } finally {
+                btnBusca.disabled = false;
+                btnBusca.innerHTML = `<i class="fa-solid fa-paper-plane"></i>`;
+            }
         };
-    });
 
-    // 8. SUBSISTEMAS E LOGOUT
-    inicializarAmigos(db, auth);
-    const btnSair = document.getElementById('btnConfirmarSair');
-    if (btnSair) {
-        btnSair.onclick = () => {
-            signOut(auth).then(() => {
-                window.location.reload();
-            }).catch(err => alert("Erro ao sair: " + err.message));
-        };
+        inputBusca.onkeydown = (e) => { if (e.key === 'Enter') btnBusca.click(); };
     }
+
+    const btnSair = document.getElementById('btnConfirmarSair');
+    if (btnSair) btnSair.onclick = () => signOut(auth).then(() => window.location.reload());
+
+    inicializarAmigos(db, auth);
 }
