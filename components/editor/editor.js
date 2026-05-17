@@ -28,6 +28,8 @@ import { EditorUI } from './modulos/ui-utils.js';
 import { SyncLogic } from './modulos/sync-logic.js';
 import { ModoManager } from './modulos/modo-manager.js';
 import { MobileUI } from '../ui/mobile-manager.js';
+import { processarAberturaNota, configurarBotaoShare } from './modulos/nota-viewer.js';
+
 
 
 // ESTADO GLOBAL DO EDITOR
@@ -71,8 +73,6 @@ export async function forcarGravacaoImediata() {
     }
 }
 
-// Adicione este import no topo do editor.js
-import { processarAberturaNota, configurarBotaoShare } from './modulos/nota-viewer.js';
 
 // No editor.js, a função abrirNotaNoEditor agora é apenas um "despachante"
 export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco = null, maeIdOverride = null) {
