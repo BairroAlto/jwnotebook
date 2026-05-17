@@ -93,10 +93,10 @@ header.querySelector('.btn-parabolica').onclick = () => {
     `;
 
     // Função para ajustar altura do título
-    const ajustarAlturaTitulo = () => {
-        inputTitulo.style.height = 'auto';
-        inputTitulo.style.height = inputTitulo.scrollHeight + 'px';
-    };
+const ajustarAlturaTitulo = () => {
+    inputTitulo.style.height = 'auto';
+    inputTitulo.style.height = (inputTitulo.scrollHeight + 2) + 'px';
+};
 
     inputTitulo.addEventListener("input", (e) => {
         ajustarAlturaTitulo();
@@ -124,10 +124,10 @@ if (caixa.destaques) corTxt = "#000";
         font-family: inherit; line-height: 1.6; transition: background-color 0.3s;
     `;
 
-    const ajustarAlturaCorpo = () => {
-        corpo.style.height = 'auto'; 
-        corpo.style.height = corpo.scrollHeight + 'px'; 
-    };
+const ajustarAlturaCorpo = () => {
+    corpo.style.height = 'auto'; 
+    corpo.style.height = (corpo.scrollHeight + 2) + 'px'; 
+};
 
     corpo.addEventListener("input", (e) => {
         ajustarAlturaCorpo(); 
@@ -136,10 +136,10 @@ if (caixa.destaques) corTxt = "#000";
     });
 
     // Ajustes iniciais
-    setTimeout(() => {
-        ajustarAlturaTitulo();
-        ajustarAlturaCorpo();
-    }, 50);
+   setTimeout(() => {
+    ajustarAlturaTitulo();
+    ajustarAlturaCorpo();
+}, 150);
 
     caixaDiv.appendChild(header);
     caixaDiv.appendChild(tituloContainer);
