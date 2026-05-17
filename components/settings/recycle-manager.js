@@ -2,160 +2,92 @@
 import { collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { renderizarItensReciclagem } from './recycle-ui.js';
 
-/**
- * MOTOR DE VERIFICAÇÃO DE ITENS EXPIRADOS (+3 MESES)
- */
+const TRES_MESES_MS = 3 * 30 * 24 * 60 * 60 * 1000;
+
 export async function verificarItensExpirados(db, userId) {
-    console.log("🔍 [RECYCLE] A verificar validade dos itens ocultos...");
-    
-    // 3 meses em milissegundos (90 dias aprox)
-    const tresMesesEmMs = 3 * 30 * 24 * 60 * 60 * 1000;
-    const agora = Date.now();
-    
-    const itensExpirados = [];
+    console.log("🔍 [RECYCLE] Verificação de expiração iniciada...");
+    const todosItens = await varrerTodasColecoes(db, userId);
+    const itensExpirados = todosItens.filter(item => item.expirado === true);
 
-    try {
-        // 1. PROCURAR NOTAS INTEIRAS OCULTAS
-        const qNotas = query(
-            collection(db, "Local"), 
-            where("userId", "==", userId), 
-            where("estado", "==", "desativa")
-        );
-        const snapNotas = await getDocs(qNotas);
-
-        snapNotas.forEach(docSnap => {
-            const data = docSnap.data();
-            if (data.timedelete) {
-                const dataDelete = new Date(data.timedelete).getTime();
-                if (agora - dataDelete > tresMesesEmMs) {
-                    itensExpirados.push({ id: docSnap.id, tipoItem: 'nota', dados: data });
-                }
-            }
-        });
-
-        // 2. PROCURAR FERRAMENTAS (CAIXAS) DENTRO DE NOTAS ATIVAS
-        const qCaixas = query(
-            collection(db, "Local"), 
-            where("userId", "==", userId), 
-            where("estado", "==", "ativa")
-        );
-        const snapCaixas = await getDocs(qCaixas);
-
-        snapCaixas.forEach(docSnap => {
-            const data = docSnap.data();
-            if (data.caixas) {
-                data.caixas.forEach(caixa => {
-                    if (caixa.estado === "desativa" && caixa.timedelete) {
-                        const dataDelete = new Date(caixa.timedelete).getTime();
-                        if (agora - dataDelete > tresMesesEmMs) {
-                            itensExpirados.push({ 
-                                id: docSnap.id, 
-                                idCaixa: caixa.id, 
-                                tipoItem: 'ferramenta', 
-                                dados: caixa, 
-                                nomeNota: data.nome 
-                            });
-                        }
-                    }
-                });
-            }
-        });
-
-        // 3. SE ENCONTRAR ITENS, DISPARA A UI
-        if (itensExpirados.length > 0) {
-            console.log(`⚠️ [RECYCLE] Encontrados ${itensExpirados.length} itens expirados.`);
-            dispararAlertaReciclagem(itensExpirados);
-        } else {
-            console.log("✅ [RECYCLE] Tudo em conformidade. Nenhum item expirado.");
-        }
-
-    } catch (error) {
-        console.error("❌ [RECYCLE] Erro ao verificar itens:", error);
+    if (itensExpirados.length > 0) {
+        // 🚀 DISPARA AUTO-OPEN: Passamos 'true' para indicar que é um alerta automático
+        dispararAlertaReciclagem(todosItens, true);
     }
 }
 
-/**
- * ATIVA A INTERFACE DE RECICLAGEM
- */
-function dispararAlertaReciclagem(lista) {
+function dispararAlertaReciclagem(listaCompleta, isAutoOpen) {
     const btnTab = document.getElementById('btn-tab-reciclagem');
     const overlay = document.getElementById('popup-settings-overlay');
 
     if (btnTab && overlay) {
-        // Torna a aba visível
-        btnTab.style.display = 'flex';
-        
-        // Abre o popup de definições
         overlay.classList.add('active');
-
-        // Seleciona a aba Reciclagem automaticamente
         btnTab.click();
-
-        // Renderiza a lista de itens
-        renderizarItensReciclagem(lista);
+        // Renderiza com a flag de abertura automática
+        renderizarItensReciclagem(listaCompleta, isAutoOpen);
     }
 }
-
-// Adiciona este export ao components/settings/recycle-manager.js
 
 export async function carregarTodaReciclagem(db, userId) {
     const container = document.getElementById('lista-reciclagem-expirada');
     if (!container) return;
-
     container.innerHTML = `<div style="text-align:center; padding:20px;"><i class="fa-solid fa-circle-notch fa-spin" style="color:var(--primary);"></i></div>`;
 
-    const tresMesesEmMs = 3 * 30 * 24 * 60 * 60 * 1000;
-    const agora = Date.now();
-    const todosItensReciclagem = [];
-
     try {
-        // 1. NOTAS OCULTAS
-        const qNotas = query(collection(db, "Local"), where("userId", "==", userId), where("estado", "==", "desativa"));
-        const snapNotas = await getDocs(qNotas);
+        const todosItens = await varrerTodasColecoes(db, userId);
+        // 🚀 CLIQUE MANUAL: Passamos 'false'
+        renderizarItensReciclagem(todosItens, false);
+    } catch (e) {
+        container.innerHTML = "Erro ao carregar lixeira.";
+    }
+}
 
-        snapNotas.forEach(docSnap => {
-            const data = docSnap.data();
-            if (data.timedelete) {
-                const msPassados = agora - new Date(data.timedelete).getTime();
-                todosItensReciclagem.push({
-                    id: docSnap.id,
-                    tipoItem: 'nota',
-                    dados: data,
-                    expirado: msPassados > tresMesesEmMs
-                });
+async function varrerTodasColecoes(db, userId) {
+    const agora = Date.now();
+    const listaFinal = [];
+    try {
+        const qLocal = query(collection(db, "Local"), where("userId", "==", userId));
+        const snapLocal = await getDocs(qLocal);
+        snapLocal.forEach(docSnap => {
+            const d = docSnap.data();
+            if (d.estado === "desativa" && d.timedelete) {
+                const ms = agora - new Date(d.timedelete).getTime();
+                listaFinal.push({ id: docSnap.id, tipoItem: 'nota', dados: d, expirado: ms > TRES_MESES_MS });
             }
-        });
-
-        // 2. FERRAMENTAS OCULTAS (dentro de qualquer nota do user)
-        const qTodasNotas = query(collection(db, "Local"), where("userId", "==", userId));
-        const snapTodas = await getDocs(qTodasNotas);
-
-        snapTodas.forEach(docSnap => {
-            const data = docSnap.data();
-            if (data.caixas) {
-                data.caixas.forEach(caixa => {
-                    if (caixa.estado === "desativa" && caixa.timedelete) {
-                        const msPassados = agora - new Date(caixa.timedelete).getTime();
-                        todosItensReciclagem.push({
-                            id: docSnap.id,
-                            idCaixa: caixa.id,
-                            tipoItem: 'ferramenta',
-                            dados: caixa,
-                            nomeNota: data.nome,
-                            expirado: msPassados > tresMesesEmMs
-                        });
+            if (d.caixas) {
+                d.caixas.forEach(c => {
+                    if (c.estado === "desativa" && c.timedelete) {
+                        const ms = agora - new Date(c.timedelete).getTime();
+                        listaFinal.push({ id: docSnap.id, idSub: c.id, tipoItem: 'caixa', dados: c, nomePai: d.nome, expirado: ms > TRES_MESES_MS });
                     }
                 });
             }
         });
-
-        // 3. RENDERIZAR
-        import('./recycle-ui.js').then(m => {
-            m.renderizarItensReciclagem(todosItensReciclagem);
+        const qCosmo = query(collection(db, "Cosmo"), where("userId", "==", userId));
+        const snapCosmo = await getDocs(qCosmo);
+        snapCosmo.forEach(docSnap => {
+            const d = docSnap.data();
+            if (d.estado === "desativo" && d.timedelete) {
+                const ms = agora - new Date(d.timedelete).getTime();
+                listaFinal.push({ id: docSnap.id, tipoItem: 'cosmos-tema', dados: d, expirado: ms > TRES_MESES_MS });
+            }
+            if (d.Dossie?.mica) {
+                Object.values(d.Dossie.mica).forEach(m => {
+                    if (m.estado === "desativo" && m.timedelete) {
+                        const ms = agora - new Date(m.timedelete).getTime();
+                        listaFinal.push({ id: docSnap.id, idSub: m.id, tipoItem: 'mica', dados: m, nomePai: d.nome || "Dossiê", expirado: ms > TRES_MESES_MS });
+                    }
+                });
+            }
         });
-
-    } catch (e) {
-        console.error("Erro ao carregar reciclagem:", e);
-        container.innerHTML = "Erro ao carregar itens.";
-    }
+        const qTopico = query(collection(db, "Topico"), where("userId", "==", userId));
+        const snapTopico = await getDocs(qTopico);
+        snapTopico.forEach(docSnap => {
+            const d = docSnap.data();
+            if (d.estado === "desativo" && d.timedelete) {
+                const ms = agora - new Date(d.timedelete).getTime();
+                listaFinal.push({ id: docSnap.id, tipoItem: 'topico', dados: d, expirado: ms > TRES_MESES_MS });
+            }
+        });
+    } catch (e) { console.error(e); }
+    return listaFinal;
 }
