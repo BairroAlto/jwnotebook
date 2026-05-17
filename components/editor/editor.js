@@ -510,19 +510,7 @@ async function atualizarFeedEGravar(dispararGravacao = true) {
 
 async function guardarNotaNoFirebase() {
     if (!notaAbertaId || !dbRef || !authRef.currentUser) return;
-
-    // 🛡️ NOVO BLOQUEIO DE SEGURANÇA:
-    // Se não houve alterações reais, saímos imediatamente.
-    // Isto evita que o updateDoc seja chamado e que os outros vejam o "SHARE" em vermelho.
-    if (!notaComAlteracoes) {
-        console.log("💤 [SAVE] Nada mudou. Abortando gravação para não notificar colaboradores.");
-        const info = document.getElementById('editor-info-text');
-        if (info) {
-            info.innerText = "Sincronizado";
-            info.style.color = "var(--text-muted)";
-        }
-        return; 
-    }
+    if (!notaComAlteracoes) return; 
 
     const uid = authRef.currentUser.uid;
     const isShare = (dadosNotaOriginal.onde === "share");
@@ -532,28 +520,33 @@ async function guardarNotaNoFirebase() {
         const novoNome = document.getElementById('editor-titulo').innerText.trim();
         const notaRef = doc(dbRef, colecaoAlvo, notaAbertaId);
 
+        // GARANTIR QUE NÃO ENVIAMOS UNDEFINED
         const updateData = { 
             nome: novoNome, 
-            caixas: caixasAtuais 
+            caixas: caixasAtuais || [],
+            // Adicionamos proteção para os metadados
+            vincTopicos: dadosNotaOriginal.vincTopicos || [] 
         };
 
         if (isShare) {
-            // Só limpamos o vistoPor se o utilizador realmente mudou conteúdo
             updateData.vistoPor = [uid]; 
             updateData[`${uid}.ultimaLeitura`] = new Date().toISOString();
-            console.log("📢 [SHARE] Conteúdo alterado. Notificando colaboradores.");
         }
 
         await updateDoc(notaRef, updateData);
-
-        // ✅ Resetar a flag apenas após uma gravação bem sucedida
         notaComAlteracoes = false; 
 
+        // 🚀 GATILHO DO GPS: Indexar após gravar com sucesso
+        import('./modulos/ai-search-indexer.js').then(m => {
+            m.dispararIndexacao(dbRef, uid, notaAbertaId, {
+                nome: novoNome,
+                caixas: caixasAtuais,
+                vincTopicos: dadosNotaOriginal.vincTopicos || []
+            });
+        });
+
         const info = document.getElementById('editor-info-text');
-        if (info) {
-            info.innerText = "Sincronizado";
-            info.style.color = "var(--text-muted)";
-        }
+        if (info) info.innerText = "Sincronizado";
 
     } catch (e) {
         console.error(`❌ Erro ao gravar:`, e);
