@@ -71,213 +71,62 @@ export async function forcarGravacaoImediata() {
     }
 }
 
-/**
- * FUNÇÃO AUXILIAR: Ajusta todos os campos de texto automáticos (Títulos e Conteúdos)
- * Esta função só funciona se o container NÃO estiver em 'display: none'
- */
-function ajustarAlturasDinamicamente() {
-    const campos = document.querySelectorAll('.tool-title-input, #editor-feed textarea');
-    campos.forEach(el => {
-        el.style.height = 'auto'; // Reseta
-        el.style.height = el.scrollHeight + 'px'; // Aplica altura real baseada no texto
-    });
-}
+// Adicione este import no topo do editor.js
+import { processarAberturaNota, configurarBotaoShare } from './modulos/nota-viewer.js';
 
-/**
- * FUNÇÃO AUXILIAR: Configura o comportamento do ícone de partilha (roldana/partilha)
- * Coloca isto no final do teu ficheiro editor.js
- */
-/**
- * Configura o comportamento do ícone de partilha no cabeçalho do editor.
- * Notas Locais -> Abrem o sistema de envio de cópias/clonagem (V2).
- * Notas Share -> Abrem a gestão de amigos/colaboradores.
- */
-function configurarBotaoShare(notaId, dadosNota, auth) {
-    // Localiza o ícone de partilha (o avião de papel/nodos no topo direito)
-    const btnShareNota = document.querySelector('i[title="Partilhar"]');
-    if (!btnShareNota) return;
-
-    // Limpar eventos anteriores para evitar execuções duplicadas
-    btnShareNota.onclick = null;
-
-    if (dadosNota.onde === "share") {
-        // --- CENÁRIO A: NOTA JÁ PARTILHADA (Colaborativa) ---
-        // Apenas o dono da nota pode gerir quem tem acesso.
-        const souDono = dadosNota.userId === auth.currentUser.uid;
-        
-        if (souDono) {
-            btnShareNota.style.display = "block";
-            btnShareNota.style.color = "#ef4444"; // Destaque vermelho para modo Share
-            btnShareNota.onclick = () => {
-                console.log("👥 Abrindo Gestão de Colaboradores (Tempo Real)...");
-                import('../share/gestao-share.js').then(m => m.abrirGestaoPartilha(notaId, auth));
-            };
-        } else {
-            // Se for convidado, não pode gerir acessos de outros
-            btnShareNota.style.display = "none";
-        }
-    } else {
-        // --- CENÁRIO B: NOTA LOCAL (Novo Sistema de Clonagem V2) ---
-        // Permite enviar uma cópia seletiva para amigos ou gerar link.
-        btnShareNota.style.display = "block";
-        btnShareNota.style.color = "var(--text-muted)"; // Cor padrão do editor
-        
-        btnShareNota.onclick = () => {
-            console.log("🚀 Abrindo Sistema de Partilha V2 (Clonagem e OUT)...");
-            
-            // Importa o novo módulo V2 que criámos
-            import('./modulos/partilhar-v2.js').then(m => {
-                // Inicializa o motor se necessário e abre o popup
-                m.iniciarPartilhaV2(dbRef, authRef);
-                m.abrirPopupPartilharV2(dadosNota);
-            }).catch(err => {
-                console.error("Erro ao carregar o motor de partilha V2:", err);
-            });
-        };
-    }
-}
-
-/**
- * ABRIR UMA NOTA NO EDITOR
- */
+// No editor.js, a função abrirNotaNoEditor agora é apenas um "despachante"
 export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco = null, maeIdOverride = null) {
-    console.log(`🚀 [EDITOR] Abrindo nota: ${dadosNota.nome} (${notaId})`);
-
-    // 1. GESTÃO DE ESTADO E SELEÇÃO VISUAL NA BARRA LATERAL
-    // Guardamos o ID globalmente para que todas as listas saibam quem iluminar
-    window.itemSelecionadoId = notaId; 
-
-    // 2. UX MOBILE: Fechar menus e limpar overlay (baço)
-    // MobileUI.fecharColunaEsquerda já trata de esconder o menu e desativar o fundo baço
-    if (typeof MobileUI !== 'undefined') {
-        MobileUI.fecharColunaEsquerda();
-    } else {
-        document.getElementById('area-esquerda')?.classList.add('closed');
-        document.getElementById('mobile-overlay')?.classList.remove('active');
-    }
-
-    // 3. SINCRONIZAÇÃO DA BARRA LATERAL (Navegação Inteligente)
-    // Faz a coluna da esquerda viajar até à aba (Local/Share) e pasta corretas
-    if (typeof window.sincronizarBarraLateralComNota === 'function') {
-        window.sincronizarBarraLateralComNota(notaId, dadosNota, auth);
-    }
-
-    // 4. GESTÃO DE TELAS DE CARREGAMENTO
-    const placeholder = document.getElementById('editor-placeholder');
-    const container = document.getElementById('editor-container');
-    const loading = document.getElementById('editor-loading');
-
-    // 🛡️ ADICIONE ESTA PROTEÇÃO AQUI:
-    if (!container || !loading) {
-        console.warn("⚠️ [EDITOR] O HTML do editor ainda não foi injetado. Re-tentando em 100ms...");
-        setTimeout(() => abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco, maeIdOverride), 100);
-        return;
-    }
     
-    if (placeholder) placeholder.style.display = 'none';
-    if (container) container.style.display = 'none';
-    if (loading) loading.style.display = 'flex';
+    // Antes de mudar, garante que a nota anterior está salva
+    await forcarGravacaoImediata();
 
-    // 5. SEGURANÇA DE DADOS: Gravar nota anterior
-    // Antes de mudar de nota, garantimos que qualquer alteração pendente foi salva
-    await forcarGravacaoImediata(); 
+    // Envia para o novo módulo lidar com a parte visual
+    await processarAberturaNota({
+        notaId, dadosNota, db, auth, idCaixaFoco, maeIdOverride,
+        stateManager: {
+            // Esta função interna vai atualizar as variáveis globais do editor.js
+            inicializarDadosNota: async (id, dados, maeId) => {
+                notaAbertaId = id;
+                dadosNotaOriginal = dados;
+                window.dadosNotaOriginal = dados;
+                caixasAtuais = dados.caixas || [];
+                window.caixasAtuais = caixasAtuais;
+                notaMaeAtualId = maeId || id;
+                dbRef = db; 
+                authRef = auth;
 
-    // 6. ATUALIZAR ESTADO GLOBAL DO EDITOR
-    dbRef = db; 
-    authRef = auth;
-    notaAbertaId = notaId;
-    notaComAlteracoes = false; 
-    dadosNotaOriginal = dadosNota; 
-    window.dadosNotaOriginal = dadosNota; 
-    caixasAtuais = dadosNota.caixas || [];
-    window.caixasAtuais = caixasAtuais; 
-    notaMaeAtualId = maeIdOverride || notaId;
+                // Inicializa os motores se necessário
+                if (!eventosIniciados) {
+                    await inicializarMotoresInternos();
+                    eventosIniciados = true;
+                }
 
-    // 7. INICIALIZAÇÃO ÚNICA DE MOTORES (Apenas se ainda não foram iniciados)
-    if (!eventosIniciados) {
-        iniciarShareController(db, auth, () => guardarNotaNoFirebase());
-        iniciarSelectorBiblia(() => atualizarFeedEGravar(true));
-        iniciarSistemaRecuperacao(db, auth); 
-        await iniciarSistemaCores(db, auth.currentUser, () => atualizarFeedEGravar(true));
-        iniciarSistemaTags(db, auth); 
-        iniciarSistemaBrowser(db, auth);
-        configurarEventosFixos(); 
-        eventosIniciados = true;
-    }
-
-    // 8. GESTÃO DE SESSÃO SHARE (Metadados e Trancas)
-    if (dadosNota.onde === "share") {
-        const userActual = auth.currentUser || window.auth?.currentUser;
-        if (userActual) {
-            const uid = userActual.uid;
-            window.sessaoUltimaLeitura = dadosNota[uid]?.ultimaLeitura || 0;
-            try {
-                await updateDoc(doc(db, "Share", notaId), { 
-                    vistoPor: arrayUnion(uid),
-                    [`${uid}.ultimaLeitura`]: new Date().toISOString()
-                });
-            } catch (e) { console.warn("⚠️ [EDITOR] Erro ao atualizar metadados share"); }
+                // Sincroniza abas e share
+                await gerirSessaoShare(id, dados);
+                configurarBotaoShare(id, dados, auth);
+                
+                // Redesenha o feed
+                return await atualizarFeedEGravar(false);
+            }
         }
-    }
-    
-    // Inicia a vigilância de quem está a editar (Lock Manager)
-    await gerirSessaoShare(notaId, dadosNota);
-
-    // 9. CONFIGURAÇÃO DA UI DO EDITOR
-    const tituloEditor = document.getElementById('editor-titulo');
-    if (tituloEditor) tituloEditor.innerText = dadosNota.nome || "Sem Título";
-
-    // 10. GESTÃO DE MODOS (ARQUIVO / FEED NORMAL)
-    const modosAtivos = Array.isArray(dadosNota.modo) ? dadosNota.modo : [dadosNota.modo || 'normal'];
-    const tabsArquivoUI = document.getElementById('arquivo-tabs-container');
-
-    if (modosAtivos.includes('arquivo')) {
-        if (!dadosNota.Arquivo) dadosNota.Arquivo = { gavetas: {} };
-        iniciarArquivo(db, auth, () => atualizarFeedEGravar(true));
-        if (tabsArquivoUI) tabsArquivoUI.style.display = 'block';
-    } else {
-        if (tabsArquivoUI) tabsArquivoUI.style.display = 'none';
-    }
-
-    // 11. RENDERIZAÇÃO DO CONTEÚDO
-    // Atualiza a tela sem disparar uma gravação automática apenas por abrir
-    await atualizarFeedEGravar(false); 
-
-    // 12. CARREGAR SUBSISTEMAS DA NOTA
-    if (window.switchEyeTab) window.switchEyeTab('indice'); // Ativa Índice por defeito
-    iniciarAbaAncora(notaId, db, auth); // Carrega temas do Cosmos ancorados
-    carregarAbasDaNota(notaMaeAtualId, dadosNota, notaId); // Sincroniza abas superiores (Browser)
-    configurarBotaoShare(notaId, dadosNota, auth); // Configura botão de Cópia ou Colaboração
-
-    // 13. FINALIZAR CARREGAMENTO E AJUSTAR LAYOUT
-    container.style.visibility = 'hidden';
-    container.style.display = 'block';
-    
-    // Pequeno delay para o browser calcular as dimensões antes de mostrar
-    await new Promise(res => requestAnimationFrame(res));
-    
-    // Ajustar automaticamente a altura de todos os campos de texto da nota
-    const campos = document.querySelectorAll('.tool-title-input, #editor-feed textarea');
-    campos.forEach(el => { 
-        el.style.height = 'auto'; 
-        el.style.height = el.scrollHeight + 'px'; 
     });
-    
 
-
-    container.style.visibility = 'visible';
-    if (loading) loading.style.display = 'none';
-
-    // 14. TELEPORTE (SCROLL PARA BLOCO ESPECÍFICO)
-    if (idCaixaFoco) {
-        setTimeout(() => {
-            const elAlvo = document.getElementById(`bloco-${idCaixaFoco}`);
-            if (elAlvo) elAlvo.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 450); // Delay ligeiramente maior para garantir que o render terminou
-    }
+    // Iniciar subsistemas de inteligência
+    import('./modulos/intelligence/dispatcher.js').then(m => {
+        m.despacharInteligenciaEye(caixasAtuais, dadosNotaOriginal, db, auth);
+    });
 }
 
-
+// Crie esta função auxiliar para organizar os disparos de boot
+async function inicializarMotoresInternos() {
+    iniciarShareController(dbRef, authRef, () => guardarNotaNoFirebase());
+    iniciarSelectorBiblia(() => atualizarFeedEGravar(true));
+    iniciarSistemaRecuperacao(dbRef, authRef); 
+    await iniciarSistemaCores(dbRef, authRef.currentUser, () => atualizarFeedEGravar(true));
+    iniciarSistemaTags(dbRef, authRef); 
+    iniciarSistemaBrowser(dbRef, authRef);
+    configurarEventosFixos(); 
+}
 
 /**
  * GESTOR DE GRAVAÇÃO (ADAPTADO)
