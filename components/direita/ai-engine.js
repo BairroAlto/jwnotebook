@@ -14,76 +14,51 @@ const _P3 = "067545fc72f44b562ee8659745f6f86edf795a246f6e746c8fcb0f65765b568f";
 const _restore = (s) => s.split("").reverse().join("");
 
 export const NexoEngine = {
-   perguntar: async (texto, modo, contextoExtra = null) => {
+    perguntar: async (texto, modo, contextoExtra = null) => {
         const _k = _P1 + _P2 + _P3;
-
-        // 1. DEFINIÇÃO DE PROMPTS DE PROTOCOLO
         const prompts = {
-            "melhorar": "Reescreve o texto para ser mais claro, elegante e fluido. Mantém a essência original.",
-            "investigar": "Fornece contexto histórico, bíblico e referências teocráticas sobre este tema.",
-            "socratico": "Gera 3 perguntas profundas para meditação baseadas neste conteúdo.",
-            "sintese": "Faz um resumo atómico e direto num parágrafo curto.",
-            "origens": "Explica o significado dos termos no contexto original grego ou hebraico.",
-            "cosmos": "Analisa este texto e sugere a categoria mais adequada no sistema Cosmos.",
-            "teocratico": "Atua como especialista em pesquisa teocrática. Baseia a tua resposta exclusivamente no estilo e lógica encontrados em jw.org.",
-            "ilustrar": "Cria uma analogia ou ilustração poderosa para ajudar a explicar este conceito.",
-            "critico": "Apresenta 2 possíveis dúvidas ou objeções que alguém teria sobre este texto e como respondê-las.",
-            "pratico": "Sugere 2 formas práticas de aplicar esta informação na vida pessoal ou no ministério."
+            "melhorar": "Reescreve o texto para ser mais claro e elegante.",
+            "investigar": "Fornece contexto histórico e referências sobre este tema.",
+            "socratico": "Gera 3 perguntas profundas para meditação.",
+            "sintese": "Faz um resumo atómico num parágrafo curto.",
+            "origens": "Explica o significado no contexto original grego/hebraico.",
+            "cosmos": "Sugere uma categoria do Cosmos para este texto.",
+            "teocratico": "Atua como especialista em jw.org.",
+            "ilustrar": "Cria uma analogia poderosa.",
+            "critico": "Apresenta 2 dúvidas comuns e responde-lhes.",
+            "pratico": "Sugere 2 formas de aplicar esta info."
         };
 
-        // 2. CONSTRUÇÃO DA INSTRUÇÃO DE SISTEMA (SYSTEM PROMPT)
         let systemContent = "";
 
         if (modo === "GPS_SEARCH") {
-            // Lógica para o GPS Inteligente
-            systemContent = `Tu és o GPS do Notebook X. Analisa o índice de notas do utilizador abaixo e responde APENAS o ID da nota que melhor responde à pergunta. 
-            Regras:
-            1. Responde apenas o ID (ex: 10DgAjKkBkhR8PyipQYj).
-            2. Se não houver nenhuma nota relacionada, responde apenas "NULL".
-            3. Se houver mais do que uma, escolhe a mais relevante.
-
+            // PROMPT ULTRA-ESTRITO: Proíbe a IA de falar
+            systemContent = `Tu és um servidor de dados JSON (GPS de notas). 
+            Analisa o índice abaixo e responde APENAS com um array JSON bruto, sem explicações, sem saudações.
+            Formato: [{"id": "ID_DA_NOTA", "title": "TITULO_DA_NOTA"}]
+            Se não houver nada, responde: []
+            
             Índice de Memória:\n${contextoExtra}`;
         } else {
-            // Lógica para os Protocolos de Escrita
-            systemContent = `Tu és o BookAI, uma inteligência especializada em análise de textos e estudo profundo. 
-            ${prompts[modo] || "Atua como um assistente inteligente."} 
-            Importante: Usa apenas negrito com ** e títulos com ### para organizar a resposta. Responde sempre em Português de Portugal.`;
+            systemContent = `Tu és o BookAI. ${prompts[modo]} Usa negrito com ** e títulos com ###. Responde em Português de Portugal.`;
         }
 
-        // 3. CHAMADA À API (OpenRouter / DeepSeek)
         try {
             const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
                 method: "POST",
-                headers: { 
-                    "Authorization": "Bearer " + _k, 
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": window.location.origin, // Obrigatório por algumas políticas do OpenRouter
-                    "X-Title": "notABook X"
-                },
+                headers: { "Authorization": "Bearer " + _k, "Content-Type": "application/json" },
                 body: JSON.stringify({
                     "model": "deepseek/deepseek-chat",
                     "messages": [
                         { "role": "system", "content": systemContent },
                         { "role": "user", "content": texto }
                     ],
-                    "temperature": modo === "GPS_SEARCH" ? 0.1 : 0.7 // Temperatura baixa para busca (mais preciso), alta para escrita (mais criativo)
+                    "temperature": modo === "GPS_SEARCH" ? 0.0 : 0.7 // Temperatura 0 para busca ser exata
                 })
             });
-
-            if (!response.ok) throw new Error("Falha na resposta da IA");
-
             const data = await response.json();
-            
-            if (data.choices && data.choices.length > 0) {
-                return data.choices[0].message.content;
-            } else {
-                return "NULL";
-            }
-
-        } catch (e) {
-            console.error("❌ [NEXO-ENGINE] Erro crítico:", e);
-            return "ERROR";
-        }
+            return data.choices[0].message.content;
+        } catch (e) { return "ERROR"; }
     }
 };
 
