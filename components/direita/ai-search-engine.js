@@ -2,6 +2,9 @@
 import { collection, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { NexoEngine } from "./ai-engine.js";
 
+/**
+ * MOTOR DE BUSCA SEMÂNTICA (GPS)
+ */
 export const AISearchEngine = {
     procurar: async (queryUtilizador, db, userId) => {
         console.log("🛰️ [AI-SEARCH] Iniciando Varredura...");
@@ -15,15 +18,13 @@ export const AISearchEngine = {
             snap.forEach(docShard => {
                 const data = docShard.data();
                 Object.entries(data).forEach(([key, resumo]) => {
-                    mapaMemoria += `ID:${key.replace('n_', '')} | INFO:${resumo}\n`;
+                    const notaIdReal = key.replace('n_', '');
+                    mapaMemoria += `ID:${notaIdReal} | INFO:${resumo}\n`;
                 });
             });
 
             const respostaIA = await NexoEngine.perguntar(queryUtilizador, "GPS_SEARCH", mapaMemoria);
-            console.log("🛰️ Resposta Bruta da IA:", respostaIA);
-
-            // --- TÉCNICA DE EXTRAÇÃO COM REGEX (BLINDAGEM) ---
-            // Procura o padrão [...] dentro da resposta, ignorando o resto do texto
+            
             const regexJSON = /\[\s*{[\s\S]*}\s*\]/;
             const match = respostaIA.match(regexJSON);
 
@@ -31,19 +32,14 @@ export const AISearchEngine = {
                 try {
                     const lista = JSON.parse(match[0]);
                     return Array.isArray(lista) ? lista : [];
-                } catch (e) {
-                    console.error("Falha ao processar o trecho JSON extraído.");
-                }
+                } catch (e) { console.error("Erro no Parse JSON"); }
             }
 
-            // --- PLANO B: Se a IA devolveu apenas o ID puro ---
             if (respostaIA.length > 15 && !respostaIA.includes(" ") && !respostaIA.includes("[")) {
                 return [{ id: respostaIA.trim(), title: "Nota Localizada" }];
             }
 
-            console.warn("⚠️ A IA não enviou um formato compatível.");
             return [];
-
         } catch (error) {
             console.error("❌ Erro no motor de busca:", error);
             return [];
