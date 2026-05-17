@@ -31,15 +31,16 @@ export const NexoEngine = {
 
         let systemContent = "";
 
-        if (modo === "GPS_SEARCH") {
-            // PROMPT ULTRA-ESTRITO: Proíbe a IA de falar
-            systemContent = `Tu és um servidor de dados JSON (GPS de notas). 
-            Analisa o índice abaixo e responde APENAS com um array JSON bruto, sem explicações, sem saudações.
-            Formato: [{"id": "ID_DA_NOTA", "title": "TITULO_DA_NOTA"}]
-            Se não houver nada, responde: []
-            
-            Índice de Memória:\n${contextoExtra}`;
-        } else {
+       if (modo === "GPS_SEARCH") {
+    systemContent = `Tu és um servidor de dados JSON (GPS de notas). 
+    Analisa o índice abaixo e responde APENAS com um array JSON.
+    Para cada nota encontrada, extrai um "snippet" (máximo 60 caracteres) que mostre o trecho do conteúdo que combina com a busca.
+    
+    Formato: [{"id": "ID", "title": "TITULO", "snippet": "TRECHO_RELEVANTE"}]
+    Se não houver nada, responde: []
+    
+    Índice de Memória:\n${contextoExtra}`;
+} else {
             systemContent = `Tu és o BookAI. ${prompts[modo]} Usa negrito com ** e títulos com ###. Responde em Português de Portugal.`;
         }
 
