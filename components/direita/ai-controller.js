@@ -5,7 +5,7 @@ import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
 let isManualScrolling = false;
 let ultimaAssinaturaEstrutura = "";
 let notaIdCache = ""; 
-let caixaEmAnalise = null; // Armazena o bloco atual para evitar erros de JSON no HTML
+let caixaEmAnalise = null; 
 
 export const AIController = {
     /**
@@ -15,30 +15,31 @@ export const AIController = {
         const display = document.getElementById('xsat-display-content');
         if (!display) return;
 
+        // 1. DEFINIÇÃO DO ID DO CONTENTOR (Corrigindo o erro de ReferenceError)
+        const listContId = 'ai-blocks-list';
+
+        // 2. VERIFICAÇÃO DE CANAL (Proteção contra sequestro de aba)
         const canalAtivo = document.querySelector('.xsat-num.active')?.dataset.num;
+        if (canalAtivo !== "6") return; 
 
-        if (canalAtivo !== "6") {
-            // console.log("⏳ AI Scanner em standby (utilizador está em modo SAT)");
-            return; 
-        }
-
+        // 3. RECOLHA DE DADOS DA NOTA ATUAL
         const caixas = window.caixasAtuais || [];
         const notaIdAtual = window.notaAbertaId;
         const modos = window.dadosNotaOriginal?.modo || [];
-        const isModoPost = Array.isArray(modos) ? modos.includes('post') : modos === 'post';
+        const isModoPost = Array.isArray(modos) ? modos.includes('post') : (modos === 'post');
         const ativas = caixas.filter(c => c.estado === 'ativa');
 
-        // Reset de cache se mudarmos de nota
+        // 4. RESET DE CACHE AO MUDAR DE NOTA
         if (notaIdAtual !== notaIdCache) {
             notaIdCache = notaIdAtual;
             ultimaAssinaturaEstrutura = "";
-            const cont = document.getElementById(listContId);
-            if (cont) cont.innerHTML = "";
+            const contExistente = document.getElementById(listContId);
+            if (contExistente) contExistente.innerHTML = "";
         }
 
+        // 5. VERIFICAÇÃO DE ASSINATURA (ANTI-FLICKER)
         const assinaturaAtual = ativas.map(c => c.id).join('|') + (isModoPost ? '_post' : '_normal');
-
-        // Atualização cirúrgica se a estrutura for a mesma (Anti-Flicker)
+        
         if (document.getElementById(listContId) && assinaturaAtual === ultimaAssinaturaEstrutura) {
             AIController.sincronizarTextosLive(ativas);
             return;
@@ -46,6 +47,7 @@ export const AIController = {
 
         ultimaAssinaturaEstrutura = assinaturaAtual;
 
+        // 6. DESENHAR ESTRUTURA BASE
         display.innerHTML = `
             <div class="ai-container" id="ai-container-main">
                 <p style="font-size:9px; color:#10b981; font-weight:900; text-transform:uppercase; text-align:center; margin-bottom:15px; letter-spacing:1px;">
@@ -70,7 +72,7 @@ export const AIController = {
 
             card.innerHTML = `
                 <div class="label-tipo" style="color:${config.cor}">${config.nome}</div>
-                <div class="resumo-texto" id="ai-txt-${c.id}" style="font-size:12px; opacity:0.8; color:white;">...</div>
+                <div class="resumo-texto" id="ai-txt-${c.id}" style="opacity:0.8; color:white;">...</div>
             `;
 
             card.onclick = () => {
@@ -107,12 +109,11 @@ export const AIController = {
                     </p>
                 </div>
 
-                <div class="btn-protocolo-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div class="btn-protocolo-grid">
                     <button class="btn-protocolo" onclick="window.AIController.executar('melhorar')" style="border-color:#10b981;"><i class="fa-solid fa-wand-magic-sparkles" style="color:#10b981;"></i><span>Melhorar</span></button>
                     <button class="btn-protocolo" onclick="window.AIController.executar('investigar')" style="border-color:#6366f1;"><i class="fa-solid fa-microscope" style="color:#6366f1;"></i><span>Investigar</span></button>
                     <button class="btn-protocolo" onclick="window.AIController.executar('teocratico')" style="border-color:#3b82f6;"><i class="fa-solid fa-book" style="color:#3b82f6;"></i><span>JW Search</span></button>
                     <button class="btn-protocolo" onclick="window.AIController.executar('socratico')" style="border-color:#f59e0b;"><i class="fa-solid fa-lightbulb" style="color:#f59e0b;"></i><span>Desafiar</span></button>
-                    <button class="btn-protocolo" onclick="window.AIController.executar('ilustrar')" style="border-color:#22d3ee;"><i class="fa-solid fa-image" style="color:#22d3ee;"></i><span>Ilustrar</span></button>
                     <button class="btn-protocolo" onclick="window.AIController.executar('sintese')" style="border-color:#fbbf24;"><i class="fa-solid fa-atom" style="color:#fbbf24;"></i><span>Resumir</span></button>
                     <button class="btn-protocolo" onclick="window.AIController.executar('origens')" style="border-color:#a855f7;"><i class="fa-solid fa-language" style="color:#a855f7;"></i><span>Léxico</span></button>
                     <button class="btn-protocolo" onclick="window.AIController.executar('critico')" style="border-color:#f87171;"><i class="fa-solid fa-scale-balanced" style="color:#f87171;"></i><span>Analisar</span></button>
@@ -123,23 +124,17 @@ export const AIController = {
         `;
     },
 
-    /**
-     * VISTA 3: RESULTADO (ANIMAÇÃO DO MACACO)
-     */
-   /**
-     * VISTA 3: RESULTADO (ANIMAÇÃO DO MACACO SVG)
-     */
     executar: async (modo) => {
         const display = document.getElementById('xsat-display-content');
-        const cores = { melhorar: '#10b981', investigar: '#6366f1', teocratico: '#3b82f6', socratico: '#f59e0b', ilustrar: '#22d3ee', sintese: '#fbbf24', origens: '#a855f7', critico: '#f87171', pratico: '#22c55e', cosmos: '#db2777' };
+        const cores = { melhorar: '#10b981', investigar: '#6366f1', teocratico: '#3b82f6', socratico: '#f59e0b', sintese: '#fbbf24', origens: '#a855f7', critico: '#f87171', pratico: '#22c55e', cosmos: '#db2777' };
 
-      display.innerHTML = `
+        display.innerHTML = `
             <div style="text-align:center; padding:60px 20px; color:${cores[modo]};">
                 <i class="fa-brands fa-mailchimp fa-bounce" style="font-size:40px; margin-bottom:20px;"></i>
                 <p style="font-family:monospace; font-size:10px; font-weight:800; letter-spacing:2px;">BOOKAI A PROCESSAR SINAPSE...</p>
             </div>`;
 
-         const respostaBruta = await NexoEngine.perguntar(caixaEmAnalise.conteudo, modo);
+        const respostaBruta = await NexoEngine.perguntar(caixaEmAnalise.conteudo, modo);
         const respostaFormatada = AIController.formatarResposta(respostaBruta);
 
         display.innerHTML = `
@@ -147,20 +142,16 @@ export const AIController = {
                 <button class="btn-voltar-ai" onclick="window.AIController.abrirProtocolos()">
                     <i class="fa-solid fa-arrow-left"></i> Voltar aos Protocolos
                 </button>
-               <div class="ai-target-card" style="border-left: 4px solid ${cores[modo]}">
-            <p class="ai-target-label" style="color:${cores[modo]};">
-                <i class="fa-solid fa-robot"></i> Resultado BookAI
-            </p>
-            <!-- Removido font-size fixo daqui -->
-            <div style="color:#f1f5f9; white-space:pre-wrap;">${respostaFormatada}</div>
-        </div>
-    </div>
-`;
+                <div class="ai-target-card" style="border-left: 4px solid ${cores[modo]}">
+                    <p class="ai-target-label" style="color:${cores[modo]};">
+                        <i class="fa-solid fa-robot"></i> Resultado BookAI
+                    </p>
+                    <div style="color:#f1f5f9; white-space:pre-wrap;">${respostaFormatada}</div>
+                </div>
+            </div>
+        `;
     },
 
-    /**
-     * CONVERSOR MARKDOWN -> HTML
-     */
     formatarResposta: (texto) => {
         return texto
             .replace(/^### (.*$)/gim, '<h4 style="color:#10b981; margin:15px 0 5px 0; font-weight:800; text-transform:uppercase; font-size:11px;">$1</h4>')
@@ -170,9 +161,6 @@ export const AIController = {
             .replace(/^\s*[\-\*]\s+(.*)$/gim, '<div style="margin-left:10px; margin-bottom:5px; display:flex; gap:8px;"><span style="color:#10b981;">•</span><span>$1</span></div>');
     },
 
-    /**
-     * UTILITÁRIOS: SYNC TEXTO E SCROLL
-     */
     sincronizarTextosLive: (lista) => {
         lista.forEach(c => {
             const el = document.getElementById(`ai-txt-${c.id}`);
