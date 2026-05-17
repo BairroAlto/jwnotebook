@@ -201,10 +201,18 @@ function criarCardMica(mica, index, listaCompleta) {
     div.querySelector('.btn-up-m').onclick = (e) => { stop(e); moverPastaMica(index, -1, listaCompleta); };
     div.querySelector('.btn-down-m').onclick = (e) => { stop(e); moverPastaMica(index, 1, listaCompleta); };
     div.querySelector('.btn-del-m').onclick = async (e) => { 
-        stop(e); 
-        if(await confirmarDossieAcao("Ocultar?", "Ocultar pasta?")) 
-            await updateDoc(currentTemaRef, { [`Dossie.mica.${mica.id}.estado`]: "desativo" });
-    };
+    stop(e); 
+    if(await confirmarDossieAcao("Ocultar?", "Esta pasta será movida para a reciclagem. Confirmar?")) {
+        const timestamp = new Date().toISOString(); // 🚀 Marca a hora da morte
+        
+        await updateDoc(currentTemaRef, { 
+            [`Dossie.mica.${mica.id}.estado`]: "desativo",
+            [`Dossie.mica.${mica.id}.timedelete`]: timestamp // 🚀 Crucial para os 3 meses
+        });
+        
+        console.log(`🗑️ [DOSSIÊ] Mica "${mica.titulo}" enviada para reciclagem.`);
+    }
+};
     return div;
 }
 
