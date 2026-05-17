@@ -1,12 +1,14 @@
 // components/settings/settings.js
-import { doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { doc, getDoc, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-import { inicializarAmigos } from './amigos.js';
-import { abrirNotaNoEditor } from '../editor/editor.js';
+import { inicializarAmigos } from './components/settings/amigos.js';
+import { abrirNotaNoEditor } from '../editor/editor.js'; // 🚀 CAMINHO CORRIGIDO AQUI
 import { AISearchEngine } from '../direita/ai-search-engine.js';
 
+let timerGravacao = null;
+
 /**
- * Atualiza o ícone de definições no topo do site (Avatar do utilizador)
+ * Atualiza o ícone de definições no topo (Avatar)
  */
 function atualizarIconeBotaoTopo(avatar) {
     const btnDefinicoes = document.getElementById('btnDefinicoes');
@@ -34,39 +36,56 @@ export async function inicializarSettings(db, auth) {
     const btnAbrir = document.getElementById('btnDefinicoes');
     const btnFechar = document.getElementById('btn-fechar-settings');
     
-    // --- 1. CONFIGURAR ABERTURA E FECHO ---
-    if (btnAbrir) {
-        btnAbrir.onclick = () => {
-            overlay.classList.add('active');
-            console.log("🔓 [SETTINGS] Painel aberto.");
-        };
-    }
+    // Elementos de Toggles
+    const checkColapso = document.getElementById('check-colapso-titulos');
+    const checkShare = document.getElementById('check-partilhar-respostas');
 
-    if (btnFechar) {
-        btnFechar.onclick = () => overlay.classList.remove('active');
-    }
+    // 1. CONFIGURAR ABERTURA E FECHO
+    if (btnAbrir) btnAbrir.onclick = () => overlay.classList.add('active');
+    if (btnFechar) btnFechar.onclick = () => overlay.classList.remove('active');
 
-    // --- 2. CARREGAR PREFERÊNCIAS DO FIREBASE ---
+    // 2. CARREGAR PREFERÊNCIAS DO FIREBASE
     try {
         const snap = await getDoc(userRef);
         if (snap.exists()) {
             const dados = snap.data();
             
-            // Aplicar tamanhos de letra
+            // A. Aplicar Tamanhos de Letra
             if (dados.tamanholetra) {
                 Object.entries(dados.tamanholetra).forEach(([varName, value]) => {
                     document.documentElement.style.setProperty(varName, value + 'px');
+                    const input = document.querySelector(`input[data-var="${varName}"]`);
+                    if (input) input.value = value;
                 });
             }
 
-            // Aplicar Avatar
+            // B. Estado do Colapso de Títulos
+            if (dados.colapsoTitulos && checkColapso) {
+                checkColapso.checked = true;
+                document.body.classList.add('modo-colapso-titulos');
+            }
+
+            // C. Estado da Rede de Respostas
+            if (dados.shareAnswers && checkShare) {
+                checkShare.checked = true;
+            }
+
+            // D. Aplicar Avatar
             atualizarIconeBotaoTopo(dados.avatar || "gear");
         }
-    } catch (e) { 
-        console.error("❌ [SETTINGS] Erro ao carregar perfil:", e); 
-    }
+    } catch (e) { console.error("Erro ao carregar perfil:", e); }
 
-    // --- 3. GESTÃO DE TROCA DE ABAS ---
+    // Botão de atalho da lupa no topo do site
+const btnLupaTopo = document.getElementById('btnAbrirGpsDireto');
+if (btnLupaTopo) {
+    btnLupaTopo.onclick = () => {
+        overlay.classList.add('active'); // Abre o popup
+        const tabPesquisa = document.querySelector('.tab-settings[data-target="set-search"]');
+        if (tabPesquisa) tabPesquisa.click(); // Salta direto para a aba de pesquisa
+    };
+}
+
+    // 3. GESTÃO DE ABAS
     const tabs = document.querySelectorAll('.tab-settings');
     tabs.forEach(tab => {
         tab.onclick = () => {
@@ -83,118 +102,120 @@ export async function inicializarSettings(db, auth) {
         };
     });
 
-    // --- 4. LÓGICA DE BUSCA SEMÂNTICA (NEXO GPS) ---
-    const btnBusca = document.getElementById('btn-executar-tab-search');
-    const inputBusca = document.getElementById('input-tab-search');
+    // 4. LÓGICA DE BUSCA SEMÂNTICA (NEXO GPS)
+  const btnBusca = document.getElementById('btn-executar-tab-search');
+const inputBusca = document.getElementById('input-tab-search');
 
-    if (btnBusca) {
-        btnBusca.onclick = async () => {
-            const query = inputBusca.value.trim();
-            if (!query) return;
+if (btnBusca) {
+    btnBusca.onclick = async () => {
+        const query = inputBusca.value.trim();
+        if (!query) return;
 
-            const status = document.getElementById('search-status-info');
-            const listaUI = document.getElementById('list-results-gps');
+        const status = document.getElementById('search-status-info');
+        const listaUI = document.getElementById('list-results-gps');
 
-            // Feedback Visual: Botão Loading e Macaco a Saltar
-            btnBusca.disabled = true;
-            btnBusca.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
-            listaUI.innerHTML = "";
-            
-            status.innerHTML = `
-                <div style="text-align:center; padding:20px; color:var(--primary); animation: fadeIn 0.3s ease;">
-                    <i class="fa-brands fa-mailchimp fa-bounce" style="font-size:35px; margin-bottom:15px; display:block;"></i>
-                    <p style="font-family:monospace; font-size:10px; font-weight:800; letter-spacing:2px; text-transform:uppercase;">
-                        O BOOKAi ESTÁ A PROCESSAR SINAPSE...
-                    </p>
-                </div>
-            `;
+        btnBusca.disabled = true;
+        btnBusca.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
+        listaUI.innerHTML = "";
+        
+        status.innerHTML = `
+            <div style="text-align:center; padding:20px; color:var(--primary);">
+                <i class="fa-brands fa-mailchimp fa-bounce" style="font-size:35px; margin-bottom:15px; display:block;"></i>
+                <p style="font-family:monospace; font-size:10px; font-weight:800; letter-spacing:2px; text-transform:uppercase;">PROCESSANDO SINAPSE...</p>
+            </div>`;
 
-            try {
-                // Executar a procura no motor DeepSeek
-                const resultados = await AISearchEngine.procurar(query, db, user.uid);
+        try {
+            const { AISearchEngine } = await import('../direita/ai-search-engine.js');
+            const resultados = await AISearchEngine.procurar(query, db, user.uid);
 
-                if (!resultados || resultados.length === 0) {
-                    status.innerHTML = `<span style="color:#f87171;"><i class="fa-solid fa-ghost"></i> Nenhuma nota encontrada com esse significado.</span>`;
-                } else {
-                    status.innerHTML = `<i class="fa-solid fa-circle-check" style="color:#22c55e;"></i> Encontrei <b>${resultados.length}</b> correspondências:`;
-                    
-                    resultados.forEach(nota => {
-                        const card = document.createElement('div');
-                        card.className = "menu-item-list";
-                        
-                        // Estilo do card com título e snippet
-                        card.style.cssText = `
-                            background: rgba(99, 102, 241, 0.08); 
-                            border: 1px solid rgba(99, 102, 241, 0.2); 
-                            border-left: 4px solid var(--primary); 
-                            margin-bottom: 8px; 
-                            padding: 12px 15px; 
-                            cursor: pointer; 
-                            display: flex; 
-                            flex-direction: column; 
-                            gap: 4px;
-                            transition: 0.2s;
-                        `;
-                        
-                        card.innerHTML = `
-                            <div style="display:flex; justify-content:space-between; align-items:center; width:100%; pointer-events:none;">
-                                <div style="display:flex; align-items:center; gap:12px; overflow:hidden;">
-                                    <i class="fa-solid fa-file-lines" style="color:var(--primary); font-size:12px;"></i>
-                                    <span style="font-weight:700; color:white; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px;">
-                                        ${nota.title}
-                                    </span>
-                                </div>
-                                <i class="fa-solid fa-arrow-right-to-bracket" style="opacity:0.3; font-size:12px;"></i>
+            if (!resultados || resultados.length === 0) {
+                status.innerHTML = `<span style="color:#f87171;">❌ Nenhuma nota encontrada.</span>`;
+            } else {
+                status.innerHTML = `✅ Encontrei <b>${resultados.length}</b> correspondências:`;
+                resultados.forEach(nota => {
+                    const card = document.createElement('div');
+                    card.className = "menu-item-list";
+                    card.style.cssText = `background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.2); border-left: 4px solid var(--primary); margin-bottom: 8px; padding: 12px 15px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;`;
+                    card.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:center; width:100%; pointer-events:none;">
+                            <div style="display:flex; align-items:center; gap:10px; overflow:hidden;">
+                                <i class="fa-solid fa-file-lines" style="color:var(--primary); font-size:12px;"></i>
+                                <span style="font-weight:700; color:white;">${nota.title}</span>
                             </div>
-                            ${nota.snippet ? `
-                                <div style="font-size:11px; color:var(--text-muted); padding-left:22px; font-style: italic; opacity:0.8; pointer-events:none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                                    "${nota.snippet}..."
-                                </div>
-                            ` : ''}
-                        `;
-                        
-                        // Efeitos de Hover
-                        card.onmouseenter = () => card.style.background = "rgba(99, 102, 241, 0.15)";
-                        card.onmouseleave = () => card.style.background = "rgba(99, 102, 241, 0.08)";
-
-                        // Ação de Abrir Nota
-                        card.onclick = async () => {
-                            overlay.classList.remove('active');
-                            const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js");
-                            
-                            // Tenta Local primeiro, depois Share
-                            let snap = await getDoc(doc(db, "Local", nota.id));
-                            if (!snap.exists()) snap = await getDoc(doc(db, "Share", nota.id));
-                            
-                            if (snap.exists()) {
-                                abrirNotaNoEditor(nota.id, snap.data(), db, auth);
-                            } else {
-                                console.error("A nota não existe mais nas coleções Local ou Share.");
-                            }
-                        };
-                        listaUI.appendChild(card);
-                    });
-                }
-            } catch (err) {
-                console.error("Erro na busca:", err);
-                status.innerHTML = `<span style="color:#f87171;">Erro na ligação ao Nexo.</span>`;
-            } finally {
-                btnBusca.disabled = false;
-                btnBusca.innerHTML = `<i class="fa-solid fa-paper-plane"></i>`;
+                            <i class="fa-solid fa-arrow-right-to-bracket" style="opacity:0.3; font-size:12px;"></i>
+                        </div>
+                        <div style="font-size:11px; color:var(--text-muted); padding-left:22px; font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">"${nota.snippet}..."</div>`;
+                    
+                    card.onclick = async () => {
+                        overlay.classList.remove('active');
+                        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js");
+                        const snap = await getDoc(doc(db, "Local", nota.id));
+                        if (snap.exists()) abrirNotaNoEditor(nota.id, snap.data(), db, auth);
+                    };
+                    listaUI.appendChild(card);
+                });
             }
-        };
+        } catch (err) { status.innerHTML = "Erro na busca."; }
+        finally { btnBusca.disabled = false; btnBusca.innerHTML = `<i class="fa-solid fa-paper-plane"></i>`; }
+    };
+    inputBusca.onkeydown = (e) => { if (e.key === 'Enter') btnBusca.click(); };
+}
 
-        // Suporte para tecla ENTER no input
-        inputBusca.onkeydown = (e) => { if (e.key === 'Enter') btnBusca.click(); };
+    // 5. TOGGLE: REDE DE RESPOSTAS
+    if (checkShare) {
+        checkShare.onchange = async (e) => {
+            const ativo = e.target.checked;
+            try {
+                await updateDoc(userRef, { shareAnswers: ativo });
+                await setDoc(doc(db, "Partilharcom", user.uid), { userId: user.uid, shareAnswers: ativo, lastUpdate: new Date().toISOString() }, { merge: true });
+            } catch (err) { console.error(err); }
+        };
     }
 
-    // --- 5. LOGOUT E AMIGOS ---
+    // 6. TOGGLE: COLAPSO DE TÍTULOS
+    if (checkColapso) {
+        checkColapso.onchange = async (e) => {
+            try {
+                await updateDoc(userRef, { colapsoTitulos: e.target.checked });
+                window.location.reload(); 
+            } catch (err) { console.error(err); }
+        };
+    }
+
+    // 7. SELEÇÃO DE AVATAR
+    document.querySelectorAll('.avatar-item').forEach(item => {
+        item.onclick = async () => {
+            const novoAvatar = item.dataset.avatar;
+            atualizarIconeBotaoTopo(novoAvatar);
+            try {
+                await updateDoc(userRef, { avatar: novoAvatar });
+                document.querySelectorAll('.avatar-item').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
+            } catch (e) { console.error(e); }
+        };
+    });
+
+    // 8. SLIDERS DE FONTES (Universal)
+    document.querySelectorAll('.field-font input[type="range"]').forEach(slider => {
+        slider.oninput = (e) => {
+            const varName = e.target.getAttribute('data-var');
+            const valor = e.target.value;
+            document.documentElement.style.setProperty(varName, valor + 'px');
+            
+            clearTimeout(timerGravacao);
+            timerGravacao = setTimeout(async () => {
+                const config = {};
+                document.querySelectorAll('.field-font input[type="range"]').forEach(i => {
+                    config[i.getAttribute('data-var')] = i.value;
+                });
+                await updateDoc(userRef, { tamanholetra: config });
+            }, 1500);
+        };
+    });
+
+    // 9. LOGOUT E AMIGOS
     const btnSair = document.getElementById('btnConfirmarSair');
-    if (btnSair) {
-        btnSair.onclick = () => {
-            signOut(auth).then(() => window.location.reload());
-        };
-    }
+    if (btnSair) btnSair.onclick = () => signOut(auth).then(() => window.location.reload());
 
     inicializarAmigos(db, auth);
 }
