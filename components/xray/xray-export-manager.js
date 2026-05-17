@@ -1,44 +1,57 @@
 // components/xray/xray-export-manager.js
 import { collection, query, where, getDocs, doc, getDoc, updateDoc, or, and } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
-import { state } from './xray-state.js';
+import { dispararIndexacao } from '../editor/modulos/ai-search-indexer.js'; // 🚀 GATILHO GPS INTEGRADO
 
 let notaSelecionadaId = null;
 let colecaoAlvo = "Local";
 
+/**
+ * 1. INICIALIZADOR DO MOTOR DE EXPORTAÇÃO
+ */
 export function iniciarExportManager(db, auth) {
     const btnAbrir = document.getElementById('btn-xray-export');
     const overlay = document.getElementById('popup-export-xray');
     
     if(!btnAbrir) return;
 
+    // Abrir Popup de Exportação
     btnAbrir.onclick = () => {
         const texto = document.getElementById('editor-manuscrito').value.trim();
-        if(!texto) return alert("O Manuscrito está vazio!");
+        if(!texto) {
+            alert("O Manuscrito está vazio! Escreve algo antes de exportar.");
+            return;
+        }
         overlay.classList.add('active');
         carregarEstruturaParaExport(db, auth);
     };
 
-    document.getElementById('btn-fechar-export').onclick = () => overlay.classList.remove('active');
+    // Fechar Popup
+    document.getElementById('btn-fechar-export').onclick = () => {
+        overlay.classList.remove('active');
+        notaSelecionadaId = null;
+    };
 
-    // Abas Local/Share
-  document.querySelectorAll('.tab-export-btn').forEach(btn => {
+    // Alternar entre Local e Share como destino
+    document.querySelectorAll('.tab-export-btn').forEach(btn => {
         btn.onclick = () => {
-            // 1. Remover classe active de todos
             document.querySelectorAll('.tab-export-btn').forEach(b => b.classList.remove('active'));
-            // 2. Adicionar ao clicado
             btn.classList.add('active');
-            
-            // 3. Atualizar dados
-            colecaoAlvo = btn.dataset.origem;
+            colecaoAlvo = btn.dataset.origem; // "Local" ou "Share"
             carregarEstruturaParaExport(db, auth);
         };
     });
 
-    document.getElementById('btn-executar-export').onclick = () => executarConversao(db);
+    // Botão Final de Conversão
+    document.getElementById('btn-executar-export').onclick = () => executarConversao(db, auth);
 }
 
+/**
+ * 2. CARREGAR ESTRUTURA DE NOTAS (ÁRVORE)
+ */
 async function carregarEstruturaParaExport(db, auth) {
     const container = document.getElementById('arvore-export-xray');
+    if (!container) return;
+
     container.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fa-solid fa-circle-notch fa-spin" style="color:var(--xray-primary);"></i></div>`;
     
     const uid = auth.currentUser.uid;
@@ -47,7 +60,10 @@ async function carregarEstruturaParaExport(db, auth) {
     if(colecaoAlvo === "Local") {
         q = query(collection(db, "Local"), where("userId", "==", uid), where("estado", "==", "ativa"));
     } else {
-        q = query(collection(db, "Share"), and(where("estado", "==", "ativo"), or(where("userId", "==", uid), where("aprovado", "array-contains", uid))));
+        q = query(collection(db, "Share"), and(
+            where("estado", "==", "ativo"), 
+            or(where("userId", "==", uid), where("aprovado", "array-contains", uid))
+        ));
     }
 
     try {
@@ -55,124 +71,94 @@ async function carregarEstruturaParaExport(db, auth) {
         const todosItens = [];
         
         snap.forEach(d => {
-            // 🚀 A CORREÇÃO ESTÁ AQUI: 
-            // Guardamos o id do Firestore como 'docId' para não confundir com o id interno
-            todosItens.push({ docId: d.id, ...d.data() }); 
+            const data = d.data();
+            let pai = (colecaoAlvo === "Local") ? (data.pastapai || "root") : (data[uid]?.pastapai || "home");
+            todosItens.push({ docId: d.id, ...data, paiCalculado: pai }); 
         });
 
         container.innerHTML = "";
-        const raizId = colecaoAlvo === "Local" ? "root" : "home";
-        renderizarNivel(container, todosItens, raizId);
+        const raizId = (colecaoAlvo === "Local") ? "root" : "home";
+        renderizarNivel(container, todosItens, raizId, auth);
 
-    } catch (e) { console.error(e); }
+        if (container.innerHTML === "") {
+            container.innerHTML = `<p style="color:gray; text-align:center; padding:20px; font-size:12px;">Nenhuma nota encontrada no ${colecaoAlvo}.</p>`;
+        }
+
+    } catch (e) { 
+        console.error("Erro ao carregar árvore para exportação:", e); 
+    }
 }
 
-function renderizarNivel(container, lista, paiId) {
-    // Ajuste no filtro para suportar Local e Share
-    const itensNivel = lista.filter(i => {
-        if (colecaoAlvo === "Local") return i.pastapai === paiId;
-        const uid = auth.currentUser.uid;
-        return i[uid]?.pastapai === paiId;
-    });
+/**
+ * 3. RENDERIZADOR DA LISTA DE SELECÇÃO
+ */
+function renderizarNivel(container, lista, paiId, auth) {
+    const itensNivel = lista.filter(i => i.paiCalculado === paiId).sort((a,b) => (a.ordem || 0) - (b.ordem || 0));
 
-    itensNivel.sort((a,b) => (a.ordem || 0) - (b.ordem || 0)).forEach(item => {
+    itensNivel.forEach(item => {
         const wrapper = document.createElement('div');
         
         if (item.tipo === 'pasta') {
             wrapper.className = "tree-folder";
             wrapper.innerHTML = `
-                <div class="tree-item-row folder-row">
-                    <i class="fa-solid fa-chevron-right chevron-rotate"></i>
+                <div class="tree-item-row folder-row" style="opacity: 0.6; cursor: default;">
                     <i class="fa-solid fa-folder folder-icon"></i>
                     <span style="font-weight:700;">${item.nome}</span>
                 </div>
-                <div class="tree-children"></div>
+                <div class="tree-children" style="display: block; padding-left: 15px;"></div>
             `;
             container.appendChild(wrapper);
-
-            wrapper.querySelector('.folder-row').onclick = (e) => {
-                e.stopPropagation();
-                const children = wrapper.querySelector('.tree-children');
-                const isOpen = children.classList.toggle('open');
-                wrapper.querySelector('.chevron-rotate').classList.toggle('open', isOpen);
-                // Usamos o 'id' interno ou 'docId' para o paiId conforme a tua lógica de pastas
-                if (isOpen && children.innerHTML === "") renderizarNivel(children, lista, (item.id || item.docId));
-            };
+            const childrenCont = wrapper.querySelector('.tree-children');
+            renderizarNivel(childrenCont, lista, item.docId, auth);
         } else {
-            // É UMA NOTA
-           wrapper.className = "tree-note";
-        wrapper.innerHTML = `
-            <div class="tree-item-row note-row" data-firestoreid="${item.docId}">
-                <i class="fa-solid fa-file-lines note-icon" style="margin-left: 22px;"></i>
-                <span>${item.nome}</span>
-            </div>
-        `;
-        container.appendChild(wrapper);
-
-        const row = wrapper.querySelector('.note-row');
-        row.onclick = (e) => {
-            e.stopPropagation();
-            // 🚀 PASSAMOS O ID, O NOME E O ELEMENTO (row)
-            selecionarNota(item.docId, item.nome, row); 
-        };
-    }
+            wrapper.className = "tree-note";
+            wrapper.innerHTML = `
+                <div class="tree-item-row note-row" data-firestoreid="${item.docId}">
+                    <i class="fa-solid fa-file-lines note-icon"></i>
+                    <span>${item.nome}</span>
+                </div>
+            `;
+            const row = wrapper.querySelector('.note-row');
+            row.onclick = () => selecionarNotaDestino(item.docId, item.nome, row);
+            container.appendChild(wrapper);
+        }
     });
 }
 
-function selecionarNota(id, nome, elementoClicado) {
-    // 1. Guardar o ID para a exportação final
+function selecionarNotaDestino(id, nome, el) {
     notaSelecionadaId = id;
-
-    // 2. Limpar a seleção visual de todos os outros itens
-    document.querySelectorAll('.tree-item-row').forEach(el => {
-        el.classList.remove('selected');
-    });
-
-    // 3. Adicionar destaque ao elemento que foi passado (sem erro de querySelector)
-    if (elementoClicado) {
-        elementoClicado.classList.add('selected');
-    } else {
-        // Fallback de segurança caso o elemento não venha por argumento
-        const el = document.querySelector(`[data-firestoreid="${id}"]`);
-        if (el) el.classList.add('selected');
-    }
-
-    // 4. Mostrar o rodapé de confirmação
+    document.querySelectorAll('.tree-item-row').forEach(x => x.classList.remove('selected'));
+    el.classList.add('selected');
+    
     const footer = document.getElementById('export-action-footer');
     const label = document.getElementById('txt-nota-selecionada');
-    
     if (footer) footer.style.display = 'block';
-    if (label) label.innerText = `Destino: ${nome}`;
+    if (label) label.innerText = `Enviar para: ${nome}`;
 }
 
-
-async function executarConversao(db) {
+/**
+ * 4. EXECUTAR CONVERSÃO E SINCRONIZAR COM GPS
+ */
+async function executarConversao(db, auth) {
     if (!notaSelecionadaId) return;
 
     const manuscritoTexto = document.getElementById('editor-manuscrito').value.trim();
     const btn = document.getElementById('btn-executar-export');
-    
-    // Elementos da UI para resetar no fim
-    const footer = document.getElementById('export-action-footer');
-    const overlay = document.getElementById('popup-export-xray');
+    const uid = auth.currentUser.uid;
 
     btn.disabled = true;
     btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> A ENVIAR...';
 
     try {
-        console.log(`📡 Exportando para ${colecaoAlvo} / ID: ${notaSelecionadaId}`);
-
         const docRef = doc(db, colecaoAlvo, notaSelecionadaId);
         const snap = await getDoc(docRef);
 
-        if (!snap.exists()) {
-            throw new Error("A nota de destino não foi encontrada.");
-        }
+        if (!snap.exists()) throw new Error("Nota de destino não encontrada.");
 
         const data = snap.data();
         let caixas = data.caixas || [];
 
-        // 1. CRIAR O NOVO CONTENTOR
+        // Criar o novo bloco de conteúdo
         const novaCaixa = {
             id: crypto.randomUUID(),
             tipo: "contentor",
@@ -184,33 +170,45 @@ async function executarConversao(db) {
             origem: "xray-export"
         };
 
-        // 2. LÓGICA DE ORDEM (NORMAL vs POST)
+        // Lógica de Ordem baseada no Modo da Nota (Post vs Normal)
         const modos = Array.isArray(data.modo) ? data.modo : [data.modo || 'normal'];
         if (modos.includes('post')) {
-            caixas.unshift(novaCaixa);
+            caixas.unshift(novaCaixa); // No topo
         } else {
-            caixas.push(novaCaixa);
+            caixas.push(novaCaixa); // No fim
         }
 
-        // 3. RE-INDEXAR
+        // Re-indexar a ordem numérica
         caixas.forEach((c, i) => c.ordem = i + 1);
 
-        // 4. GRAVAR NO FIRESTORE
+        // 1. GRAVAR NO FIRESTORE
         await updateDoc(docRef, { caixas: caixas });
+        console.log(`✅ [X-RAY] Manuscrito exportado para nota ${notaSelecionadaId}`);
 
-        // 5. FEEDBACK E LIMPEZA (IDs Corrigidos aqui)
-        
-        if (overlay) overlay.classList.remove('active');
-        
-        // 🚀 A CORREÇÃO: Usar o ID que existe no seu HTML
-        if (footer) footer.style.display = 'none'; 
-        
-        notaSelecionadaId = null;
+        // 2. 🚀 GATILHO NEXO GPS: Indexar o novo conteúdo imediatamente
+        // Isto permite que o utilizador pesquise este manuscrito no GPS logo a seguir.
+        dispararIndexacao(db, uid, notaSelecionadaId, {
+            nome: data.nome,
+            caixas: caixas,
+            vincTopicos: data.vincTopicos || []
+        });
+
+        // Feedback de sucesso e fecho
+        btn.innerHTML = '<i class="fa-solid fa-check"></i> ENVIADO COM SUCESSO!';
+        btn.style.background = "#22c55e";
+
+        setTimeout(() => {
+            document.getElementById('popup-export-xray').classList.remove('active');
+            document.getElementById('export-action-footer').style.display = 'none';
+            btn.innerHTML = '<i class="fa-solid fa-file-export"></i> CONVERTER E ENVIAR';
+            btn.style.background = "";
+            btn.disabled = false;
+            notaSelecionadaId = null;
+        }, 1500);
 
     } catch (e) {
         console.error("❌ Erro na Exportação:", e);
-        alert("Falha ao exportar: " + e.message);
-    } finally {
+        alert("Falha ao exportar manuscrito. Verifica a tua ligação.");
         btn.disabled = false;
         btn.innerHTML = '<i class="fa-solid fa-file-export"></i> CONVERTER E ENVIAR';
     }
