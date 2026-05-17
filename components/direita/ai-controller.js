@@ -13,9 +13,14 @@ export const AIController = {
      */
     renderizarLista: () => {
         const display = document.getElementById('xsat-display-content');
-        const listContId = 'ai-blocks-list';
-        
         if (!display) return;
+
+        const canalAtivo = document.querySelector('.xsat-num.active')?.dataset.num;
+
+        if (canalAtivo !== "6") {
+            // console.log("⏳ AI Scanner em standby (utilizador está em modo SAT)");
+            return; 
+        }
 
         const caixas = window.caixasAtuais || [];
         const notaIdAtual = window.notaAbertaId;
