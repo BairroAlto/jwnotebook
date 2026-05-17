@@ -102,9 +102,9 @@ export function criarElevadorVermelho(caixa, onTextoAlterado, onApagar, onPaleta
             `;
 
             const ajustarAlturaPai = () => {
-                inputPaiNome.style.height = 'auto';
-                inputPaiNome.style.height = inputPaiNome.scrollHeight + 'px';
-            };
+    inputPaiNome.style.height = 'auto';
+    inputPaiNome.style.height = (inputPaiNome.scrollHeight + 2) + 'px';
+};
             inputPaiNome.oninput = () => { ajustarAlturaPai(); pai.nome = inputPaiNome.value; onTextoAlterado(caixa); };
 
             const controlesPai = document.createElement("div");
@@ -158,7 +158,7 @@ export function criarElevadorVermelho(caixa, onTextoAlterado, onApagar, onPaleta
             }
 
             corpo.appendChild(paiDiv);
-            setTimeout(ajustarAlturaPai, 10);
+            setTimeout(ajustarAlturaPai, 150);
         });
     }
 
