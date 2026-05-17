@@ -55,6 +55,7 @@ export function inicializarCriacaoShare(db, auth) {
                 estado: "ativo",
                 nome: "Nova Nota Partilhada",
                 aprovado: [],
+                convidado: [],
                 modo: ["normal"],
                 vistoPor: [uid],
                 caixas: [{
