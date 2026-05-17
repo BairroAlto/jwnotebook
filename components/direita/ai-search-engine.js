@@ -2,51 +2,51 @@
 import { collection, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { NexoEngine } from "./ai-engine.js";
 
-/**
- * MOTOR DE BUSCA SEMÂNTICA (GPS)
- */
-const AISearchEngine = {
+export const AISearchEngine = {
     procurar: async (queryUtilizador, db, userId) => {
-        console.group("🛰️ [AI-SEARCH] Iniciando Varredura Semântica...");
+        console.log("🛰️ [AI-SEARCH] Iniciando Varredura...");
         
         try {
             const shardsRef = collection(db, "SearchIndex", userId, "shards");
             const snap = await getDocs(shardsRef);
-            
             if (snap.empty) return [];
 
             let mapaMemoria = "";
             snap.forEach(docShard => {
                 const data = docShard.data();
                 Object.entries(data).forEach(([key, resumo]) => {
-                    const notaIdReal = key.replace('n_', '');
-                    mapaMemoria += `ID:${notaIdReal} | INFO:${resumo}\n`;
+                    mapaMemoria += `ID:${key.replace('n_', '')} | INFO:${resumo}\n`;
                 });
             });
 
-            const promptSystem = `Tu és o GPS do Notebook X. Analisa o índice e responde APENAS com um array JSON de objetos contendo "id" e "title" (máx 5). Exemplo: [{"id": "abc", "title": "Nota A"}]`;
+            const respostaIA = await NexoEngine.perguntar(queryUtilizador, "GPS_SEARCH", mapaMemoria);
+            console.log("🛰️ Resposta Bruta da IA:", respostaIA);
 
-            const respostaIA = await NexoEngine.perguntar(queryUtilizador, "GPS_SEARCH", mapaMemoria + "\n\n" + promptSystem);
+            // --- TÉCNICA DE EXTRAÇÃO COM REGEX (BLINDAGEM) ---
+            // Procura o padrão [...] dentro da resposta, ignorando o resto do texto
+            const regexJSON = /\[\s*{[\s\S]*}\s*\]/;
+            const match = respostaIA.match(regexJSON);
 
-            try {
-                // Tenta limpar o lixo que a IA às vezes manda (como ```json)
-                const jsonLimpo = respostaIA.replace(/```json|```/g, "").trim();
-                const lista = JSON.parse(jsonLimpo);
-                return Array.isArray(lista) ? lista : [];
-            } catch (e) {
-                console.warn("IA não respondeu em JSON, tentando recuperar...");
-                // Plano B: Se devolver só o ID
-                if (respostaIA.trim().length > 15 && !respostaIA.includes(" ")) {
-                    return [{ id: respostaIA.trim(), title: "Nota Localizada" }];
+            if (match) {
+                try {
+                    const lista = JSON.parse(match[0]);
+                    return Array.isArray(lista) ? lista : [];
+                } catch (e) {
+                    console.error("Falha ao processar o trecho JSON extraído.");
                 }
-                return [];
             }
 
-        } catch (error) {
-            console.error("Erro crítico no motor de busca:", error);
+            // --- PLANO B: Se a IA devolveu apenas o ID puro ---
+            if (respostaIA.length > 15 && !respostaIA.includes(" ") && !respostaIA.includes("[")) {
+                return [{ id: respostaIA.trim(), title: "Nota Localizada" }];
+            }
+
+            console.warn("⚠️ A IA não enviou um formato compatível.");
             return [];
-        } finally {
-            console.groupEnd();
+
+        } catch (error) {
+            console.error("❌ Erro no motor de busca:", error);
+            return [];
         }
     }
 };
