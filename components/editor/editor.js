@@ -167,6 +167,13 @@ export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco
     const container = document.getElementById('editor-container');
     const loading = document.getElementById('editor-loading');
 
+    // 🛡️ ADICIONE ESTA PROTEÇÃO AQUI:
+    if (!container || !loading) {
+        console.warn("⚠️ [EDITOR] O HTML do editor ainda não foi injetado. Re-tentando em 100ms...");
+        setTimeout(() => abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco, maeIdOverride), 100);
+        return;
+    }
+    
     if (placeholder) placeholder.style.display = 'none';
     if (container) container.style.display = 'none';
     if (loading) loading.style.display = 'flex';
@@ -256,6 +263,8 @@ export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco
         el.style.height = el.scrollHeight + 'px'; 
     });
     
+
+
     container.style.visibility = 'visible';
     if (loading) loading.style.display = 'none';
 
