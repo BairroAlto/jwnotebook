@@ -104,7 +104,7 @@ export async function inicializarSettings(db, auth) {
                 <div style="text-align:center; padding:20px; color:var(--primary); animation: fadeIn 0.3s ease;">
                     <i class="fa-brands fa-mailchimp fa-bounce" style="font-size:35px; margin-bottom:15px; display:block;"></i>
                     <p style="font-family:monospace; font-size:10px; font-weight:800; letter-spacing:2px; text-transform:uppercase;">
-                        O NEXO ESTÁ A PROCESSAR SINAPSE...
+                        O BOOKAi ESTÁ A PROCESSAR SINAPSE...
                     </p>
                 </div>
             `;
