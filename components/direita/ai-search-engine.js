@@ -50,6 +50,3 @@ export const AISearchEngine = {
         }
     }
 };
-
-// EXPORTAÇÃO NOMEADA (O que corrige o teu erro)
-export { AISearchEngine };
