@@ -1,5 +1,6 @@
 // components/editor/modulos/paleta-cores.js
 import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { MutationManager } from './mutation-manager.js'; // 🚀 NOVO MÓDULO
 
 const CORES_BASE = [
     { code: "#B12823", name: "Vermelho" }, { code: "#AC4A0B", name: "Laranja" },
@@ -49,29 +50,34 @@ let dbReferencia = null;
 let uidLogado = null;
 let callbackAtualizarEditor = null;
 
+/**
+ * INICIALIZAÇÃO
+ */
 export async function iniciarSistemaCores(db, user, callbackUpdate) {
     if (!user) return;
     dbReferencia = db; uidLogado = user.uid; callbackAtualizarEditor = callbackUpdate;
     
     try {
         const snap = await getDoc(doc(db, "users", uidLogado));
-        if (snap.exists() && snap.data().caixadestaques) nomesCoresCustom = snap.data().caixadestaques;
+        if (snap.exists() && snap.data().caixadestaques) {
+            nomesCoresCustom = snap.data().caixadestaques;
+        }
     } catch (e) {}
 
-    // Configuração das abas
     vincularCliquesAbas();
 }
 
+/**
+ * GESTÃO DE NAVEGAÇÃO ENTRE ABAS
+ */
 function vincularCliquesAbas() {
     const tabs = document.querySelectorAll('.tab-cor');
     tabs.forEach(tab => {
         tab.onclick = (e) => {
             e.preventDefault();
-            e.stopPropagation(); // Agora o stopPropagation aqui é bom para as abas
+            e.stopPropagation();
             
             const targetId = tab.getAttribute('data-target');
-            console.log("📂 [TABS] Trocando para aba:", targetId);
-
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             
@@ -82,14 +88,11 @@ function vincularCliquesAbas() {
     });
 }
 
+/**
+ * ABRIR POPUP DE CORES E MUTAÇÃO
+ */
 export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques") {
     caixaParaColorir = caixaAlvo;
-
-    // 1. GARANTIR INSTÂNCIAS (Fallback de segurança)
-    if (!dbReferencia && window.db) { 
-        dbReferencia = window.db; 
-        uidLogado = window.auth.currentUser.uid; 
-    }
 
     const overlay = document.getElementById('popup-cores-overlay');
     const btnRemover = document.getElementById('btn-remover-cor');
@@ -99,37 +102,20 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques") {
 
     if (!overlay) return;
 
-    // 2. SINCRONIZAR ABAS (Memória visual)
-    vincularCliquesAbas();
-    const selectorAba = document.querySelector(`.tab-cor[data-target="${abaAlvo}"]`);
-    if (selectorAba) {
-        // Simula o clique para ativar o CSS e esconder a aba oposta
-        document.querySelectorAll('.tab-cor').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.cor-tab-content').forEach(c => c.style.display = 'none');
-        selectorAba.classList.add('active');
-        document.getElementById(abaAlvo).style.display = 'block';
+    // --- 🧬 LÓGICA DE MUTAÇÃO ---
+    const btnMutacao = document.querySelector('.tab-cor[data-target="tab-mutacao"]');
+    const areaMutacao = document.getElementById('tab-mutacao');
+    
+    if (MutationManager.podeMutar(caixaAlvo.tipo)) {
+        btnMutacao.style.display = "inline-flex";
+        MutationManager.render(caixaAlvo, areaMutacao, callbackAtualizarEditor);
+    } else {
+        btnMutacao.style.display = "none";
+        // Se a aba mutação estava ativa e mudámos para um bloco não mutável, voltamos para destaques
+        if (abaAlvo === "tab-mutacao") abaAlvo = "tab-destaques";
     }
 
-    // 3. BOTÃO REMOVER (Borracha)
-    if (btnRemover) {
-        btnRemover.onclick = () => {
-            caixaParaColorir.destaques = "";
-            if (typeof callbackAtualizarEditor === 'function') callbackAtualizarEditor();
-            // No Brain ou Mobile, fecha logo. No PC, mantém aberto.
-            if (document.querySelector('.cosmos-brain-wrapper') || window.innerWidth <= 768) {
-                overlay.classList.remove('active');
-            } else {
-                abrirPaleta(caixaParaColorir, "tab-destaques");
-            }
-        };
-    }
-
-    // 4. BOTÃO FECHAR (X)
-    if (btnFechar) {
-        btnFechar.onclick = () => overlay.classList.remove('active');
-    }
-
-    // 5. RENDERIZAÇÃO DA ABA DESTAQUES (CORES)
+    // --- 🎨 RENDERIZAÇÃO DE DESTAQUES (CORES) ---
     if (listaDest) {
         listaDest.innerHTML = "";
         CORES_BASE.forEach(corObj => {
@@ -152,16 +138,14 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques") {
                     <i class="fa-solid fa-pen btn-edit-cor" style="font-size:11px; color:var(--primary); opacity:0.5; padding:5px;"></i>
                 </div>`;
 
-            // AÇÃO: Aplicar Cor
             div.querySelector('.click-area').onclick = (e) => {
-                if (e.target.classList.contains('btn-edit-cor')) return; // Ignora se clicou no lápis
+                if (e.target.classList.contains('btn-edit-cor')) return;
                 caixaParaColorir.destaques = isSel ? "" : corObj.code; 
-                if (typeof callbackAtualizarEditor === 'function') callbackAtualizarEditor();
+                if (callbackAtualizarEditor) callbackAtualizarEditor();
                 if (window.innerWidth <= 768) overlay.classList.remove('active');
                 else abrirPaleta(caixaParaColorir, "tab-destaques");
             };
 
-            // AÇÃO: Abrir Edição de Nome (Lápis)
             div.querySelector('.btn-edit-cor').onclick = (e) => {
                 e.stopPropagation();
                 corSendoEditada = corObj.code;
@@ -175,7 +159,6 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques") {
                 overlay.classList.remove('active');
                 editOverlay.classList.add('active');
 
-                // Lógica dinâmica dos botões do sub-popup
                 btnGuardar.onclick = async () => {
                     const n = inputNome.value.trim();
                     if (!n) return;
@@ -185,19 +168,14 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques") {
                     abrirPaleta(caixaParaColorir, "tab-destaques");
                 };
 
-                btnCancelar.onclick = () => {
-                    editOverlay.classList.remove('active');
-                    overlay.classList.add('active');
-                };
-
+                btnCancelar.onclick = () => { editOverlay.classList.remove('active'); overlay.classList.add('active'); };
                 setTimeout(() => inputNome.focus(), 150);
             };
-            
             listaDest.appendChild(div);
         });
     }
 
-    // 6. RENDERIZAÇÃO DA ABA FOCOS (SEMÂNTICA)
+    // --- 🎭 RENDERIZAÇÃO DE FOCOS ---
     if (listaFoco) {
         listaFoco.innerHTML = "";
         const mapa = (caixaParaColorir.tipo === 'subnota') ? FOCOS_SUBNOTA : 
@@ -213,13 +191,11 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques") {
                 <div style="width:20px; height:20px; border-radius:4px; background:${obj.corForte}; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
                     ${isSelF ? '<i class="fa-solid fa-check" style="color:white; font-size:10px;"></i>' : ''}
                 </div>
-                <div style="display:flex; flex-direction:column;">
-                    <span style="font-size:13px; font-weight:700; color:white;">${obj.nome}</span>
-                </div>`;
+                <span style="font-size:13px; font-weight:700; color:white;">${obj.nome}</span>`;
             
             row.onclick = () => {
                 caixaParaColorir.foco = key;
-                if (typeof callbackAtualizarEditor === 'function') callbackAtualizarEditor();
+                if (callbackAtualizarEditor) callbackAtualizarEditor();
                 if (window.innerWidth <= 768) overlay.classList.remove('active');
                 else abrirPaleta(caixaParaColorir, "tab-focos");
             };
@@ -227,6 +203,18 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques") {
         });
     }
 
-    // 7. EXIBIR FINAL
+    // Configurar Botões de Fecho e Remover Cor
+    if (btnRemover) {
+        btnRemover.onclick = () => {
+            caixaParaColorir.destaques = "";
+            if (callbackAtualizarEditor) callbackAtualizarEditor();
+            overlay.classList.remove('active');
+        };
+    }
+    if (btnFechar) btnFechar.onclick = () => overlay.classList.remove('active');
+
+    // Mostrar Overlay e selecionar aba inicial
     overlay.classList.add('active');
+    const selectorAba = document.querySelector(`.tab-cor[data-target="${abaAlvo}"]`);
+    if (selectorAba) selectorAba.click();
 }
