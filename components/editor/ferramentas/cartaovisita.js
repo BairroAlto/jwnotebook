@@ -5,7 +5,6 @@ import { abrirPopupImagemCartao } from '../modulos/tags/tags-utils.js';
  * Fábrica de Cartões de Visita (Dourado/Cinza com Imagem e Título dinâmico)
  */
 export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onAddAbaixo) {
-    console.log("📇 [FACTORY] Gerando UI para Cartão de Visita:", caixa.id);
     const caixaDiv = document.createElement("div");
     const corOuro = "#d4af37";
 
@@ -26,7 +25,7 @@ export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onA
         caixaDiv.style.borderColor = `${corOuro}66`;
     };
 
-    // --- TOOLBAR (Simplificada) ---
+    // --- TOOLBAR ---
     const header = document.createElement("div");
     header.style.cssText = `display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(212,175,55,0.1);`;
     header.innerHTML = `
@@ -67,9 +66,7 @@ export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onA
     };
 
     colEsq.onclick = async () => {
-         console.log("🖼️ [ACTION] Abrindo configurador de imagem para o cartão...");
         const dados = await abrirPopupImagemCartao(caixa.url, caixa.urldimensao);
-        console.log("✅ [SAVE] Nova imagem definida:", dados.url);
         if (dados) {
             caixa.url = dados.url;
             caixa.urldimensao = dados.dimensao;
@@ -82,9 +79,9 @@ export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onA
     const colDir = document.createElement("div");
     colDir.style.cssText = "flex: 1; display: flex; flex-direction: column; gap: 10px;";
 
-    // TÍTULO (MUDADO PARA TEXTAREA)
+    // TÍTULO
     const inputTit = document.createElement("textarea");
-    inputTit.className = "tool-title-input"; // Necessário para o colapso via CSS
+    inputTit.className = "tool-title-input"; 
     inputTit.value = caixa.titulo || "";
     inputTit.placeholder = "Título do Cartão...";
     inputTit.rows = 1;
@@ -95,10 +92,13 @@ export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onA
         overflow: hidden; font-family: inherit; line-height: 1.3;
     `;
 
- const ajustarAlturaTit = () => {
-    inputTit.style.height = 'auto';
-    inputTit.style.height = (inputTit.scrollHeight + 2) + 'px';
-};
+    // 🚀 Ajuste Anti-Salto para o Título
+    const ajustarAlturaTit = () => {
+        caixaDiv.style.minHeight = caixaDiv.offsetHeight + 'px'; // Tranca
+        inputTit.style.height = 'auto';
+        inputTit.style.height = (inputTit.scrollHeight + 2) + 'px';
+        requestAnimationFrame(() => { caixaDiv.style.minHeight = ''; }); // Destranca
+    };
 
     inputTit.oninput = () => {
         ajustarAlturaTit();
@@ -109,19 +109,24 @@ export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onA
     // CONTEÚDO / DESCRIÇÃO
     const areaTexto = document.createElement("textarea");
     areaTexto.value = caixa.conteudo || "";
-    aplicarEscudoBloqueio(caixa, corpo, caixaDiv);
+    if (typeof window.aplicarEscudoBloqueio === 'function') {
+        window.aplicarEscudoBloqueio(caixa, areaTexto, caixaDiv);
+    }
     areaTexto.placeholder = "Descrição...";
     areaTexto.style.cssText = `
-    background: transparent; border: none; 
-    color: var(--text-main); /* Mudado para a cor principal */
-    font-size: var(--fs-editor-texto); line-height: 1.5; outline: none; 
-    resize: none; min-height: 60px; font-family: inherit; overflow: hidden;
-`;
+        background: transparent; border: none; 
+        color: var(--text-main); font-size: var(--fs-editor-texto); 
+        line-height: 1.5; outline: none; resize: none; 
+        min-height: 60px; font-family: inherit; overflow: hidden;
+    `;
     
-const ajustarAlturaCorpo = () => { 
-    areaTexto.style.height = 'auto'; 
-    areaTexto.style.height = (areaTexto.scrollHeight + 2) + 'px'; 
-};
+    // 🚀 Ajuste Anti-Salto para a Descrição
+    const ajustarAlturaCorpo = () => { 
+        caixaDiv.style.minHeight = caixaDiv.offsetHeight + 'px'; // Tranca
+        areaTexto.style.height = 'auto'; 
+        areaTexto.style.height = (areaTexto.scrollHeight + 2) + 'px'; 
+        requestAnimationFrame(() => { caixaDiv.style.minHeight = ''; }); // Destranca
+    };
     
     areaTexto.oninput = () => { 
         ajustarAlturaCorpo();
@@ -139,11 +144,11 @@ const ajustarAlturaCorpo = () => {
     caixaDiv.appendChild(header);
     caixaDiv.appendChild(corpo);
     
-    // Ajustes iniciais de altura
-setTimeout(() => {
-    ajustarAlturaTit();
-    ajustarAlturaCorpo();
-}, 150);
+    // Ajustes iniciais de altura após renderização global
+    setTimeout(() => {
+        ajustarAlturaTit();
+        ajustarAlturaCorpo();
+    }, 150);
 
     return caixaDiv;
 }
