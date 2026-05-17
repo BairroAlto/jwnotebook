@@ -20,19 +20,22 @@ export function iniciarXSat() {
     const botoesNum = document.querySelectorAll('.xsat-num');
     const subNav = document.getElementById('xsat-sub-nav');
 
-    botoesNum.forEach(btn => {
+  botoesNum.forEach(btn => {
         btn.onclick = () => {
             const num = btn.dataset.num;
             
-            // 1. ATUALIZAÇÃO VISUAL DOS BOTÕES (CRUCIAL)
+            // Se já clicámos neste canal e ele já está ativo, ignoramos (evita loops)
+            if (btn.classList.contains('active') && canalSelecionadoUI === num) {
+                // Exceção: Se for o 6, deixamos passar para atualizar a lista se houver notas novas
+                if (num !== "6") return; 
+            }
+
             botoesNum.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             
             canalSelecionadoUI = num;
 
-            // 2. LÓGICA DE CANAL
             if (num === "6") {
-                // MODO IA: Esconde sub-nav e desenha lista
                 if (subNav) subNav.style.display = 'none';
                 AIController.renderizarLista();
             } else {
