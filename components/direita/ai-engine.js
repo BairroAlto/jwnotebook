@@ -21,7 +21,7 @@ export const NexoEngine = {
             "investigar": "Fornece contexto histórico e referências sobre este tema.",
             "socratico": "Gera 3 perguntas profundas para meditação.",
             "sintese": "Faz um resumo atómico num parágrafo curto.",
-            "origens": "Explica o significado no contexto original grego/hebraico.",
+            "origens": "Corrige erros ortográficos, gramaticais e de sintaxe.",
             "cosmos": "Sugere uma categoria do Cosmos para este texto.",
             "teocratico": "Atua como especialista em jw.org.",
             "ilustrar": "Cria uma analogia poderosa.",
