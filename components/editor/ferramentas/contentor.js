@@ -17,6 +17,17 @@ export function criarContentorLaranja(caixa, onTextoAlterado, onApagar, onPaleta
         margin-bottom: 12px;
     `;
 
+    caixaDiv.onmouseenter = () => {
+    if (caixa.foco !== "camaleao") {
+        caixaDiv.style.boxShadow = `0 4px 20px ${focoInfo.corForte}4D`;
+        caixaDiv.style.transform = "translateY(-1px)";
+    }
+};
+caixaDiv.onmouseleave = () => {
+    caixaDiv.style.boxShadow = "none";
+    caixaDiv.style.transform = "translateY(0)";
+};
+
     // --- TOOLBAR ---
     const header = document.createElement("div");
     header.style.cssText = `display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background-color: ${isCamaleao ? "rgba(0,0,0,0.15)" : focoInfo.corForte + "4D"}; color: ${focoInfo.corIcone};`;
