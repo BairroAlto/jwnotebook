@@ -9,6 +9,20 @@ export function criarCitacaoBiblica(caixa, onApagar, onMover, onAddAbaixo, onAbr
         border-radius: var(--radius-md); overflow: hidden; margin-bottom: 15px; transition: 0.2s;
     `;
 
+
+    caixaDiv.onmouseenter = () => {
+    caixaDiv.style.boxShadow = `0 4px 20px rgba(148, 163, 184, 0.3)`;
+    caixaDiv.style.transform = "translateY(-1px)";
+};
+caixaDiv.onmouseleave = () => {
+    caixaDiv.style.boxShadow = "none";
+    caixaDiv.style.transform = "translateY(0)";
+};
+
+
+
+
+
     // TOOLBAR
    const header = document.createElement("div");
     header.style.cssText = `display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background-color: rgba(148, 163, 184, 0.2); color: white;`;
@@ -27,11 +41,10 @@ export function criarCitacaoBiblica(caixa, onApagar, onMover, onAddAbaixo, onAbr
 const btnLupa = header.querySelector('.btn-lupa');
 btnLupa.onclick = (e) => {
     e.stopPropagation();
-    // Verifica se a ponte existe antes de chamar para não dar erro fatal
     if (typeof window.abrirSeletorBibliaGlobal === 'function') {
         window.abrirSeletorBibliaGlobal(caixa);
     } else {
-        console.error("❌ Erro: A ponte global 'abrirSeletorBibliaGlobal' não foi inicializada no editor.js.");
+        console.error("❌ Erro: Ponte 'abrirSeletorBibliaGlobal' não encontrada.");
     }
 };
 
