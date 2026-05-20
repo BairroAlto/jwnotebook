@@ -52,21 +52,33 @@ export function renderAnotacoes(estudo, container, db) {
     const docRef = doc(db, "Biblioteca", estudo.id);
 
     // 4. ESCUTA EM TEMPO REAL (SNAPSHOT)
-   window._unsubAnotacao = onSnapshot(docRef, (snap) => {
-    if (!snap.exists()) {
-        console.error("❌ [BRAIN] Ficha não encontrada.");
-        return;
-    }
-    
-    const data = snap.data();
-    const caixa = data.anotacaoEspecial;
+ window._unsubAnotacao = onSnapshot(docRef, (snap) => {
+        if (!snap.exists()) return;
+        
+        const data = snap.data();
+        let caixa = data.anotacaoEspecial;
 
-    // 🚀 CORREÇÃO 1: Se for NULL ou OFF, reseta o cache e mostra o seletor
-    if (!caixa || caixa.estado === "off") {
-        cacheLocalUI.idCaixa = null; // Limpa o ID da caixa no cache
-        renderSeletor(container, docRef);
-        return;
-    }
+        if (!caixa || caixa.estado === "off") {
+            cacheLocalUI.idCaixa = null;
+            renderSeletor(container, docRef);
+            return;
+        }
+    
+    // 🚀 A CORREÇÃO MESTRE: SINCRONIZAÇÃO RAM -> UI
+        // Antes de renderizar, verificamos se este bloco está aberto no Editor
+        if (window.caixasAtuais) {
+            const blocoNoEditor = window.caixasAtuais.find(c => 
+                c.referenciacodex && 
+                c.referenciacodex[0] === data.referencia && 
+                String(c.referenciacodex[1]) === String(data.sequencia)
+            );
+
+            if (blocoNoEditor) {
+                console.log("⚡ [BRAIN-SYNC] Usando texto em tempo real da RAM.");
+                caixa.conteudo = blocoNoEditor.conteudo;
+                caixa.titulo = blocoNoEditor.titulo;
+            }
+        }
 
     // 🚀 CORREÇÃO 2: Só calcula a assinatura se a caixa existir
     const assinaturaAtual = `${caixa.id}-${caixa.tipo}-${caixa.foco}-${caixa.destaques}`;
