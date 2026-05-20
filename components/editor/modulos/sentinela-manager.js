@@ -1,6 +1,6 @@
 // components/editor/modulos/sentinela-manager.js
 import { 
-    collection, query, where, getDocs, doc, updateDoc, addDoc, serverTimestamp 
+    collection, query, where, getDocs, doc, updateDoc, addDoc, serverTimestamp, getDoc 
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { SentinelaLoader } from '../../ui/loading-sentinela.js';
 
@@ -22,7 +22,6 @@ export const SentinelaManager = {
         snap.forEach(docSnap => {
             const d = docSnap.data();
             if (d.caixas && Array.isArray(d.caixas)) {
-                // Se alguma caixa desta nota já referencia este artigo, ela é a nota de estudo
                 const temReferencia = d.caixas.some(c => 
                     c.referenciacodex && c.referenciacodex[0] === refLimpa
                 );
@@ -33,8 +32,8 @@ export const SentinelaManager = {
     },
 
     /**
-     * 2. CONFIGURAÇÃO AUTOMÁTICA DO ESTUDO
-     * Gera as caixas na nota local e as fichas mestre na Biblioteca.
+     * 2. CONFIGURAÇÃO AUTOMÁTICA DO ESTUDO (COM FUSÃO DE DADOS)
+     * Adiciona o estudo à nota preservando o conteúdo existente.
      */
     configurarNota: async (json, artigoIdx, ctx) => {
         const { db, auth, notaId } = ctx;
@@ -42,26 +41,29 @@ export const SentinelaManager = {
         const refArtigoLimpa = limparRef(artigo.referencia);
         const uid = auth.currentUser.uid;
 
-        // Mostrar animação de carregamento
         SentinelaLoader.show(artigo.titulo);
 
         try {
-            // A) Atualizar o nome da nota local para o título do artigo
-            await updateDoc(doc(db, "Local", notaId), { nome: artigo.titulo });
+            // 🚀 PASSO A: LER CONTEÚDO ATUAL DA NOTA PARA PRESERVAR
+            const notaRef = doc(db, "Local", notaId);
+            const snapNota = await getDoc(notaRef);
+            const caixasAnteriores = snapNota.exists() ? (snapNota.data().caixas || []) : [];
 
-            const novasCaixas = [];
-            let contadorOrdem = 1;
+            // B) Atualizar o nome da nota para o título do artigo
+            await updateDoc(notaRef, { nome: artigo.titulo });
 
-            // B) REGRA DE OURO: Filtrar apenas Perguntas e Resumos para a nota e para a Biblioteca
+            const novasCaixasEstudo = [];
+            // A ordem começa depois do último bloco existente
+            let contadorOrdem = caixasAnteriores.length + 1; 
+
+            // C) Filtrar apenas Perguntas e Resumos
             const blocosExpostos = artigo.conteudo.filter(b => b.tipo === "pergunta" || b.tipo === "resumo");
 
             for (const bloco of blocosExpostos) {
-                // Definir a sequência (ID único dentro do artigo)
-                // Perguntas usam o número do parágrafo; Resumos usam R1, R2...
+                // Sequência com prefixo "R" para resumos
                 const seqString = (bloco.tipo === "pergunta") ? String(bloco.numero_ref) : `R${bloco.numero_ref}`;
 
-                // C) SINCRONIZAÇÃO COM FIREBASE -> BIBLIOTECA
-                // Procuramos se já existe uma ficha mestre para este parágrafo específico
+                // D) SINCRONIZAÇÃO COM BIBLIOTECA
                 const qBiba = query(collection(db, "Biblioteca"), 
                     where("userId", "==", uid),
                     where("referencia", "==", refArtigoLimpa),
@@ -69,87 +71,82 @@ export const SentinelaManager = {
                 );
 
                 const snapBiba = await getDocs(qBiba);
-                let dadosBiba = null;
 
-                if (!snapBiba.empty) {
-                    // Se já existir na Biblioteca, reaproveitamos os dados (conteúdo, foco, etc)
-                    dadosBiba = snapBiba.docs[0].data().anotacaoEspecial;
-                } else {
-                    // Se não existir, criamos a Ficha Mestre APENAS para este bloco
+                if (snapBiba.empty) {
                     await addDoc(collection(db, "Biblioteca"), {
-    userId: uid,
-    referencia: refArtigoLimpa,
-    sequencia: seqString,
-    titulo: artigo.titulo,
-    oque: bloco.tipo,
-    estado: "on",
-    timestamp: serverTimestamp(),
-    anotacaoEspecial: { 
-        id: crypto.randomUUID(), 
-        tipo: "questao", // 🚀 AGORA É SEMPRE QUESTAO (Verde)
-        titulo: bloco.texto, 
-        conteudo: "", 
-        estado: "on", 
-        // 🚀 SE FOR PERGUNTA -> ORIGINAL | SE FOR RESUMO -> REVISAO
-        foco: (bloco.tipo === "pergunta" ? "original" : "revisao") 
-    }
-});
+                        userId: uid,
+                        referencia: refArtigoLimpa,
+                        sequencia: seqString,
+                        titulo: artigo.titulo,
+                        oque: bloco.tipo,
+                        estado: "on",
+                        timestamp: serverTimestamp(),
+                        anotacaoEspecial: { 
+                            id: crypto.randomUUID(), 
+                            tipo: "questao", 
+                            titulo: bloco.texto, 
+                            conteudo: "", 
+                            estado: "on", 
+                            foco: (bloco.tipo === "pergunta" ? "original" : "revisao") 
+                        }
+                    });
                 }
 
-                // D) GERAR A CAIXA PARA A NOTA LOCAL
-            novasCaixas.push({
-    id: crypto.randomUUID(),
-    tipo: "questao", // 🚀 AGORA É SEMPRE QUESTAO (Verde)
-    titulo: bloco.texto,
-    conteudo: "", 
-    // 🚀 SE FOR PERGUNTA -> ORIGINAL | SE FOR RESUMO -> REVISAO
-    foco: (bloco.tipo === "pergunta" ? "original" : "revisao"),
-    estado: "on",
-    ordem: contadorOrdem++,
-    referenciacodex: [refArtigoLimpa, seqString], 
-    timestamp: new Date().toISOString()
-});
+                // E) GERAR A CAIXA PARA A NOTA LOCAL
+                novasCaixasEstudo.push({
+                    id: crypto.randomUUID(),
+                    tipo: "questao",
+                    titulo: bloco.texto,
+                    conteudo: "", 
+                    foco: (bloco.tipo === "pergunta" ? "original" : "revisao"),
+                    estado: "on",
+                    ordem: contadorOrdem++,
+                    referenciacodex: [refArtigoLimpa, seqString], 
+                    timestamp: new Date().toISOString(),
+                    protecao: "fechado"
+                });
             }
 
-            // E) Persistir as caixas geradas na nota local
-            await updateDoc(doc(db, "Local", notaId), { caixas: novasCaixas });
+            // 🚀 PASSO F: FUNDIR OS ARRAYS (DADOS ANTIGOS + NOVOS)
+            const listaFinal = [...caixasAnteriores, ...novasCaixasEstudo];
+
+            // G) Gravar a fusão final no Firestore
+            await updateDoc(notaRef, { caixas: listaFinal });
             
             SentinelaLoader.hide();
-            location.reload(); // Recarregar para aplicar as proteções de UI do modo Sentinela
+            location.reload(); 
 
         } catch (error) {
             console.error("❌ [SENTINELA] Erro ao configurar estudo:", error);
             SentinelaLoader.hide();
-            alert("Erro ao gerar o estudo. Verifica a tua ligação.");
+            alert("Erro ao gerar o estudo.");
         }
     },
 
     /**
      * 3. SINCRONIZAÇÃO LIVE: EDITOR -> BIBLIOTECA
-     * Atualiza a ficha mestre sempre que escreves na nota em modo Sentinela.
      */
     sincronizarParaBiblioteca: async (caixa, db, uid) => {
-    if (!caixa.referenciacodex) return;
-    
-    const [ref, seq] = caixa.referenciacodex;
+        if (!caixa.referenciacodex) return;
+        
+        const [ref, seq] = caixa.referenciacodex;
 
-    const q = query(collection(db, "Biblioteca"), 
-        where("userId", "==", uid),
-        where("referencia", "==", ref),
-        where("sequencia", "==", String(seq))
-    );
+        const q = query(collection(db, "Biblioteca"), 
+            where("userId", "==", uid),
+            where("referencia", "==", ref),
+            where("sequencia", "==", String(seq))
+        );
 
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-        // Atualiza a Ficha Mestre com a nova "alma" da caixa
-        await updateDoc(snap.docs[0].ref, {
-            "anotacaoEspecial.conteudo": caixa.conteudo || "",
-            "anotacaoEspecial.titulo": caixa.titulo || "",
-            "anotacaoEspecial.foco": caixa.foco || "original",
-            "anotacaoEspecial.tipo": caixa.tipo || "questao",
-            "anotacaoEspecial.destaques": caixa.destaques || "",
-            "timestampUpdate": serverTimestamp()
-        });
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+            await updateDoc(snap.docs[0].ref, {
+                "anotacaoEspecial.conteudo": caixa.conteudo || "",
+                "anotacaoEspecial.titulo": caixa.titulo || "",
+                "anotacaoEspecial.foco": caixa.foco || "original",
+                "anotacaoEspecial.tipo": caixa.tipo || "questao",
+                "anotacaoEspecial.destaques": caixa.destaques || "",
+                "timestampUpdate": serverTimestamp()
+            });
+        }
     }
-}
 };
