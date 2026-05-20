@@ -223,7 +223,55 @@ const btnCancelarOcultar = document.getElementById('btn-cancelar-ocultar');
             }
         };
 
-        // Outras pontes de sistema
+              // ========================================================
+        // 🚀 PONTES PARA FERRAMENTAS ESPECIAIS (LUPAS)
+        // ========================================================
+
+        // 1. CITAÇÃO BÍBLICA
+        window.abrirSeletorBibliaGlobal = (caixa) => {
+            console.log("📖 [EVENT] Abrindo seletor bíblico para a caixa.");
+            import('./biblia-selector.js').then(m => {
+                m.abrirSelector(caixa);
+            });
+        };
+
+        // 2. WEBCARD (LINKS VISUAIS)
+        window.abrirWebCardConfigGlobal = (caixa) => {
+            console.log("🌐 [EVENT] Abrindo configurador de WebCards.");
+            import('./webcard-service.js').then(async m => {
+                const urls = await m.WebCardService.abrirConfigurador(caixa);
+                if (urls) {
+                    // Se o utilizador confirmou as URLs, o sistema processa os metadados
+                    const elementoFisico = document.getElementById(`bloco-${caixa.id}`);
+                    if (elementoFisico && elementoFisico.processarLinks) {
+                        await elementoFisico.processarLinks(urls);
+                        ctx.atualizarFeedEGravar(true);
+                    }
+                }
+            });
+        };
+
+        // 3. IMAGENS (GALERIA ROSA)
+        window.abrirImagensConfigGlobal = (caixa) => {
+            console.log("📸 [EVENT] Abrindo configurador de Galeria.");
+            import('./imagens-service.js').then(async m => {
+                const dados = await m.ImagensService.abrirConfigurador(caixa);
+                if (dados) {
+                    caixa.links = dados.links;
+                    caixa.urldimensao = dados.urldimensao;
+                    
+                    // Atualiza a visualização da galeria sem recarregar a nota toda
+                    const el = document.getElementById(`bloco-${caixa.id}`);
+                    if (el && el.refreshGaleria) el.refreshGaleria();
+                    
+                    ctx.atualizarFeedEGravar(true);
+                }
+            });
+        };
+
+      // ========================================================
+        // 🛠️ PONTES GLOBAIS EXISTENTES (HEADER E ACTIONS)
+        // ========================================================
         window.inserirFerramentaNoEditor = (tipo) => ctx.inserirFerramentaNoEditor(tipo);
         window.abrirFerramentasDoNexo = () => {
             document.getElementById('popup-lab-overlay')?.classList.remove('active');
@@ -235,11 +283,11 @@ const btnCancelarOcultar = document.getElementById('btn-cancelar-ocultar');
         window.prepararInsercaoGlobal = (id) => prepararInsercao(id);
         window.abrirPopupPartilharGlobal = (caixa, id) => abrirPopupPartilhar(caixa, id || ctx.notaAbertaId, ctx.atualizarFeedEGravar);
         window.moverCaixaGlobal = (c, d) => moverCaixa(ctx.caixasAtuais, c, d, ctx.dadosNotaOriginal.modo.includes('post'), ctx.atualizarFeedEGravar);
-window.abrirPopupTagsGlobal = (caixa, id) => {
-    // Pegamos a origem da nota (local ou share) para que o popup saiba onde salvar
-    const origem = ctx.dadosNotaOriginal.onde || "local";
-    abrirPopupTags(caixa, id || ctx.notaAbertaId, origem);
-};
+        
+        window.abrirPopupTagsGlobal = (caixa, id) => {
+            const origem = ctx.dadosNotaOriginal.onde || "local";
+            abrirPopupTags(caixa, id || ctx.notaAbertaId, origem);
+        };
 
         const tit = document.getElementById('editor-titulo');
         if (tit) tit.oninput = () => ctx.acionarGravacao();
