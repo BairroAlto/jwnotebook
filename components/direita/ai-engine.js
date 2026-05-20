@@ -24,7 +24,13 @@ export const NexoEngine = {
             "sintese": "Resume o conteúdo num único parágrafo atómico e impactante.",
             "critico": "Apresenta 2 pontos que podem gerar dúvidas e responde com argumentos lógicos.",
             "origens": "Revê o texto e corrige erros de gramática, ortografia e sintaxe.",
-            "cosmos": "Atua como Arquiteto de Conhecimento. Sugere uma Categoria Mestre e um Sub-tópico para este texto.",
+           
+             "cosmos": `Tu és um Arquiteto de Conhecimento. Analisa este texto e define: 
+            1. Uma CATEGORIA MESTRE (ex: Teologia, História, Ética, Ciência, Biografias, etc.).
+            2. Um SUB-TÓPICO ESTRUTURAL (ex: Arqueologia, Fruto do Espírito, Profecias Messiânicas, etc.).
+            3. Explica brevemente por que razão esta classificação é a mais lógica para organizar este estudo no futuro.
+            Responde de forma estruturada e direta.`,
+
             "ilustrar": "Cria uma analogia ou ilustração poderosa para explicar este conceito.",
             "pratico": "Sugere 2 formas diretas de aplicar esta informação na vida quotidiana.",
 
