@@ -1,8 +1,8 @@
 // components/direita/ai-engine.js
 
 /**
- * MOTOR DE INTELIGÊNCIA BOOKAI (OPENROUTER)
- * Proteção contra GitHub Secret Scanning (Versão Ofuscada)
+ * MOTOR DE INTELIGÊNCIA BOOKAI
+ * 
  */
 
 // 
