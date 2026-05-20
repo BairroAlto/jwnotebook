@@ -53,6 +53,9 @@ const PROTOCOLOS = [
 ];
 
 export const AIView = {
+    /**
+     * RENDERIZA O CONTENTOR DA LISTA DE BLOCOS (VISTA INICIAL)
+     */
     renderContainer: (display, isSentinela) => {
         display.innerHTML = `
             <div class="ai-container" id="ai-container-main">
@@ -63,6 +66,9 @@ export const AIView = {
             </div>`;
     },
 
+    /**
+     * CRIA UM CARD INDIVIDUAL PARA A LISTA
+     */
     criarCard: (c, onClick) => {
         const config = IDENTIDADE_FERRAMENTAS[c.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
         const div = document.createElement('div');
@@ -78,9 +84,25 @@ export const AIView = {
         return div;
     },
 
-    renderProtocolos: (display, caixa, onVoltar, onExecutar) => {
+    /**
+     * RENDERIZA O PAINEL DE ESCOLHA DE PROTOCOLOS
+     */
+    renderProtocolos: (display, caixa, onVoltar, onExecutar, incluirTitulo) => {
         const config = IDENTIDADE_FERRAMENTAS[caixa.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
+        const isContentor = caixa.tipo === 'contentor';
+
+        // 1. SELETOR DE MODO DE PESQUISA (Escondido se for Contentor)
+        const seletorTituloHtml = isContentor ? '' : `
+    <div style="display:flex; gap:5px; background: rgba(0,0,0,0.2); padding: 4px; border-radius: 10px; margin-bottom: 25px;">
+        <!-- Fica inativo por defeito -->
+        <button class="btn-amt ${incluirTitulo ? 'active' : ''}" id="btn-com-titulo" style="flex:1; height:28px; font-size:9px; font-weight:800;">COM TÍTULO</button>
         
+        <!-- Fica ATIVO por defeito porque incluirTitulo é false -->
+        <button class="btn-amt ${!incluirTitulo ? 'active' : ''}" id="btn-sem-titulo" style="flex:1; height:28px; font-size:9px; font-weight:800;">SEM TÍTULO</button>
+    </div>
+`;
+
+        // 2. GERAÇÃO DAS CATEGORIAS E BOTÕES
         let htmlCategorias = PROTOCOLOS.map(cat => `
             <div style="margin-bottom: 25px;">
                 <p style="font-size:9px; color:${cat.cor}; font-weight:900; text-transform:uppercase; margin-bottom:12px; letter-spacing:1px; border-bottom: 1px solid ${cat.cor}33; padding-bottom:5px;">${cat.categoria}</p>
@@ -95,25 +117,42 @@ export const AIView = {
             </div>
         `).join('');
 
+        // 3. MONTAGEM FINAL
         display.innerHTML = `
             <div class="ai-container" style="padding-bottom: 50px;">
                 <button class="btn-voltar-ai" id="ai-back-btn"><i class="fa-solid fa-arrow-left"></i> Voltar à Lista</button>
-                <div class="ai-target-card" style="border-left: 4px solid ${config.cor}; margin-bottom:30px;">
+                
+                <div class="ai-target-card" style="border-left: 4px solid ${config.cor}; margin-bottom:15px;">
                     <span class="ai-target-label" style="color:${config.cor}">Alvo: ${config.nome}</span>
-                    <p style="font-size:12px; color:white; opacity:0.8; line-height:1.4;">${caixa.conteudo.substring(0, 100)}...</p>
+                    <p style="font-size:12px; color:white; opacity:0.8; line-height:1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                        ${caixa.conteudo || 'Sem conteúdo para analisar.'}
+                    </p>
                 </div>
+
+                ${seletorTituloHtml}
                 ${htmlCategorias}
             </div>`;
         
+        // 4. ATRIBUIÇÃO DE EVENTOS
         display.querySelector('#ai-back-btn').onclick = onVoltar;
+        
+        if (!isContentor) {
+            display.querySelector('#btn-com-titulo').onclick = () => window.dispatchEvent(new CustomEvent('ai:toggleTitulo', {detail: true}));
+            display.querySelector('#btn-sem-titulo').onclick = () => window.dispatchEvent(new CustomEvent('ai:toggleTitulo', {detail: false}));
+        }
+
         display.querySelectorAll('.btn-protocolo').forEach(btn => {
             btn.onclick = () => onExecutar(btn.dataset.m);
         });
     },
 
+    /**
+     * FORMATA O MARKDOWN DA IA PARA HTML ELEGANTE
+     */
     formatarTexto: (t) => {
-        return t.replace(/^### (.*$)/gim, '<h4 style="color:#10b981; margin:15px 0 5px 0; font-weight:800; font-size:11px;">$1</h4>')
-                .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
-                .replace(/^\s*[\-\*]\s+(.*)$/gim, '<div style="margin-left:10px; margin-bottom:5px; display:flex; gap:8px;"><span style="color:#10b981;">•</span><span>$1</span></div>');
+        if (!t) return "";
+        return t.replace(/^### (.*$)/gim, '<h4 style="color:#10b981; margin:15px 0 5px 0; font-weight:800; font-size:11px; text-transform:uppercase;">$1</h4>')
+                .replace(/\*\*(.*?)\*\*/g, '<b style="color:white; font-weight:700;">$1</b>')
+                .replace(/^\s*[\-\*]\s+(.*)$/gim, '<div style="margin-left:10px; margin-bottom:5px; display:flex; gap:8px; line-height:1.5;"><span style="color:#10b981;">•</span><span>$1</span></div>');
     }
 };
