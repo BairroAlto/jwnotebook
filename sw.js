@@ -1,70 +1,54 @@
-const CACHE_NAME = 'notabook-x-v12';
+const CACHE_NAME = 'notabook-x-v15';
 
-// Ficheiros essenciais para o "esqueleto" do app
 const PRE_CACHE_ASSETS = [
   './',
   './index.html',
   './styles/global.css',
   './styles/typography.css',
   './styles/mobile.css',
+  './styles/nexo.css',
+  './styles/loading-sentinela.css',
   './firebase-config.js'
 ];
 
-// Instalação: Guarda o básico no cache
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(PRE_CACHE_ASSETS);
-    })
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRE_CACHE_ASSETS))
   );
   self.skipWaiting();
 });
 
-// Ativação: Limpa caches antigos
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cache) => {
-          if (cache !== CACHE_NAME) {
-            return caches.delete(cache);
-          }
-        })
-      );
-    })
+    caches.keys().then((keys) => Promise.all(
+      keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))
+    ))
   );
 });
 
-// Interceção de pedidos (O "Cérebro" do App)
 self.addEventListener('fetch', (event) => {
-  // Ignorar pedidos para o Firebase Auth e Firestore (Deixa a rede tratar disso)
-  if (event.request.url.includes('googleapis') || event.request.url.includes('firebase')) {
-    return;
-  }
+  // 1. REGRA DE OURO: Ignorar tudo o que não seja GET (Corrige o erro do POST)
+  if (event.request.method !== 'GET') return;
+
+  // 2. Ignorar chamadas do Firebase/Google (Auth, Firestore, etc)
+  if (event.request.url.includes('googleapis') || event.request.url.includes('firebase')) return;
 
   event.respondWith(
-    // Tenta primeiro a Rede
     fetch(event.request)
       .then((response) => {
-        // Se a resposta for válida, guarda uma cópia no cache (dinâmico)
-        if (response.ok && event.request.method === 'GET') {
+        // Se a resposta for válida, guarda no cache
+        if (response && response.status === 200 && response.type === 'basic') {
           const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, copy);
-          });
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
         }
         return response;
       })
       .catch(() => {
-        // Se falhar a rede (offline), tenta o Cache
+        // Se falhar a rede, tenta o cache
         return caches.match(event.request).then((cachedResponse) => {
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          // Se for uma navegação e não tiver nada, volta para o index
-          if (event.request.mode === 'navigate') {
-            return caches.match('./index.html');
-          }
+          if (cachedResponse) return cachedResponse;
+          // Se for uma página e estiver offline, volta ao index
+          if (event.request.mode === 'navigate') return caches.match('./index.html');
         });
       })
   );
