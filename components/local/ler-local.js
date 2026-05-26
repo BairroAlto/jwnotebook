@@ -10,10 +10,12 @@ let authReferencia = null;
 
 
 export function inicializarLeituraLocal(db, auth) {
+    // REMOVE esta linha ou comenta-a:
+    // if (!auth.currentUser) return; 
+
     dbReferencia = db;
     authReferencia = auth;
 
-    // Navegação: Voltar Atrás
     const navBackArea = document.getElementById('nav-back-click');
     if (navBackArea) {
         navBackArea.onclick = () => {
@@ -27,21 +29,12 @@ export function inicializarLeituraLocal(db, auth) {
         };
     }
 
-    // Função de Teleporte para PINS
-   window.carregarPastaLocalManual = (id) => {
-    // Chama a tua função que já tens para ler o Firebase
-    if (typeof carregarPasta === 'function') {
-        carregarPasta(id); 
-    }
-    // Chama a tua função que atualiza o nome no topo "Voltar a..."
-    if (typeof atualizarUI === 'function') {
-        atualizarUI(); 
-    }
-};
-
+    // Se o user já existir, carrega. Se não, o onSnapshot lá dentro espera por ele.
     carregarPasta(window.pastaAtual);
     atualizarUI();
 }
+
+
 
 function carregarPasta(idPasta) {
     const listaLocal = document.getElementById('lista-local');
