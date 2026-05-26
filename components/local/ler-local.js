@@ -10,7 +10,6 @@ let authReferencia = null;
 
 
 export function inicializarLeituraLocal(db, auth) {
-    if (!auth.currentUser) return;
     dbReferencia = db;
     authReferencia = auth;
 
