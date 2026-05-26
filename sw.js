@@ -1,58 +1,70 @@
-const CACHE_NAME = 'notabook-v1';
-const ASSETS = [
-  '/',
-  'index.html',
-  'styles/global.css',
-  'styles/typography.css',
-  'styles/mobile.css',
-  'styles/nexo.css',
-  'styles/loading-sentinela.css',
-  'firebase-config.js'
+const CACHE_NAME = 'notabook-x-v12';
+
+// Ficheiros essenciais para o "esqueleto" do app
+const PRE_CACHE_ASSETS = [
+  './',
+  './index.html',
+  './styles/global.css',
+  './styles/typography.css',
+  './styles/mobile.css',
+  './firebase-config.js'
 ];
 
-// Instalação
+// Instalação: Guarda o básico no cache
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS);
+      return cache.addAll(PRE_CACHE_ASSETS);
     })
   );
   self.skipWaiting();
 });
 
-// Ativação e Limpeza
+// Ativação: Limpa caches antigos
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
+    caches.keys().then((cacheNames) => {
       return Promise.all(
-        keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))
+        cacheNames.map((cache) => {
+          if (cache !== CACHE_NAME) {
+            return caches.delete(cache);
+          }
+        })
       );
     })
   );
 });
 
-// Busca de ficheiros (Estratégia: Tenta Rede, se falhar tenta Cache)
+// Interceção de pedidos (O "Cérebro" do App)
 self.addEventListener('fetch', (event) => {
+  // Ignorar pedidos para o Firebase Auth e Firestore (Deixa a rede tratar disso)
+  if (event.request.url.includes('googleapis') || event.request.url.includes('firebase')) {
+    return;
+  }
+
   event.respondWith(
+    // Tenta primeiro a Rede
     fetch(event.request)
       .then((response) => {
-        // Se a resposta for boa, guarda no cache
-        if (response.ok) {
+        // Se a resposta for válida, guarda uma cópia no cache (dinâmico)
+        if (response.ok && event.request.method === 'GET') {
           const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, copy);
+          });
         }
         return response;
       })
       .catch(() => {
-        // Se estiver offline, tenta o cache
-        return caches.match(event.request).then(cachedResponse => {
-          if (cachedResponse) return cachedResponse;
-          
-          // Se for uma PÁGINA (navegação) e não estiver no cache, mostra o index
-          if (event.request.mode === 'navigate') {
-            return caches.match('index.html');
+        // Se falhar a rede (offline), tenta o Cache
+        return caches.match(event.request).then((cachedResponse) => {
+          if (cachedResponse) {
+            return cachedResponse;
           }
-          event.respondWith(fetch(event.request));
+          // Se for uma navegação e não tiver nada, volta para o index
+          if (event.request.mode === 'navigate') {
+            return caches.match('./index.html');
+          }
         });
       })
   );
