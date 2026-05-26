@@ -3,7 +3,9 @@ import {
     getAuth, 
     onAuthStateChanged, 
     signInWithEmailAndPassword, 
-    signOut 
+    signOut,
+    setPersistence,
+    browserLocalPersistence 
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 
 /**
@@ -13,6 +15,16 @@ import {
  */
 export function iniciarAutenticacao(app, db) {
     const auth = getAuth(app);
+
+    // 🚀 CORREÇÃO 1: Forçar persistência local. 
+    // Isto garante que o iPhone não peça login toda a vez que fechas a app.
+    setPersistence(auth, browserLocalPersistence)
+        .then(() => {
+            console.log("🔐 AUTH: Persistência configurada para Local.");
+        })
+        .catch((error) => {
+            console.error("❌ AUTH: Erro na persistência:", error);
+        });
     
     // Elementos da Interface
     const loadingScreen = document.getElementById('loading-screen');
@@ -29,12 +41,10 @@ export function iniciarAutenticacao(app, db) {
             
             // Esconder telas de acesso
             if(loginScreen) loginScreen.style.display = 'none';
-            
-       
-
-            // O sistema principal é ativado no index.html via este observer,
-            // mas podes disparar lógicas globais aqui se necessário.
-
+            if(loadingScreen) {
+                loadingScreen.style.opacity = '0';
+                setTimeout(() => { loadingScreen.style.display = 'none'; }, 500);
+            }
         } else {
             console.log("🔒 AUTH: Nenhuma sessão ativa.");
             
@@ -51,6 +61,9 @@ export function iniciarAutenticacao(app, db) {
     // 2. LÓGICA DE LOGIN
     if(btnLogin) {
         btnLogin.addEventListener('click', () => {
+            // 🚀 CORREÇÃO 2: Leitura direta no momento do clique.
+            // O iPhone Auto-fill preenche os campos mas às vezes o JS não deteta a mudança.
+            // Ler o .value diretamente aqui ignora esse problema.
             const email = emailInput.value.trim();
             const password = passwordInput.value.trim();
 
@@ -84,19 +97,18 @@ export function iniciarAutenticacao(app, db) {
         });
     }
 
-    // 3. LÓGICA DE LOGOUT (Geralmente chamada pelo botão nas Definições)
+    // 3. LÓGICA DE LOGOUT
     window.executarLogout = () => {
         if (confirm("Desejas realmente encerrar a sessão?")) {
             signOut(auth).then(() => {
                 console.log("👋 AUTH: Sessão encerrada.");
-                location.reload(); // Recarregar para limpar cache de memória
+                location.reload(); 
             }).catch((error) => {
                 alert("Erro ao sair: " + error.message);
             });
         }
     };
 
-    // Função auxiliar para mensagens de erro
     function mostrarErro(msg) {
         if(loginError) {
             loginError.style.display = 'block';
