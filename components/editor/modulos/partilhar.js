@@ -188,7 +188,7 @@ async function enviarCopiaParaNota(idDestino, nomeDestino, abaAlvo) {
             const dataDest = snapDest.data();
             let caixasDest = dataDest.caixas || [];
             
-            // 1. CRIAR O CLONE ATÓMICO DA CAIXA
+            // 1. CRIAR CLONE DA CAIXA
             let novaCopia = JSON.parse(JSON.stringify(caixaAtual));
             novaCopia.id = crypto.randomUUID();
             novaCopia.estado = "on";
@@ -196,41 +196,32 @@ async function enviarCopiaParaNota(idDestino, nomeDestino, abaAlvo) {
             novaCopia.timestamp = new Date().toISOString();
             
             // ========================================================
-            // 🚀 LÓGICA DE POSICIONAMENTO INTELIGENTE (NORMAL vs POST)
+            // 🚀 CORREÇÃO: SEMPRE USAR PUSH
+            // Para ser a "mais recente", ela deve ir para o fim do array.
+            // O renderizador (Modo Post) colocará o número maior no topo.
             // ========================================================
-            const modosDest = Array.isArray(dataDest.modo) ? dataDest.modo : [dataDest.modo || 'normal'];
-            
-            if (modosDest.includes('post')) {
-                // MODO POST: Inserir no início do array (Topo do feed)
-                console.log(`📥 [PARTILHA] Nota destino em modo POST. Inserindo no topo.`);
-                caixasDest.unshift(novaCopia);
-            } else {
-                // MODO NORMAL: Inserir no fim do array (Fundo do feed)
-                console.log(`📥 [PARTILHA] Nota destino em modo NORMAL. Inserindo no fim.`);
-                caixasDest.push(novaCopia);
-            }
+            caixasDest.push(novaCopia); 
 
-            // 2. RE-INDEXAR ORDENS (Garante que a sequência 1, 2, 3... se mantém correta)
+            // 2. RE-INDEXAR ORDENS (Garante que a nova caixa tem o maior número)
             caixasDest.forEach((c, i) => { 
                 c.ordem = i + 1; 
             });
 
-            // 3. GRAVAR NA NOTA DE DESTINO
+            // 3. GRAVAR
             await updateDoc(docDestRef, { caixas: caixasDest });
 
-            // 4. ATUALIZAR ÍNDICE DE PESQUISA (NEXO GPS) DA NOTA ALVO
-            // Importante para que a nota destino reflita a nova caixa na busca semântica
+            // 4. ATUALIZAR GPS
             dispararIndexacao(db, auth.currentUser.uid, idDestino, {
                 nome: dataDest.nome,
                 caixas: caixasDest,
                 vincTopicos: dataDest.vincTopicos || []
             });
 
-            console.log(`✅ [SISTEMA] Bloco enviado com sucesso para: ${nomeDestino}`);
+            console.log(`✅ [SISTEMA] Bloco enviado. Ordem da nova caixa: ${caixasDest.length}`);
             window.fecharPopupPartilhar();
         }
     } catch (e) {
-        console.error("❌ Erro ao enviar cópia:", e);
+        console.error("❌ Erro:", e);
         alert("Erro ao processar partilha.");
     }
 }
