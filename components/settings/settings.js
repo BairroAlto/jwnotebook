@@ -164,19 +164,49 @@ if (btnBusca) {
         </div>
     `;
 
-    card.onclick = async () => {
-        const overlay = document.getElementById('popup-settings-overlay');
-        overlay.classList.remove('active');
-        
+card.onclick = async () => {
+    console.log("🎯 [GPS] Clicado no resultado:", nota);
+    
+    const overlay = document.getElementById('popup-settings-overlay');
+    if (overlay) overlay.classList.remove('active');
+
+    try {
         const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js");
-        const snap = await getDoc(doc(db, "Local", nota.id));
-        
-        if (snap.exists()) {
-            // 🚀 O SEGREDO DO SCROLL: Passamos o blockId como 5º argumento
-            // Se a IA não encontrou um bloco específico, nota.blockId será null e abre no topo.
-            abrirNotaNoEditor(nota.id, snap.data(), db, auth, nota.blockId);
+        const { abrirNotaNoEditor } = await import('../editor/editor.js');
+
+        // 🕵️ PASSO 1: Tentar procurar na coleção "Local"
+        console.log("🔍 [GPS] Procurando na coleção Local...");
+        let noteRef = doc(db, "Local", nota.id);
+        let snap = await getDoc(noteRef);
+
+        // 🕵️ PASSO 2: Se não encontrar no Local, tenta no "Share"
+        if (!snap.exists()) {
+            console.log("ℹ️ [GPS] Não está no Local. Tentando coleção Share...");
+            noteRef = doc(db, "Share", nota.id);
+            snap = await getDoc(noteRef);
         }
-    };
+
+        if (snap.exists()) {
+            console.log("✅ [GPS] Nota localizada com sucesso!");
+            
+            // 🚀 PASSO 3: Abrir no editor
+            // nota.blockId é o ID do bloco azul que a IA detetou
+            await abrirNotaNoEditor(nota.id, snap.data(), db, auth, nota.blockId);
+            
+            // UX: Fechar menus mobile se necessário
+            if (window.innerWidth <= 768) {
+                document.getElementById('area-esquerda')?.classList.add('closed');
+                document.getElementById('mobile-overlay')?.classList.remove('active');
+            }
+        } else {
+            // Se não existe em lado nenhum
+            console.error("❌ [GPS] A nota ID: " + nota.id + " desapareceu do mapa.");
+            alert("A nota parece ter sido movida ou eliminada.");
+        }
+    } catch (err) {
+        console.error("❌ [GPS] Erro no salto:", err);
+    }
+};
     listaUI.appendChild(card);
 });
             }
