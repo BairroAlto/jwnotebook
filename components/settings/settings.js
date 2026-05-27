@@ -132,28 +132,53 @@ if (btnBusca) {
                 status.innerHTML = `<span style="color:#f87171;">❌ Nenhuma nota encontrada.</span>`;
             } else {
                 status.innerHTML = `✅ Encontrei <b>${resultados.length}</b> correspondências:`;
-                resultados.forEach(nota => {
-                    const card = document.createElement('div');
-                    card.className = "menu-item-list";
-                    card.style.cssText = `background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.2); border-left: 4px solid var(--primary); margin-bottom: 8px; padding: 12px 15px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;`;
-                    card.innerHTML = `
-                        <div style="display:flex; justify-content:space-between; align-items:center; width:100%; pointer-events:none;">
-                            <div style="display:flex; align-items:center; gap:10px; overflow:hidden;">
-                                <i class="fa-solid fa-file-lines" style="color:var(--primary); font-size:12px;"></i>
-                                <span style="font-weight:700; color:white;">${nota.title}</span>
-                            </div>
-                            <i class="fa-solid fa-arrow-right-to-bracket" style="opacity:0.3; font-size:12px;"></i>
-                        </div>
-                        <div style="font-size:11px; color:var(--text-muted); padding-left:22px; font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">"${nota.snippet}..."</div>`;
-                    
-                    card.onclick = async () => {
-                        overlay.classList.remove('active');
-                        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js");
-                        const snap = await getDoc(doc(db, "Local", nota.id));
-                        if (snap.exists()) abrirNotaNoEditor(nota.id, snap.data(), db, auth);
-                    };
-                    listaUI.appendChild(card);
-                });
+              resultados.forEach(nota => {
+    const card = document.createElement('div');
+    card.className = "menu-item-list";
+    
+    // 🎨 DESIGN MELHORADO (IGUAL AO PRINT)
+    card.style.cssText = `
+        background: rgba(99, 102, 241, 0.08); 
+        border: 1px solid rgba(99, 102, 241, 0.2); 
+        border-left: 4px solid var(--primary); 
+        margin-bottom: 10px; 
+        padding: 15px; 
+        cursor: pointer; 
+        display: flex; 
+        flex-direction: column; 
+        gap: 6px;
+        border-radius: 12px;
+        transition: 0.2s;
+    `;
+
+    card.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+            <div style="display:flex; align-items:center; gap:12px;">
+                <i class="fa-solid fa-file-lines" style="color:var(--primary); font-size:14px;"></i>
+                <span style="font-weight:800; color:white; font-size:15px; letter-spacing:0.3px;">${nota.title}</span>
+            </div>
+            <i class="fa-solid fa-arrow-right-to-bracket" style="opacity:0.2; font-size:14px;"></i>
+        </div>
+        <div style="font-size:12px; color:var(--text-muted); padding-left:26px; font-style: italic; line-height:1.4; opacity:0.8;">
+            "${nota.snippet}..."
+        </div>
+    `;
+
+    card.onclick = async () => {
+        const overlay = document.getElementById('popup-settings-overlay');
+        overlay.classList.remove('active');
+        
+        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js");
+        const snap = await getDoc(doc(db, "Local", nota.id));
+        
+        if (snap.exists()) {
+            // 🚀 O SEGREDO DO SCROLL: Passamos o blockId como 5º argumento
+            // Se a IA não encontrou um bloco específico, nota.blockId será null e abre no topo.
+            abrirNotaNoEditor(nota.id, snap.data(), db, auth, nota.blockId);
+        }
+    };
+    listaUI.appendChild(card);
+});
             }
         } catch (err) { status.innerHTML = "Erro na busca."; }
         finally { btnBusca.disabled = false; btnBusca.innerHTML = `<i class="fa-solid fa-paper-plane"></i>`; }
