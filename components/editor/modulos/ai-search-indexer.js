@@ -19,14 +19,12 @@ export async function dispararIndexacao(db, userId, notaId, dadosNota) {
    const blocosProcessados = dadosNota.caixas
     .filter(c => c.estado === 'on') 
     .map(c => {
-        let info = "";
         const titulo = c.titulo ? `[${c.titulo}] ` : "";
-        const conteudo = c.conteudo ? c.conteudo.substring(0, 800) : "";
-        // 🚀 ADICIONAMOS O ID NO INÍCIO DE CADA BLOCO
-        return `{ID:${c.id}}${titulo}${conteudo}`;
+        const conteudo = c.conteudo ? c.conteudo.substring(0, 1000) : "";
+        // 🚀 Formato ultra-claro: {ID:uuid} Conteúdo...
+        return `{ID:${c.id}} ${titulo}${conteudo}`;
     })
-    .join(' | ')
-    .substring(0, 3500);
+    .join(' | ');
 
     const tags = (dadosNota.vincTopicos || []).map(t => t.nome).join(', ');
 
