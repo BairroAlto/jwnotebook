@@ -26,16 +26,16 @@ const _SATELLITE_DATA_CACHE = new Map();
  */
 function extrairReferencias(texto) {
     const achados = [];
+    const vistos = new Set(); // 🚀 Garante que não processamos a mesma ref duas vezes
     const textoLimpo = texto.toLowerCase();
     
-    // Preparar dicionário para busca rápida
     const dictLower = {};
     Object.keys(BIBLE_ABBREVIATIONS).forEach(k => { dictLower[k.toLowerCase()] = BIBLE_ABBREVIATIONS[k]; });
     
     const nomesOrdenados = Object.keys(BIBLE_ABBREVIATIONS).sort((a, b) => b.length - a.length);
     const patternLivros = nomesOrdenados.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
 
-    // Regex atualizada para capturar intervalos (ex: 1:1-10 ou 1:1,2,5)
+    // Regex para capturar referências
     const regexFull = new RegExp(`(${patternLivros})\\.?\\s*(\\d+)[:\\s](\\d+(?:[\\d\\s\\-,]*)?)`, 'gi');
 
     let m;
@@ -44,17 +44,23 @@ function extrairReferencias(texto) {
         const cap = parseInt(m[2]);
         const versiculosBrutos = m[3];
 
-        // --- MOTOR DE EXPANSÃO DE INTERVALO ---
-        // Ex: "1-3, 5" -> [1, 2, 3, 5]
         const listaVersiculos = expandirVersiculos(versiculosBrutos);
 
         listaVersiculos.forEach(vNum => {
-            achados.push({ 
-                livro: livroOficial, 
-                abrev: m[1], 
-                cap: cap, 
-                ver: vNum 
-            });
+            // 🚀 CRIAR UMA CHAVE ÚNICA (Ex: "isaias-1-1")
+            const chaveUnica = `${livroOficial}-${cap}-${vNum}`.toLowerCase();
+
+            if (!vistos.has(chaveUnica)) {
+                vistos.add(chaveUnica);
+                achados.push({ 
+                    livro: livroOficial, 
+                    abrev: m[1], 
+                    cap: cap, 
+                    ver: vNum 
+                });
+            } else {
+                console.log(`skipping duplicate: ${chaveUnica}`);
+            }
         });
     }
     return achados;
