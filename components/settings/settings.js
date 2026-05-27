@@ -2,27 +2,10 @@
 import { doc, getDoc, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { inicializarAmigos } from './amigos.js';
-import { abrirNotaNoEditor } from '../editor/editor.js'; // 🚀 CAMINHO CORRIGIDO AQUI
-import { AISearchEngine } from '../direita/ai-search-engine.js';
+import { abrirNotaNoEditor } from '../editor/editor.js'; 
 
 let timerGravacao = null;
-
-/**
- * Atualiza o ícone de definições no topo (Avatar)
- */
-function atualizarIconeBotaoTopo(avatar) {
-    const btnDefinicoes = document.getElementById('btnDefinicoes');
-    if (!btnDefinicoes) return;
-    const icone = btnDefinicoes.querySelector('i');
-    if (!icone) return;
-
-    if (!avatar || avatar === "" || avatar === "gear") {
-        icone.className = "fa-solid fa-gear";
-    } else {
-        const prefixo = (avatar === 'discord' || avatar === 'xbox') ? 'fa-brands' : 'fa-solid';
-        icone.className = `${prefixo} fa-${avatar}`;
-    }
-}
+let nomesCoresCustom = {};
 
 /**
  * INICIALIZADOR PRINCIPAL DAS DEFINIÇÕES
@@ -36,21 +19,26 @@ export async function inicializarSettings(db, auth) {
     const btnAbrir = document.getElementById('btnDefinicoes');
     const btnFechar = document.getElementById('btn-fechar-settings');
     
-    // Elementos de Toggles
-    const checkColapso = document.getElementById('check-colapso-titulos');
-    const checkShare = document.getElementById('check-partilhar-respostas');
+    // Elementos da Busca Semântica (Nexo GPS)
+    const btnBusca = document.getElementById('btn-executar-tab-search');
+    const inputBusca = document.getElementById('input-tab-search');
+    const inputRefine = document.getElementById('input-tab-refine');
+    const refineContainer = document.getElementById('refine-search-container');
+    const listaUI = document.getElementById('list-results-gps');
+    const statusInfo = document.getElementById('search-status-info');
 
     // 1. CONFIGURAR ABERTURA E FECHO
     if (btnAbrir) btnAbrir.onclick = () => overlay.classList.add('active');
-    if (btnFechar) btnFechar.onclick = () => overlay.classList.remove('active');
+    if (btnFechar) btnFechar.onclick = () => {
+        overlay.classList.remove('active');
+        if (refineContainer) refineContainer.style.display = 'none';
+    };
 
-    // 2. CARREGAR PREFERÊNCIAS DO FIREBASE
+    // 2. CARREGAR PREFERÊNCIAS DO UTILIZADOR
     try {
         const snap = await getDoc(userRef);
         if (snap.exists()) {
             const dados = snap.data();
-            
-            // A. Aplicar Tamanhos de Letra
             if (dados.tamanholetra) {
                 Object.entries(dados.tamanholetra).forEach(([varName, value]) => {
                     document.documentElement.style.setProperty(varName, value + 'px');
@@ -58,34 +46,12 @@ export async function inicializarSettings(db, auth) {
                     if (input) input.value = value;
                 });
             }
-
-            // B. Estado do Colapso de Títulos
-            if (dados.colapsoTitulos && checkColapso) {
-                checkColapso.checked = true;
-                document.body.classList.add('modo-colapso-titulos');
-            }
-
-            // C. Estado da Rede de Respostas
-            if (dados.shareAnswers && checkShare) {
-                checkShare.checked = (dados.shareAnswers === "on");
-            }
-
-            // D. Aplicar Avatar
+            if (dados.caixadestaques) nomesCoresCustom = dados.caixadestaques;
             atualizarIconeBotaoTopo(dados.avatar || "gear");
         }
     } catch (e) { console.error("Erro ao carregar perfil:", e); }
 
-    // Botão de atalho da lupa no topo do site
-const btnLupaTopo = document.getElementById('btnAbrirGpsDireto');
-if (btnLupaTopo) {
-    btnLupaTopo.onclick = () => {
-        overlay.classList.add('active'); // Abre o popup
-        const tabPesquisa = document.querySelector('.tab-settings[data-target="set-search"]');
-        if (tabPesquisa) tabPesquisa.click(); // Salta direto para a aba de pesquisa
-    };
-}
-
-    // 3. GESTÃO DE ABAS
+    // 3. GESTÃO DE ABAS DO PAINEL
     const tabs = document.querySelectorAll('.tab-settings');
     tabs.forEach(tab => {
         tab.onclick = () => {
@@ -102,179 +68,159 @@ if (btnLupaTopo) {
         };
     });
 
-    // 4. LÓGICA DE BUSCA SEMÂNTICA (NEXO GPS)
-  const btnBusca = document.getElementById('btn-executar-tab-search');
-const inputBusca = document.getElementById('input-tab-search');
+    // ========================================================
+    // 📡 MOTOR NEXO GPS (BUSCA SEMÂNTICA)
+    // ========================================================
 
-if (btnBusca) {
-    btnBusca.onclick = async () => {
-        const query = inputBusca.value.trim();
-        if (!query) return;
-
-        const status = document.getElementById('search-status-info');
-        const listaUI = document.getElementById('list-results-gps');
+    const executarBuscaGps = async (termo) => {
+        if (!termo) return;
 
         btnBusca.disabled = true;
         btnBusca.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
-        listaUI.innerHTML = "";
+        listaUI.style.opacity = "0.4"; // Feedback de processamento
         
-        status.innerHTML = `
-            <div style="text-align:center; padding:20px; color:var(--primary);">
-                <i class="fa-brands fa-mailchimp fa-bounce" style="font-size:35px; margin-bottom:15px; display:block;"></i>
-                <p style="font-family:monospace; font-size:10px; font-weight:800; letter-spacing:2px; text-transform:uppercase;">PROCESSANDO SINAPSE...</p>
+        statusInfo.innerHTML = `
+            <div style="text-align:center; padding:10px; color:var(--primary);">
+                <i class="fa-brands fa-mailchimp fa-bounce" style="font-size:30px; margin-bottom:10px; display:block;"></i>
+                <p style="font-family:monospace; font-size:9px; font-weight:800; letter-spacing:2px; text-transform:uppercase;">VARRENDO A REDE...</p>
             </div>`;
 
         try {
             const { AISearchEngine } = await import('../direita/ai-search-engine.js');
-            const resultados = await AISearchEngine.procurar(query, db, user.uid);
+            const resultados = await AISearchEngine.procurar(termo, db, user.uid);
 
-            if (!resultados || resultados.length === 0) {
-                status.innerHTML = `<span style="color:#f87171;">❌ Nenhuma nota encontrada.</span>`;
-            } else {
-                status.innerHTML = `✅ Encontrei <b>${resultados.length}</b> correspondências:`;
-              resultados.forEach(nota => {
-    const card = document.createElement('div');
-    card.className = "menu-item-list";
-    
-    // 🎨 DESIGN MELHORADO (IGUAL AO PRINT)
-    card.style.cssText = `
-        background: rgba(99, 102, 241, 0.08); 
-        border: 1px solid rgba(99, 102, 241, 0.2); 
-        border-left: 4px solid var(--primary); 
-        margin-bottom: 10px; 
-        padding: 15px; 
-        cursor: pointer; 
-        display: flex; 
-        flex-direction: column; 
-        gap: 6px;
-        border-radius: 12px;
-        transition: 0.2s;
-    `;
+            listaUI.innerHTML = "";
+            listaUI.style.opacity = "1";
 
-    card.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
-            <div style="display:flex; align-items:center; gap:12px;">
-                <i class="fa-solid fa-file-lines" style="color:var(--primary); font-size:14px;"></i>
-                <span style="font-weight:800; color:white; font-size:15px; letter-spacing:0.3px;">${nota.title}</span>
-            </div>
-            <i class="fa-solid fa-arrow-right-to-bracket" style="opacity:0.2; font-size:14px;"></i>
-        </div>
-        <div style="font-size:12px; color:var(--text-muted); padding-left:26px; font-style: italic; line-height:1.4; opacity:0.8;">
-            "${nota.snippet}..."
-        </div>
-    `;
+          if (!resultados || resultados.length === 0) {
+    statusInfo.innerHTML = `<span style="color:#f87171;">❌ Nenhuma correspondência encontrada.</span>`;
+} else {
+    statusInfo.innerHTML = `✅ Encontrei <b>${resultados.length}</b> resultados:`;
+           
+                
+                resultados.forEach(nota => {
+                    const card = document.createElement('div');
+                    card.className = "menu-item-list";
+                    
+                    // 🎨 DESIGN DINÂMICO (LOCAL=Indigo | SHARE=Vermelho)
+                    const isShare = (nota.source && nota.source.toUpperCase() === "SHARE");
+                    const corPrimaria = isShare ? "#ef4444" : "var(--primary)";
+                    const bgCard = isShare ? "rgba(239, 68, 68, 0.08)" : "rgba(99, 102, 241, 0.08)";
+                    const borderCard = isShare ? "rgba(239, 68, 68, 0.2)" : "rgba(99, 102, 241, 0.2)";
 
-card.onclick = async () => {
-    console.log("🎯 [GPS] Clicado no resultado:", nota);
-    
-    const overlay = document.getElementById('popup-settings-overlay');
-    if (overlay) overlay.classList.remove('active');
+                    card.style.cssText = `
+                        background: ${bgCard}; border: 1px solid ${borderCard}; 
+                        border-left: 4px solid ${corPrimaria}; margin-bottom: 10px; 
+                        padding: 15px; cursor: pointer; display: flex; 
+                        flex-direction: column; gap: 8px; border-radius: 12px; transition: 0.2s;
+                    `;
 
-    try {
-        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js");
-        const { abrirNotaNoEditor } = await import('../editor/editor.js');
+                    card.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:center; width:100%; pointer-events:none;">
+                            <div style="display:flex; align-items:center; gap:12px;">
+                                <i class="fa-solid ${isShare ? 'fa-share-nodes' : 'fa-file-lines'}" style="color:${corPrimaria}; font-size:14px;"></i>
+                                <span style="font-weight:800; color:white; font-size:15px; letter-spacing:0.3px;">${nota.title}</span>
+                            </div>
+                            <span style="font-size:8px; font-weight:900; color:${corPrimaria}; opacity:0.7; border:1px solid ${corPrimaria}; padding:2px 6px; border-radius:4px; text-transform:uppercase;">${isShare ? 'SHARE' : 'LOCAL'}</span>
+                        </div>
+                        <div style="font-size:12.5px; color:var(--text-muted); padding-left:26px; font-style: italic; line-height:1.4; opacity:0.9;">
+                            "${nota.snippet}..."
+                        </div>
+                    `;
 
-        // 🕵️ PASSO 1: Tentar procurar na coleção "Local"
-        console.log("🔍 [GPS] Procurando na coleção Local...");
-        let noteRef = doc(db, "Local", nota.id);
-        let snap = await getDoc(noteRef);
+                    card.onclick = async () => {
+                        // 1. Extração Blindada do ID (IA-Safe)
+                        const idNotaRaw = nota.id || nota.ID || nota.Id;
+                        const idNotaLimpo = idNotaRaw ? String(idNotaRaw).trim() : null;
+                        
+                        const idBlocoRaw = nota.blockId || nota.blockid || nota.BlockId;
+                        const idBlocoLimpo = idBlocoRaw ? String(idBlocoRaw).trim() : null;
 
-        // 🕵️ PASSO 2: Se não encontrar no Local, tenta no "Share"
-        if (!snap.exists()) {
-            console.log("ℹ️ [GPS] Não está no Local. Tentando coleção Share...");
-            noteRef = doc(db, "Share", nota.id);
-            snap = await getDoc(noteRef);
-        }
+                        if (!idNotaLimpo) return alert("Erro no endereço da nota devolvido pela IA.");
 
-        if (snap.exists()) {
-            console.log("✅ [GPS] Nota localizada com sucesso!");
-            
-            // 🚀 PASSO 3: Abrir no editor
-            // nota.blockId é o ID do bloco azul que a IA detetou
-            await abrirNotaNoEditor(nota.id, snap.data(), db, auth, nota.blockId);
-            
-            // UX: Fechar menus mobile se necessário
-            if (window.innerWidth <= 768) {
-                document.getElementById('area-esquerda')?.classList.add('closed');
-                document.getElementById('mobile-overlay')?.classList.remove('active');
-            }
-        } else {
-            // Se não existe em lado nenhum
-            console.error("❌ [GPS] A nota ID: " + nota.id + " desapareceu do mapa.");
-            alert("A nota parece ter sido movida ou eliminada.");
-        }
-    } catch (err) {
-        console.error("❌ [GPS] Erro no salto:", err);
-    }
-};
-    listaUI.appendChild(card);
-});
-            }
-        } catch (err) { status.innerHTML = "Erro na busca."; }
-        finally { btnBusca.disabled = false; btnBusca.innerHTML = `<i class="fa-solid fa-paper-plane"></i>`; }
-    };
-    inputBusca.onkeydown = (e) => { if (e.key === 'Enter') btnBusca.click(); };
-}
+                        overlay.classList.remove('active');
 
-    // 5. TOGGLE: REDE DE RESPOSTAS
-   if (checkShare) {
-    checkShare.onchange = async (e) => {
-        // Se a checkbox estiver marcada, guarda "on", senão guarda "off"
-        const novoStatus = e.target.checked ? "on" : "off";
-        
-        try {
-            await updateDoc(userRef, { shareAnswers: novoStatus });
-            // ... resto do código de partilha pública ...
-        } catch (err) { 
-            console.error("Erro ao atualizar rede de respostas:", err); 
-        }
-    };
-}
+                        try {
+                            const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js");
+                            const { abrirNotaNoEditor } = await import('../editor/editor.js');
 
-    // 6. TOGGLE: COLAPSO DE TÍTULOS
-    if (checkColapso) {
-        checkColapso.onchange = async (e) => {
-            try {
-                await updateDoc(userRef, { colapsoTitulos: e.target.checked });
-                window.location.reload(); 
-            } catch (err) { console.error(err); }
-        };
-    }
+                            // 2. Busca Automática em Ambbas as Coleções (Fallback)
+                            let colecaoPrincipal = isShare ? "Share" : "Local";
+                            let noteRef = doc(db, colecaoPrincipal, idNotaLimpo);
+                            let snap = await getDoc(noteRef);
 
-    // 7. SELEÇÃO DE AVATAR
-    document.querySelectorAll('.avatar-item').forEach(item => {
-        item.onclick = async () => {
-            const novoAvatar = item.dataset.avatar;
-            atualizarIconeBotaoTopo(novoAvatar);
-            try {
-                await updateDoc(userRef, { avatar: novoAvatar });
-                document.querySelectorAll('.avatar-item').forEach(i => i.classList.remove('active'));
-                item.classList.add('active');
-            } catch (e) { console.error(e); }
-        };
-    });
-
-    // 8. SLIDERS DE FONTES (Universal)
-    document.querySelectorAll('.field-font input[type="range"]').forEach(slider => {
-        slider.oninput = (e) => {
-            const varName = e.target.getAttribute('data-var');
-            const valor = e.target.value;
-            document.documentElement.style.setProperty(varName, valor + 'px');
-            
-            clearTimeout(timerGravacao);
-            timerGravacao = setTimeout(async () => {
-                const config = {};
-                document.querySelectorAll('.field-font input[type="range"]').forEach(i => {
-                    config[i.getAttribute('data-var')] = i.value;
+                            if (!snap.exists()) {
+                                // Tenta na outra coleção se a primeira falhar
+                                colecaoPrincipal = (colecaoPrincipal === "Local") ? "Share" : "Local";
+                                noteRef = doc(db, colecaoPrincipal, idNotaLimpo);
+                                snap = await getDoc(noteRef);
+                            }
+                            
+                            if (snap.exists()) {
+                                // 🚀 SALTO DE PRECISÃO: Abre nota e faz scroll para o parágrafo
+                                await abrirNotaNoEditor(idNotaLimpo, snap.data(), db, auth, idBlocoLimpo);
+                                
+                                // UX: Fechar menu mobile se estiver aberto
+                                if (window.innerWidth <= 768) {
+                                    document.getElementById('area-esquerda')?.classList.add('closed');
+                                    document.getElementById('mobile-overlay')?.classList.remove('active');
+                                }
+                            } else {
+                                alert("Nota não localizada. Pode ter sido movida ou removida.");
+                            }
+                        } catch (err) { console.error("Erro no salto GPS:", err); }
+                    };
+                    listaUI.appendChild(card);
                 });
-                await updateDoc(userRef, { tamanholetra: config });
-            }, 1500);
-        };
-    });
 
-    // 9. LOGOUT E AMIGOS
+                // Mostrar o campo de refinamento após a primeira busca
+                refineContainer.style.display = 'block';
+                 inputRefine.value = ""; 
+            }
+        } catch (err) { 
+            console.error(err);
+            statusInfo.innerHTML = `<span style="color:#ef4444;">Erro na varredura do satélite.</span>`; 
+        }
+        finally { 
+            btnBusca.disabled = false; 
+            btnBusca.innerHTML = `<i class="fa-solid fa-paper-plane"></i>`; 
+        }
+    };
+
+    // Listeners de Busca
+    btnBusca.onclick = () => executarBuscaGps(inputBusca.value.trim());
+    inputBusca.onkeydown = (e) => { if (e.key === 'Enter') btnBusca.click(); };
+    
+    // Listener de Refinamento (Enter no campo itálico)
+    inputRefine.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+            const contextoExtra = inputRefine.value.trim();
+            if (contextoExtra) {
+                const perguntaCompleta = `No contexto anterior, foca agora em: ${contextoExtra}`;
+                executarBuscaGps(perguntaCompleta);
+                inputRefine.value = "";
+            }
+        }
+    };
+
+    // 4. LOGOUT E SLIDERS (MANUTENÇÃO)
     const btnSair = document.getElementById('btnConfirmarSair');
     if (btnSair) btnSair.onclick = () => signOut(auth).then(() => window.location.reload());
 
     inicializarAmigos(db, auth);
+}
+
+/**
+ * UTILS: AVATAR E UI
+ */
+function atualizarIconeBotaoTopo(avatar) {
+    const btn = document.getElementById('btnDefinicoes');
+    if (!btn) return;
+    const icone = btn.querySelector('i');
+    if (!icone) return;
+    if (!avatar || avatar === "gear") { icone.className = "fa-solid fa-gear"; }
+    else {
+        const prefixo = (avatar === 'discord' || avatar === 'xbox') ? 'fa-brands' : 'fa-solid';
+        icone.className = `${prefixo} fa-${avatar}`;
+    }
 }
