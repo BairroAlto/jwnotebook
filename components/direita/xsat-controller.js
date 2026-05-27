@@ -87,40 +87,43 @@ function getAbaId(nome) {
 export async function dispararPesquisaParabolica(textoBruto, isGlobal = false) {
     console.log(`🛰️ [X-SAT] Iniciando varredura ${isGlobal ? 'GLOBAL' : 'INDIVIDUAL'}`);
 
-    // 1. FEEDBACK IMEDIATO: Saltar para o painel X-SAT na hora!
-    if (window.switchPanel) {
-        window.switchPanel('xsat');
-    } else {
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById('panel-xsat').classList.add('active');
-    }
-
-    // 2. GESTÃO DE CANAL
-    // Procura o primeiro canal livre ou limpa o Canal 1 se estiverem todos ocupados
-    let canalId = Object.keys(estadosCanais).find(id => estadosCanais[id].ativa === false);
+    // 1. GESTÃO DE CANAL: Procura o primeiro canal livre (entre 1 e 5)
+    // Se estiverem todos ocupados, limpa o Canal 1 para reutilização.
+    let canalId = Object.keys(estadosCanais).find(id => estadosCanais[id].ativa === false && id !== "6");
+    
     if (!canalId) {
         canalId = "1";
+        // Reset preventivo do estado do Canal 1
         estadosCanais[1] = { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' };
     }
 
     canalSelecionadoUI = canalId;
 
-    // Ativar visualmente o número do canal no topo
+    // 2. MARCAR CANAL NA UI: Ativar visualmente o número ANTES de trocar de painel
+    // Isto é vital para que o switchPanel no index.html não force a abertura da IA (Canal 6)
     document.querySelectorAll('.xsat-num').forEach(b => b.classList.remove('active'));
     const btnNum = document.querySelector(`.xsat-num[data-num="${canalId}"]`);
     if (btnNum) btnNum.classList.add('active');
 
-    // 3. INJETAR ANIMAÇÃO ARTÍSTICA IMEDIATAMENTE (Antes de processar o texto)
+    // 3. TROCAR PAINEL: Saltar para o X-SAT agora que o canal já está "reservado"
+    if (window.switchPanel) {
+        window.switchPanel('xsat');
+    }
+
+    // 4. PREPARAR INTERFACE: Mostrar a sub-navegação (necessária para canais 1-5)
+    const subNav = document.getElementById('xsat-sub-nav');
+    if (subNav) subNav.style.display = 'flex';
+
+    // 5. INJETAR ANIMAÇÃO ARTÍSTICA IMEDIATAMENTE
     const display = document.getElementById('xsat-display-content');
     if (!display) return;
 
     const temaCor = isGlobal ? '#34d399' : '#6366f1';
-    const iconePrincipal = isGlobal ? 'fa-satellite' : 'fa-satellite';
+    const iconePrincipal = 'fa-satellite';
 
     display.innerHTML = `
         <div class="xsat-sync-wrapper ${isGlobal ? 'global-mode' : ''}">
-            
-            <!-- Chuva de Meteoros (10 elementos para o CSS desenhar) -->
+            <!-- Chuva de Meteoros -->
             <div class="xsat-meteor-rain">
                 ${'<div class="meteor"></div>'.repeat(10)}
             </div>
@@ -157,17 +160,17 @@ export async function dispararPesquisaParabolica(textoBruto, isGlobal = false) {
             </div>
         </div>`;
 
-    // 4. INICIAR PROCESSAMENTO COM SUSPENSÃO ARTÍSTICA (Min. 2.2 segundos)
+    // 6. INICIAR PROCESSAMENTO COM SUSPENSÃO ARTÍSTICA (Mínimo de 2.2 segundos para percepção visual)
     estadosCanais[canalId].ativa = true;
     
     try {
-        // Corremos a pesquisa e o cronómetro de animação em paralelo
+        // Executa a varredura dos JSONs e o cronómetro em paralelo
         const [payload] = await Promise.all([
             processarPesquisaSat(textoBruto, canalId),
             new Promise(resolve => setTimeout(resolve, 2200)) 
         ]);
 
-        // 5. VALIDAR RESULTADOS
+        // 7. VALIDAR RESULTADOS
         if (!payload || !payload.referencias || payload.referencias.length === 0) {
             display.innerHTML = `
                 <div style="text-align:center; padding:50px 20px; opacity:0.6;">
@@ -180,7 +183,7 @@ export async function dispararPesquisaParabolica(textoBruto, isGlobal = false) {
             return;
         }
 
-        // 6. MAPEAR DADOS E ATIVAR PICCARDS
+        // 8. CONFIGURAR DADOS NO CANAL
         estadosCanais[canalId].versiculos = payload.referencias.map(ref => ({
             nome: `${ref.livro} ${ref.cap}:${ref.ver}`,
             ativo: true 
@@ -188,7 +191,7 @@ export async function dispararPesquisaParabolica(textoBruto, isGlobal = false) {
 
         estadosCanais[canalId].dados = payload.resultados;
 
-        // 7. FINALIZAR: MOSTRAR RESULTADOS (Abre a aba de Publicações por defeito)
+        // 9. FINALIZAR: Simular clique na aba de Publicações para mostrar os resultados
         const btnPub = document.getElementById('btn-xsat-pub');
         if (btnPub) btnPub.click(); 
 
