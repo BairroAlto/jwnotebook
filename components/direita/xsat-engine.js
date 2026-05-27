@@ -131,10 +131,12 @@ function gerarSuperPadroes(ref) {
  */
 function procurarNoJson(json, referencias, listaDestino, labelExibicao, caminho, contextId) {
     const partes = caminho.split('/');
+    const fileName = partes[partes.length - 1].replace('.json', '');
+
     const metaFicheiro = { 
-        sigla: json.id || (partes.includes('publicacoes') ? partes[2] : partes[partes.length-1].replace('.json', '')), 
+        sigla: (contextId === 'livro') ? fileName : (json.id || (partes.includes('publicacoes') ? partes[2] : fileName)), 
         ano: partes.find(p => p.match(/^\d{4}$/)) || "", 
-        mes: partes[partes.length - 1].replace('.json', '') 
+        mes: fileName 
     };
 
     const blocosPai = json.artigos || json.capitulos || (json.video ? [json.video] : []);
@@ -142,62 +144,67 @@ function procurarNoJson(json, referencias, listaDestino, labelExibicao, caminho,
     blocosPai.forEach(itemPai => {
         if (!itemPai.conteudo) return;
 
-        referencias.forEach(ref => {
-            const padroes = gerarSuperPadroes(ref);
-            let snippetEncontrado = "";
-            let paragrafoAlvo = null;
+        // 🚀 MUDANÇA: Varremos cada bloco de texto individualmente
+        itemPai.conteudo.forEach(bloco => {
+            if (!bloco.texto) return;
+            const textoLower = bloco.texto.toLowerCase();
 
-            const blocoMatch = itemPai.conteudo.find(bloco => {
-                if (!bloco.texto) return false;
-                const textoLower = bloco.texto.toLowerCase();
-                
-                // 1. Match exato com os padrões gerados
+            referencias.forEach(ref => {
+                const padroes = gerarSuperPadroes(ref);
+                let matchEncontrado = false;
+                let termoDetectado = "";
+
+                // 1. Verificação por Padrões Literais
                 const patternMatch = padroes.find(p => {
                     const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                     return new RegExp(escaped + "(?!\\d)", "i").test(textoLower);
                 });
 
                 if (patternMatch) {
-                    snippetEncontrado = criarSnippet(bloco.texto, patternMatch);
-                    paragrafoAlvo = bloco.numero_ref;
-                    return true;
-                }
-
-                // 2. Lógica de Intervalo (Ex: 3:1-10 contém o 3:5)
-                const regexIntervalo = new RegExp(`(?:${ref.livro}|${ref.abrev}\\.?)\\s+${ref.cap}:(\\d+)-(\\d+)`, 'gi');
-                let matchR;
-                while ((matchR = regexIntervalo.exec(textoLower)) !== null) {
-                    if (ref.ver >= parseInt(matchR[1]) && ref.ver <= parseInt(matchR[2])) {
-                        snippetEncontrado = criarSnippet(bloco.texto, matchR[0]);
-                        paragrafoAlvo = bloco.numero_ref;
-                        return true;
+                    matchEncontrado = true;
+                    termoDetectado = patternMatch;
+                } 
+                // 2. Lógica de Intervalo ou Listas (Ex: 65:1, 2 ou 65:1-5)
+                else {
+                    const regexFlexivel = new RegExp(`(?:${ref.livro}|${ref.abrev}\\.?)\\s+${ref.cap}[:\\s](\\d+)(?:[\\s,\\-]*(\\d+))?`, 'gi');
+                    let m;
+                    while ((m = regexFlexivel.exec(textoLower)) !== null) {
+                        const vInicio = parseInt(m[1]);
+                        const vFim = m[2] ? parseInt(m[2]) : vInicio;
+                        
+                        if (ref.ver >= vInicio && ref.ver <= vFim) {
+                            matchEncontrado = true;
+                            termoDetectado = m[0];
+                            break;
+                        }
                     }
                 }
-                return false;
-            });
 
-            if (blocoMatch) {
-                const idUnico = (itemPai.titulo || labelExibicao) + ref.livro + ref.cap + ref.ver;
-                if (!listaDestino.some(ex => ex._idKey === idUnico)) {
-                    listaDestino.push({
-                        _idKey: idUnico,
-                        titulo: itemPai.titulo || json.titulo || labelExibicao,
-                        referencia: `${ref.livro} ${ref.cap}:${ref.ver}`,
-                        contexto: labelExibicao,
-                        resumo: snippetEncontrado,
-                        bridge: {
-                            contexto: contextId,
-                            sigla: metaFicheiro.sigla,
-                            ano: metaFicheiro.ano,
-                            mes: metaFicheiro.mes,
-                            artigo: itemPai.titulo,
-                            capitulo: String(itemPai.capitulo || "").replace(/\D/g, '') || "1",
-                            oque: blocoMatch.tipo || "paragrafo",
-                            paragrafos: [paragrafoAlvo]
-                        }
-                    });
+                if (matchEncontrado) {
+                    // 🚀 CHAVE ÚNICA: Inclui o número do parágrafo para permitir múltiplos resultados do mesmo artigo
+                    const idUnico = `${fileName}-${itemPai.titulo || 'cap'}-${bloco.numero_ref}-${ref.livro}-${ref.cap}-${ref.ver}`;
+                    
+                    if (!listaDestino.some(ex => ex._idKey === idUnico)) {
+                        listaDestino.push({
+                            _idKey: idUnico,
+                            titulo: itemPai.titulo || json.titulo || labelExibicao,
+                            referencia: `${ref.livro} ${ref.cap}:${ref.ver}`,
+                            contexto: `${labelExibicao} (§${bloco.numero_ref})`, // Mostra o parágrafo no card
+                            resumo: criarSnippet(bloco.texto, termoDetectado),
+                            bridge: {
+                                contexto: contextId,
+                                sigla: metaFicheiro.sigla,
+                                ano: metaFicheiro.ano,
+                                mes: metaFicheiro.mes,
+                                artigo: itemPai.titulo || "",
+                                capitulo: String(itemPai.capitulo || "").replace(/\D/g, '') || "1",
+                                oque: bloco.tipo || "paragrafo",
+                                paragrafos: [bloco.numero_ref] // 🎯 Envia o parágrafo exato para o salto
+                            }
+                        });
+                    }
                 }
-            }
+            });
         });
     });
 }
