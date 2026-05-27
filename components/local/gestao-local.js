@@ -160,6 +160,8 @@ function configurarCliquesPopup() {
  * 3. FUNÇÃO DE ABERTURA (Disparada pela Roldana na lista)
  */
 window.abrirEditorItemLocal = async (id, tipo, nome) => {
+    const btnOcultar = document.getElementById('btn-gestao-ocultar');
+    if (btnOcultar) btnOcultar.style.display = 'flex';
     const db = getFirestore();
     const auth = getAuth();
     const uid = auth.currentUser.uid;
