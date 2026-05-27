@@ -285,6 +285,16 @@ window.saltarParaFonteSat = (index, canalId) => {
     const filtrados = canal.dados[canal.abaAtiva].filter(item => refsAtivas.includes(item.referencia));
     const item = filtrados[index];
     if (!item || !item.bridge) return;
+
+
+ // 🕵️ LOG DE CLIQUE
+    console.log("%c🖱️ [X-SAT CLICK] Disparando Salto!", "color: #6366f1; font-weight: bold; background: #1e293b; padding: 3px 8px; border-radius: 4px;", {
+        texto_no_card: item.titulo,
+        referencia_via: item.referencia,
+        metadados_envio: item.bridge
+    });
+
+
     jumpInProgress = true;
     const btnLists = Array.from(document.querySelectorAll('#left-buttons button')).find(b => b.innerText.trim().toUpperCase() === 'LISTS');
     if (btnLists) btnLists.click();
