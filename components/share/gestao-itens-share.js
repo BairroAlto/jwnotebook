@@ -21,15 +21,26 @@ window.abrirGestaoItemShare = async (id, tipo, nome) => {
         const snap = await getDoc(doc(db, "Share", id));
         if (!snap.exists()) return;
 
-        itemAlvo = { id, tipo, ...snap.data() };
+        const dadosFirestore = snap.data();
+        itemAlvo = { id, tipo, ...dadosFirestore };
 
-        // --- Configuração Visual do Popup ---
+        // 1. CONFIGURAÇÃO VISUAL BÁSICA
         document.getElementById('gestao-item-titulo').innerText = `Gerir ${tipo === 'pasta' ? 'Pasta' : 'Nota'} Share`;
         const inputNome = document.getElementById('input-gestao-nome');
         inputNome.value = itemAlvo.nome;
-        
-        // Esconder seletor de ícones (fixo no Share) e mostrar botão Top
-        document.getElementById('seccao-icones-pasta').style.display = 'none';
+
+        // ========================================================
+        // 🚀 REGRA DE SEGURANÇA: VERIFICAR SE É O DONO
+        // ========================================================
+        const btnOcultar = document.getElementById('btn-gestao-ocultar');
+        const souDono = (itemAlvo.userId === uid);
+
+        if (btnOcultar) {
+            // Se eu for o dono, o botão aparece (flex). Se não for, fica invisível (none).
+            btnOcultar.style.display = souDono ? 'flex' : 'none';
+        }
+
+        // --- Resto da configuração dos botões ---
         const btnTop = document.getElementById('btn-gestao-top');
         const btnPin = document.getElementById('btn-gestao-pin');
         btnTop.style.display = 'flex';
