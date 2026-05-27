@@ -1,14 +1,19 @@
 // components/direita/ai-gps-engine.js
 
+/**
+ * MOTOR DE PESQUISA SEMÂNTICA (NEXO GPS) - FROTA GRATUITA
+ * Estratégia de Fallback: Tenta vários modelos até obter uma resposta válida.
+ */
+
 // 1. MONTAGEM DA CHAVE (Versão Ofuscada)
 const _P1 = "sk-or-";
 const _P2 = "v1-";
 const _P3 = "5deed9c3b7fa3074df477442e7a3af296569ff15425b068f25381844022bf121"; 
-const K_GPS = (_P1 + _P2 + _P3).trim();
+const OPENROUTER_API_KEY = (_P1 + _P2 + _P3).trim();
 
-// 2. LISTA DE MODELOS GRATUITOS PARA FALLBACK
+// 2. LISTA DE MODELOS (FROTA GRATUITA PARA FALLBACK)
 const MODELS_TO_TRY = [
-        // --- TOP DE LINHA (Modelos Grandes) ---
+    // --- Modelos Grandes e Inteligentes ---
     "meta-llama/llama-3.3-70b-instruct:free",
     "nousresearch/hermes-3-405b:free",
     "openai/gpt-oss-120b:free",
@@ -42,32 +47,36 @@ const MODELS_TO_TRY = [
 
 export const GpsEngine = {
     /**
-     * Tenta localizar as notas usando modelos gratuitos com sistema de retentativa
+     * VARREDURA DE MEMÓRIA COM FALLBACK
+     * @param {string} pergunta - O que o utilizador procura.
+     * @param {string} mapaMemoria - O índice consolidado dos Shards.
      */
     varrerMemoria: async (pergunta, mapaMemoria) => {
-        const systemPrompt = `... responde APENAS com um array JSON de objetos: 
-{"id": "ID_DA_NOTA", "blockId": "ID_DO_BLOCO", "title": "TITULO", "snippet": "TRECHO"}.
-
-REGRAS:
-        1. Baseia-te no SIGNIFICADO da pergunta, não apenas em palavras iguais.
-        2. O snippet deve ter no máximo 80 caracteres.
-        3. Se não houver nada relevante, responde []. 
-        4. Responde apenas o JSON bruto, sem explicações.
         
-        Índice de Memória:\n${mapaMemoria}`;
+        const systemPrompt = `Tu és o Navegador GPS do notABook. Analisa o índice e localiza as notas relevantes.
 
-        // 🚀 LOOP DE FALLBACK
+REGRAS OBRIGATÓRIAS DE RESPOSTA:
+1. Responde APENAS com um array JSON válido, sem texto extra.
+2. Formato: [{"id": "ID_NOTA", "blockId": "ID_BLOCO", "source": "LOCAL_OU_SHARE", "title": "TITULO", "snippet": "RESUMO"}]
+3. O "id" da nota vem após 'ID:'.
+4. O "blockId" vem dentro de '{ID:...}'. Extrai o UUID corretamente. Se não houver, usa null.
+5. O "source" é 'SHARE' se vires 'ORIGEM: SHARE', senão assume 'LOCAL'.
+6. Baseia-te no SIGNIFICADO da pergunta. Se a pergunta for "Sobre Isaías", procura menções a Isaías ou textos bíblicos dele.
+
+Índice de Memória:\n${mapaMemoria}`;
+
+        // 🚀 INÍCIO DO CICLO DE FALLBACK
         for (const model of MODELS_TO_TRY) {
             try {
-                console.log(`📡 [GPS-RADAR] Tentando sintonizar via: ${model}`);
+                console.log(`📡 [GPS-RADAR] Tentando sintonizar sinal via: ${model}`);
                 
                 const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
                     method: "POST",
                     headers: { 
-                        "Authorization": "Bearer " + K_GPS, 
+                        "Authorization": "Bearer " + OPENROUTER_API_KEY, 
                         "Content-Type": "application/json",
-                        "HTTP-Referer": window.location.origin, // Requisito OpenRouter
-                        "X-Title": "notABook X"
+                        "HTTP-Referer": window.location.origin,
+                        "X-Title": "notABook X - GPS"
                     },
                     body: JSON.stringify({
                         "model": model,
@@ -75,27 +84,38 @@ REGRAS:
                             { "role": "system", "content": systemPrompt },
                             { "role": "user", "content": pergunta }
                         ],
-                        "temperature": 0.3 // Baixa temperatura para resultados mais exatos
+                        "temperature": 0.3,
+                        "top_p": 1,
+                        "frequency_penalty": 0,
+                        "presence_penalty": 0
                     })
                 });
 
-                if (!response.ok) throw new Error(`Status: ${response.status}`);
+                // Se o modelo der erro (429 tráfego, 400 bad request, etc), lançamos erro para o catch
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`Modelo indisponível: ${errorData.error?.message || response.status}`);
+                }
 
                 const data = await response.json();
-                const conteudo = data.choices[0].message.content;
+                const conteudo = data.choices[0]?.message?.content;
                 
-                if (conteudo && conteudo.includes("[")) {
+                // Verificação básica se a resposta contém o início de um JSON
+                if (conteudo && (conteudo.includes("[") || conteudo.includes("{"))) {
                     console.log(`✅ [GPS-SUCCESS] Resposta obtida através de: ${model}`);
                     return conteudo;
+                } else {
+                    throw new Error("Resposta em formato inválido.");
                 }
 
             } catch (err) {
-                console.warn(`⚠️ [GPS-RETRY] Modelo ${model} falhou. Saltando para o próximo...`);
-                continue; // Tenta o próximo modelo da lista
+                console.warn(`⚠️ [GPS-RETRY] Falha no modelo ${model}: ${err.message}. Tentando o próximo da lista...`);
+                // O loop continua para o próximo modelo em MODELS_TO_TRY
             }
         }
 
-        console.error("❌ [GPS-CRITICAL] Todos os modelos da frota falharam ou excederam o limite.");
+        // Se sair do loop sem retornar, é porque todos os modelos falharam
+        console.error("❌ [GPS-CRITICAL] A frota de modelos está fora do ar ou ocupada.");
         return "ERROR";
     }
 };
