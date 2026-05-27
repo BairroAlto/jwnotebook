@@ -188,40 +188,49 @@ async function enviarCopiaParaNota(idDestino, nomeDestino, abaAlvo) {
             const dataDest = snapDest.data();
             let caixasDest = dataDest.caixas || [];
             
-            // CRIAR CLONE DO BLOCO
+            // 1. CRIAR O CLONE ATÓMICO DA CAIXA
             let novaCopia = JSON.parse(JSON.stringify(caixaAtual));
             novaCopia.id = crypto.randomUUID();
             novaCopia.estado = "on";
             novaCopia.origem = "copia";
             novaCopia.timestamp = new Date().toISOString();
             
-            // DECIDIR POSIÇÃO (NORMAL vs POST)
+            // ========================================================
+            // 🚀 LÓGICA DE POSICIONAMENTO INTELIGENTE (NORMAL vs POST)
+            // ========================================================
             const modosDest = Array.isArray(dataDest.modo) ? dataDest.modo : [dataDest.modo || 'normal'];
+            
             if (modosDest.includes('post')) {
+                // MODO POST: Inserir no início do array (Topo do feed)
+                console.log(`📥 [PARTILHA] Nota destino em modo POST. Inserindo no topo.`);
                 caixasDest.unshift(novaCopia);
             } else {
+                // MODO NORMAL: Inserir no fim do array (Fundo do feed)
+                console.log(`📥 [PARTILHA] Nota destino em modo NORMAL. Inserindo no fim.`);
                 caixasDest.push(novaCopia);
             }
 
-            // RE-INDEXAR ORDENS
-            caixasDest.forEach((c, i) => { c.ordem = i + 1; });
+            // 2. RE-INDEXAR ORDENS (Garante que a sequência 1, 2, 3... se mantém correta)
+            caixasDest.forEach((c, i) => { 
+                c.ordem = i + 1; 
+            });
 
-            // 1. GRAVAR NA NOTA DE DESTINO
+            // 3. GRAVAR NA NOTA DE DESTINO
             await updateDoc(docDestRef, { caixas: caixasDest });
-            console.log(`✅ [PARTILHA] Bloco copiado para: ${nomeDestino}`);
 
-            // 2. 🚀 ATUALIZAR ÍNDICE DE PESQUISA (NEXO GPS)
-            // Garantimos que a nota de destino seja agora pesquisável com este novo conteúdo.
+            // 4. ATUALIZAR ÍNDICE DE PESQUISA (NEXO GPS) DA NOTA ALVO
+            // Importante para que a nota destino reflita a nova caixa na busca semântica
             dispararIndexacao(db, auth.currentUser.uid, idDestino, {
                 nome: dataDest.nome,
                 caixas: caixasDest,
                 vincTopicos: dataDest.vincTopicos || []
             });
 
+            console.log(`✅ [SISTEMA] Bloco enviado com sucesso para: ${nomeDestino}`);
             window.fecharPopupPartilhar();
         }
     } catch (e) {
-        console.error("❌ Erro ao clonar para nota:", e);
-        alert("Erro ao enviar cópia. Tenta novamente.");
+        console.error("❌ Erro ao enviar cópia:", e);
+        alert("Erro ao processar partilha.");
     }
 }
