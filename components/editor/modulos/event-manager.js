@@ -95,6 +95,15 @@ export const EventManager = {
                 return; 
             }
 
+
+            if (m === 'sumar-global') {
+    import('./sumariar-service.js').then(mod => {
+        mod.SumariarService.abrirSumarioGlobal();
+    });
+    document.getElementById('popup-lab-overlay')?.classList.remove('active');
+    return;
+}
+
             // B) LÓGICA DE EXCLUSIVIDADE DE MODOS
             let atual = Array.isArray(ctx.dadosNotaOriginal.modo) ? [...ctx.dadosNotaOriginal.modo] : [ctx.dadosNotaOriginal.modo || 'normal'];
             let novos = [];
