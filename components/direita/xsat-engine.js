@@ -144,7 +144,7 @@ function procurarNoJson(json, referencias, listaDestino, labelExibicao, caminho,
     blocosPai.forEach(itemPai => {
         if (!itemPai.conteudo) return;
 
-        // 🚀 MUDANÇA: Varremos cada bloco de texto individualmente
+        // Varredura bloco a bloco para investigação profunda
         itemPai.conteudo.forEach(bloco => {
             if (!bloco.texto) return;
             const textoLower = bloco.texto.toLowerCase();
@@ -164,14 +164,13 @@ function procurarNoJson(json, referencias, listaDestino, labelExibicao, caminho,
                     matchEncontrado = true;
                     termoDetectado = patternMatch;
                 } 
-                // 2. Lógica de Intervalo ou Listas (Ex: 65:1, 2 ou 65:1-5)
+                // 2. Lógica de Intervalo ou Listas
                 else {
                     const regexFlexivel = new RegExp(`(?:${ref.livro}|${ref.abrev}\\.?)\\s+${ref.cap}[:\\s](\\d+)(?:[\\s,\\-]*(\\d+))?`, 'gi');
                     let m;
                     while ((m = regexFlexivel.exec(textoLower)) !== null) {
                         const vInicio = parseInt(m[1]);
                         const vFim = m[2] ? parseInt(m[2]) : vInicio;
-                        
                         if (ref.ver >= vInicio && ref.ver <= vFim) {
                             matchEncontrado = true;
                             termoDetectado = m[0];
@@ -181,15 +180,15 @@ function procurarNoJson(json, referencias, listaDestino, labelExibicao, caminho,
                 }
 
                 if (matchEncontrado) {
-                    // 🚀 CHAVE ÚNICA: Inclui o número do parágrafo para permitir múltiplos resultados do mesmo artigo
-                    const idUnico = `${fileName}-${itemPai.titulo || 'cap'}-${bloco.numero_ref}-${ref.livro}-${ref.cap}-${ref.ver}`;
+                    // 🚀 CHAVE ÚNICA: Evita que o mesmo parágrafo apareça várias vezes no canal
+                    const idUnico = `${metaFicheiro.sigla}-${itemPai.titulo || 'cap'}-${bloco.numero_ref}`.toLowerCase();
                     
                     if (!listaDestino.some(ex => ex._idKey === idUnico)) {
                         listaDestino.push({
                             _idKey: idUnico,
                             titulo: itemPai.titulo || json.titulo || labelExibicao,
                             referencia: `${ref.livro} ${ref.cap}:${ref.ver}`,
-                            contexto: `${labelExibicao} (§${bloco.numero_ref})`, // Mostra o parágrafo no card
+                            contexto: `${labelExibicao} (§${bloco.numero_ref})`,
                             resumo: criarSnippet(bloco.texto, termoDetectado),
                             bridge: {
                                 contexto: contextId,
@@ -198,8 +197,9 @@ function procurarNoJson(json, referencias, listaDestino, labelExibicao, caminho,
                                 mes: metaFicheiro.mes,
                                 artigo: itemPai.titulo || "",
                                 capitulo: String(itemPai.capitulo || "").replace(/\D/g, '') || "1",
+                                // 🚀 CORREÇÃO DO ERRO: Usando 'bloco' em vez de 'blocoMatch'
                                 oque: bloco.tipo || "paragrafo",
-                                paragrafos: [bloco.numero_ref] // 🎯 Envia o parágrafo exato para o salto
+                                paragrafos: [bloco.numero_ref] 
                             }
                         });
                     }
