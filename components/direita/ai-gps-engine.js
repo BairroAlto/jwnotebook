@@ -1,9 +1,5 @@
 // components/direita/ai-gps-engine.js
-
-/**
- * MOTOR DE PESQUISA SEMÂNTICA (NEXO GPS) - FROTA GRATUITA
- * Estratégia de Fallback: Tenta vários modelos até obter uma resposta válida.
- */
+import { MODELS_TO_TRY } from '../constants/ai-models.js';
 
 // 1. MONTAGEM DA CHAVE (Versão Ofuscada)
 const _P1 = "sk-or-";
@@ -11,61 +7,32 @@ const _P2 = "v1-";
 const _P3 = "5deed9c3b7fa3074df477442e7a3af296569ff15425b068f25381844022bf121"; 
 const OPENROUTER_API_KEY = (_P1 + _P2 + _P3).trim();
 
-// 2. LISTA DE MODELOS (FROTA GRATUITA PARA FALLBACK)
-const MODELS_TO_TRY = [
-    // --- Modelos Grandes e Inteligentes ---
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "nousresearch/hermes-3-405b:free",
-    "openai/gpt-oss-120b:free",
-    "qwen/qwen3-next-80b-a3b-instruct:free",
-    
-    // --- MODELOS NOVOS / EXPERIMENTAIS DA TUA LISTA ---
-    "poolside/laguna-m1:free",
-    "poolside/laguna-xs2:free",
-    "deepseek/deepseek-v4-flash:free",
-    "z-ai/glm-4.5-air:free",
-    "baidu/cobuddy:free",
-    "google/gemma-4-31b:free",
-    "google/gemma-4-26b-a4b:free",
-    "minimax/minimax-m2.5:free",
-    "qwen/qwen3-coder-480b-a35b:free",
-
-    // --- MODELOS NVIDIA / NEMOTRON ---
-    "nvidia/nemotron-3-nano-omni:free",
-    "nvidia/nemotron-3-nano-30b-a3b:free",
-    "nvidia/nemotron-nano-12b-2-vl:free",
-    "nvidia/nemotron-nano-9b-v2:free",
-
-    // --- MODELOS RÁPIDOS E LEVES ---
-    "google/gemini-2.0-flash-lite-preview-02-05:free",
-    "meta-llama/llama-3.2-3b-instruct:free",
-    "liquid/lfm2.5-1.2b-thinking:free",
-    "liquid/lfm2.5-1.2b-instruct:free",
-    "venice/uncensored:free",
-    "openai/gpt-oss-20b:free"
-];
-
+/**
+ * MOTOR DE PESQUISA SEMÂNTICA (NEXO GPS) - FROTA GRATUITA
+ * Este motor é especializado em localizar notas e blocos através do significado.
+ */
 export const GpsEngine = {
     /**
      * VARREDURA DE MEMÓRIA COM FALLBACK
-     * @param {string} pergunta - O que o utilizador procura.
-     * @param {string} mapaMemoria - O índice consolidado dos Shards.
+     * @param {string} pergunta - A dúvida ou intenção do utilizador.
+     * @param {string} mapaMemoria - O índice consolidado dos Shards (resumos das notas).
      */
     varrerMemoria: async (pergunta, mapaMemoria) => {
         
         const systemPrompt = `Tu és o Navegador GPS do notABook. Analisa o índice e localiza as notas relevantes.
 
 REGRAS OBRIGATÓRIAS DE RESPOSTA:
-1. Responde APENAS com um array JSON válido, sem texto extra.
-2. Formato: [{"id": "ID_NOTA", "blockId": "ID_BLOCO", "source": "LOCAL_OU_SHARE", "title": "TITULO", "snippet": "RESUMO"}]
-3. O "id" da nota vem após 'ID:'.
+1. Responde APENAS com um array JSON válido, sem texto explicativo antes ou depois.
+2. Estrutura: [{"id": "ID_NOTA", "blockId": "ID_BLOCO", "source": "LOCAL_OU_SHARE", "title": "TITULO", "snippet": "RESUMO"}]
+3. O "id" da nota vem após 'ID:'. Copia-o fielmente.
 4. O "blockId" vem dentro de '{ID:...}'. Extrai o UUID corretamente. Se não houver, usa null.
 5. O "source" é 'SHARE' se vires 'ORIGEM: SHARE', senão assume 'LOCAL'.
-6. Baseia-te no SIGNIFICADO da pergunta. Se a pergunta for "Sobre Isaías", procura menções a Isaías ou textos bíblicos dele.
+6. Baseia-te no SIGNIFICADO. Se o user perguntar por um tema, procura notas relacionadas mesmo que o título seja diferente.
+7. Se nada for encontrado, responde apenas: []
 
 Índice de Memória:\n${mapaMemoria}`;
 
-        // 🚀 INÍCIO DO CICLO DE FALLBACK
+        // 🚀 INÍCIO DO CICLO DE FALLBACK (Percorre a lista centralizada)
         for (const model of MODELS_TO_TRY) {
             try {
                 console.log(`📡 [GPS-RADAR] Tentando sintonizar sinal via: ${model}`);
@@ -85,37 +52,38 @@ REGRAS OBRIGATÓRIAS DE RESPOSTA:
                             { "role": "user", "content": pergunta }
                         ],
                         "temperature": 0.3,
-                        "top_p": 1,
-                        "frequency_penalty": 0,
-                        "presence_penalty": 0
+                        "response_format": { "type": "json_object" } // Sugestão para modelos que suportam
                     })
                 });
 
-                // Se o modelo der erro (429 tráfego, 400 bad request, etc), lançamos erro para o catch
                 if (!response.ok) {
                     const errorData = await response.json();
-                    throw new Error(`Modelo indisponível: ${errorData.error?.message || response.status}`);
+                    throw new Error(`Erro: ${errorData.error?.message || response.status}`);
                 }
 
                 const data = await response.json();
-                const conteudo = data.choices[0]?.message?.content;
+                let conteudo = data.choices[0]?.message?.content;
                 
-                // Verificação básica se a resposta contém o início de um JSON
-                if (conteudo && (conteudo.includes("[") || conteudo.includes("{"))) {
-                    console.log(`✅ [GPS-SUCCESS] Resposta obtida através de: ${model}`);
+                if (!conteudo) throw new Error("Resposta vazia.");
+
+                // 🚀 LIMPEZA DE MARKDOWN (Proteção contra modelos que usam blocos de código)
+                conteudo = conteudo.replace(/```json/g, "").replace(/```/g, "").trim();
+
+                // Verificação se a resposta parece um JSON
+                if (conteudo.startsWith("[") || conteudo.startsWith("{")) {
+                    console.log(`✅ [GPS-SUCCESS] Sintonizado com sucesso através de: ${model}`);
                     return conteudo;
                 } else {
-                    throw new Error("Resposta em formato inválido.");
+                    throw new Error("Formato de resposta não reconhecido.");
                 }
 
             } catch (err) {
-                console.warn(`⚠️ [GPS-RETRY] Falha no modelo ${model}: ${err.message}. Tentando o próximo da lista...`);
+                console.warn(`⚠️ [GPS-RETRY] Falha no modelo ${model}: ${err.message}`);
                 // O loop continua para o próximo modelo em MODELS_TO_TRY
             }
         }
 
-        // Se sair do loop sem retornar, é porque todos os modelos falharam
-        console.error("❌ [GPS-CRITICAL] A frota de modelos está fora do ar ou ocupada.");
+        console.error("❌ [GPS-CRITICAL] A frota de modelos está indisponível.");
         return "ERROR";
     }
 };
