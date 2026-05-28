@@ -57,6 +57,8 @@ export async function atualizarFeedEGravar(disparar = true) {
     await SyncManager.atualizar(state, acionarGravacao, disparar);
 }
 
+window.atualizarFeedEGravarGlobal = atualizarFeedEGravar;
+
 // 4. ACIONAR GRAVAÇÃO
 function acionarGravacao(caixa = null) {
     if (!state.dadosNotaOriginal) return;
