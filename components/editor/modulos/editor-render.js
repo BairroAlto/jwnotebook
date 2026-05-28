@@ -2,97 +2,109 @@
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 
 /**
- * RENDERIZADOR DO FEED CENTRAL
- * Converte os dados das caixas em elementos HTML vivos e destaca novidades no Share.
+ * RENDERIZADOR DO FEED CENTRAL COM TELEMETRIA
  */
 export async function renderizarFeed(params) {
     const { caixasAtuais, feed, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao, notaAbertaId, dadosNota } = params;
 
     if (!feed) return;
 
-    feed.style.minHeight = feed.offsetHeight + "px";
-    feed.innerHTML = ""; 
-
-    const auth = window.auth;
-    const user = auth.currentUser;
-
+    // ========================================================
+    // 🛰️ SISTEMA DE LOGS (TELEMETRIA)
+    // ========================================================
+    console.group(`%c📝 [FEED-RENDER] Nota: ${dadosNota?.nome || 'Sem Nome'}`, "color: #6366f1; font-weight: bold;");
+    
     const modos = Array.isArray(dadosNota?.modo) ? dadosNota.modo : [dadosNota?.modo || 'normal'];
-    const isModoPost = modos.includes('post');
     const isModoSentinela = modos.includes('sentinela');
+    const isModoPost = modos.includes('post');
 
-    // ========================================================
-    // 🚀 LÓGICA DE FILTRAGEM DE EXCLUSIVIDADE
-    // ========================================================
+    console.log(`⚙️ Modo Ativo: %c${modos.join(' + ').toUpperCase()}`, "color: #fbbf24; font-weight: 800;");
+    console.log(`📊 Total de caixas no Banco de Dados: ${caixasAtuais.length}`);
+
+    // 1. CONTAGEM INTERNA PARA O LOG
+    const contagemNormal = caixasAtuais.filter(c => !c.referenciacodex && c.estado === 'on').length;
+    const contagemSentinela = caixasAtuais.filter(c => !!c.referenciacodex && c.estado === 'on').length;
+
+    console.log(`   - Blocos "Normais" detetados: ${contagemNormal}`);
+    console.log(`   - Blocos "Sentinela" detetados: ${contagemSentinela}`);
+
+    // 2. APLICAÇÃO DO FILTRO REAL
     const caixasParaMostrar = caixasAtuais.filter(c => {
-        if (c.estado !== "on") return false; // Ignorar ocultas/apagadas
+        if (c.estado !== "on") return false; 
+
+        const temRef = (c.referenciacodex !== undefined && c.referenciacodex !== null);
 
         if (isModoSentinela) {
-            // No modo Sentinela, mostramos apenas o que pertence ao estudo
-            return !!c.referenciacodex;
+            return temRef; // No Modo Sentinela, ignora as "antigas"
         } else {
-            // Nos outros modos (Normal, Post, Arquivo), escondemos o estudo
-            return !c.referenciacodex;
+            return !temRef; // No Modo Normal, ignora o "estudo"
         }
     });
+
+    console.log(`✅ %cFILTRAGEM: Exibindo ${caixasParaMostrar.length} blocos no ecrã.`, "color: #22c55e; font-weight: bold;");
+    console.groupEnd();
+
+    // ========================================================
+    // RENDERIZAÇÃO FÍSICA NO DOM
+    // ========================================================
+    feed.style.minHeight = feed.offsetHeight + "px";
+    feed.innerHTML = ""; 
 
     // Ordenação
     if (isModoPost) caixasParaMostrar.sort((a, b) => (b.ordem || 0) - (a.ordem || 0));
     else caixasParaMostrar.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
 
-    let minhaUltimaLeitura = 0;
-    if (user && dadosNota && dadosNota.onde === "share") {
-        minhaUltimaLeitura = dadosNota[user.uid]?.ultimaLeitura || 0;
-    }
-    
     const raciociniosVivos = caixasParaMostrar.filter(c => c.tipo === "raciocinio");
 
     const promessasDeRender = caixasParaMostrar.map(async (caixa) => {
         let modulo;
         let elementoResultante;
         
-     switch (caixa.tipo) {
-    case "subnota": 
-        modulo = await import('../ferramentas/subnota.js');
-        elementoResultante = await modulo.criarSubNotaAzul(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
-        break;
-    case "questao": 
-        modulo = await import('../ferramentas/questao.js');
-        elementoResultante = await modulo.criarQuestaoVerde(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
-        break;
-    case "raciocinio": 
-        const numR = raciociniosVivos.findIndex(r => r.id === caixa.id) + 1;
-        modulo = await import('../ferramentas/raciocinio.js');
-        elementoResultante = await modulo.criarRaciocinioAmarelo(caixa, numR, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
-        break;
-    case "elevador":
-        modulo = await import('../ferramentas/elevador.js');
-        elementoResultante = await modulo.criarElevadorVermelho(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
-        break;
-    case "cartaovisita":
-        modulo = await import('../ferramentas/cartaovisita.js');
-        elementoResultante = await modulo.criarCartaoVisita(caixa, acionarGravacao, onApagar, moverCaixa, prepararInsercao);
-        break;
-    case "citacaobiblica":
-        modulo = await import('../ferramentas/citacaobiblica.js');
-        elementoResultante = await modulo.criarCitacaoBiblica(caixa, onApagar, moverCaixa, prepararInsercao);
-        break;
-    case "webcard":
-        modulo = await import('../ferramentas/webcard.js');
-        elementoResultante = await modulo.criarWebCardRoxo(caixa, onApagar, moverCaixa, prepararInsercao, acionarGravacao);
-        break;
-    case "galeria": // Corresponde à ferramenta "Imagens"
-        modulo = await import('../ferramentas/imagens.js');
-        elementoResultante = await modulo.criarGaleriaRosa(caixa, onApagar, moverCaixa, prepararInsercao, acionarGravacao);
-        break;
-    default: 
-        modulo = await import('../ferramentas/contentor.js');
-        elementoResultante = await modulo.criarContentorLaranja(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
-}
+        switch (caixa.tipo) {
+            case "subnota": 
+                modulo = await import('../ferramentas/subnota.js');
+                elementoResultante = await modulo.criarSubNotaAzul(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
+                break;
+            case "questao": 
+                modulo = await import('../ferramentas/questao.js');
+                elementoResultante = await modulo.criarQuestaoVerde(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
+                break;
+            case "raciocinio": 
+                const numR = raciociniosVivos.findIndex(r => r.id === caixa.id) + 1;
+                modulo = await import('../ferramentas/raciocinio.js');
+                elementoResultante = await modulo.criarRaciocinioAmarelo(caixa, numR, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
+                break;
+            case "elevador":
+                modulo = await import('../ferramentas/elevador.js');
+                elementoResultante = await modulo.criarElevadorVermelho(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
+                break;
+            case "cartaovisita":
+                modulo = await import('../ferramentas/cartaovisita.js');
+                elementoResultante = await modulo.criarCartaoVisita(caixa, acionarGravacao, onApagar, moverCaixa, prepararInsercao);
+                break;
+            case "citacaobiblica":
+                modulo = await import('../ferramentas/citacaobiblica.js');
+                elementoResultante = await modulo.criarCitacaoBiblica(caixa, onApagar, moverCaixa, prepararInsercao);
+                break;
+            case "webcard":
+                modulo = await import('../ferramentas/webcard.js');
+                elementoResultante = await modulo.criarWebCardRoxo(caixa, onApagar, moverCaixa, prepararInsercao, acionarGravacao);
+                break;
+            case "galeria":
+                modulo = await import('../ferramentas/imagens.js');
+                elementoResultante = await modulo.criarGaleriaRosa(caixa, onApagar, moverCaixa, prepararInsercao, acionarGravacao);
+                break;
+            case "sumariar":
+                modulo = await import('../ferramentas/sumariar.js');
+                elementoResultante = await modulo.criarSumariarIA(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
+                break;
+            default: 
+                modulo = await import('../ferramentas/contentor.js');
+                elementoResultante = await modulo.criarContentorLaranja(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
+        }
 
-        // Lógica de Novidade e IDs...
         if (elementoResultante) {
             elementoResultante.id = `bloco-${caixa.id}`;
-            // Aplicar Badge de novo se necessário...
         }
         return elementoResultante;
     });
