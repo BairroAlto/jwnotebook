@@ -7,5 +7,6 @@ export const IDENTIDADE_FERRAMENTAS = {
      cartaovisita: { id: "cartaovisita", nome: "Cartão Visita", icon: "fa-solid fa-address-card", cor: "#d4af37" },
      citacaobiblica: { id: "citacaobiblica", nome: "Citação Bíblica", icon: "fa-solid fa-book-open", cor: "#94a3b8" },
      webcard: { id: "webcard", nome: "WebCard", icon: "fa-solid fa-globe", cor: "#8b5cf6" },
-     galeria: { id: "galeria", nome: "Imagens", icon: "fa-solid fa-panorama", cor: "#ec4899" }
+     galeria: { id: "galeria", nome: "Imagens", icon: "fa-solid fa-panorama", cor: "#ec4899" },
+     sumariar: { id: "sumariar", nome: "Sumariar", icon: "fa-brands fa-mailchimp", cor: "#6366f1" },
 };
