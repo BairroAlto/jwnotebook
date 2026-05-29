@@ -17,11 +17,14 @@ export const EditorUI = {
     /**
      * 🚀 SUPER RESIZER: Ajusta a altura de todos os inputs e textareas do editor
      */
-  forçarAjusteAlturas: () => {
-    const elementos = document.querySelectorAll('.tool-title-input, #editor-feed textarea');
-    elementos.forEach(el => {
-        el.style.height = 'auto';
-        el.style.height = (el.scrollHeight) + 'px';
-    });
-}
+forçarAjusteAlturas: () => {
+        // Seleciona todos os títulos e corpos de texto
+        const elementos = document.querySelectorAll('.tool-title-input, #editor-feed textarea');
+        elementos.forEach(el => {
+            el.style.height = 'auto';
+            // O segredo: scrollHeight dá-nos o tamanho real do texto, mesmo com quebras
+            el.style.height = (el.scrollHeight) + 'px';
+        });
+        console.log("📏 [UI] Alturas recalculadas (Colapso Apply)");
+    }
 };
