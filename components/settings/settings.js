@@ -34,11 +34,13 @@ export async function inicializarSettings(db, auth) {
         if (refineContainer) refineContainer.style.display = 'none';
     };
 
-    // 2. CARREGAR PREFERÊNCIAS DO UTILIZADOR
+   // 2. CARREGAR PREFERÊNCIAS DO UTILIZADOR
     try {
         const snap = await getDoc(userRef);
         if (snap.exists()) {
             const dados = snap.data();
+
+            // A. Aplicar Tamanhos de Letra (Sliders)
             if (dados.tamanholetra) {
                 Object.entries(dados.tamanholetra).forEach(([varName, value]) => {
                     document.documentElement.style.setProperty(varName, value + 'px');
@@ -46,10 +48,34 @@ export async function inicializarSettings(db, auth) {
                     if (input) input.value = value;
                 });
             }
+
+            // 🚀 B. Lógica de Colapso de Títulos (Wrap vs No-Wrap)
+            // Aplica a classe ao body imediatamente para o CSS atuar
+            if (dados.colapsoTitulos) {
+                document.body.classList.add('modo-colapso-titulos');
+                const checkColapso = document.getElementById('check-colapso-titulos');
+                if (checkColapso) checkColapso.checked = true;
+            } else {
+                document.body.classList.remove('modo-colapso-titulos');
+                const checkColapso = document.getElementById('check-colapso-titulos');
+                if (checkColapso) checkColapso.checked = false;
+            }
+
+            // C. Rede de Respostas (Social)
+            const checkShare = document.getElementById('check-partilhar-respostas');
+            if (checkShare) {
+                checkShare.checked = (dados.shareAnswers === "on");
+            }
+
+            // D. Nomes de Cores Personalizados
             if (dados.caixadestaques) nomesCoresCustom = dados.caixadestaques;
+            
+            // E. Avatar e Identidade
             atualizarIconeBotaoTopo(dados.avatar || "gear");
         }
-    } catch (e) { console.error("Erro ao carregar perfil:", e); }
+    } catch (e) { 
+        console.error("❌ [SETTINGS] Erro ao carregar perfil do Firebase:", e); 
+    }
 
     // 3. GESTÃO DE ABAS DO PAINEL
     const tabs = document.querySelectorAll('.tab-settings');
@@ -186,6 +212,35 @@ export async function inicializarSettings(db, auth) {
             btnBusca.innerHTML = `<i class="fa-solid fa-paper-plane"></i>`; 
         }
     };
+
+    // 6. TOGGLE: COLAPSO DE TÍTULOS
+const checkColapso = document.getElementById('check-colapso-titulos');
+if (checkColapso) {
+    checkColapso.onchange = async (e) => {
+        const novoEstado = e.target.checked;
+        
+        console.log("💾 [SETTINGS] Gravando preferência de colapso:", novoEstado);
+
+        try {
+            // 1. Grava no Firebase (Documento do utilizador)
+            await updateDoc(userRef, { 
+                colapsoTitulos: novoEstado 
+            });
+
+            // 2. Feedback visual antes de recarregar (opcional)
+            console.log("✅ Gravado. Recarregando página...");
+
+            // 3. Força o recarregamento da página para aplicar o CSS e as alturas
+            window.location.reload();
+            
+        } catch (err) {
+            console.error("❌ Erro ao gravar preferência:", err);
+            alert("Erro ao salvar definição. Verifica a tua ligação.");
+            // Reverte o botão visualmente se falhar
+            e.target.checked = !novoEstado;
+        }
+    };
+}
 
     // Listeners de Busca
     btnBusca.onclick = () => executarBuscaGps(inputBusca.value.trim());
