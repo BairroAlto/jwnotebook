@@ -140,16 +140,66 @@ export async function carregarAbasDaNota(maeId, dadosNota, notaAtivaId) {
 }
 
 function criarElementoAba(id, nome, isMae, canClose, onde, isActive) {
+    // ========================================================
+    // 🚀 LÓGICA DE LIMITAÇÃO DE CARATERES
+    // ========================================================
+    const LIMITE_CARATERES = 18; // Podes ajustar este número conforme preferires
+    const nomeFormatado = nome.length > LIMITE_CARATERES 
+        ? nome.substring(0, LIMITE_CARATERES).trim() + "..." 
+        : nome;
+
     const aba = document.createElement('div');
     const corDestaque = (onde === "share") ? "#ef4444" : "#6366f1";
-    aba.style.cssText = `padding: 6px 15px; background: rgba(255,255,255,0.08); border-radius: 4px; font-size: 12px; color: ${isActive ? '#fff' : '#94a3b8'}; cursor: pointer; display: flex; align-items: center; gap: 10px; border-top: 2px solid ${isActive ? corDestaque : 'transparent'}; white-space: nowrap; margin-right: 4px;`;
-    aba.innerHTML = `<span style="${isActive ? 'font-weight:700;' : 'font-weight:400;'}">${nome}</span>`;
+    
+    aba.style.cssText = `
+        padding: 6px 15px; 
+        background: rgba(255,255,255,0.08); 
+        border-radius: 4px; 
+        font-size: 12px; 
+        color: ${isActive ? '#fff' : '#94a3b8'}; 
+        cursor: pointer; 
+        display: flex; 
+        align-items: center; 
+        gap: 10px; 
+        border-top: 2px solid ${isActive ? corDestaque : 'transparent'}; 
+        white-space: nowrap; 
+        margin-right: 4px;
+        transition: 0.2s;
+    `;
+
+    // Adicionamos o 'title' para que o nome completo apareça ao passar o rato (Hover)
+    aba.innerHTML = `
+        <span title="${nome}" style="${isActive ? 'font-weight:700;' : 'font-weight:400;'}">
+            ${nomeFormatado}
+        </span>
+    `;
+
+    // Botão de fecho (X)
     if (canClose) {
-        const btnX = document.createElement('i'); btnX.className = "fa-solid fa-xmark"; btnX.style.cssText = "font-size: 10px; opacity: 0.4;";
-        btnX.onclick = (e) => { e.stopPropagation(); fecharAba(id, onde); };
+        const btnX = document.createElement('i'); 
+        btnX.className = "fa-solid fa-xmark"; 
+        btnX.style.cssText = "font-size: 10px; opacity: 0.4; padding: 2px;";
+        
+        // Efeito hover no X
+        btnX.onmouseenter = () => btnX.style.opacity = "1";
+        btnX.onmouseleave = () => btnX.style.opacity = "0.4";
+
+        btnX.onclick = (e) => { 
+            e.stopPropagation(); 
+            fecharAba(id, onde); 
+        };
         aba.appendChild(btnX);
     }
-    aba.onclick = () => { if (id !== notaAtivaIdGlobal) { buscarNotaHibrida(id).then(res => { if (res) abrirNotaNoEditor(id, res.dados, dbRef || window.db, authRef || window.auth, null, notaMaeIdLocal); }); } };
+
+    // Clique para trocar de nota
+    aba.onclick = () => { 
+        if (id !== notaAtivaIdGlobal) { 
+            buscarNotaHibrida(id).then(res => { 
+                if (res) abrirNotaNoEditor(id, res.dados, dbRef || window.db, authRef || window.auth, null, notaMaeIdLocal); 
+            }); 
+        } 
+    };
+
     return aba;
 }
 
