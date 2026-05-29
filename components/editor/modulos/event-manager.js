@@ -298,7 +298,28 @@ const btnCancelarOcultar = document.getElementById('btn-cancelar-ocultar');
             abrirPopupTags(caixa, id || ctx.notaAbertaId, origem);
         };
 
-        const tit = document.getElementById('editor-titulo');
-        if (tit) tit.oninput = () => ctx.acionarGravacao();
+       const tit = document.getElementById('editor-titulo');
+if (tit) {
+    // 1. Gravação ao digitar
+    tit.oninput = () => ctx.acionarGravacao();
+
+    // 🚀 2. LÓGICA DE COLAGEM LIMPA (PLAIN TEXT)
+    tit.addEventListener('paste', (e) => {
+        // Impede o comportamento padrão (que colaria HTML/Formatação)
+        e.preventDefault();
+
+        // Extrai apenas o texto puro do clipboard
+        const text = (e.originalEvent || e).clipboardData.getData('text/plain');
+
+        // Limpeza extra: remove quebras de linha para o título não "partir"
+        const cleanText = text.replace(/\r?\n|\r/g, " ");
+
+        // Insere o texto limpo na posição onde está o cursor
+        document.execCommand('insertText', false, cleanText);
+        
+        // Notifica o sistema que houve uma alteração para gravar
+        ctx.acionarGravacao();
+    });
+}
     }
 };
