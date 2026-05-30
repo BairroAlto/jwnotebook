@@ -1,15 +1,23 @@
 // components/xray/xray-state.js
 export const state = {
     projetoAtivo: null,
-    resultadosCache: null,      // Resultados Bíblicos
-    resultadosPalavrasCache: {}, // NOVO: { "Família": [resultados], "Lealdade": [...] }
+    resultadosCache: null,
+    resultadosPalavrasCache: {},
     textosBiblicosCache: {},
-    palavrasDetetadas: [],       // NOVO: Lista de palavras limpas
-    modoResumo: "linhas", 
+    palavrasDetetadas: [],
+    modoResumo: "linhas",
+    // 🚀 NOVO: Persistência da Aba AI
+    aiStatus: {
+        loading: false,
+        alvo: null,
+        tipo: null,
+        modo: null,
+        resposta: null
+    },
     config: {
-         silenciados: new Set(),         // Versículos (ex: "Jó 1:1")
-        silenciadosPalavras: new Set(), // Termos (ex: "batismo")
-        fontesOcultas: new Set(),       // Fontes (ex: "w_2024_01")
+        silenciados: new Set(),
+        silenciadosPalavras: new Set(),
+        fontesOcultas: new Set(),
         leituraDireita: false
     }
 };
