@@ -90,17 +90,15 @@ export const AIView = {
     renderProtocolos: (display, caixa, onVoltar, onExecutar, incluirTitulo) => {
         const config = IDENTIDADE_FERRAMENTAS[caixa.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
         const isContentor = caixa.tipo === 'contentor';
+        const isExterno = caixa.id === "externo";
 
-        // 1. SELETOR DE MODO DE PESQUISA (Escondido se for Contentor)
-        const seletorTituloHtml = isContentor ? '' : `
-    <div style="display:flex; gap:5px; background: rgba(0,0,0,0.2); padding: 4px; border-radius: 10px; margin-bottom: 25px;">
-        <!-- Fica inativo por defeito -->
-        <button class="btn-amt ${incluirTitulo ? 'active' : ''}" id="btn-com-titulo" style="flex:1; height:28px; font-size:9px; font-weight:800;">COM TÍTULO</button>
-        
-        <!-- Fica ATIVO por defeito porque incluirTitulo é false -->
-        <button class="btn-amt ${!incluirTitulo ? 'active' : ''}" id="btn-sem-titulo" style="flex:1; height:28px; font-size:9px; font-weight:800;">SEM TÍTULO</button>
-    </div>
-`;
+        // 1. SELETOR DE MODO (Escondido se for Contentor OU Fonte Externa)
+        const seletorTituloHtml = (isContentor || isExterno) ? '' : `
+            <div style="display:flex; gap:5px; background: rgba(0,0,0,0.2); padding: 4px; border-radius: 10px; margin-bottom: 25px;">
+                <button class="btn-amt ${incluirTitulo ? 'active' : ''}" id="btn-com-titulo" style="flex:1; height:28px; font-size:9px; font-weight:800;">COM TÍTULO</button>
+                <button class="btn-amt ${!incluirTitulo ? 'active' : ''}" id="btn-sem-titulo" style="flex:1; height:28px; font-size:9px; font-weight:800;">SEM TÍTULO</button>
+            </div>
+        `;
 
         // 2. GERAÇÃO DAS CATEGORIAS E BOTÕES
         let htmlCategorias = PROTOCOLOS.map(cat => `
@@ -117,13 +115,17 @@ export const AIView = {
             </div>
         `).join('');
 
-        // 3. MONTAGEM FINAL
+        // 3. IDENTIFICAÇÃO DO ALVO (INTERNO VS EXTERNO)
+        const labelCor = isExterno ? "#818cf8" : config.cor;
+        const labelNome = isExterno ? "FONTE BIBLIOGRÁFICA" : `Alvo: ${config.nome}`;
+
         display.innerHTML = `
             <div class="ai-container" style="padding-bottom: 50px;">
                 <button class="btn-voltar-ai" id="ai-back-btn"><i class="fa-solid fa-arrow-left"></i> Voltar à Lista</button>
                 
-                <div class="ai-target-card" style="border-left: 4px solid ${config.cor}; margin-bottom:15px;">
-                    <span class="ai-target-label" style="color:${config.cor}">Alvo: ${config.nome}</span>
+                <div class="ai-target-card" style="border-left: 4px solid ${labelCor}; margin-bottom:15px;">
+                    <span class="ai-target-label" style="color:${labelCor}">${labelNome}</span>
+                    <p style="font-size:12px; color:white; font-weight:700; margin-bottom:5px;">${caixa.titulo || 'Sem Título'}</p>
                     <p style="font-size:12px; color:white; opacity:0.8; line-height:1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
                         ${caixa.conteudo || 'Sem conteúdo para analisar.'}
                     </p>
@@ -136,7 +138,7 @@ export const AIView = {
         // 4. ATRIBUIÇÃO DE EVENTOS
         display.querySelector('#ai-back-btn').onclick = onVoltar;
         
-        if (!isContentor) {
+        if (!isContentor && !isExterno) {
             display.querySelector('#btn-com-titulo').onclick = () => window.dispatchEvent(new CustomEvent('ai:toggleTitulo', {detail: true}));
             display.querySelector('#btn-sem-titulo').onclick = () => window.dispatchEvent(new CustomEvent('ai:toggleTitulo', {detail: false}));
         }
