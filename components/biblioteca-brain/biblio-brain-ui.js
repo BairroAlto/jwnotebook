@@ -7,6 +7,9 @@ import { verificarNovidadesSociais } from './biblio-social.js';
 let abaAtiva = 'anotacoes';
 let estudoAtual = null;
 
+/**
+ * GERE OS BOTÕES DE ACÇÃO NO TOPO (PÁGINA DINÂMICA)
+ */
 export function atualizarBotoesHeader() {
     const actionContainer = document.getElementById('biblio-header-action-container');
     if (!actionContainer) return;
@@ -38,19 +41,17 @@ export function atualizarBotoesHeader() {
     }
 }
 
-// Tornar a função disponível globalmente para os módulos filhos (Engine)
 window.atualizarBotoesHeader = atualizarBotoesHeader;
 
 /**
- * ORQUESTRADOR DE INTERFACE DA BIBLIOTECA
+ * ORQUESTRADOR DE INTERFACE DA BIBLIOTECA (ABERTURA DE ESTUDO)
  */
 export async function abrirEstudoNoBrain(estudo) {
-    // 🚀 CORREÇÃO: Verificar se mudou o documento OU a sequência interna
     const refUnicaAtual = estudoAtual ? `${estudoAtual.id}-${estudoAtual.sequencia}` : "";
     const refUnicaNova = `${estudo.id}-${estudo.sequencia}`;
 
     if (refUnicaAtual === refUnicaNova) {
-        console.log("🧊 [BRAIN] Parágrafo idêntico já aberto.");
+        console.log("🧊 [BRAIN] Parágrafo já em foco.");
         return; 
     }
     
@@ -70,7 +71,7 @@ export async function abrirEstudoNoBrain(estudo) {
     mainContainer.style.height = "100%";
     mainContainer.style.overflow = "hidden"; 
 
-    // CONSTRUÇÃO DO CABEÇALHO
+    // --- CONSTRUÇÃO DO CABEÇALHO ---
     const headerBlock = document.createElement('div');
     headerBlock.style.cssText = "flex-shrink: 0; background: #1e293b; z-index: 10; border-bottom: 1px solid rgba(255,255,255,0.05);";
     
@@ -82,12 +83,16 @@ export async function abrirEstudoNoBrain(estudo) {
                     &#x202a;${estudo.referencia}, ${estudo.oque} ${estudo.sequencia}&#x202c;
                 </span>
             </div>
-            <div style="display:flex; align-items:center; gap:15px; flex-shrink: 0;">
+            <div style="display:flex; align-items:center; gap:12px; flex-shrink: 0;">
                 <!-- ÍCONE PARABÓLICA -->
                 <i class="fa-solid fa-satellite-dish" id="btn-sat-biblioteca"
                    style="color: #64748b; cursor:pointer; font-size: 16px;" title="Pesquisar no X-SAT"></i>
                 
-                <!-- CONTENTOR DE BOTÕES (ONDE APARECEM O + / LINK / FOLDER) -->
+                <!-- 🚀 NOVO: ÍCONE BOOKAI (PONTE IA) -->
+                <i class="fa-brands fa-mailchimp" id="btn-ai-biblioteca"
+                   style="color: #64748b; cursor:pointer; font-size: 19px;" title="Analisar com BookAI"></i>
+                
+                <!-- CONTENTOR DE BOTÕES DINÂMICOS (+ / LINK / FOLDER) -->
                 <div id="biblio-header-action-container" style="display: flex; align-items: center;"></div>
             </div>
         </div>
@@ -109,7 +114,7 @@ export async function abrirEstudoNoBrain(estudo) {
     mainContainer.appendChild(headerBlock);
     mainContainer.appendChild(scrollArea);
 
-    // LÓGICA DO SATÉLITE
+    // --- LÓGICA DO SATÉLITE ---
     const btnSat = headerBlock.querySelector('#btn-sat-biblioteca');
     if (btnSat) {
         btnSat.onclick = async () => {
@@ -122,7 +127,30 @@ export async function abrirEstudoNoBrain(estudo) {
         };
     }
 
-    // NAVEGAÇÃO DE ABAS
+    // --- 🚀 LÓGICA DA PONTE BOOKAI ---
+  const btnAI = headerBlock.querySelector('#btn-ai-biblioteca');
+if (btnAI) {
+    btnAI.onclick = async () => {
+        btnAI.classList.add('fa-bounce');
+        
+        // 1. Capturar texto do parágrafo
+        let textoParaIA = estudo.textoOriginal || await recuperarTextoDoRepositorio(estudo);
+        
+        if (textoParaIA) {
+            // 2. CHAMADA AO NOVO MÓDULO DE PONTE
+            import('../direita/ai-bridge-external.js').then(m => {
+                m.AIBridge.iniciarAnaliseFonteExterna(
+                    textoParaIA, 
+                    `${estudo.referencia} §${estudo.sequencia}`
+                );
+            });
+        }
+        
+        setTimeout(() => btnAI.classList.remove('fa-bounce'), 1000);
+    };
+    }
+
+    // --- NAVEGAÇÃO DE ABAS ---
     const navContainer = headerBlock.querySelector('#biblio-nav-container');
     navContainer.onclick = (e) => {
         const icon = e.target.closest('i[data-aba]');
@@ -132,15 +160,14 @@ export async function abrirEstudoNoBrain(estudo) {
         icon.classList.add('active');
         abaAtiva = icon.dataset.aba;
         
-        // --- AQUI ESTÁ A CORREÇÃO: Atualizar botões sempre que mudar a aba ---
         atualizarBotoesHeader();
         renderizarConteudoAba(scrollArea);
     };
 
-    // INICIALIZAR VISTA
+    // Inicializar Vista Padrão
     abaAtiva = 'anotacoes';
     renderizarConteudoAba(scrollArea);
-    atualizarBotoesHeader(); // Chamar na abertura
+    atualizarBotoesHeader();
 
     // Radar Social
     if (auth.currentUser) {
@@ -148,7 +175,7 @@ export async function abrirEstudoNoBrain(estudo) {
             const socialWrapper = headerBlock.querySelector('#social-tab-wrapper');
             try {
                 const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
-                if (userSnap.exists() && userSnap.data().shareAnswers === true) {
+                if (userSnap.exists() && userSnap.data().shareAnswers === "on") {
                     socialWrapper.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin" style="font-size: 14px; color: var(--primary); opacity: 0.6;"></i>`;
                     const temConteudo = await verificarNovidadesSociais(estudo);
                     socialWrapper.innerHTML = `<i class="fa-regular fa-comment-dots" data-aba="comentarios" title="Comentários" style="cursor:pointer;"></i>`;
@@ -160,7 +187,7 @@ export async function abrirEstudoNoBrain(estudo) {
 }
 
 /**
- * FUNÇÃO AUXILIAR CORRIGIDA: Resolve o erro 404 e constrói o caminho correto
+ * RECUPERA O TEXTO DO REPOSITÓRIO (EVITA 404 E MATCH SEMÂNTICO)
  */
 async function recuperarTextoDoRepositorio(estudo) {
     try {
