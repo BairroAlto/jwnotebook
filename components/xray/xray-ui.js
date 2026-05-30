@@ -34,6 +34,18 @@ export const XRayUI = {
         // --- CASOS ESPECIAIS (BÍBLIA E RESUMO) ---
         if (filtro === 'biblia') { XRayUI.renderAbaBiblia(container); return; }
         if (filtro === 'resumo') { XRayUI.renderAbaResumo(container); return; }
+      if (filtro === 'ai') {
+    // Limpar container e mostrar ícone de carregamento inicial enquanto importa o módulo
+    container.innerHTML = `
+        <div style="text-align:center; padding:40px; color:#10b981; opacity:0.5;">
+            <i class="fa-brands fa-mailchimp fa-spin" style="font-size:20px;"></i>
+        </div>`;
+    
+    import('./xray-ai-controller.js').then(m => {
+        m.XRayAiController.renderizarMenuInicial(container);
+    });
+    return;
+}
 
         let encontrouAlgo = false;
 
