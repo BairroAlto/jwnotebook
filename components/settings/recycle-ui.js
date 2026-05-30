@@ -1,48 +1,55 @@
 // components/settings/recycle-ui.js
 import { getFirestore, doc, updateDoc, deleteDoc, getDoc, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { RecycleViewer } from './recycle-viewer.js';
+import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js"; // Garante este import no topo
+
+let cacheItensNaLixeira = [];
+
 
 const db = getFirestore();
 
 export function renderizarItensReciclagem(lista, isAutoOpen) {
     const container = document.getElementById('lista-reciclagem-expirada');
+    const btnVazamento = document.getElementById('btn-vazamento-lixeira');
+    
     if (!container) return;
 
+    cacheItensNaLixeira = lista;
+
+    // Mostrar ou esconder o botão no canto superior direito
+    if (btnVazamento) {
+        btnVazamento.style.display = (lista.length > 0) ? "flex" : "none";
+        btnVazamento.style.alignItems = "center";
+        btnVazamento.style.gap = "6px";
+    }
+
+    // 🚀 LIMPEZA: O container agora só tem os cards, o título já está fixo no HTML
+    container.innerHTML = "";
+
     if (lista.length === 0) {
-        container.innerHTML = `<p style="color:gray; text-align:center; padding:40px; opacity:0.5;">Lixeira vazia.</p>`;
+        container.innerHTML = `<p style="color:gray; text-align:center; padding:40px; opacity:0.5; font-size:12px;">A lixeira está vazia.</p>`;
         return;
     }
 
-    const listaUrgente = lista.filter(i => i.expirado);
+
+     const listaUrgente = lista.filter(i => i.expirado);
     const listaNormal = lista.filter(i => !i.expirado);
 
-    let htmlFinal = "";
-
+    // Renderizar apenas os grupos de cards
     if (listaUrgente.length > 0) {
-        htmlFinal += `
-            <div style="margin-bottom: 25px;">
-                <p style="font-size: 10px; color: #ef4444; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
-                    <i class="fa-solid fa-triangle-exclamation"></i> Lixo Urgente (+90 dias)
-                </p>
-                ${listaUrgente.map(item => criarCardHTML(item)).join('')}
-            </div>
-            <div style="height: 1px; background: rgba(255,255,255,0.05); margin: 20px 0;"></div>
+        container.innerHTML += `
+            <p style="font-size: 9px; color: #ef4444; font-weight: 800; text-transform: uppercase; margin-bottom: 10px;">Lixo Expirado (+90 dias)</p>
+            ${listaUrgente.map(item => criarCardHTML(item)).join('')}
+            <div style="height: 20px;"></div>
         `;
     }
 
     if (listaNormal.length > 0) {
-        htmlFinal += `
-            <div>
-                <p style="font-size: 10px; color: var(--primary); font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
-                    <i class="fa-solid fa-recycle"></i> Lixeira Inteligente
-                </p>
-                ${listaNormal.map(item => criarCardHTML(item)).join('')}
-            </div>
-        `;
+        container.innerHTML += listaNormal.map(item => criarCardHTML(item)).join('');
     }
-
-    container.innerHTML = htmlFinal;
 }
+
+
 
 function criarCardHTML(item) {
     let nome = item.dados.nome || item.dados.titulo || "Sem Nome";
@@ -191,3 +198,126 @@ window.execEliminar = async (docId, subId, tipo) => {
         alert("Erro ao processar eliminação. Verifica a tua ligação.");
     }
 };
+
+/**
+ * 🚀 MOTOR DE ELIMINAÇÃO EM MASSA (LIMPEZA TOTAL)
+ */
+window.execApagarTudo = async () => {
+    if (cacheItensNaLixeira.length === 0) return;
+
+    const total = cacheItensNaLixeira.length;
+    const confirmou = await confirmarAcaoGeral(
+        "Vazar Lixeira?", 
+        `Desejas mover todos os ${total} itens para o arquivo morto (Blackbox)? Esta ação não pode ser desfeita.`
+    );
+
+    if (!confirmou) return;
+
+    const btn = document.getElementById('btn-vazamento-lixeira');
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> A PROCESSAR...`;
+
+    console.group(`🗑️ [MASS-DELETE] Iniciando limpeza de ${total} itens`);
+
+    try {
+        // Processamos todos os itens em paralelo para ser instantâneo
+        const promessas = cacheItensNaLixeira.map(item => processarEliminacaoSilenciosa(item));
+        await Promise.all(promessas);
+
+        console.log("✅ [MASS-DELETE] Lixeira limpa e Blackbox alimentada.");
+        location.reload(); // Atualiza para limpar o ecrã e as listas
+
+    } catch (e) {
+        console.error("Erro na limpeza em massa:", e);
+        alert("Ocorreu um erro ao limpar alguns itens.");
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fa-solid fa-dumpster-fire"></i> APAGAR TUDO`;
+    }
+    console.groupEnd();
+};
+
+/**
+ * AUXILIAR: Faz o backup e apaga sem dar refresh na página (para loops)
+ */
+async function processarEliminacaoSilenciosa(item) {
+    const auth = getAuth();
+    const meuUid = auth.currentUser ? auth.currentUser.uid : null;
+
+    if (!meuUid) {
+        console.error("❌ [RECYCLE] Utilizador não autenticado para realizar limpeza.");
+        return;
+    }
+
+    const colecaoOriginal = (item.tipoItem === 'cosmos-tema' || item.tipoItem === 'mica') ? "Cosmo" : (item.tipoItem === 'topico' ? "Topico" : "Local");
+    const docRef = doc(db, colecaoOriginal, item.id);
+
+    try {
+        // 1. Obter dados atuais do servidor
+        const snap = await getDoc(docRef);
+        if (!snap.exists()) return;
+        const dadosDoc = snap.data();
+
+        let payloadBlackbox = null;
+
+        // 2. Extrair o conteúdo correto para o backup
+        if (item.idSub) {
+            // Cenário: Caixa de Nota ou Mica de Dossiê
+            if (item.tipoItem === 'mica') {
+                payloadBlackbox = { ...(dadosDoc.Dossie?.mica[item.idSub] || {}), _meta_origem: "Mica" };
+                const micas = { ...dadosDoc.Dossie.mica }; 
+                delete micas[item.idSub];
+                await updateDoc(docRef, { "Dossie.mica": micas });
+            } else {
+                const caixaAlvo = (dadosDoc.caixas || []).find(c => c.id === item.idSub);
+                payloadBlackbox = { ...(caixaAlvo || {}), _meta_origem: "Bloco" };
+                const novas = dadosDoc.caixas.filter(c => c.id !== item.idSub);
+                await updateDoc(docRef, { caixas: novas });
+            }
+        } else {
+            // Cenário: Nota, Tema ou Tópico Integral
+            payloadBlackbox = { ...dadosDoc, _meta_origem: "Documento" };
+            await deleteDoc(docRef);
+        }
+
+        // 3. GRAVAR NA BLACKBOX (Com verificação de userId)
+        // 🚀 O SEGREDO: Se dadosDoc.userId for undefined, usa o meuUid. Nunca envia undefined.
+        await addDoc(collection(db, "Blackbox"), {
+            ...payloadBlackbox,
+            deletedAt: serverTimestamp(),
+            originalCollection: colecaoOriginal,
+            tipoItem: item.tipoItem,
+            userId: dadosDoc.userId || meuUid 
+        });
+
+    } catch (err) {
+        console.error(`❌ [RECYCLE] Erro ao processar item ${item.id}:`, err);
+    }
+}
+
+/**
+ * PROMISE: Popup de confirmação reutilizável
+ */
+function confirmarAcaoGeral(titulo, mensagem) {
+    return new Promise((resolve) => {
+        const overlay = document.getElementById('popup-confirmar-remover-overlay');
+        const btnSim = document.getElementById('btn-confirmar-remover-final');
+        const btnNao = document.getElementById('btn-cancelar-remover');
+
+        if (!overlay) return resolve(confirm(mensagem));
+
+        overlay.querySelector('h3').innerText = titulo;
+        overlay.querySelector('p').innerText = mensagem;
+        btnSim.innerText = "SIM, APAGAR TUDO";
+        
+        overlay.classList.add('active');
+
+        const fechar = (r) => {
+            overlay.classList.remove('active');
+            btnSim.onclick = null;
+            resolve(r);
+        };
+
+        btnSim.onclick = () => fechar(true);
+        btnNao.onclick = () => fechar(false);
+    });
+}
