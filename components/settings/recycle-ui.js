@@ -1,5 +1,5 @@
 // components/settings/recycle-ui.js
-import { getFirestore, doc, updateDoc, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { getFirestore, doc, updateDoc, deleteDoc, getDoc, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { RecycleViewer } from './recycle-viewer.js';
 
 const db = getFirestore();
@@ -121,20 +121,73 @@ window.execRecuperar = async (docId, subId, tipo) => {
 };
 
 window.execEliminar = async (docId, subId, tipo) => {
-    if (!confirm("Eliminar permanentemente?")) return;
-    const colecao = (tipo === 'cosmos-tema' || tipo === 'mica') ? "Cosmo" : (tipo === 'topico' ? "Topico" : "Local");
-    const docRef = doc(db, colecao, docId);
+    // 1. CONFIRMAÇÃO VISUAL (Podes usar o teu popup-blackbox aqui se quiseres)
+    if (!confirm("Esta ação é irreversível. O item será eliminado. Continuar?")) return;
+
+    const colecaoOriginal = (tipo === 'cosmos-tema' || tipo === 'mica') ? "Cosmo" : (tipo === 'topico' ? "Topico" : "Local");
+    const docRef = doc(db, colecaoOriginal, docId);
+
     try {
+        const snap = await getDoc(docRef);
+        if (!snap.exists()) return;
+
+        const dadosCompletos = snap.data();
+        let dadosParaOArquivo = null;
+
+        // 2. PREPARAR DADOS PARA A BLACKBOX
         if (subId) {
-            const snap = await getDoc(docRef);
+            // Cenário: Eliminando uma Caixa ou uma Mica específica
             if (tipo === 'mica') {
-                const micas = { ...snap.data().Dossie.mica }; delete micas[subId];
+                dadosParaOArquivo = { 
+                    ...dadosCompletos.Dossie.mica[subId], 
+                    _meta_origem: `Mica de ${dadosCompletos.nome || 'Tema'}` 
+                };
+            } else {
+                const caixaAlvo = dadosCompletos.caixas.find(c => c.id === subId);
+                dadosParaOArquivo = { 
+                    ...caixaAlvo, 
+                    _meta_origem: `Bloco da nota ${dadosCompletos.nome}` 
+                };
+            }
+        } else {
+            // Cenário: Eliminando a Nota ou Tema inteiro
+            dadosParaOArquivo = { 
+                ...dadosCompletos, 
+                _meta_origem: `Documento Integral (${colecaoOriginal})` 
+            };
+        }
+
+        // 3. ENVIAR PARA A BLACKBOX (Backup de Segurança)
+        await addDoc(collection(db, "Blackbox"), {
+            ...dadosParaOArquivo,
+            deletedAt: serverTimestamp(),
+            originalId: docId,
+            originalCollection: colecaoOriginal,
+            tipoItem: tipo,
+            userId: dadosCompletos.userId
+        });
+
+        console.log("🚀 [BLACKBOX] Cópia de segurança criada com sucesso.");
+
+        // 4. ELIMINAÇÃO REAL (Limpando o sistema)
+        if (subId) {
+            if (tipo === 'mica') {
+                const micas = { ...dadosCompletos.Dossie.mica };
+                delete micas[subId];
                 await updateDoc(docRef, { "Dossie.mica": micas });
             } else {
-                const novas = snap.data().caixas.filter(c => c.id !== subId);
-                await updateDoc(docRef, { caixas: novas });
+                const novasCaixas = dadosCompletos.caixas.filter(c => c.id !== subId);
+                await updateDoc(docRef, { caixas: novasCaixas });
             }
-        } else { await deleteDoc(docRef); }
-        location.reload();
-    } catch (e) { console.error(e); }
+        } else {
+            await deleteDoc(docRef);
+        }
+
+        console.log("🗑️ [SISTEMA] Item removido da coleção ativa.");
+        location.reload(); 
+
+    } catch (e) {
+        console.error("❌ Erro no processo de eliminação:", e);
+        alert("Erro ao processar eliminação. Verifica a tua ligação.");
+    }
 };
