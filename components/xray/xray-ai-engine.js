@@ -8,21 +8,37 @@ const K_XRAY_AI = (_P1 + _P2 + _P3).trim();
 
 export const XRayAiEngine = {
     executarProtocolo: async (conteudos, alvo, modo) => {
+        
+        // 🛡️ REGRAS DE SEGURANÇA: OBRIGAR A IA A USAR APENAS O CONTEÚDO FORNECIDO
+        const REGRAS_FIDELIDADE = `
+        REGRAS CRÍTICAS DE FONTE:
+        1. Estás OBRIGADO a usar APENAS as informações contidas nos "CONTEÚDOS ENCONTRADOS" abaixo.
+        2. Proibido usar conhecimentos externos ou informações da internet.
+        3. Se os dados fornecidos não falarem de um detalhe, não o inventes.
+        4. Não uses símbolos de Markdown (*, #, **, |) nem tabelas. Escreve apenas texto puro e natural.
+        5. Responde em Português de Portugal.`;
+
         const prompts = {
-            "resumir": `Tu és o SumarIAr. Analisa os parágrafos seguintes sobre [${alvo}] e cria um resumo consolidado. REGRA: Não uses símbolos como *, #, ** ou tabelas. Escreve apenas texto limpo e parágrafos naturais.`,
+            "resumir": `${REGRAS_FIDELIDADE}
+            Missão: Cria um resumo consolidado dos factos apresentados sobre [${alvo}]. Agrupa ideias semelhantes e elimina repetições.`,
             
-            "designacao": `Tu és um instrutor experiente. Prepara um esboço para um discurso sobre [${alvo}]. REGRA: Não uses símbolos como *, #, **, | ou formatos de tabela. Usa apenas títulos em texto simples e listas numeradas normais.`,
+            "designacao": `${REGRAS_FIDELIDADE}
+            Missão: Com base nos factos fornecidos sobre [${alvo}], estrutura um esboço para um discurso. Usa apenas a lógica presente no texto.`,
             
-            // 🚀 NOVO PROTOCOLO: PROFESSOR
-            "explicar": `Tu és um professor paciente e experiente. Analisa os parágrafos sobre [${alvo}] e explica o conceito de forma pedagógica a um aluno. Usa uma linguagem clara, exemplos simples e um tom humano. REGRA: Não uses símbolos de Markdown (*, #, **, |).`
+            "explicar": `${REGRAS_FIDELIDADE}
+            Missão: Age como um professor. Explica o conceito de [${alvo}] usando apenas os argumentos e explicações presentes nos parágrafos fornecidos. Usa uma linguagem pedagógica mas estritamente baseada na fonte.`
         };
 
         const systemPrompt = prompts[modo];
-        const userContent = `CONTEÚDOS ENCONTRADOS:\n\n${conteudos.join('\n\n')}`;
+        
+        // Se não houver conteúdos, avisamos a IA para não inventar nada
+        const listaTextos = (conteudos.length > 0) ? conteudos.join('\n\n---\n\n') : "NENHUM CONTEÚDO ENCONTRADO NO REPOSITÓRIO.";
+        
+        const userContent = `CONTEÚDOS ENCONTRADOS NO REPOSITÓRIO:\n\n${listaTextos}`;
 
         for (const model of MODELS_TO_TRY) {
             try {
-                console.log(`📡 [XRAY-AI] Tentando protocolo ${modo} via: ${model}`);
+                console.log(`📡 [XRAY-AI] Modo ${modo} (Fidelidade Total) via: ${model}`);
                 const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
                     method: "POST",
                     headers: { 
@@ -37,7 +53,7 @@ export const XRayAiEngine = {
                             { "role": "system", "content": systemPrompt },
                             { "role": "user", "content": userContent }
                         ],
-                        "temperature": 0.6
+                        "temperature": 0.3 // 🧊 Baixamos a temperatura para a IA ser menos "criativa" e mais fiel
                     })
                 });
 
