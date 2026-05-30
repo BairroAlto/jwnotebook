@@ -15,40 +15,37 @@ let state = {
 
 export const AIController = {
     /**
-     * VISTA 1: LISTA DE BLOCOS
+     * 🚀 FUNÇÃO PARA A PONTE (AI-BRIDGE-EXTERNAL)
+     * Define o alvo vindo do Brain (Biblioteca/Bíblia)
+     */
+    configurarAlvoExterno: (caixaVirtual) => {
+        console.log("🎯 [IA-CONTROLLER] Alvo externo configurado:", caixaVirtual.titulo);
+        state.caixaAlvo = caixaVirtual;
+        state.assinatura = "EXTERNO"; // Bloqueia o reset do scanner
+    },
+
+    /**
+     * VISTA 1: LISTA DE BLOCOS (SCANNER DA NOTA)
      */
     renderizarLista: (listaManual = null, notaRecebida = null) => {
-        console.group("%c📡 [IA-CONTROLLER] renderizarLista", "color: #10b981; font-weight: bold;");
-        
         const display = document.getElementById('xsat-display-content');
-        if (!display) { console.groupEnd(); return; }
+        if (!display) return;
 
-        // 1. CAPTURAR CONTEXTO REATIVO COM BLINDAGEM
+        // Capturar contexto da nota atual
         let nota = notaRecebida || window.dadosNotaOriginal;
         
         if (!nota || !nota.id) {
-            console.log("ℹ️ Dados externos ausentes. Recuperando contexto do state interno...");
             if (state.notaId) {
-                // 🚀 SOLUÇÃO: Reconstruímos o objeto nota a partir do que temos no state
-                nota = {
-                    id: state.notaId,
-                    modo: state.modoId === 'S' ? ['sentinela'] : ['normal']
-                };
-            } else {
-                console.error("❌ Falha crítica: Nenhum contexto de nota encontrado.");
-                console.groupEnd();
-                return;
-            }
+                nota = { id: state.notaId, modo: state.modoId === 'S' ? ['sentinela'] : ['normal'] };
+            } else return;
         }
 
-        // Agora é seguro ler nota.modo
         const modos = Array.isArray(nota.modo) ? nota.modo : [nota.modo || 'normal'];
         const isSentinela = modos.includes('sentinela');
         const idContexto = `${nota.id}-${isSentinela ? 'S' : 'N'}`;
 
-        // 2. DETETAR MUDANÇA DE ESTADO
-        if (idContexto !== state.assinatura) {
-            console.warn("♻️ Mudança detectada. Resetando cache da IA...");
+        // Resetar cache se a nota mudou (exceto se viermos de fonte externa)
+        if (idContexto !== state.assinatura && state.assinatura !== "EXTERNO") {
             state.assinatura = idContexto;
             state.notaId = nota.id;
             state.modoId = isSentinela ? 'S' : 'N';
@@ -56,11 +53,9 @@ export const AIController = {
             window._aiScrollInited = false;
         }
 
-        // 3. LOGICA DE DADOS (Persistência)
+        // Filtragem de blocos permitidos para a IA
         let caixas = listaManual || state.cacheCaixas;
-
         if (!caixas) {
-            console.log("🔍 Filtrando window.caixasAtuais...");
             const origem = window.caixasAtuais || [];
             caixas = origem.filter(c => {
                 if (c.estado !== 'on') return false;
@@ -70,19 +65,18 @@ export const AIController = {
             state.cacheCaixas = caixas;
         }
 
-        // 4. CONSTRUIR UI
         AIView.renderContainer(display, isSentinela);
         const listCont = document.getElementById('ai-blocks-list');
 
         if (caixas.length === 0) {
             listCont.innerHTML = `<p style="text-align:center; color:gray; padding:40px; font-size:11px; opacity:0.5;">Vazio neste modo.</p>`;
-            console.groupEnd();
             return;
         }
 
         caixas.forEach(c => {
             const card = AIView.criarCard(c, () => {
                 state.caixaAlvo = c;
+                // 🚀 CORREÇÃO: Usando o nome correto 'focarNoEditor' que está no ai-interaction.js
                 AIInteraction.focarNoEditor(c.id, () => AIController.abrirProtocolos());
             });
             listCont.appendChild(card);
@@ -90,8 +84,6 @@ export const AIController = {
 
         AIController.sincronizarTextosLive(caixas);
         AIInteraction.initScrollSpy(caixas, (id) => AIInteraction.aplicarDestaqueUI(id));
-
-        console.groupEnd();
     },
 
     /**
@@ -113,31 +105,35 @@ export const AIController = {
         AIView.renderProtocolos(
             display, 
             state.caixaAlvo, 
-            () => AIController.renderizarLista(), 
+            () => {
+                state.assinatura = ""; // Reseta para voltar a ler a nota
+                AIController.renderizarLista();
+            }, 
             (modo) => AIController.executarAnalise(modo),
             state.incluirTitulo
         );
     },
 
     /**
-     * EXECUÇÃO
+     * EXECUÇÃO DA CONSULTA À IA
      */
-   executarAnalise: async (modo) => {
+    executarAnalise: async (modo) => {
         const display = document.getElementById('xsat-display-content');
         display.scrollTop = 0;
-        display.innerHTML = `<div style="text-align:center; padding:60px 20px; color:#10b981;"><i class="fa-brands fa-mailchimp fa-bounce" style="font-size:40px; margin-bottom:20px;"></i><p style="font-size:10px; font-weight:800; letter-spacing:2px;">BOOKAI A PROCESSAR...</p></div>`;
+        display.innerHTML = `
+            <div style="text-align:center; padding:60px 20px; color:#10b981;">
+                <i class="fa-brands fa-mailchimp fa-bounce" style="font-size:40px; margin-bottom:20px;"></i>
+                <p style="font-size:10px; font-weight:800; letter-spacing:2px;">O BOOKAI ESTÁ A ANALISAR...</p>
+            </div>`;
 
         let textoParaIA = state.caixaAlvo.conteudo;
-        if (state.incluirTitulo && state.caixaAlvo.tipo !== 'contentor' && state.caixaAlvo.titulo) {
+        if (state.incluirTitulo && state.caixaAlvo.id !== "externo" && state.caixaAlvo.tipo !== 'contentor' && state.caixaAlvo.titulo) {
             textoParaIA = `TÍTULO: ${state.caixaAlvo.titulo}\nCONTEÚDO: ${state.caixaAlvo.conteudo}`;
         }
-
 
         try {
             const respostaBruta = await NexoEngine.perguntar(textoParaIA, modo);
             const formatada = AIView.formatarTexto(respostaBruta);
-
-            // 🚀 PREPARAR RESPOSTA PARA O ONCLICK (Escapar aspas e quebras de linha)
             const respostaParaCopia = respostaBruta.replace(/`/g, '\\`').replace(/\$/g, '\\$');
 
             display.innerHTML = `
@@ -145,36 +141,30 @@ export const AIController = {
                     <button class="btn-voltar-ai" onclick="window.AIController.abrirProtocolos()"><i class="fa-solid fa-arrow-left"></i> Voltar</button>
                     
                     <div class="ai-target-card" style="border-left: 4px solid #10b981; position: relative;">
-                        
-                        <!-- 📋 BOTÃO DE CÓPIA -->
                         <button onclick="window.AIController.copiarResposta(\`${respostaParaCopia}\`, this)" 
-                                style="position: absolute; top: 12px; right: 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--text-muted); width: 28px; height: 28px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s;" 
-                                title="Copiar para a Área de Transferência">
+                                class="btn-copy-ai"
+                                style="position: absolute; top: 12px; right: 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--text-muted); width: 28px; height: 28px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s;">
                             <i class="fa-regular fa-copy" style="font-size: 12px;"></i>
                         </button>
 
                         <p class="ai-target-label" style="color:#10b981;"><i class="fa-solid fa-robot"></i> Resultado</p>
-                        <div style="color:#f1f5f9; white-space:pre-wrap; font-size:13px; line-height:1.6; padding-right: 20px;">${formatada}</div>
+                        <div style="color:#f1f5f9; white-space:pre-wrap; font-size:13.5px; line-height:1.7; padding-right: 20px;">${formatada}</div>
                     </div>
                 </div>`;
         } catch (e) {
-            display.innerHTML = `<p style="color:#ef4444; padding:20px; text-align:center;">Erro na ligação.</p>`;
+            display.innerHTML = `<p style="color:#ef4444; padding:20px; text-align:center;">Erro na ligação ao satélite.</p>`;
         }
     },
 
-      /**
-     * 📋 MOTOR DE CÓPIA COM FEEDBACK VISUAL
+    /**
+     * MOTOR DE CÓPIA
      */
     copiarResposta: (texto, btn) => {
         navigator.clipboard.writeText(texto).then(() => {
             const icon = btn.querySelector('i');
-            
-            // Feedback visual: Muda ícone e cor
             icon.className = 'fa-solid fa-check';
             btn.style.color = '#22c55e';
             btn.style.borderColor = '#22c55e';
-
-            // Restaura após 2 segundos
             setTimeout(() => {
                 icon.className = 'fa-regular fa-copy';
                 btn.style.color = '';
@@ -183,6 +173,9 @@ export const AIController = {
         });
     },
     
+    /**
+     * ATUALIZAÇÃO DOS RESUMOS NA LISTA
+     */
     sincronizarTextosLive: (lista) => {
         lista.forEach(c => {
             const el = document.getElementById(`ai-txt-${c.id}`);
