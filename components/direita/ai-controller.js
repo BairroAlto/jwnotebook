@@ -14,46 +14,72 @@ let state = {
 };
 
 export const AIController = {
+
     /**
-     * 🚀 FUNÇÃO PARA A PONTE (AI-BRIDGE-EXTERNAL)
-     * Define o alvo vindo do Brain (Biblioteca/Bíblia)
+     * 🚀 CONFIGURAÇÃO EXTERNA (Vindo do Brain)
      */
     configurarAlvoExterno: (caixaVirtual) => {
-        console.log("🎯 [IA-CONTROLLER] Alvo externo configurado:", caixaVirtual.titulo);
+        console.log("%c🎯 [IA-CONTROLLER] Sintonizando alvo externo.", "color: #10b981; font-weight: bold;");
         state.caixaAlvo = caixaVirtual;
-        state.assinatura = "EXTERNO"; // Bloqueia o reset do scanner
+        state.assinatura = "EXTERNO"; 
     },
 
     /**
-     * VISTA 1: LISTA DE BLOCOS (SCANNER DA NOTA)
+     * ♻️ RESET DE ESTADO (Vindo do clique no botão X-SAT)
+     */
+    resetarEstado: () => {
+        console.log("♻️ [IA-CONTROLLER] Resetando para o contexto da nota.");
+        state.assinatura = "";    
+        state.caixaAlvo = null;   
+        state.cacheCaixas = null; 
+        
+        // Chamamos a renderização passando os dados globais para evitar o erro de 'undefined'
+        AIController.renderizarLista(null, window.dadosNotaOriginal);
+    },
+
+    /**
+     * VISTA 1: LISTA DE BLOCOS (SCANNER)
      */
     renderizarLista: (listaManual = null, notaRecebida = null) => {
         const display = document.getElementById('xsat-display-content');
         if (!display) return;
 
-        // Capturar contexto da nota atual
-        let nota = notaRecebida || window.dadosNotaOriginal;
-        
-        if (!nota || !nota.id) {
+        // 1. DETERMINAR CONTEXTO DE FORMA SEGURA
+        // Prioridade: notaRecebida -> window.dadosNotaOriginal -> state interno
+        let notaAtual = notaRecebida || window.dadosNotaOriginal;
+
+        if (!notaAtual || !notaAtual.id) {
             if (state.notaId) {
-                nota = { id: state.notaId, modo: state.modoId === 'S' ? ['sentinela'] : ['normal'] };
-            } else return;
+                // Reconstrução mínima para evitar crash
+                notaAtual = { 
+                    id: state.notaId, 
+                    modo: (state.modoId === 'S') ? ['sentinela'] : ['normal'] 
+                };
+            } else {
+                return; // Aborta se não houver mesmo nenhuma nota
+            }
         }
 
-        const modos = Array.isArray(nota.modo) ? nota.modo : [nota.modo || 'normal'];
-        const isSentinela = modos.includes('sentinela');
-        const idContexto = `${nota.id}-${isSentinela ? 'S' : 'N'}`;
+        // 2. ESCUDO DE MODO EXTERNO
+        if (state.assinatura === "EXTERNO") {
+            console.log("🛡️ [IA-CONTROLLER] Scanner da nota bloqueado (Modo Externo Ativo)");
+            return; 
+        }
 
-        // Resetar cache se a nota mudou (exceto se viermos de fonte externa)
-        if (idContexto !== state.assinatura && state.assinatura !== "EXTERNO") {
+        // 3. DETETAR MUDANÇA DE NOTA
+        const modos = Array.isArray(notaAtual.modo) ? notaAtual.modo : [notaAtual.modo || 'normal'];
+        const isSentinela = modos.includes('sentinela');
+        const idContexto = `${notaAtual.id}-${isSentinela ? 'S' : 'N'}`;
+
+        if (idContexto !== state.assinatura) {
             state.assinatura = idContexto;
-            state.notaId = nota.id;
+            state.notaId = notaAtual.id;
             state.modoId = isSentinela ? 'S' : 'N';
             state.cacheCaixas = null;
             window._aiScrollInited = false;
         }
 
-        // Filtragem de blocos permitidos para a IA
+        // 4. LOGICA DE DADOS
         let caixas = listaManual || state.cacheCaixas;
         if (!caixas) {
             const origem = window.caixasAtuais || [];
@@ -65,6 +91,7 @@ export const AIController = {
             state.cacheCaixas = caixas;
         }
 
+        // 5. CONSTRUIR UI
         AIView.renderContainer(display, isSentinela);
         const listCont = document.getElementById('ai-blocks-list');
 
@@ -76,7 +103,6 @@ export const AIController = {
         caixas.forEach(c => {
             const card = AIView.criarCard(c, () => {
                 state.caixaAlvo = c;
-                // 🚀 CORREÇÃO: Usando o nome correto 'focarNoEditor' que está no ai-interaction.js
                 AIInteraction.focarNoEditor(c.id, () => AIController.abrirProtocolos());
             });
             listCont.appendChild(card);
@@ -106,7 +132,7 @@ export const AIController = {
             display, 
             state.caixaAlvo, 
             () => {
-                state.assinatura = ""; // Reseta para voltar a ler a nota
+                if (state.assinatura === "EXTERNO") state.assinatura = "";
                 AIController.renderizarLista();
             }, 
             (modo) => AIController.executarAnalise(modo),
@@ -123,7 +149,7 @@ export const AIController = {
         display.innerHTML = `
             <div style="text-align:center; padding:60px 20px; color:#10b981;">
                 <i class="fa-brands fa-mailchimp fa-bounce" style="font-size:40px; margin-bottom:20px;"></i>
-                <p style="font-size:10px; font-weight:800; letter-spacing:2px;">O BOOKAI ESTÁ A ANALISAR...</p>
+                <p style="font-size:10px; font-weight:800; letter-spacing:2px; text-transform:uppercase;">O BOOKAI ESTÁ A ANALISAR...</p>
             </div>`;
 
         let textoParaIA = state.caixaAlvo.conteudo;
@@ -174,7 +200,7 @@ export const AIController = {
     },
     
     /**
-     * ATUALIZAÇÃO DOS RESUMOS NA LISTA
+     * SINCRONIZAÇÃO DE TEXTOS
      */
     sincronizarTextosLive: (lista) => {
         lista.forEach(c => {
