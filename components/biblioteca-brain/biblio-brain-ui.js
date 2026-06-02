@@ -88,7 +88,7 @@ export async function abrirEstudoNoBrain(estudo) {
                 <i class="fa-solid fa-satellite-dish" id="btn-sat-biblioteca"
                    style="color: #64748b; cursor:pointer; font-size: 16px;" title="Pesquisar no X-SAT"></i>
                 
-                <!-- 🚀 NOVO: ÍCONE BOOKAI (PONTE IA) -->
+                <!-- 🚀 ÍCONE BOOKAI (PONTE IA) -->
                 <i class="fa-brands fa-mailchimp" id="btn-ai-biblioteca"
                    style="color: #64748b; cursor:pointer; font-size: 19px;" title="Analisar com BookAI"></i>
                 
@@ -127,27 +127,30 @@ export async function abrirEstudoNoBrain(estudo) {
         };
     }
 
-    // --- 🚀 LÓGICA DA PONTE BOOKAI ---
-  const btnAI = headerBlock.querySelector('#btn-ai-biblioteca');
-if (btnAI) {
-    btnAI.onclick = async () => {
-        btnAI.classList.add('fa-bounce');
-        
-        // 1. Capturar texto do parágrafo
-        let textoParaIA = estudo.textoOriginal || await recuperarTextoDoRepositorio(estudo);
-        
-        if (textoParaIA) {
-            // 2. CHAMADA AO NOVO MÓDULO DE PONTE
-            import('../direita/ai-bridge-external.js').then(m => {
-                m.AIBridge.iniciarAnaliseFonteExterna(
-                    textoParaIA, 
-                    `${estudo.referencia} §${estudo.sequencia}`
-                );
-            });
-        }
-        
-        setTimeout(() => btnAI.classList.remove('fa-bounce'), 1000);
-    };
+    // --- 🚀 LÓGICA DA PONTE BOOKAI COM LOGS ---
+    const btnAI = headerBlock.querySelector('#btn-ai-biblioteca');
+    if (btnAI) {
+        btnAI.onclick = async () => {
+            console.log("%c📖 [BRAIN-AI] Botão BookAI clicado no estudo.", "color: #818cf8; font-weight: bold;");
+            btnAI.classList.add('fa-bounce');
+            
+            // 1. Capturar o texto original (se não estiver na cache, vai buscar ao repositório JSON)
+            let textoParaIA = estudo.textoOriginal || await recuperarTextoDoRepositorio(estudo);
+            const labelRef = `${estudo.referencia} §${estudo.sequencia}`;
+            
+            if (textoParaIA) {
+                console.log("📤 [BRAIN-AI] Enviando parágrafo para Bridge:", { labelRef, comprimento: textoParaIA.length });
+
+                // 2. Disparar o módulo de ponte externa
+                import('../direita/ai-bridge-external.js').then(m => {
+                    m.AIBridge.iniciarAnaliseFonteExterna(textoParaIA, labelRef);
+                });
+            } else {
+                console.warn("⚠️ [BRAIN-AI] Não foi possível recuperar o texto para análise.");
+            }
+            
+            setTimeout(() => btnAI.classList.remove('fa-bounce'), 1000);
+        };
     }
 
     // --- NAVEGAÇÃO DE ABAS ---
@@ -187,7 +190,7 @@ if (btnAI) {
 }
 
 /**
- * RECUPERA O TEXTO DO REPOSITÓRIO (EVITA 404 E MATCH SEMÂNTICO)
+ * RECUPERA O TEXTO DO REPOSITÓRIO (CORRIGIDO PARA EVITAR 404)
  */
 async function recuperarTextoDoRepositorio(estudo) {
     try {
