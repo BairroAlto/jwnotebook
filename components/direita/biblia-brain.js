@@ -19,7 +19,7 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth) {
     const globalTabs = document.getElementById('sub-tabs-brain');
     if (globalTabs) globalTabs.style.display = 'none';
 
-   versiculoAtivoMemoria = { livro, cap, ver, texto };
+ versiculoAtivoMemoria = { livro, cap, ver, texto };
 
     container.innerHTML = "";
     container.className = "cosmos-brain-wrapper"; 
@@ -36,7 +36,12 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth) {
             </div>
 
             <div style="display:flex; align-items:center; gap:15px; flex-shrink: 0;">
-                <!-- 🚀 SUBSTITUÍDO: WOL pela PONTE BOOKAI -->
+                
+                <!-- 🚀 NOVO: PARABÓLICA (Lado esquerdo do BookAI) -->
+                <i class="fa-solid fa-satellite-dish" id="btn-sat-biblia-brain"
+                   style="color: #64748b; cursor:pointer; font-size: 16px;" title="Pesquisar no X-SAT"></i>
+
+                <!-- ÍCONE BOOKAI (MAILCHIMP) -->
                 <i class="fa-brands fa-mailchimp" id="btn-ai-biblia-brain"
                    style="color: #64748b; cursor:pointer; font-size: 18px;" title="Analisar com BookAI"></i>
                 
@@ -62,24 +67,41 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth) {
     container.appendChild(stickyHeader);
     container.appendChild(contentArea);
 
-     // --- 🚀 LÓGICA DE SALTO PARA IA ---
- const btnAI = stickyHeader.querySelector('#btn-ai-biblia-brain');
-if (btnAI) {
-    btnAI.onclick = () => {
-        btnAI.classList.add('fa-bounce');
-        
-        // 1. Identificar o versículo e o texto que estão na memória do Brain
-        const referencia = `${versiculoAtivoMemoria.livro} ${versiculoAtivoMemoria.cap}:${versiculoAtivoMemoria.ver}`;
-        const textoVersiculo = versiculoAtivoMemoria.texto;
 
-        // 2. Chamar a ponte externa (AI-BRIDGE)
-        import('./ai-bridge-external.js').then(m => {
-            m.AIBridge.iniciarAnaliseFonteExterna(textoVersiculo, referencia);
-        });
-        
-        setTimeout(() => btnAI.classList.remove('fa-bounce'), 1000);
-    };
-}
+     // --- 📡 LÓGICA DA PARABÓLICA (SALTO PARA X-SAT) ---
+    const btnSat = stickyHeader.querySelector('#btn-sat-biblia-brain');
+    if (btnSat) {
+        btnSat.onclick = () => {
+            btnSat.classList.add('fa-spin'); // Efeito visual de rotação
+            
+            const referencia = `${versiculoAtivoMemoria.livro} ${versiculoAtivoMemoria.cap}:${versiculoAtivoMemoria.ver}`;
+            console.log(`%c📡 [BRAIN-SAT] Disparando pesquisa para: ${referencia}`, "color: #fbbf24; font-weight: bold;");
+
+            // Importamos o controlador do satélite e disparamos a pesquisa
+            import('./xsat-controller.js').then(m => {
+                // false = pesquisa individual (não global)
+                m.dispararPesquisaParabolica(referencia, false);
+                
+                // Remove a rotação após o salto
+                setTimeout(() => btnSat.classList.remove('fa-spin'), 1000);
+            });
+        };
+    }
+    
+     // --- 🚀 LÓGICA DE SALTO PARA IA ---
+const btnAI = stickyHeader.querySelector('#btn-ai-biblia-brain');
+    if (btnAI) {
+        btnAI.onclick = () => {
+            btnAI.classList.add('fa-bounce');
+            const referencia = `${versiculoAtivoMemoria.livro} ${versiculoAtivoMemoria.cap}:${versiculoAtivoMemoria.ver}`;
+            
+            import('./ai-bridge-external.js').then(m => {
+                m.AIBridge.iniciarAnaliseFonteExterna(versiculoAtivoMemoria.texto, referencia);
+            });
+            
+            setTimeout(() => btnAI.classList.remove('fa-bounce'), 1000);
+        };
+    }
 
     /**
      * ATUALIZAR BOTÃO DE AÇÃO (AGORA COM SÍMBOLOS)
