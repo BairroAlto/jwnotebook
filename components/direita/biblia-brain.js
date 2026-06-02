@@ -19,21 +19,15 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth) {
     const globalTabs = document.getElementById('sub-tabs-brain');
     if (globalTabs) globalTabs.style.display = 'none';
 
-    versiculoAtivoMemoria = { livro, cap, ver, texto };
+   versiculoAtivoMemoria = { livro, cap, ver, texto };
 
     container.innerHTML = "";
     container.className = "cosmos-brain-wrapper"; 
 
-    const queryWOL = encodeURIComponent(`${livro} ${cap}:${ver}`).replace(/%20/g, '+');
-    const urlWOL = `https://wol.jw.org/pt-PT/wol/l/r296/lp-tpo?q=${queryWOL}`;
-
-    // --- ESTRUTURA CORRIGIDA (IGUAL AO COSMOS) ---
     const stickyHeader = document.createElement('div');
     stickyHeader.className = "cosmos-sticky-header";
-   stickyHeader.innerHTML = `
-    <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 20px; background: #1e293b; border-bottom: 1px solid rgba(255,255,255,0.05); gap: 15px;">
-
-            <!-- ESQUERDA -->
+    stickyHeader.innerHTML = `
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 20px; background: #1e293b; border-bottom: 1px solid rgba(255,255,255,0.05); gap: 15px;">
             <div style="display:flex; align-items:center; gap:10px; overflow: hidden; flex: 1;">
                 <i class="fa-solid fa-book-bible" style="color: #818cf8; font-size: 16px; flex-shrink: 0;"></i>
                 <span style="font-size: 13px; font-weight: 800; color: white; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; letter-spacing: 0.5px;">
@@ -41,11 +35,10 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth) {
                 </span>
             </div>
 
-            <!-- DIREITA (Lupa + Marcador + Botão Símbolo) -->
             <div style="display:flex; align-items:center; gap:15px; flex-shrink: 0;">
-                <a href="${urlWOL}" target="_blank" title="Pesquisar na WOL" style="text-decoration: none; display: flex; align-items: center;">
-                    <i class="fa-solid fa-magnifying-glass" style="color: #64748b; cursor:pointer; font-size: 16px;"></i>
-                </a>
+                <!-- 🚀 SUBSTITUÍDO: WOL pela PONTE BOOKAI -->
+                <i class="fa-brands fa-mailchimp" id="btn-ai-biblia-brain"
+                   style="color: #64748b; cursor:pointer; font-size: 18px;" title="Analisar com BookAI"></i>
                 
                 <i class="fa-regular fa-bookmark" id="icon-marcador-biblia" style="color: #64748b; cursor:pointer; font-size: 16px;" title="Marcadores"></i>
                 
@@ -68,6 +61,25 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth) {
 
     container.appendChild(stickyHeader);
     container.appendChild(contentArea);
+
+     // --- 🚀 LÓGICA DE SALTO PARA IA ---
+ const btnAI = stickyHeader.querySelector('#btn-ai-biblia-brain');
+if (btnAI) {
+    btnAI.onclick = () => {
+        btnAI.classList.add('fa-bounce');
+        
+        // 1. Identificar o versículo e o texto que estão na memória do Brain
+        const referencia = `${versiculoAtivoMemoria.livro} ${versiculoAtivoMemoria.cap}:${versiculoAtivoMemoria.ver}`;
+        const textoVersiculo = versiculoAtivoMemoria.texto;
+
+        // 2. Chamar a ponte externa (AI-BRIDGE)
+        import('./ai-bridge-external.js').then(m => {
+            m.AIBridge.iniciarAnaliseFonteExterna(textoVersiculo, referencia);
+        });
+        
+        setTimeout(() => btnAI.classList.remove('fa-bounce'), 1000);
+    };
+}
 
     /**
      * ATUALIZAR BOTÃO DE AÇÃO (AGORA COM SÍMBOLOS)
@@ -100,6 +112,8 @@ const atualizarBotaoAcao = (dentroDeMica = false) => {
         btnCont.innerHTML = "";
     }
 };
+
+
 
     /**
      * VIGIAR STATUS DO MARCADOR
