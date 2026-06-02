@@ -85,121 +85,92 @@ function getAbaId(nome) {
  * Chamado por: Antenas das Caixas, Botão Global do Lab, ou Satélite da Biblioteca.
  */
 export async function dispararPesquisaParabolica(textoBruto, isGlobal = false) {
-    console.log(`🛰️ [X-SAT] Iniciando varredura ${isGlobal ? 'GLOBAL' : 'INDIVIDUAL'}`);
+    console.group("%c📡 [X-SAT-UPLINK] Novo Sinal Detetado", "color: #6366f1; font-weight: bold;");
 
-    // 1. GESTÃO DE CANAL: Procura o primeiro canal livre (entre 1 e 5)
-    // Se estiverem todos ocupados, limpa o Canal 1 para reutilização.
+    // 1. GESTÃO DE CANAL
     let canalId = Object.keys(estadosCanais).find(id => estadosCanais[id].ativa === false && id !== "6");
-    
     if (!canalId) {
         canalId = "1";
-        // Reset preventivo do estado do Canal 1
         estadosCanais[1] = { ativa: false, dados: null, versiculos: [], abaAtiva: 'publicacoes' };
     }
 
     canalSelecionadoUI = canalId;
 
-    // 2. MARCAR CANAL NA UI: Ativar visualmente o número ANTES de trocar de painel
-    // Isto é vital para que o switchPanel no index.html não force a abertura da IA (Canal 6)
+    // 2. MARCAR CANAL NA UI
     document.querySelectorAll('.xsat-num').forEach(b => b.classList.remove('active'));
     const btnNum = document.querySelector(`.xsat-num[data-num="${canalId}"]`);
     if (btnNum) btnNum.classList.add('active');
 
-    // 3. TROCAR PAINEL: Saltar para o X-SAT agora que o canal já está "reservado"
-    if (window.switchPanel) {
-        window.switchPanel('xsat');
-    }
+    // 3. TROCAR PAINEL
+    if (window.switchPanel) window.switchPanel('xsat');
 
-    // 4. PREPARAR INTERFACE: Mostrar a sub-navegação (necessária para canais 1-5)
+    // 4. MOSTRAR SUB-NAV
     const subNav = document.getElementById('xsat-sub-nav');
     if (subNav) subNav.style.display = 'flex';
 
-    // 5. INJETAR ANIMAÇÃO ARTÍSTICA IMEDIATAMENTE
+    // 5. INJETAR ANIMAÇÃO
     const display = document.getElementById('xsat-display-content');
     if (!display) return;
 
-    const temaCor = isGlobal ? '#34d399' : '#6366f1';
-    const iconePrincipal = 'fa-satellite';
-
     display.innerHTML = `
-        <div class="xsat-sync-wrapper ${isGlobal ? 'global-mode' : ''}">
-            <!-- Chuva de Meteoros -->
-            <div class="xsat-meteor-rain">
-                ${'<div class="meteor"></div>'.repeat(10)}
-            </div>
-
-            <!-- Núcleo do Satélite e Sistema de Órbita -->
+        <div class="xsat-sync-wrapper">
+            <div class="xsat-meteor-rain">${'<div class="meteor"></div>'.repeat(10)}</div>
             <div class="xsat-visual-core">
                 <div class="xsat-radar-wave"></div>
-                <div class="xsat-radar-wave"></div>
-                
-                <div class="xsat-orbital-system">
-                    <div class="orbital-particle p1"></div>
-                    <div class="orbital-particle p2"></div>
-                    <div class="orbital-particle p3"></div>
-                </div>
-
-                <i class="fa-solid ${iconePrincipal} xsat-main-icon"></i>
+                <div class="xsat-orbital-system"><div class="orbital-particle p1"></div><div class="orbital-particle p2"></div></div>
+                <i class="fa-solid fa-satellite xsat-main-icon"></i>
             </div>
-
-            <!-- Interface de Sincronização -->
             <div class="xsat-progress-box">
-                <div class="xsat-bar-container">
-                    <div class="xsat-bar-fill"></div>
-                </div>
-                
-                <div class="xsat-scan-line"></div>
-
-                <div class="xsat-text" style="color: ${temaCor}">
-                    ${isGlobal ? 'GLOBAL NETWORK SYNC' : 'SCANNING SATELLITE...'}
-                </div>
-                
-                <div style="font-size: 8px; color:rgba(255,255,255,0.3); text-align:center; margin-top:8px; font-family:monospace; letter-spacing:1px; font-weight:800;">
-                    ESTABLISHING UPLINK • CANAL ${canalId}
-                </div>
+                <div class="xsat-bar-container"><div class="xsat-bar-fill"></div></div>
+                <div class="xsat-text">SINTONIZANDO CANAL ${canalId}...</div>
             </div>
         </div>`;
 
-    // 6. INICIAR PROCESSAMENTO COM SUSPENSÃO ARTÍSTICA (Mínimo de 2.2 segundos para percepção visual)
+    // 6. PROCESSAR PESQUISA
     estadosCanais[canalId].ativa = true;
     
     try {
-        // Executa a varredura dos JSONs e o cronómetro em paralelo
         const [payload] = await Promise.all([
             processarPesquisaSat(textoBruto, canalId),
             new Promise(resolve => setTimeout(resolve, 2200)) 
         ]);
 
-        // 7. VALIDAR RESULTADOS
-        if (!payload || !payload.referencias || payload.referencias.length === 0) {
+        // 7. VALIDAR RESULTADOS (🚀 CORREÇÃO AQUI)
+        const temDados = payload && (payload.resultados.publicacoes.length > 0 || payload.resultados.livros.length > 0 || payload.resultados.multimedia.length > 0);
+
+        if (!payload || payload.referencias.length === 0 || !temDados) {
             display.innerHTML = `
                 <div style="text-align:center; padding:50px 20px; opacity:0.6;">
                     <i class="fa-solid fa-satellite-dish" style="font-size:40px; margin-bottom:15px; color:var(--primary);"></i>
-                    <p style="font-size:12px; font-weight:700;">VARREDURA COMPLETA</p>
-                    <p style="font-size:10px; margin-top:5px;">Nenhuma referência bíblica foi detetada para pesquisa.</p>
+                    <p style="font-size:12px; font-weight:700;">BUSCA TERMINADA</p>
+                    <p style="font-size:10px; margin-top:5px; line-height:1.4;">
+                        Encontrei o versículo, mas ele não tem explicações nos teus ficheiros locais.
+                    </p>
                     <button onclick="window.limparCanalX(${canalId})" style="margin-top:20px; background:transparent; border:1px solid var(--border-color); color:white; padding:8px 15px; border-radius:4px; font-size:10px; cursor:pointer;">FECHAR CANAL</button>
                 </div>`;
             estadosCanais[canalId].ativa = false;
+            console.groupEnd();
             return;
         }
 
-        // 8. CONFIGURAR DADOS NO CANAL
+        // 8. CONFIGURAR DADOS
         estadosCanais[canalId].versiculos = payload.referencias.map(ref => ({
             nome: `${ref.livro} ${ref.cap}:${ref.ver}`,
             ativo: true 
         }));
-
         estadosCanais[canalId].dados = payload.resultados;
 
-        // 9. FINALIZAR: Simular clique na aba de Publicações para mostrar os resultados
-        const btnPub = document.getElementById('btn-xsat-pub');
-        if (btnPub) btnPub.click(); 
+        // 9. RENDERIZAR
+        if (payload.resultados.publicacoes.length > 0) document.getElementById('btn-xsat-pub').click();
+        else if (payload.resultados.livros.length > 0) document.getElementById('btn-xsat-liv').click();
+        else document.getElementById('btn-xsat-vid').click();
 
     } catch (e) {
-        console.error("❌ [X-SAT] Erro de Sinal:", e);
-        display.innerHTML = `<p style="color:#ef4444; text-align:center; padding:20px; font-size:11px; font-weight:800;">SATELLITE OFFLINE</p>`;
+        console.error("❌ Erro de Sinal:", e);
+        display.innerHTML = `<p style="color:#ef4444; text-align:center; padding:20px; font-size:11px;">SATELLITE OFFLINE</p>`;
         estadosCanais[canalId].ativa = false;
     }
+    console.groupEnd();
 }
 
 // REGISTO GLOBAL PARA O EDITOR E FERRAMENTAS
