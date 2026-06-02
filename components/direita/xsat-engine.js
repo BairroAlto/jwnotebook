@@ -26,7 +26,7 @@ const _SATELLITE_DATA_CACHE = new Map();
  */
 function extrairReferencias(texto) {
     const achados = [];
-    const vistos = new Set(); // 🚀 Garante que não processamos a mesma ref duas vezes
+    const vistos = new Set(); // 🚀 ISTO DEVE ESTAR AQUI DENTRO para limpar a cada clique
     const textoLimpo = texto.toLowerCase();
     
     const dictLower = {};
@@ -35,7 +35,6 @@ function extrairReferencias(texto) {
     const nomesOrdenados = Object.keys(BIBLE_ABBREVIATIONS).sort((a, b) => b.length - a.length);
     const patternLivros = nomesOrdenados.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
 
-    // Regex para capturar referências
     const regexFull = new RegExp(`(${patternLivros})\\.?\\s*(\\d+)[:\\s](\\d+(?:[\\d\\s\\-,]*)?)`, 'gi');
 
     let m;
@@ -43,23 +42,13 @@ function extrairReferencias(texto) {
         const livroOficial = dictLower[m[1].toLowerCase()];
         const cap = parseInt(m[2]);
         const versiculosBrutos = m[3];
-
         const listaVersiculos = expandirVersiculos(versiculosBrutos);
 
         listaVersiculos.forEach(vNum => {
-            // 🚀 CRIAR UMA CHAVE ÚNICA (Ex: "isaias-1-1")
             const chaveUnica = `${livroOficial}-${cap}-${vNum}`.toLowerCase();
-
             if (!vistos.has(chaveUnica)) {
                 vistos.add(chaveUnica);
-                achados.push({ 
-                    livro: livroOficial, 
-                    abrev: m[1], 
-                    cap: cap, 
-                    ver: vNum 
-                });
-            } else {
-                console.log(`skipping duplicate: ${chaveUnica}`);
+                achados.push({ livro: livroOficial, abrev: m[1], cap: cap, ver: vNum });
             }
         });
     }
