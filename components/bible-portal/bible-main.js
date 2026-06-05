@@ -85,6 +85,7 @@ function renderizarMosaicoInicial() {
 
     const feed = document.getElementById('bible-feed');
     if (!feed) return;
+    document.body.classList.remove('bible-book-select-active');
 
     const antigoT = BIBLIA_METADATA.filter(l => l.id <= 39);
     const novoT = BIBLIA_METADATA.filter(l => l.id > 39);
@@ -119,14 +120,11 @@ function mostrarCapitulosDoLivro(livroNome) {
 
     window.livroAtivo = livro.nome;
     window.capAtivo = null;
+    document.body.classList.add('bible-book-select-active');
 
     feed.className = "bible-mosaico-view";
     feed.innerHTML = `
         <section class="testamento-section">
-            <button class="bible-back-btn" onclick="window.renderizarMosaicoPrincipal()">
-                <i class="fa-solid fa-arrow-left"></i>
-                <span>Livros</span>
-            </button>
             <h4 class="testamento-title bible-book-heading">${livro.nome}</h4>
             <div class="bible-nav-grid-caps">
                 ${Array.from({ length: livro.caps }, (_, idx) => {
@@ -138,6 +136,8 @@ function mostrarCapitulosDoLivro(livroNome) {
     `;
 
     BibleUI.ativarModoLeitura(false, livro.nome.toUpperCase());
+    const titleEl = document.getElementById('bible-context-title');
+    if (titleEl) titleEl.innerHTML = `<i class="fa-solid fa-arrow-left"></i><span>Livros</span>`;
     BibleUI.fecharPainelLateral();
 }
 
@@ -148,6 +148,7 @@ async function carregarCapituloNoPortal(livroNome, cap, verAlvo = null) {
     window.livroAtivo = livro.nome;
     window.capAtivo = Number(cap);
     window.referenciaAtiva = `${livro.nome} ${cap}`;
+    document.body.classList.remove('bible-book-select-active');
 
     BibleUI.mostrarLoadingLeitura(true);
 
@@ -222,6 +223,7 @@ function vincularEventos() {
     bind('btn-next-cap', () => navegarCapitulo(1));
     bind('bible-context-title', () => {
         if (window.livroAtivo && window.capAtivo) BibleNav.abrirPainelTroca();
+        else if (window.livroAtivo && !window.capAtivo) renderizarMosaicoInicial();
     });
 
     bind('btn-abrir-pesquisa-biblia', () => BibleUI.togglePopup('popup-search-bible', true));
@@ -250,6 +252,14 @@ function vincularEventos() {
             document.querySelectorAll('.ai-content-view').forEach(view => view.classList.remove('active'));
             btn.classList.add('active');
             document.getElementById(btn.dataset.target)?.classList.add('active');
+        };
+    });
+
+    document.querySelectorAll('.bookai-mode-pill').forEach(btn => {
+        btn.onclick = () => {
+            document.querySelectorAll('.bookai-mode-pill').forEach(item => item.classList.remove('active'));
+            btn.classList.add('active');
+            BibleAI.setMode(btn.dataset.aiMode);
         };
     });
 
