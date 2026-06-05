@@ -46,15 +46,17 @@ export const BibleNav = {
 
             <div class="recent-bible-block">
                 <div class="recent-bible-title">Ultimos textos acessados</div>
-                ${recentes.length ? recentes.map(item => `
-                    <button class="recent-bible-item" onclick="window.carregarCapituloNoPortal('${escapar(item.livro)}', ${Number(item.cap)}); window.fecharPainelNavBiblia();">
-                        ${item.label}
-                    </button>
-                `).join('') : '<p class="recent-empty">Ainda sem historico nesta sessao.</p>'}
+                <div class="recent-bible-piccards">
+                    ${recentes.length ? recentes.map(item => `
+                        <button class="recent-bible-item" onclick="window.carregarCapituloNoPortal('${escapar(item.livro)}', ${Number(item.cap)}); window.fecharPainelNavBiblia();">
+                            ${item.label}
+                        </button>
+                    `).join('') : '<p class="recent-empty">Ainda sem historico nesta sessao.</p>'}
+                </div>
             </div>
 
             <div class="nav-books-toggle-block">
-                <button class="nav-books-toggle" onclick="document.getElementById('nav-books-grid').classList.toggle('hidden')">
+                <button class="nav-books-toggle" onclick="const g=document.getElementById('nav-books-grid'); g.classList.toggle('hidden'); if(!g.classList.contains('hidden')) setTimeout(()=>g.scrollIntoView({behavior:'smooth', block:'nearest'}), 40);">
                     <span>Livros</span>
                     <i class="fa-solid fa-chevron-down"></i>
                 </button>
