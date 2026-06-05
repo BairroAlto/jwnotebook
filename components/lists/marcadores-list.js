@@ -116,6 +116,7 @@ async function renderizarVersiculosDoMarcador(container, marcador, listaCompleta
         el.onclick = async () => {
             const { livro, cap, ver } = el.dataset;
             const textoOriginal = await buscarTextoNoJson(livro, cap, ver);
+            if (typeof window.ensureOfficeRightPanel === 'function') await window.ensureOfficeRightPanel();
             abrirVersiculoNoBrain(livro, cap, ver, textoOriginal, db, auth);
         };
     });
