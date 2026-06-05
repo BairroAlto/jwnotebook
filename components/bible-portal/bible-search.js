@@ -3,6 +3,7 @@ import { BIBLIA_METADATA } from '../lists/biblia.js';
 
 let currentTestamento = "tudo";
 let resultadosGlobais = [];
+let searchRunId = 0;
 
 function slugLivro(nome) {
     return nome.toLowerCase()
@@ -23,12 +24,19 @@ function criarRegexExato(termo) {
     return new RegExp(`(^|[^\\p{L}\\p{N}])(${escaped})(?=$|[^\\p{L}\\p{N}])`, 'iu');
 }
 
+function contemTermo(textoNormalizado, termoNormalizado) {
+    if (!termoNormalizado) return false;
+    if (termoNormalizado.includes(" ")) return textoNormalizado.includes(termoNormalizado);
+    return criarRegexExato(termoNormalizado).test(textoNormalizado);
+}
+
 export const BibleSearch = {
     setTestamento: (testamento) => {
         currentTestamento = testamento;
     },
 
     executar: async (rawQuery, options = {}) => {
+        const runId = ++searchRunId;
         const query = rawQuery.trim();
         if (query.length < 2) {
             if (!options.silentShort) alert("Escreve pelo menos 2 caracteres.");
@@ -69,7 +77,7 @@ export const BibleSearch = {
                         const textoLower = normalizar(texto);
                         const match = isExact
                             ? exactRegex.test(textoLower)
-                            : termosLivres.every(termo => textoLower.includes(termo));
+                            : termosLivres.every(termo => contemTermo(textoLower, termo));
 
                         if (!match) return;
 
@@ -89,6 +97,8 @@ export const BibleSearch = {
                 console.warn(`[BIBLE-SEARCH] Nao foi possivel ler ${livro.nome}.`, error);
             }
         }
+
+        if (runId !== searchRunId) return;
 
         resultadosGlobais = achados;
         BibleSearch.renderBookFilters(Array.from(livrosComSucesso));
@@ -156,6 +166,7 @@ export const BibleSearch = {
     },
 
     limpar: () => {
+        searchRunId++;
         document.getElementById('bible-search-results')?.replaceChildren();
         const bookFilterRow = document.getElementById('filter-books-found');
         if (bookFilterRow) {
