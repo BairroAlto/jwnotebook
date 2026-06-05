@@ -191,12 +191,18 @@ function abrirPopupNovoTema() {
 }
 
 function configurarEventosPopups() {
+    if (!document.getElementById('popup-tema-cosmos-overlay')) return;
+
     // 1. EVENTOS DE FECHO / CANCELAR
-    document.getElementById('btn-fechar-cosmos').onclick = () => document.getElementById('popup-tema-cosmos-overlay').classList.remove('active');
-    document.getElementById('btn-cancelar-cat-x').onclick = () => document.getElementById('popup-categoria-cosmos-overlay').classList.remove('active');
+    const btnFecharCosmos = document.getElementById('btn-fechar-cosmos');
+    const btnCancelarCat = document.getElementById('btn-cancelar-cat-x');
+    const btnAbrirCategoria = document.getElementById('btn-abrir-criar-categoria');
+
+    if (btnFecharCosmos) btnFecharCosmos.onclick = () => document.getElementById('popup-tema-cosmos-overlay').classList.remove('active');
+    if (btnCancelarCat) btnCancelarCat.onclick = () => document.getElementById('popup-categoria-cosmos-overlay').classList.remove('active');
     
     // Botão para abrir o sub-popup de criação de categoria
-    document.getElementById('btn-abrir-criar-categoria').onclick = () => document.getElementById('popup-categoria-cosmos-overlay').classList.add('active');
+    if (btnAbrirCategoria) btnAbrirCategoria.onclick = () => document.getElementById('popup-categoria-cosmos-overlay').classList.add('active');
 
     // 2. LÓGICA DE OCULTAR TEMA (Lixeira / Reciclagem)
    const btnOcultar = document.getElementById('btn-ocultar-cosmos');
@@ -230,7 +236,10 @@ if (btnOcultar) {
 }
 
     // 3. LÓGICA DE GRAVAR / ATUALIZAR TEMA
-    document.getElementById('btn-gravar-cosmos').onclick = async () => {
+    const btnGravarCosmos = document.getElementById('btn-gravar-cosmos');
+    if (!btnGravarCosmos) return;
+
+    btnGravarCosmos.onclick = async () => {
         const btn = document.getElementById('btn-gravar-cosmos');
         const nome = document.getElementById('cosmos-tema-nome').value.trim();
         const desc = document.getElementById('cosmos-tema-desc').value.trim();
@@ -485,12 +494,13 @@ function renderizarListaFiltrada() {
                 ${modoEdicaoAtivo ? `<i class="fa-solid fa-pen-to-square btn-edit-trigger" style="font-size: 12px; color: var(--primary); cursor: pointer; padding: 5px;"></i>` : ''}
             `;
 
-            item.onclick = (e) => {
+            item.onclick = async (e) => {
                 if (e.target.classList.contains('btn-edit-trigger')) {
                     abrirPopupEdicao(itemData.docIdFirebase, itemData);
                 } else {
                     temaSelecionadoId = itemData.id;
                     renderizarListaFiltrada(); // Destaque visual imediato
+                    if (typeof window.ensureOfficeRightPanel === 'function') await window.ensureOfficeRightPanel();
                     abrirTemaNoBrain(itemData, dbRef, authRef);
                 }
             };
