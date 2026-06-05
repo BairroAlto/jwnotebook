@@ -131,7 +131,8 @@ function renderizarMenuCores() {
 /**
  * PESQUISA DE BLOCOS COLORIDOS (BRAIN)
  */
-function pesquisarDestaquesNoBrain(corHex, corNome) {
+async function pesquisarDestaquesNoBrain(corHex, corNome) {
+    if (typeof window.ensureOfficeRightPanel === 'function') await window.ensureOfficeRightPanel();
     if (typeof window.switchPanel === 'function') window.switchPanel('brain');
     
     const divResultados = document.getElementById('brain-resultado-pesquisa');
