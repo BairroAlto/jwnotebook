@@ -82,6 +82,7 @@ export const BibleUI = {
                 const res = await fetch('components/direita/menu.html');
                 colDireita.innerHTML = await res.text();
 
+                instalarBibleMobileSheet(colDireita);
                 colDireita.querySelector('#btn-eye')?.remove();
                 colDireita.querySelector('#sub-tabs-brain')?.remove();
 
@@ -90,6 +91,8 @@ export const BibleUI = {
             } catch (e) {
                 console.error("Erro no fetch do menu:", e);
             }
+        } else {
+            instalarBibleMobileSheet(colDireita);
         }
 
         requestAnimationFrame(() => {
@@ -124,3 +127,52 @@ export const BibleUI = {
         }, 1800);
     }
 };
+
+function instalarBibleMobileSheet(col) {
+    if (!col || col.querySelector('.mobile-sheet-chrome')) return;
+
+    const chrome = document.createElement('div');
+    chrome.className = 'mobile-sheet-chrome';
+    chrome.innerHTML = `
+        <div class="mobile-sheet-handle"></div>
+        <button class="mobile-sheet-close" title="Fechar"><i class="fa-solid fa-xmark"></i></button>
+    `;
+    col.prepend(chrome);
+
+    chrome.querySelector('.mobile-sheet-close').onclick = () => {
+        col.classList.remove('active');
+        col.classList.add('closed');
+        col.style.width = "0";
+        col.style.removeProperty('height');
+        col.style.removeProperty('bottom');
+    };
+
+    const handle = chrome.querySelector('.mobile-sheet-handle');
+    let startY = 0;
+    let startHeight = 0;
+
+    const setPct = (pct) => {
+        const clamped = Math.max(10, Math.min(85, pct));
+        col.style.setProperty('height', `${clamped}vh`, 'important');
+        col.dataset.sheetPct = String(clamped);
+    };
+    if (isBibleTouchMobile()) setPct(Number(col.dataset.sheetPct || 55));
+
+    handle.addEventListener('pointerdown', (event) => {
+        if (!isBibleTouchMobile()) return;
+        startY = event.clientY;
+        startHeight = Number(col.dataset.sheetPct || 55);
+        col.classList.add('dragging');
+        handle.setPointerCapture(event.pointerId);
+    });
+    handle.addEventListener('pointermove', (event) => {
+        if (!col.classList.contains('dragging')) return;
+        const delta = ((startY - event.clientY) / window.innerHeight) * 100;
+        setPct(startHeight + delta);
+    });
+    handle.addEventListener('pointerup', () => col.classList.remove('dragging'));
+}
+
+function isBibleTouchMobile() {
+    return window.matchMedia('(max-width: 760px) and (hover: none)').matches;
+}
