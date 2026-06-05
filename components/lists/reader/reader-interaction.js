@@ -1,6 +1,6 @@
 // components/lists/reader/reader-interaction.js
 export const ReaderInteraction = {
-    handleLink: (bloco, obj, dataPai) => {
+    handleLink: async (bloco, obj, dataPai) => {
         let refParaProcessar = "";
         let contextoReal = "publicacao";
 
@@ -28,15 +28,18 @@ export const ReaderInteraction = {
 
         console.log(`%c🎯 [READER] Traduzindo para busca: ${bloco.tipo} §${seqFinal}`, "color: #34d399; font-weight: bold;");
 
-        import('../../biblioteca-brain/biblio-bridge.js').then(m => {
-            m.estudarReferencia({
-                rawRef: refParaProcessar,
-                contexto: contextoReal,
-                oque: bloco.tipo || "paragrafo",
-                sequencia: seqFinal, // Agora envia "R1", "R2", etc.
-                textoOriginal: bloco.texto,
-                tituloConteudo: obj.titulo || dataPai.video?.titulo || ""
-            });
+        if (typeof window.ensureOfficeRightPanel === 'function') {
+            await window.ensureOfficeRightPanel();
+        }
+
+        const m = await import('../../biblioteca-brain/biblio-bridge.js');
+        m.estudarReferencia({
+            rawRef: refParaProcessar,
+            contexto: contextoReal,
+            oque: bloco.tipo || "paragrafo",
+            sequencia: seqFinal, // Agora envia "R1", "R2", etc.
+            textoOriginal: bloco.texto,
+            tituloConteudo: obj.titulo || dataPai.video?.titulo || ""
         });
     }
 };
