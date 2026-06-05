@@ -14,6 +14,7 @@ let ultimoSnapMarcadores = [];
 export async function abrirPopupMarcadores(verseInfo, db, auth) {
     currentVerseInfo = verseInfo; currentDb = db; currentAuth = auth;
     modoEdicaoMarcador = false;
+    garantirPopupsMarcadorBiblia();
 
     const overlay = document.getElementById('popup-ancora-lista-overlay'); // Reutilizamos o container visual
     const container = document.getElementById('lista-ancoras-container');
@@ -35,6 +36,49 @@ export async function abrirPopupMarcadores(verseInfo, db, auth) {
     escutarMarcadores();
 }
 
+function garantirPopupsMarcadorBiblia() {
+    if (!document.getElementById('popup-ancora-lista-overlay')) {
+        const listaOverlay = document.createElement('div');
+        listaOverlay.id = 'popup-ancora-lista-overlay';
+        listaOverlay.className = 'popup-overlay';
+        listaOverlay.style.zIndex = '10200';
+        listaOverlay.innerHTML = `
+            <div class="popup-content" style="max-width:420px; width:92%; border-radius:18px; overflow:hidden;">
+                <div class="popup-header">
+                    <h3>Marcadores Bíblicos</h3>
+                    <div style="display:flex; align-items:center; gap:16px;">
+                        <i class="fa-solid fa-pen-to-square" id="btn-edit-ancoras-toggle" title="Editar" style="cursor:pointer; color:var(--text-muted);"></i>
+                        <i class="fa-solid fa-plus" id="btn-nova-ancora-trigger" title="Novo marcador" style="cursor:pointer; color:var(--primary);"></i>
+                        <button onclick="document.getElementById('popup-ancora-lista-overlay').classList.remove('active')">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                </div>
+                <div id="lista-ancoras-container" style="padding:15px; max-height:360px; overflow-y:auto; background:var(--bg-body);"></div>
+            </div>
+        `;
+        document.body.appendChild(listaOverlay);
+    }
+
+    if (!document.getElementById('popup-ancora-form-overlay')) {
+        const formOverlay = document.createElement('div');
+        formOverlay.id = 'popup-ancora-form-overlay';
+        formOverlay.className = 'popup-overlay';
+        formOverlay.style.zIndex = '10300';
+        formOverlay.innerHTML = `
+            <div class="popup-content" style="max-width:340px; width:90%; border-radius:18px; padding:18px;">
+                <h4 id="ancora-form-titulo" style="margin-bottom:15px; font-size:14px; color:var(--primary);">Novo Marcador</h4>
+                <input id="input-nome-ancora" type="text" placeholder="Nome do marcador" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.25); border:1px solid var(--border-color); color:white; padding:12px; border-radius:8px; margin-bottom:14px;">
+                <div style="display:flex; gap:10px;">
+                    <button onclick="document.getElementById('popup-ancora-form-overlay').classList.remove('active')" style="flex:1; background:transparent; border:1px solid var(--border-color); color:white; padding:10px; border-radius:8px; cursor:pointer;">Cancelar</button>
+                    <button id="btn-gravar-ancora-final" style="flex:1; background:var(--primary); border:none; color:white; padding:10px; border-radius:8px; cursor:pointer; font-weight:800;">Gravar</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(formOverlay);
+    }
+}
+
 function escutarMarcadores() {
     const q = query(
         collection(currentDb, "Marcador"), 
@@ -54,6 +98,11 @@ function escutarMarcadores() {
 async function renderizarLista(lista) {
     const container = document.getElementById('lista-ancoras-container');
     container.innerHTML = "";
+
+    if (!lista.length) {
+        container.innerHTML = `<p style="color:gray; text-align:center; padding:30px 10px; font-size:12px;">Ainda não criaste categorias de marcadores.</p>`;
+        return;
+    }
 
     // Obter ID do TextosBiblia atual (se existir)
     const verseId = await obterIdVersiculoAtual();
