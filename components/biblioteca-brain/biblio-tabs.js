@@ -94,6 +94,8 @@ export function renderAnotacoes(estudo, container, db) {
         };
         
         renderCaixaAtiva(container, caixa, docRef, estudo);
+    } else {
+        sincronizarCamposAtivos(container, caixa);
     }
 }, (error) => {
     console.error("❌ [BRAIN] Erro no Snapshot:", error);
@@ -171,6 +173,19 @@ function renderCaixaAtiva(container, caixa, docRef, estudoMestre) {
     `;
 
     vincularEventosUI(container, caixa, docRef, estudoMestre);
+}
+
+function sincronizarCamposAtivos(container, caixa) {
+    const inputTit = container.querySelector('#tit-especial');
+    const inputTxt = container.querySelector('#txt-especial');
+
+    if (inputTit && inputTit.value !== (caixa.titulo || "")) {
+        inputTit.value = caixa.titulo || "";
+    }
+
+    if (inputTxt && inputTxt.value !== (caixa.conteudo || "")) {
+        inputTxt.value = caixa.conteudo || "";
+    }
 }
 
 /**
