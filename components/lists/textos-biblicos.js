@@ -101,6 +101,7 @@ function renderizarListaVersiculos(container, livroNome, textos, listaLivros, to
             
             // Buscar o texto original no JSON para abrir no Brain
             const textoOriginal = await buscarTextoNoJson(livro, cap, ver);
+            if (typeof window.ensureOfficeRightPanel === 'function') await window.ensureOfficeRightPanel();
             
             // Abrir no Brain (Exatamente como no módulo Bíblia)
             abrirVersiculoNoBrain(livro, cap, ver, textoOriginal, db, auth);
