@@ -58,7 +58,7 @@ export const NexoEngine = {
             "estruturar": "Transforma o parágrafo num esboço organizado por tópicos (I, II, a, b)."
         };
 
-        const systemContent = `Tu és o BookAI. ${prompts[modo]} Usa negrito com ** e títulos com ###. Responde em Português de Portugal.`;
+        const systemContent = `Tu és o BookAI. ${prompts[modo] || "Responde de forma útil e contextual."} Usa negrito com ** e títulos com ###. Responde em Português de Portugal.${contextoExtra ? `\n\nCONTEXTO OBRIGATORIO:\n${contextoExtra}` : ""}`;
 
         try {
             const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
