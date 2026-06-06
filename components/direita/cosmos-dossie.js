@@ -129,7 +129,11 @@ async function renderizarVistaInterior(mica) {
             // Clique no corpo: Abre a nota no editor central
             div.onclick = (e) => {
                 if (e.target.classList.contains('fa-solid')) return; // Ignora se clicou nos ícones
-                abrirNotaNoEditor(c.notaDocId, c.notaDadosCompletos, currentDb, currentAuth, c.id);
+                if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+                    window.abrirNotaNoBook(c.notaDocId, { ...c.notaDadosCompletos, onde: "local" }, currentDb, currentAuth, c.id);
+                } else {
+                    abrirNotaNoEditor(c.notaDocId, c.notaDadosCompletos, currentDb, currentAuth, c.id);
+                }
             };
         } else {
             // ==========================================
