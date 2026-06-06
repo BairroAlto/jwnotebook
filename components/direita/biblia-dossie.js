@@ -175,7 +175,13 @@ async function renderizarInteriorMica(mica, container, db, auth, onNavegacaoMica
                 ${c.titulo ? `<b>${c.titulo}</b><br>` : ''}${c.conteudo.substring(0,120)}...
             </div>`;
         
-        div.querySelector('.txt-body').onclick = () => abrirNotaNoEditor(c.notaDocId, c.notaDadosCompletos, db, auth, c.id);
+        div.querySelector('.txt-body').onclick = () => {
+            if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+                window.abrirNotaNoBook(c.notaDocId, { ...c.notaDadosCompletos, onde: "local" }, db, auth, c.id);
+            } else {
+                abrirNotaNoEditor(c.notaDocId, c.notaDadosCompletos, db, auth, c.id);
+            }
+        };
         div.querySelector('.btn-rem').onclick = async (e) => {
             e.stopPropagation();
             const novos = caixasMica.filter(x => (typeof x === 'object' ? x.id : x) !== idAlvo);
