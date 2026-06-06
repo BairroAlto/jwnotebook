@@ -320,14 +320,22 @@ window.toggleFavoritoCita = async (tipo, idAlvo) => {
 window.irParaNotaECaixa = async (notaId, caixaId) => {
     const docSnap = await getDoc(doc(db, "Local", notaId));
     if (docSnap.exists()) {
-        abrirNotaNoEditor(notaId, docSnap.data(), db, auth, caixaId);
+        if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+            window.abrirNotaNoBook(notaId, { ...docSnap.data(), onde: "local" }, db, auth, caixaId);
+        } else {
+            abrirNotaNoEditor(notaId, docSnap.data(), db, auth, caixaId);
+        }
     }
 };
 
 window.abrirNotaPeloBrain = async (notaId) => {
     const docSnap = await getDoc(doc(db, "Local", notaId));
     if (docSnap.exists()) {
-        abrirNotaNoEditor(notaId, docSnap.data(), db, auth);
+        if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+            window.abrirNotaNoBook(notaId, { ...docSnap.data(), onde: "local" }, db, auth);
+        } else {
+            abrirNotaNoEditor(notaId, docSnap.data(), db, auth);
+        }
     }
 };
 
