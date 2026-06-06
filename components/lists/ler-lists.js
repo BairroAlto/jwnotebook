@@ -209,7 +209,13 @@ async function pesquisarDestaquesNoBrain(corHex, corNome) {
                         <div style="font-size:13px; color:#f1f5f9; line-height:1.5; font-weight:500;">${resumo}</div>
                     `;
 
-                    card.onclick = () => abrirNotaNoEditor(docSnap.id, nota, dbRef, authRef, caixa.id);
+                    card.onclick = () => {
+                        if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+                            window.abrirNotaNoBook(docSnap.id, { ...nota, onde: "local" }, dbRef, authRef, caixa.id);
+                        } else {
+                            abrirNotaNoEditor(docSnap.id, nota, dbRef, authRef, caixa.id);
+                        }
+                    };
                     divResultados.appendChild(card);
                 });
             }
