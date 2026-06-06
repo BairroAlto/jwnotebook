@@ -7,6 +7,8 @@ import { marcarRespondido } from './book-viewer.js';
 import { escapeHtml, textoDaCaixa, textoDaNota } from './book-utils.js';
 
 let studyMode = null;
+let sentinelMode = null;
+let bookAiMode = null;
 let respondiMode = false;
 let lastScoreTotal = null;
 let sentinelBackHandler = null;
@@ -66,11 +68,12 @@ function renderGameTab(tab) {
                 ${modeButton("bookai-intruder", "fa-solid fa-user-secret", "Caixa Intrusa", "Encontra a opção que não bate certo com a nota.", "#f59e0b")}
                 ${modeButton("bookai-complete", "fa-solid fa-wand-magic-sparkles", "Continuação Certa", "Escolhe a continuação que respeita a lógica da nota.", "#a78bfa")}
             </div>`;
-        body.querySelector('[data-study-mode="bookai-qa"]')?.addEventListener('click', renderAiQuiz);
-        body.querySelector('[data-study-mode="bookai-summary"]')?.addEventListener('click', renderSummaryLightning);
-        body.querySelector('[data-study-mode="bookai-title"]')?.addEventListener('click', renderTitleGhost);
-        body.querySelector('[data-study-mode="bookai-intruder"]')?.addEventListener('click', renderIntruderAI);
-        body.querySelector('[data-study-mode="bookai-complete"]')?.addEventListener('click', renderCompleteAI);
+        atualizarBotoesModoDaAba(tab, bookAiMode);
+        body.querySelector('[data-study-mode="bookai-qa"]')?.addEventListener('click', () => ativarBookAiMode("bookai-qa", renderAiQuiz));
+        body.querySelector('[data-study-mode="bookai-summary"]')?.addEventListener('click', () => ativarBookAiMode("bookai-summary", renderSummaryLightning));
+        body.querySelector('[data-study-mode="bookai-title"]')?.addEventListener('click', () => ativarBookAiMode("bookai-title", renderTitleGhost));
+        body.querySelector('[data-study-mode="bookai-intruder"]')?.addEventListener('click', () => ativarBookAiMode("bookai-intruder", renderIntruderAI));
+        body.querySelector('[data-study-mode="bookai-complete"]')?.addEventListener('click', () => ativarBookAiMode("bookai-complete", renderCompleteAI));
         return;
     }
 
@@ -84,26 +87,47 @@ function renderGameTab(tab) {
     body.querySelectorAll('[data-study-mode]').forEach(btn => {
         btn.addEventListener('click', () => ativarStudyMode(btn.dataset.studyMode));
     });
+    atualizarBotoesModoDaAba(tab, studyMode);
 }
 
-function modeButton(mode, icon, title, desc, color) {
-    return `<button class="book-mode-option" data-study-mode="${mode}" style="--mode-color:${color}">
+function modeButton(mode, icon, title, desc, color, active = false) {
+    return `<button class="book-mode-option ${active ? 'active' : ''}" data-study-mode="${mode}" style="--mode-color:${color}">
         <i class="${icon}"></i>
         <span><strong>${title}</strong><small>${desc}</small></span>
     </button>`;
 }
 
 function ativarStudyMode(mode) {
-    studyMode = mode;
-    document.body.classList.toggle('book-blur-answers', mode === "blur");
+    studyMode = studyMode === mode ? null : mode;
+    document.body.classList.toggle('book-blur-answers', studyMode === "blur");
     if (mode !== "respondi") {
         respondiMode = false;
         document.body.classList.remove('book-respondi-mode');
         renderRespondiHands();
     }
-    if (mode === "flashcards") renderFlashcards();
-    else if (mode === "order") renderOrder();
-    else if (mode === "truth") renderTruth();
+    atualizarBotoesModoAtivo();
+    if (studyMode === "flashcards") renderFlashcards();
+    else if (studyMode === "order") renderOrder();
+    else if (studyMode === "truth") renderTruth();
+}
+
+function atualizarBotoesModoAtivo() {
+    document.querySelectorAll('[data-study-mode]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.studyMode === studyMode);
+    });
+}
+
+function atualizarBotoesModoDaAba(tab, activeMode) {
+    if (!activeMode) return;
+    document.querySelectorAll('[data-study-mode]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.studyMode === activeMode);
+    });
+}
+
+function ativarBookAiMode(mode, callback) {
+    bookAiMode = bookAiMode === mode ? null : mode;
+    renderGameTab("bookai");
+    if (bookAiMode) callback();
 }
 
 function renderRespondiHands() {
@@ -363,7 +387,11 @@ function renderSentinelHome(body) {
             ${modeButton("sentinel-respondi", "fa-solid fa-hand", "Modo 'Respondi?'", "Marcar caixas comentadas.", "#fbbf24")}
         </div>
         <div id="book-sentinel-browser"></div>`;
+    atualizarBotoesModoDaAba("sentinel", sentinelMode);
     body.querySelector('[data-study-mode="sentinel-read"]')?.addEventListener('click', () => {
+        sentinelMode = sentinelMode === "sentinel-read" ? null : "sentinel-read";
+        renderGameTab("sentinel");
+        if (!sentinelMode) return;
         if (window.innerWidth <= 768) {
             document.getElementById('book-popup-games')?.classList.remove('active');
             renderSentinelYears();
@@ -373,9 +401,11 @@ function renderSentinelHome(body) {
         }
     });
     body.querySelector('[data-study-mode="sentinel-respondi"]')?.addEventListener('click', () => {
-        respondiMode = !respondiMode;
+        sentinelMode = sentinelMode === "sentinel-respondi" ? null : "sentinel-respondi";
+        respondiMode = sentinelMode === "sentinel-respondi";
         document.body.classList.toggle('book-respondi-mode', respondiMode);
         renderRespondiHands();
+        renderGameTab("sentinel");
         const target = document.getElementById('book-sentinel-browser');
         if (target) target.innerHTML = `<p class="book-game-hint">${respondiMode ? "Modo ativo. As mãos ficam visíveis até desativares." : "Modo desativado."}</p>`;
     });
@@ -740,7 +770,7 @@ function bindDragOrder() {
 
 function buildNoteModel() {
     const title = BookState.dadosNota?.nome || "Nota";
-    const text = textoDaNota(BookState.dadosNota, getVisibleBookBoxes());
+    const text = sanitizeGameText(textoDaNota(BookState.dadosNota, getVisibleBookBoxes()));
     const sentences = text
         .split(/\n+/)
         .map(line => line.trim())
@@ -805,7 +835,15 @@ function genericEnding(title) {
 }
 
 function cleanSummarySentence(text) {
-    return String(text).replace(/\s+/g, ' ').trim().slice(0, 180);
+    return sanitizeGameText(text).replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+function sanitizeGameText(text) {
+    return String(text || "")
+        .replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g, ' ')
+        .replace(/https?:\/\/\S+/g, match => match.length > 80 ? ' ' : match)
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 function shuffle(items) {
