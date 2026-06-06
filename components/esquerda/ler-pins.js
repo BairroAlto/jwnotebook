@@ -229,7 +229,11 @@ async function viajarParaItem(data, db, auth) {
                     if (pastaDaNota !== "home") window.historicoPastasShare.push({ id: pastaDaNota, nome: "Pasta" });
                     if (typeof window.dispararLeituraShare === 'function') window.dispararLeituraShare();
                 }
-                abrirNotaNoEditor(docSnap.id, d, db, auth);
+                if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+                    window.abrirNotaNoBook(docSnap.id, { ...d, onde: onde === "Share" ? "share" : "local" }, db, auth);
+                } else {
+                    abrirNotaNoEditor(docSnap.id, d, db, auth);
+                }
             }
         } else {
             if (onde === "Local") {
