@@ -69,7 +69,7 @@ function carregarPasta(idPasta) {
         if (snapshot.empty) {
             const aviso = document.createElement("div");
             aviso.style.cssText = "text-align:center; color:gray; font-size:11px; padding:30px; opacity:0.6;";
-            aviso.innerHTML = "Pasta vazia.<br>Clica no '+' para criar.";
+            aviso.innerHTML = window.NotaBookMode === "book" ? "Pasta vazia." : "Pasta vazia.<br>Clica no '+' para criar.";
             fragmento.appendChild(aviso);
         } else {
             
@@ -139,7 +139,11 @@ function carregarPasta(idPasta) {
                         carregarPasta(docId); 
                     } else {
                         // Abrir nota no editor central
-                        abrirNotaNoEditor(docId, d, dbReferencia, authReferencia);
+                        if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+                            window.abrirNotaNoBook(docId, { ...d, onde: "local" }, dbReferencia, authReferencia);
+                        } else {
+                            abrirNotaNoEditor(docId, d, dbReferencia, authReferencia);
+                        }
                         
                         // Atualização visual imediata (limpa outros e acende este)
                         document.querySelectorAll('.item-local').forEach(el => el.classList.remove('active'));
