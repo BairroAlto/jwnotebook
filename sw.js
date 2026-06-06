@@ -1,4 +1,4 @@
-const CACHE_NAME = 'notabook-x-v17';
+const CACHE_NAME = 'notabook-x-v18';
 
 const PRE_CACHE_ASSETS = [
   './',
@@ -6,7 +6,12 @@ const PRE_CACHE_ASSETS = [
   './biblia.html',
   './book.html',
   './office.html',
+  './xray.html',
   './manifest.json',
+  './manifest-book.json',
+  './manifest-biblia.json',
+  './manifest-office.json',
+  './manifest-xray.json',
   './styles/global.css',
   './styles/typography.css',
   './styles/mobile.css',
