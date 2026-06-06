@@ -65,9 +65,13 @@ export async function carregarCaixasAssociadas(caixasAtuais, db, userId) {
                     <div style="font-size:8px; opacity:0.4; margin-top:10px;">Em: ${b.notaOrigem}</div>
                 `;
                 card.onclick = () => {
-                    import('../editor/editor.js').then(m => {
-                        m.abrirNotaNoEditor(b.notaDocId, b.notaDados, db, {currentUser: {uid: userId}}, b.id);
-                    });
+                    if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+                        window.abrirNotaNoBook(b.notaDocId, { ...b.notaDados, onde: "local" }, db, {currentUser: {uid: userId}}, b.id);
+                    } else {
+                        import('../editor/editor.js').then(m => {
+                            m.abrirNotaNoEditor(b.notaDocId, b.notaDados, db, {currentUser: {uid: userId}}, b.id);
+                        });
+                    }
                 };
                 container.appendChild(card);
             });
