@@ -238,7 +238,11 @@ div.innerHTML = `
                     atualizarUIShare(); // Atualiza rótulo "Voltar a..."
                     carregarDadosShare();
                 } else {
-                    abrirNotaNoEditor(item.id, item, dbRef, authRef);
+                    if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+                        window.abrirNotaNoBook(item.id, { ...item, onde: "share" }, dbRef, authRef);
+                    } else {
+                        abrirNotaNoEditor(item.id, item, dbRef, authRef);
+                    }
                     // Atualização visual imediata
                     document.querySelectorAll('#lista-share .item-local').forEach(el => el.classList.remove('active'));
                     div.classList.add('active');
