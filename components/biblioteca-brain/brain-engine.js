@@ -323,7 +323,13 @@ function renderFerramentaEspelho(c, index, todos, docRef, db, auth) {
         <div style="font-size:8px; opacity:0.3; text-align:right; margin-top:8px; font-weight:800; text-transform:uppercase;">
             <i class="fa-solid fa-file-lines"></i> ${c.notaDados.nome}
         </div>`;
-    div.onclick = () => abrirNotaNoEditor(c.notaDocId, c.notaDados, db, auth, c.id);
+    div.onclick = () => {
+        if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+            window.abrirNotaNoBook(c.notaDocId, { ...c.notaDados, onde: "local" }, db, auth, c.id);
+        } else {
+            abrirNotaNoEditor(c.notaDocId, c.notaDados, db, auth, c.id);
+        }
+    };
     return div;
 }
 export async function estudarReferencia(dados) {
