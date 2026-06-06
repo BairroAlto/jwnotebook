@@ -244,7 +244,13 @@ function renderFerramentaVinculada(c, index, todos, ref, db, auth, temaOriginal)
 
     div.querySelector('.btn-up').onclick = () => moverItemPuzzle(index, -1, todos, ref);
     div.querySelector('.btn-down').onclick = () => moverItemPuzzle(index, 1, todos, ref);
-    div.querySelector('.btn-viajar').onclick = () => abrirNotaNoEditor(c.notaDocId, c.notaDadosCompletos, db, auth, c.id);
+    div.querySelector('.btn-viajar').onclick = () => {
+        if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+            window.abrirNotaNoBook(c.notaDocId, { ...c.notaDadosCompletos, onde: "local" }, db, auth, c.id);
+        } else {
+            abrirNotaNoEditor(c.notaDocId, c.notaDadosCompletos, db, auth, c.id);
+        }
+    };
 
     return div;
 }
