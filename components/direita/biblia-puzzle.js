@@ -264,7 +264,13 @@ function renderFerramentaVinculadaUI(c, index, todos, ref, db, auth) {
             <div style="opacity:0.9; white-space: pre-wrap;">${c.conteudo}</div>
         </div>`;
 
-    div.querySelector('.btn-viajar').onclick = () => abrirNotaNoEditor(c.notaDocId, c.notaDadosCompletos, db, auth, c.id);
+    div.querySelector('.btn-viajar').onclick = () => {
+        if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+            window.abrirNotaNoBook(c.notaDocId, { ...c.notaDadosCompletos, onde: "local" }, db, auth, c.id);
+        } else {
+            abrirNotaNoEditor(c.notaDocId, c.notaDadosCompletos, db, auth, c.id);
+        }
+    };
     return div;
 }
 
