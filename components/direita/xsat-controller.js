@@ -100,6 +100,7 @@ export async function dispararPesquisaParabolica(textoBruto, isGlobal = false) {
     document.querySelectorAll('.xsat-num').forEach(b => b.classList.remove('active'));
     const btnNum = document.querySelector(`.xsat-num[data-num="${canalId}"]`);
     if (btnNum) btnNum.classList.add('active');
+    if (btnNum && typeof btnNum.scrollIntoView === "function") btnNum.scrollIntoView({ block: "nearest", inline: "center" });
 
     // 3. TROCAR PAINEL
     if (window.switchPanel) window.switchPanel('xsat');
@@ -161,9 +162,15 @@ export async function dispararPesquisaParabolica(textoBruto, isGlobal = false) {
         estadosCanais[canalId].dados = payload.resultados;
 
         // 9. RENDERIZAR
-        if (payload.resultados.publicacoes.length > 0) document.getElementById('btn-xsat-pub').click();
-        else if (payload.resultados.livros.length > 0) document.getElementById('btn-xsat-liv').click();
-        else document.getElementById('btn-xsat-vid').click();
+        const abaInicial = payload.resultados.publicacoes.length > 0
+            ? 'publicacoes'
+            : payload.resultados.livros.length > 0
+                ? 'livros'
+                : 'multimedia';
+        estadosCanais[canalId].abaAtiva = abaInicial;
+        canalSelecionadoUI = canalId;
+        ativarBotaoSubNav(abaInicial);
+        renderizarResultados(payload.resultados[abaInicial]);
 
     } catch (e) {
         console.error("❌ Erro de Sinal:", e);
