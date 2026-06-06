@@ -88,12 +88,9 @@ export const MobileBottomSheet = {
         MobileBottomSheet.iniciar();
 
         const rightCol = document.getElementById('area-direita');
-        const overlay = document.getElementById('mobile-overlay');
-
-        if (rightCol && overlay) {
-            rightCol.style.height = '60vh'; // Abre por defeito a 60%
+        if (rightCol) {
+            rightCol.style.height = '68vh';
             rightCol.classList.add('active');
-            overlay.classList.add('active'); 
             document.body.style.overflow = 'hidden';
         }
     },
@@ -102,10 +99,10 @@ export const MobileBottomSheet = {
         const rightCol = document.getElementById('area-direita');
         const overlay = document.getElementById('mobile-overlay');
 
-        if (rightCol && overlay) {
+        if (rightCol) {
             rightCol.classList.remove('active');
-            overlay.classList.remove('active'); 
             document.body.style.overflow = '';
         }
+        overlay?.classList.remove('active');
     }
 };
