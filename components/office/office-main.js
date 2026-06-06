@@ -14,6 +14,20 @@ import { renderizarNavegacaoCosmos } from '../lists/cosmos.js';
 import { renderizarPaginaLeitura } from '../lists/reader/reader-view.js';
 import { iniciarXSat, dispararPesquisaParabolica } from '../direita/xsat-controller.js';
 import { NexoEngine } from '../direita/ai-engine.js';
+import {
+    $,
+    MESES_LABEL,
+    carregarJsonSilencioso,
+    escapeHtml,
+    escapeRegExp,
+    existe,
+    normalizar,
+    officeState as state,
+    slugLivro
+} from './office-core.js';
+import { carregarMenuSuperior, finalizarLoading, mostrarLogin } from './office-ui.js';
+import { extrairTextoConteudo, normalizarItensPublicacao } from './office-content.js';
+import { filtrarIndice, filtrosAtivos } from './office-search.js';
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -21,22 +35,6 @@ const auth = getAuth(app);
 
 window.db = db;
 window.auth = auth;
-
-const state = {
-    activeTab: "atril",
-    currentData: null,
-    currentItems: [],
-    currentIndex: -1,
-    currentPath: "",
-    currentKind: "",
-    currentParent: null,
-    scriptureView: "text",
-    scriptureRef: null,
-    searchIndex: null
-};
-
-const MESES = ["janeiro", "fevereiro", "marco", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
-const MESES_LABEL = ["Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 
 iniciarAutenticacao(app, db);
 
@@ -57,35 +55,6 @@ onAuthStateChanged(auth, async (user) => {
     finalizarLoading();
 });
 
-function $(id) {
-    return document.getElementById(id);
-}
-
-function finalizarLoading() {
-    const loader = $('loading-screen');
-    if (!loader) return;
-    loader.style.opacity = "0";
-    setTimeout(() => loader.style.display = "none", 350);
-}
-
-function mostrarLogin() {
-    const loading = $('loading-screen');
-    const login = $('login-screen');
-    if (loading) loading.style.display = "none";
-    if (login) login.style.display = "flex";
-}
-
-async function carregarMenuSuperior() {
-    const menu = $('office-top-menu');
-    if (!menu) return;
-    const res = await fetch('components/topo/menu.html');
-    menu.innerHTML = await res.text();
-    menu.querySelectorAll('.nav-item').forEach(link => {
-        const label = normalizar(link.textContent);
-        link.classList.toggle('active', label.includes('escritorio'));
-    });
-}
-
 function vincularEventos() {
     instalarMobileToggleEsquerda();
 
@@ -100,7 +69,10 @@ function vincularEventos() {
         if (event.key === "Enter") executarPesquisa();
     });
     document.querySelectorAll('#office-search-filters .piccard').forEach(card => {
-        card.onclick = () => card.classList.toggle('active');
+        card.onclick = () => {
+            card.classList.toggle('active');
+            if (($('office-search-input')?.value || "").trim().length >= 2) executarPesquisa();
+        };
     });
     document.querySelectorAll('[data-office-ai-mode]').forEach(btn => {
         btn.onclick = () => {
@@ -123,6 +95,7 @@ function vincularEventos() {
     };
 
     $('office-btn-ai').onclick = () => abrirPopup('office-popup-ai');
+    $('office-btn-bookai-float').onclick = () => abrirPopup('office-popup-ai');
     $('office-ai-close').onclick = () => fecharPopup('office-popup-ai');
     $('office-ai-send').onclick = responderBokkai;
     $('office-ai-input').addEventListener('keydown', (event) => {
@@ -377,13 +350,6 @@ async function carregarPublicacao(path, kind, ano) {
     });
 }
 
-function normalizarItensPublicacao(json) {
-    if (json.capitulos) return json.capitulos.map(item => Array.isArray(item) ? item[0] : item);
-    if (json.artigos) return json.artigos;
-    if (json.video) return [json.video];
-    return [];
-}
-
 function abrirConteudo(item, parent, siblings, index, path, kind, ano = "") {
     const reader = $('office-reader');
     state.currentData = item;
@@ -393,9 +359,11 @@ function abrirConteudo(item, parent, siblings, index, path, kind, ano = "") {
     state.currentPath = path;
     state.currentKind = kind;
 
+    document.body.classList.add('office-content-open');
     renderizarPaginaLeitura(item, reader, parent, () => {});
     prepararConteudoCentral();
     if (officeIsTouchMobile()) fecharPainelEsquerdoMobile();
+    atualizarOfficeBookAiFloating();
     atualizarTituloContexto(item);
     guardarRecente(item, path, kind, index);
     renderizarRecentes();
@@ -427,7 +395,7 @@ async function abrirPainelDireito(panel = "brain") {
     if (officeIsTouchMobile()) {
         col.style.removeProperty('width');
         col.style.removeProperty('min-width');
-        col.style.setProperty('height', `${Number(col.dataset.sheetPct || 55)}vh`, 'important');
+        col.style.setProperty('height', `${Number(col.dataset.sheetPct || 70)}vh`, 'important');
     } else {
         col.style.setProperty('width', '380px', 'important');
     }
@@ -700,6 +668,7 @@ function iniciarSettings() {
     const main = $('office-main-font');
     const pop = $('office-popup-font');
     const net = $('office-response-net');
+    const floating = $('office-ai-floating');
     const savedMain = localStorage.getItem("notabook:office:mainFont") || "16";
     const savedPop = localStorage.getItem("notabook:office:popupFont") || "15";
 
@@ -722,6 +691,13 @@ function iniciarSettings() {
         localStorage.setItem("redeRespostasAtiva", net.checked ? "true" : "false");
         window.redeRespostasAtiva = net.checked;
     };
+
+    floating.checked = localStorage.getItem("notabook:office:aiFloating") === "true";
+    floating.onchange = () => {
+        localStorage.setItem("notabook:office:aiFloating", floating.checked ? "true" : "false");
+        atualizarOfficeBookAiFloating();
+    };
+    atualizarOfficeBookAiFloating();
 }
 
 function aplicarFontes() {
@@ -733,14 +709,31 @@ function aplicarFontes() {
     $('office-popup-font-val').textContent = `${pop}px`;
 }
 
+function atualizarOfficeBookAiFloating() {
+    const enabled = localStorage.getItem("notabook:office:aiFloating") === "true";
+    const hasContent = Boolean(state.currentData);
+    const iconBarra = $('office-btn-ai');
+    const zone = $('office-bookai-floating-zone');
+
+    if (iconBarra) {
+        iconBarra.style.setProperty('display', enabled || !hasContent ? 'none' : 'inline-flex', 'important');
+    }
+
+    if (!zone) return;
+    zone.classList.toggle('hidden', !enabled || !hasContent);
+    zone.style.display = enabled && hasContent ? 'block' : 'none';
+}
+
 function fecharPainelEsquerdoMobile() {
     document.body.classList.add('office-left-collapsed');
     document.body.classList.add('office-content-open');
+    atualizarOfficeBookAiFloating();
 }
 
 function abrirPainelEsquerdoMobile() {
     document.body.classList.remove('office-left-collapsed');
     document.body.classList.remove('office-content-open');
+    atualizarOfficeBookAiFloating();
 }
 
 function instalarMobileToggleEsquerda() {
@@ -787,18 +780,18 @@ function instalarMobileSheet(col) {
     let startHeight = 0;
 
     const setPct = (pct) => {
-        const clamped = Math.max(10, Math.min(85, pct));
+        const clamped = Math.max(70, Math.min(85, pct));
         col.style.setProperty('height', `${clamped}vh`, 'important');
         col.dataset.sheetPct = String(clamped);
     };
-    if (officeIsTouchMobile()) setPct(Number(col.dataset.sheetPct || 55));
+    if (officeIsTouchMobile()) setPct(Number(col.dataset.sheetPct || 70));
 
     const iniciarDragSheet = (event) => {
         if (event.target.closest('button')) return;
         if (!officeIsTouchMobile()) return;
         event.stopPropagation();
         startY = event.clientY;
-        startHeight = Number(col.dataset.sheetPct || 55);
+        startHeight = Number(col.dataset.sheetPct || 70);
         col.classList.add('dragging');
         event.currentTarget.setPointerCapture(event.pointerId);
     };
@@ -831,11 +824,11 @@ async function carregarComponente(idElemento, caminhoFicheiro) {
 async function executarPesquisa() {
     const query = normalizar($('office-search-input').value || "");
     if (query.length < 2) return;
-    const filtros = Array.from(document.querySelectorAll('#office-search-filters .piccard.active')).map(btn => btn.dataset.filter);
+    const filtros = filtrosAtivos('#office-search-filters');
     const host = $('office-search-results');
     host.innerHTML = `<div class="bible-search-loading"><i class="fa-solid fa-circle-notch fa-spin"></i> A procurar...</div>`;
     const index = await obterSearchIndex();
-    const results = index.filter(item => filtros.includes(item.filter) && normalizar(item.text).includes(query)).slice(0, 60);
+    const results = filtrarIndice(index, query, filtros);
     host.innerHTML = results.map((item, idx) => `
         <button class="search-result-item" data-result="${idx}">
             <span class="search-result-ref">${escapeHtml(item.label)}</span>
@@ -922,25 +915,6 @@ REGRAS:
     }
 }
 
-function extrairTextoConteudo(item) {
-    return (item?.conteudo || []).map(bloco => bloco.texto || "").join("\n");
-}
-
-async function existe(path) {
-    return fetch(path, { method: 'HEAD' }).then(res => res.ok).catch(() => false);
-}
-
-async function carregarJsonSilencioso(path) {
-    if (!path) return null;
-    try {
-        const res = await fetch(path);
-        if (!res.ok) return null;
-        return await res.json();
-    } catch (e) {
-        return null;
-    }
-}
-
 function formatarEdicao(id) {
     if (id.includes('_')) {
         const [mes, dia] = id.split('_');
@@ -956,32 +930,4 @@ function abrirPopup(id) {
 
 function fecharPopup(id) {
     $(id)?.classList.remove('active');
-}
-
-function slugLivro(nome) {
-    return nome.toLowerCase()
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-        .replace(/\s+/g, '_');
-}
-
-function normalizar(texto) {
-    return String(texto || "")
-        .toLowerCase()
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^\p{L}\p{N}\s]/gu, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-}
-
-function escapeRegExp(texto) {
-    return String(texto).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function escapeHtml(texto) {
-    return String(texto ?? "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
 }
