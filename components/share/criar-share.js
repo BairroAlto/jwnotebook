@@ -1,6 +1,6 @@
 // components/share/criar-share.js
 import { 
-    collection, addDoc, getDocs, query, where, serverTimestamp, and 
+    collection, addDoc, getDocs, query, where, serverTimestamp, and, writeBatch, doc
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { abrirNotaNoEditor } from '../editor/editor.js';
 
@@ -44,7 +44,18 @@ export function inicializarCriacaoShare(db, auth) {
                 )
             );
             const snapOrdem = await getDocs(qOrdem);
-            const novaOrdem = snapOrdem.size + 1;
+            const novaOrdem = 1;
+
+            if (!snapOrdem.empty) {
+                const batch = writeBatch(db);
+                snapOrdem.forEach(item => {
+                    const ordemAtual = item.data()?.[uid]?.ordem || 0;
+                    batch.update(doc(db, "Share", item.id), {
+                        [`${uid}.ordem`]: ordemAtual + 1
+                    });
+                });
+                await batch.commit();
+            }
 
             const idBlocoInicial = crypto.randomUUID();
             const dadosNovaNota = {
@@ -119,7 +130,18 @@ export function inicializarCriacaoShare(db, auth) {
                 )
             );
             const snapOrdem = await getDocs(qOrdem);
-            const novaOrdem = snapOrdem.size + 1;
+            const novaOrdem = 1;
+
+            if (!snapOrdem.empty) {
+                const batch = writeBatch(db);
+                snapOrdem.forEach(item => {
+                    const ordemAtual = item.data()?.[uid]?.ordem || 0;
+                    batch.update(doc(db, "Share", item.id), {
+                        [`${uid}.ordem`]: ordemAtual + 1
+                    });
+                });
+                await batch.commit();
+            }
 
             const dadosNovaPasta = {
                 userId: uid,
