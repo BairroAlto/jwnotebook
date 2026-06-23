@@ -29,6 +29,7 @@ export function iniciarBookReader() {
     document.getElementById('book-speech-play')?.addEventListener('click', playSpeech);
     document.getElementById('book-speech-pause')?.addEventListener('click', pauseSpeech);
     document.getElementById('book-speech-stop')?.addEventListener('click', stopSpeech);
+    document.getElementById('book-player-close')?.addEventListener('click', fecharBarraLeitura);
     document.getElementById('book-speech-rate')?.addEventListener('input', e => {
         BookState.settings.speechRate = Number(e.target.value);
         syncSpeechRateUi();
@@ -267,6 +268,14 @@ function stopSpeech() {
     utterance = null;
 }
 
+function fecharBarraLeitura() {
+    stopSpeech();
+    const bar = document.getElementById('book-player-float');
+    if (!bar) return;
+    bar.classList.add('hidden');
+    bar.style.display = 'none';
+}
+
 function startTeleprompter() {
     const scroller = document.querySelector('.book-center');
     if (!scroller) return;
@@ -328,10 +337,22 @@ function renderPresentationSlide() {
 }
 
 function getPresentationSlides() {
-    return getVisibleBookBoxes().map(caixa => ({
-        tipo: caixa.tipo || 'caixa',
-        titulo: caixa.titulo || 'Sem titulo',
-        conteudo: formatSlideContent(caixa)
+    return getVisibleBookBoxes().flatMap(caixa => buildPresentationSlides(caixa));
+}
+
+function buildPresentationSlides(caixa) {
+    const tipo = caixa.tipo || 'caixa';
+    const titulo = caixa.titulo || 'Sem titulo';
+    if (caixa.tipo === 'galeria' || Array.isArray(caixa.imagens) || caixa.tipo === 'webcard') {
+        return [{ tipo, titulo, conteudo: formatSlideContent(caixa) }];
+    }
+
+    const texto = textoDaCaixa(caixa).replace(/^\s+|\s+$/g, '').replace(/^[\r\n]+/, '') || 'Sem conteudo';
+    const partes = chunkPresentationText(texto);
+    return partes.map((parte, index) => ({
+        tipo,
+        titulo: partes.length > 1 ? `${titulo} (${index + 1}/${partes.length})` : titulo,
+        conteudo: `<p>${escapeHtml(parte).replace(/\n/g, '<br>')}</p>`
     }));
 }
 
@@ -345,6 +366,59 @@ function formatSlideContent(caixa) {
     }
     const texto = textoDaCaixa(caixa).replace(/^\s+|\s+$/g, '').replace(/^[\r\n]+/, '');
     return `<p>${escapeHtml(texto || 'Sem conteudo').replace(/\n/g, '<br>')}</p>`;
+}
+
+function chunkPresentationText(texto) {
+    const maxChars = window.innerWidth <= 768 ? 520 : 820;
+    const paragraphs = String(texto || '').split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+    const chunks = [];
+    let current = '';
+
+    const pushCurrent = () => {
+        if (current.trim()) chunks.push(current.trim());
+        current = '';
+    };
+
+    paragraphs.forEach(paragraph => {
+        if ((current + '\n\n' + paragraph).trim().length <= maxChars) {
+            current = current ? `${current}\n\n${paragraph}` : paragraph;
+            return;
+        }
+        pushCurrent();
+        if (paragraph.length <= maxChars) {
+            current = paragraph;
+            return;
+        }
+        const sentences = paragraph.split(/(?<=[.!?])\s+/);
+        sentences.forEach(sentence => {
+            if (sentence.length > maxChars) {
+                pushCurrent();
+                splitLongTextByWords(sentence, maxChars).forEach(part => {
+                    chunks.push(part);
+                });
+                return;
+            }
+            if ((current + ' ' + sentence).trim().length > maxChars) pushCurrent();
+            current = current ? `${current} ${sentence}` : sentence;
+        });
+    });
+    pushCurrent();
+    return chunks.length ? chunks : ['Sem conteudo'];
+}
+
+function splitLongTextByWords(text, maxChars) {
+    const chunks = [];
+    let current = '';
+    String(text || '').split(/\s+/).forEach(word => {
+        if ((current + ' ' + word).trim().length > maxChars) {
+            if (current.trim()) chunks.push(current.trim());
+            current = word;
+            return;
+        }
+        current = current ? `${current} ${word}` : word;
+    });
+    if (current.trim()) chunks.push(current.trim());
+    return chunks;
 }
 
 function syncSpeechRateUi() {

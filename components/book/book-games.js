@@ -13,6 +13,7 @@ let respondiMode = false;
 let lastScoreTotal = null;
 let sentinelBackHandler = null;
 let dragState = null;
+let gameCardDragState = null;
 
 const SCORE_LABELS = {
     tradicionalverdadeirofalso: "Verdadeiro/Falso",
@@ -33,6 +34,7 @@ export function iniciarBookGames() {
         });
     });
     document.getElementById('book-game-card-close')?.addEventListener('click', closeGameCard);
+    document.getElementById('book-game-card-minimize')?.addEventListener('click', minimizeGameCard);
     document.getElementById('book-sentinel-fab')?.addEventListener('click', toggleSentinelSheet);
     document.getElementById('book-sentinel-min')?.addEventListener('click', minimizeSentinelSheet);
     document.getElementById('book-sentinel-close')?.addEventListener('click', closeSentinelSheet);
@@ -40,6 +42,7 @@ export function iniciarBookGames() {
     window.atualizarBookGameBadge = updateGameBadge;
     window.renderBookRespondiHands = renderRespondiHands;
     bindGamesDrag();
+    bindGameCardDrag();
     updateGameBadge();
 }
 
@@ -301,14 +304,14 @@ function startBinaryQuiz(title, rounds, scoreKey) {
 async function renderAiQuiz() {
     const noteText = textoDaNota(BookState.dadosNota, getVisibleBookBoxes());
     openGameCard("BookAI: Perguntas e Respostas", `<div class="book-ai-loading"><i class="fa-solid fa-circle-notch fa-spin"></i><span>BookAI está a ler apenas esta nota...</span></div>`);
-    const prompt = 'Cria exatamente 15 afirmações de verdadeiro/falso com base exclusiva na nota. Mistura afirmações verdadeiras e falsas. Responde só JSON válido no formato [{"titulo":"...","texto":"...","resposta":true}].';
+    const prompt = 'Cria exatamente 15 afirmações de verdadeiro/falso com base exclusiva na nota. Tem de haver 8 verdadeiras e 7 falsas. As falsas devem ser claramente falsas por contradizerem ou trocarem factos da nota, sem inventar pormenores impossíveis de verificar. Responde só JSON válido no formato [{"titulo":"...","texto":"...","resposta":true}].';
     let rounds = [];
     try {
         const resposta = await NexoEngine.perguntar(prompt, "normal", `NOTA ATUAL:\n${noteText}`);
         rounds = parseAiQuestions(resposta);
     } catch (_) {}
-    if (!rounds.length) rounds = fallbackQuestions();
-    startBinaryQuiz("BookAI: Perguntas e Respostas", rounds.slice(0, 15), 'aiperguntasrespostas');
+    rounds = normalizeBinaryRounds(rounds, fallbackQuestions());
+    startBinaryQuiz("BookAI: Perguntas e Respostas", rounds, 'aiperguntasrespostas');
 }
 
 function renderSummaryLightning() {
@@ -397,7 +400,7 @@ function parseAiQuestions(text) {
             title: item.titulo || "Pergunta BookAI",
             body: item.texto || item.pergunta || "",
             answer: Boolean(item.resposta)
-        })).filter(item => item.body);
+        })).filter(item => item.body && String(item.body).length > 18);
     } catch (_) {
         return [];
     }
@@ -405,15 +408,50 @@ function parseAiQuestions(text) {
 
 function fallbackQuestions() {
     const caixas = getVisibleBookBoxes().filter(c => c.titulo || c.conteudo);
-    return shuffle(caixas).slice(0, 15).map((c, i, arr) => {
-        const truth = i % 3 !== 1;
-        const other = arr[(i + 1) % arr.length] || c;
+    const base = caixas.length ? caixas : [{ titulo: BookState.dadosNota?.nome || "Nota", conteudo: textoDaNota(BookState.dadosNota, getVisibleBookBoxes()) }];
+    return Array.from({ length: 15 }, (_, i) => {
+        const c = base[i % base.length];
+        const truth = i % 2 === 0;
+        const other = base.find(item => item.id !== c.id && textoDaCaixa(item).trim()) || base[(i + 1) % base.length] || c;
+        const titulo = c.titulo || `Ponto ${i + 1}`;
+        const outroTitulo = other.titulo || "outro ponto da nota";
+        const texto = cleanSummarySentence(textoDaCaixa(c) || textoDaNota(BookState.dadosNota, getVisibleBookBoxes()));
+        const outroTexto = cleanSummarySentence(textoDaCaixa(other) || texto);
         return {
-            title: c.titulo || "Pergunta BookAI",
-            body: truth ? `Esta caixa fala sobre: ${textoDaCaixa(c).slice(0, 240)}` : `Esta caixa está associada a: ${textoDaCaixa(other).slice(0, 240)}`,
+            title: titulo,
+            body: truth
+                ? `A nota afirma neste ponto: ${texto}`
+                : (other === c
+                    ? `O ponto "${titulo}" defende uma conclusão oposta ao conteúdo citado: ${texto}`
+                    : `O ponto "${titulo}" apresenta a ideia de "${outroTitulo}": ${outroTexto}`),
             answer: truth
         };
     });
+}
+
+function normalizeBinaryRounds(aiRounds, fallbackRounds) {
+    const all = [...aiRounds, ...fallbackRounds]
+        .filter(item => item && item.body)
+        .map(item => ({
+            title: String(item.title || "Pergunta BookAI").slice(0, 90),
+            body: String(item.body || "").slice(0, 420),
+            answer: Boolean(item.answer)
+        }));
+    const truths = all.filter(item => item.answer);
+    const falses = all.filter(item => !item.answer);
+    const targetTruths = 8;
+    const targetFalses = 7;
+    const picked = [
+        ...truths.slice(0, targetTruths),
+        ...falses.slice(0, targetFalses)
+    ];
+    const neededTruths = Math.max(0, targetTruths - truths.length);
+    const neededFalses = Math.max(0, targetFalses - falses.length);
+    if (neededTruths || neededFalses) {
+        picked.push(...fallbackRounds.filter(item => item.answer).slice(0, neededTruths));
+        picked.push(...fallbackRounds.filter(item => !item.answer).slice(0, neededFalses));
+    }
+    return shuffle(picked).slice(0, 15);
 }
 
 function renderSentinelHome(body) {
@@ -716,6 +754,8 @@ function setSentinelHeader(config = {}) {
 }
 
 function openGameCard(title, html) {
+    const modal = document.querySelector('#book-game-card-overlay .book-game-card-modal');
+    modal?.classList.remove('minimized');
     document.getElementById('book-game-card-title').innerHTML = escapeHtml(title);
     document.getElementById('book-game-card-body').innerHTML = html;
     document.getElementById('book-game-card-overlay')?.classList.add('active');
@@ -723,6 +763,48 @@ function openGameCard(title, html) {
 
 function closeGameCard() {
     document.getElementById('book-game-card-overlay')?.classList.remove('active');
+}
+
+function minimizeGameCard() {
+    document.querySelector('#book-game-card-overlay .book-game-card-modal')?.classList.toggle('minimized');
+}
+
+function bindGameCardDrag() {
+    const modal = document.querySelector('#book-game-card-overlay .book-game-card-modal');
+    const header = document.querySelector('#book-game-card-overlay .popup-header');
+    if (!modal || !header) return;
+    header.style.cursor = 'grab';
+    header.addEventListener('pointerdown', event => {
+        if (event.target.closest('button')) return;
+        const rect = modal.getBoundingClientRect();
+        modal.style.left = `${rect.left}px`;
+        modal.style.top = `${rect.top}px`;
+        modal.style.right = 'auto';
+        modal.style.transform = 'none';
+        gameCardDragState = {
+            startX: event.clientX,
+            startY: event.clientY,
+            startLeft: rect.left,
+            startTop: rect.top
+        };
+        modal.classList.add('dragging');
+        header.style.cursor = 'grabbing';
+        header.setPointerCapture?.(event.pointerId);
+    });
+    header.addEventListener('pointermove', event => {
+        if (!gameCardDragState) return;
+        const nextLeft = gameCardDragState.startLeft + (event.clientX - gameCardDragState.startX);
+        const nextTop = gameCardDragState.startTop + (event.clientY - gameCardDragState.startY);
+        modal.style.left = `${Math.max(8, Math.min(window.innerWidth - 80, nextLeft))}px`;
+        modal.style.top = `${Math.max(8, Math.min(window.innerHeight - 48, nextTop))}px`;
+    });
+    const endDrag = () => {
+        gameCardDragState = null;
+        modal.classList.remove('dragging');
+        header.style.cursor = 'grab';
+    };
+    header.addEventListener('pointerup', endDrag);
+    header.addEventListener('pointercancel', endDrag);
 }
 
 function openResult(title, score, detail) {
