@@ -21,6 +21,6 @@ export async function carregarMenuSuperior() {
     menu.innerHTML = await res.text();
     menu.querySelectorAll('.nav-item').forEach(link => {
         const label = normalizar(link.textContent);
-        link.classList.toggle('active', label.includes('escritorio'));
+        link.classList.toggle('active', label.includes('office'));
     });
 }

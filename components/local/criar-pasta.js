@@ -1,4 +1,4 @@
-import { collection, addDoc, getDocs, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { collection, addDoc, getDocs, query, where, serverTimestamp, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
 export function inicializarCriacaoPasta(db, auth) {
     const btnAbrir = document.getElementById('btn-abrir-criar-pasta');
@@ -51,7 +51,17 @@ export function inicializarCriacaoPasta(db, auth) {
                 );
                 
                 const querySnapshot = await getDocs(q);
-                const ordem = querySnapshot.size + 1; 
+                const ordem = 1;
+
+                if (!querySnapshot.empty) {
+                    const batch = writeBatch(db);
+                    querySnapshot.forEach(item => {
+                        batch.update(doc(db, "Local", item.id), {
+                            ordem: (item.data().ordem || 0) + 1
+                        });
+                    });
+                    await batch.commit();
+                }
 
                 // Criar o documento
                 await addDoc(localRef, {

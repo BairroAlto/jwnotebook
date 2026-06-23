@@ -86,6 +86,9 @@ case 'PINS':
             case 'LISTS':
                 alternarDisplays([listaLists], 'flex');
                 alternarDisplays([navLocal, navShare, navPins, listaLocal, listaShare, listaPins], 'none');
+                if (typeof window.renderizarMenuPrincipalLists === 'function') {
+                    window.renderizarMenuPrincipalLists();
+                }
                 break;
 
             default:

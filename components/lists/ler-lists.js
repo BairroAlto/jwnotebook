@@ -8,12 +8,14 @@ import { iniciarTopicos, renderizarNavegacaoTopicos } from './topicos.js';
 import { abrirPopupMarcadores } from '../direita/biblia-marcador.js';
 import { iniciarNavegacaoTextosBiblicos } from './textos-biblicos.js';
 import { iniciarNavegacaoMarcadores } from './marcadores-list.js';
+import { iniciarNavegacaoPalco } from './palco.js';
 
 let dbRef, authRef;
 let nomesCoresCustom = {};
 let listenersAtivos = false;
 let escutaPesquisaAtual = null;
 let corAtivaPesquisa = null;
+let unsubPalcoNotifications = null;
 
 /**
  * INICIALIZADOR PRINCIPAL DA ABA LISTS
@@ -63,9 +65,15 @@ export async function inicializarLists(db, auth) {
             // --- COSMOS ---
             if (e.target.closest('#menu-list-cosmos')) renderizarNavegacaoCosmos();
 
+            // --- PALCO ---
+            if (e.target.closest('#menu-list-palco')) iniciarNavegacaoPalco(window.__palcoPersistedItems || []);
+
         });
         listenersAtivos = true;
     }
+
+    vigiarPalcoPersistido();
+    vigiarNotificacoesPalco();
 }
 
 /**
@@ -265,3 +273,103 @@ window.renderizarMenuPrincipalLists = () => {
         </div>
     `;
 };
+
+const FUSEIS_LISTS_DEFAULT = {
+    topicos: true,
+    destaques: true,
+    biblia: true,
+    textosBiblicos: true,
+    marcadores: true,
+    livros: true,
+    cosmos: true,
+    palco: true
+};
+
+function canShowListItem(key, contexto = "default") {
+    const fuseis = { ...FUSEIS_LISTS_DEFAULT, ...(window.NotaBookUserPrefs?.listsFuseis || {}) };
+    if (contexto === "office" && key === "livros") return false;
+    return Boolean(fuseis[key]);
+}
+
+window.renderizarMenuPrincipalLists = () => {
+    const container = document.getElementById('lista-lists');
+    if (!container) return;
+    window.htmlListaAntiga = null;
+
+    const blocos = [];
+    if (canShowListItem('topicos')) {
+        blocos.push(`<div class="menu-item-list" id="menu-list-topicos"><i class="fa-solid fa-layer-group" style="color: #818cf8;"></i> Tópicos</div>`);
+    }
+    if (canShowListItem('destaques')) {
+        blocos.push(`<div class="menu-item-list" id="menu-list-destaques"><i class="fa-solid fa-palette" style="color: #fbbf24;"></i> Destaques</div>`);
+    }
+    if (blocos.length) blocos.push(`<div class="menu-separador-list"></div>`);
+    if (canShowListItem('biblia')) {
+        blocos.push(`<div class="menu-item-list" id="menu-list-biblia"><i class="fa-solid fa-book-open" style="color: #e879f9;"></i> Bíblia</div>`);
+    }
+    if (canShowListItem('textosBiblicos')) {
+        blocos.push(`<div class="menu-item-list" id="menu-list-textos-biblicos"><i class="fa-solid fa-scroll" style="color: #8b5cf6;"></i> Textos Bíblicos</div>`);
+    }
+    if (canShowListItem('marcadores')) {
+        blocos.push(`<div class="menu-item-list" id="menu-list-marcadores"><i class="fa-solid fa-bookmark" style="color: #ef4444;"></i> Marcadores</div>`);
+    }
+    if (blocos[blocos.length - 1] !== `<div class="menu-separador-list"></div>` && (canShowListItem('livros') || canShowListItem('cosmos'))) {
+        blocos.push(`<div class="menu-separador-list"></div>`);
+    }
+    if (canShowListItem('livros')) {
+        blocos.push(`<div class="menu-item-list" id="menu-list-livros"><i class="fa-solid fa-book" style="color: #60a5fa;"></i> Livros</div>`);
+    }
+    if (canShowListItem('cosmos')) {
+        if (blocos[blocos.length - 1] !== `<div class="menu-separador-list"></div>` && canShowListItem('livros')) {
+            blocos.push(`<div class="menu-separador-list"></div>`);
+        }
+        blocos.push(`<div class="menu-item-list" id="menu-list-cosmos"><i class="fa-solid fa-meteor" style="color: #d49d06;"></i> Cosmos</div>`);
+    }
+    if (canShowListItem('palco')) {
+        if (blocos[blocos.length - 1] !== `<div class="menu-separador-list"></div>`) {
+            blocos.push(`<div class="menu-separador-list"></div>`);
+        }
+        blocos.push(`<div class="menu-item-list" id="menu-list-palco" style="${window.__palcoNotificationHasItems ? 'color:#ef4444; font-weight:900;' : ''}"><i class="fa-solid fa-masks-theater" style="color: ${window.__palcoNotificationHasItems ? '#ef4444' : '#f97316'};"></i> Palco <span id="badge-list-palco" style="display:${window.__palcoNotificationHasItems ? 'inline-block' : 'none'}; margin-left:auto; width:8px; height:8px; border-radius:999px; background:#ef4444;"></span></div>`);
+    }
+
+    container.innerHTML = blocos.join('');
+};
+
+function vigiarPalcoPersistido() {
+    if (!dbRef || !authRef?.currentUser) return;
+    const q = query(collection(dbRef, "Palco"), where("userId", "==", authRef.currentUser.uid));
+    onSnapshot(q, snap => {
+        window.__palcoPersistedItems = snap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+    });
+}
+
+function vigiarNotificacoesPalco() {
+    if (!dbRef || !authRef?.currentUser) return;
+    if (unsubPalcoNotifications) unsubPalcoNotifications();
+    const btnLists = Array.from(document.querySelectorAll('#left-buttons button'))
+        .find(btn => btn.innerText.trim().toUpperCase() === 'LISTS');
+    const q = query(
+        collection(dbRef, "PalcoNotificacoes"),
+        where("userId", "==", authRef.currentUser.uid),
+        where("estado", "==", "on"),
+        where("tipo", "==", "wishlist-oficial")
+    );
+    unsubPalcoNotifications = onSnapshot(q, snap => {
+        const hasItems = !snap.empty;
+        window.__palcoNotificationItems = snap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+        window.__palcoNotificationHasItems = hasItems;
+        if (btnLists) {
+            btnLists.style.color = hasItems ? "#ef4444" : "";
+            btnLists.style.fontWeight = hasItems ? "900" : "";
+        }
+        const palcoMenuItem = document.getElementById('menu-list-palco');
+        if (palcoMenuItem) {
+            palcoMenuItem.style.color = hasItems ? "#ef4444" : "";
+            palcoMenuItem.style.fontWeight = hasItems ? "900" : "";
+            const icon = palcoMenuItem.querySelector('i');
+            if (icon) icon.style.color = hasItems ? "#ef4444" : "#f97316";
+        }
+        const badge = document.getElementById('badge-list-palco');
+        if (badge) badge.style.display = hasItems ? 'inline-block' : 'none';
+    });
+}

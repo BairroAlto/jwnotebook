@@ -1,5 +1,5 @@
 // components/local/criar-nota.js
-import { collection, addDoc, getDocs, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { collection, addDoc, getDocs, query, where, serverTimestamp, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { abrirNotaNoEditor, forcarGravacaoImediata } from '../editor/editor.js';
 
 /**
@@ -24,10 +24,19 @@ export function inicializarCriacaoNota(db, auth) {
                 const pastapai = window.pastaAtual || "root"; 
                 const localRef = collection(db, "Local");
                 
-                // Determinar ordem
                 const q = query(localRef, where("pastapai", "==", pastapai), where("userId", "==", userId));
                 const querySnapshot = await getDocs(q);
-                const ordem = querySnapshot.size + 1; 
+                const ordem = 1;
+
+                if (!querySnapshot.empty) {
+                    const batch = writeBatch(db);
+                    querySnapshot.forEach(item => {
+                        batch.update(doc(db, "Local", item.id), {
+                            ordem: (item.data().ordem || 0) + 1
+                        });
+                    });
+                    await batch.commit();
+                }
 
                 const idNotaUnico = crypto.randomUUID();
                 const idBlocoInicial = crypto.randomUUID();
@@ -39,7 +48,7 @@ export function inicializarCriacaoNota(db, auth) {
                     tipo: "nota",
                     modo: "normal", // <--- NOVO CAMPO ADICIONADO AQUI
                     estado: "on",
-                    nome: "Nova Nota " + ordem,
+                    nome: "Nova Nota",
                     pastapai: pastapai,
                     ordem: ordem,
                     browser: [], // Lista de abas vazia

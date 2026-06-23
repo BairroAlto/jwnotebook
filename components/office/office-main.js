@@ -28,6 +28,7 @@ import {
 import { carregarMenuSuperior, finalizarLoading, mostrarLogin } from './office-ui.js';
 import { extrairTextoConteudo, normalizarItensPublicacao } from './office-content.js';
 import { filtrarIndice, filtrosAtivos } from './office-search.js';
+import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -46,6 +47,7 @@ onAuthStateChanged(auth, async (user) => {
         return;
     }
 
+    window.NotaBookUserPrefs = await carregarPreferenciasUtilizador(db, user.uid);
     await carregarMenuSuperior();
     vincularEventos();
     iniciarSettings();
@@ -134,6 +136,12 @@ function trocarTab(tab) {
     if (tab === "atril") renderizarAtrilRaiz();
     else renderizarListsSemLivros();
 }
+
+window.refreshOfficeLists = () => {
+    if (state.activeTab === "lists") {
+        renderizarListsSemLivros();
+    }
+};
 
 function renderizarAtrilRaiz() {
     const list = $('office-left-list');
@@ -665,19 +673,26 @@ function tornarPopupArrastavel() {
 }
 
 function iniciarSettings() {
-    const main = $('office-main-font');
+    const mainDesktop = $('office-main-font-desktop');
+    const mainMobile = $('office-main-font-mobile');
     const pop = $('office-popup-font');
     const net = $('office-response-net');
     const floating = $('office-ai-floating');
-    const savedMain = localStorage.getItem("notabook:office:mainFont") || "16";
+    const savedMainDesktop = localStorage.getItem("notabook:office:mainFontDesktop") || localStorage.getItem("notabook:office:mainFont") || "16";
+    const savedMainMobile = localStorage.getItem("notabook:office:mainFontMobile") || localStorage.getItem("notabook:office:mainFont") || savedMainDesktop;
     const savedPop = localStorage.getItem("notabook:office:popupFont") || "15";
 
-    main.value = savedMain;
+    mainDesktop.value = savedMainDesktop;
+    mainMobile.value = savedMainMobile;
     pop.value = savedPop;
     aplicarFontes();
 
-    main.oninput = () => {
-        localStorage.setItem("notabook:office:mainFont", main.value);
+    mainDesktop.oninput = () => {
+        localStorage.setItem("notabook:office:mainFontDesktop", mainDesktop.value);
+        aplicarFontes();
+    };
+    mainMobile.oninput = () => {
+        localStorage.setItem("notabook:office:mainFontMobile", mainMobile.value);
         aplicarFontes();
     };
     pop.oninput = () => {
@@ -698,14 +713,18 @@ function iniciarSettings() {
         atualizarOfficeBookAiFloating();
     };
     atualizarOfficeBookAiFloating();
+    window.addEventListener('resize', aplicarFontes);
 }
 
 function aplicarFontes() {
-    const main = $('office-main-font').value;
+    const mainDesktop = $('office-main-font-desktop').value;
+    const mainMobile = $('office-main-font-mobile').value;
+    const main = window.innerWidth <= 768 ? mainMobile : mainDesktop;
     const pop = $('office-popup-font').value;
     document.documentElement.style.setProperty('--office-main-font', `${main}px`);
     document.documentElement.style.setProperty('--office-popup-font', `${pop}px`);
-    $('office-main-font-val').textContent = `${main}px`;
+    $('office-main-font-val-desktop').textContent = `${mainDesktop}px`;
+    $('office-main-font-val-mobile').textContent = `${mainMobile}px`;
     $('office-popup-font-val').textContent = `${pop}px`;
 }
 
