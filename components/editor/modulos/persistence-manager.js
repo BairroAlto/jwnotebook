@@ -15,9 +15,27 @@ export const PersistenceManager = {
             const payload = { 
                 nome: document.getElementById('editor-titulo').innerText.trim(), 
                 caixas: caixasAtuais,
-                vincTopicos: dadosNotaOriginal.vincTopicos || [] 
+                vincTopicos: dadosNotaOriginal.vincTopicos || [],
+                shareNovidades: dadosNotaOriginal.shareNovidades || {},
+                reactions: dadosNotaOriginal.reactions || {}
             };
             if (isShare) payload.vistoPor = [authRef.currentUser.uid];
+
+            if (isShare && caixaEditadaId) {
+                const uid = authRef.currentUser.uid;
+                const userName = authRef.currentUser.displayName || authRef.currentUser.email || "Utilizador";
+                payload.shareNovidades = {
+                    ...(dadosNotaOriginal.shareNovidades || {}),
+                    [caixaEditadaId]: {
+                        tipo: payload.shareNovidades?.[caixaEditadaId]?.tipo === "criado" ? "criado" : "editado",
+                        by: uid,
+                        byName: userName,
+                        viewedBy: [uid],
+                        timestamp: new Date().toISOString()
+                    }
+                };
+                dadosNotaOriginal.shareNovidades = payload.shareNovidades;
+            }
 
             await updateDoc(notaRef, payload);
             state.notaComAlteracoes = false;

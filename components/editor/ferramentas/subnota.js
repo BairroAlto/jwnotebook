@@ -7,6 +7,7 @@ import { FOCOS_SUBNOTA } from '../modulos/paleta-cores.js';
  */
 export function criarSubNotaAzul(caixa, onTextoAlterado, onApagar, onPaleta, onPartilhar, onMover, onTags, onAddAbaixo) {
     const caixaDiv = document.createElement("div");
+    caixaDiv.classList.add('notebook-lines');
     
     // Determinar estilo com base no FOCO
     const keyFoco = caixa.foco || "original";
@@ -75,7 +76,7 @@ export function criarSubNotaAzul(caixa, onTextoAlterado, onApagar, onPaleta, onP
     inputTitulo.style.cssText = `
         width: 100%; padding: 12px 18px; background: transparent; border: none; 
         border-bottom: 1px solid ${focoInfo.corForte}33; color: white; 
-        font-weight: 700; font-size: var(--fs-editor-titulo-ferramentas); 
+        font-weight: 700; font-size: var(--fs-note-title-tools, var(--fs-editor-titulo-ferramentas)); 
         outline: none; resize: none; overflow: hidden; font-family: inherit;
         display: block; line-height: 1.4;
     `;
@@ -117,7 +118,7 @@ export function criarSubNotaAzul(caixa, onTextoAlterado, onApagar, onPaleta, onP
         width: 100%; min-height: 80px; padding: 15px 18px; 
         background-color: ${caixa.destaques || "transparent"}; 
         border: none; outline: none; resize: none; overflow: hidden; 
-        color: ${corTxt}; font-size: var(--fs-editor-texto); 
+        color: ${corTxt}; font-size: var(--fs-note-texto, var(--fs-editor-texto)); 
         font-family: inherit; line-height: 1.6; transition: background-color 0.3s;
     `;
 

@@ -6,6 +6,7 @@ import { FOCOS_RACIOCINIO } from '../modulos/paleta-cores.js';
  */
 export function criarRaciocinioAmarelo(caixa, numeroRaciocinio, onTextoAlterado, onApagar, onPaleta, onPartilhar, onMover, onTags, onAddAbaixo) {
     const caixaDiv = document.createElement("div");
+    caixaDiv.classList.add('notebook-lines');
     
     const keyFoco = caixa.foco || "original";
     const focoInfo = FOCOS_RACIOCINIO[keyFoco] || FOCOS_RACIOCINIO["original"];
@@ -74,7 +75,7 @@ export function criarRaciocinioAmarelo(caixa, numeroRaciocinio, onTextoAlterado,
 
     inputTitulo.style.cssText = `
         flex: 1; padding: 12px 18px; background: transparent; border: none; 
-        color: white; font-weight: 700; font-size: var(--fs-editor-titulo-ferramentas); 
+        color: white; font-weight: 700; font-size: var(--fs-note-title-tools, var(--fs-editor-titulo-ferramentas)); 
         outline: none; resize: none; overflow: hidden; font-family: inherit;
         line-height: 1.4; align-self: center;
     `;
@@ -110,7 +111,7 @@ export function criarRaciocinioAmarelo(caixa, numeroRaciocinio, onTextoAlterado,
         width: 100%; min-height: 80px; padding: 15px 18px; 
         background-color: ${caixa.destaques || "transparent"}; 
         border: none; outline: none; resize: none; overflow: hidden; 
-        color: ${corTxt}; font-size: var(--fs-editor-texto); 
+        color: ${corTxt}; font-size: var(--fs-note-texto, var(--fs-editor-texto)); 
         font-family: inherit; line-height: 1.6; transition: background-color 0.3s;
     `;
 

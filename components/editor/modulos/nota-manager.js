@@ -2,6 +2,7 @@
 import { processarAberturaNota, configurarBotaoShare } from './nota-viewer.js';
 import { gerirSessaoShare } from './share-controller.js';
 import { carregarAbasDaNota, iniciarSistemaBrowser } from './browser.js';
+import { syncCurrentNoteToggle } from '../../settings/settings.js';
 
 export const NotaManager = {
     abrir: async (ctx, callbacks) => {
@@ -30,6 +31,13 @@ export const NotaManager = {
                         authRef: auth
                     });
 
+                    window.notaAtualContext = {
+                        notaId: id,
+                        dadosNota: dados,
+                        db,
+                        auth
+                    };
+
                     // 3. CARREGAR ABAS (Agora o dbRef já está pronto)
                     await carregarAbasDaNota(maeId || id, dados, id);
 
@@ -46,6 +54,7 @@ export const NotaManager = {
                         else setTimeout(tentarIndice, 50);
                     };
                     tentarIndice();
+                    syncCurrentNoteToggle();
 
                     return Promise.resolve();
                 }

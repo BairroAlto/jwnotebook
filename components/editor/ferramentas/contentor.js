@@ -7,6 +7,7 @@ import { FOCOS_BASE } from '../modulos/paleta-cores.js';
  */
 export function criarContentorLaranja(caixa, onTextoAlterado, onApagar, onPaleta, onPartilhar, onMover, onTags, onAddAbaixo) {
     const caixaDiv = document.createElement("div");
+    caixaDiv.classList.add('notebook-lines');
     
     const keyFoco = caixa.foco || "original";
     const focoInfo = FOCOS_BASE[keyFoco] || FOCOS_BASE["original"];
@@ -76,7 +77,7 @@ export function criarContentorLaranja(caixa, onTextoAlterado, onApagar, onPaleta
         width: 100%; min-height: 100px; padding: 18px 20px; 
         background-color: ${caixa.destaques || "transparent"}; 
         border: none; outline: none; resize: none; overflow: hidden; 
-        color: ${corTxt}; font-size: var(--fs-editor-texto); 
+        color: ${corTxt}; font-size: var(--fs-note-texto, var(--fs-editor-texto)); 
         font-family: inherit; line-height: 1.6; transition: background-color 0.3s;
     `;
 

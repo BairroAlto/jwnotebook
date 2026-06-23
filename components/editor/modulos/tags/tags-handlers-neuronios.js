@@ -14,7 +14,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
 import { confirmarRemocaoBrain } from './tags-utils.js';
-import { renderizarNeuroniosNoPopup } from './tags-ui.js';
+import { renderizarHub, renderizarNeuroniosNoPopup } from './tags-ui.js';
 
 /**
  * ==========================================
@@ -116,15 +116,17 @@ export async function vincularBiblia(referencia, ctx) {
     console.groupEnd();
     document.getElementById('results-biblia-neuronios').style.display = 'none';
     renderizarNeuroniosNoPopup(caixaAlvo);
+    renderizarHub(caixaAlvo);
 }
 
 /**
  * DESVINCULAR TEXTO BÍBLICO (REMOÇÃO BIDIRECIONAL)
  */
-export async function desvincularBiblia(referencia, ctx) {
+export async function desvincularBiblia(referencia, ctx, options = {}) {
     const { dbRef, caixaAlvo, persistir, authRef } = ctx;
+    const { skipConfirm = false } = options;
 
-    if (await confirmarRemocaoBrain()) {
+    if (skipConfirm || await confirmarRemocaoBrain()) {
         // 1. Limpar Local
         caixaAlvo.neuroniosBiba = (caixaAlvo.neuroniosBiba || []).filter(r => r !== referencia);
         await persistir('neuroniosBiba', caixaAlvo.neuroniosBiba);
@@ -153,6 +155,7 @@ export async function desvincularBiblia(referencia, ctx) {
             console.error("Erro ao desvincular:", e);
         }
         renderizarNeuroniosNoPopup(caixaAlvo);
+        renderizarHub(caixaAlvo);
     }
 }
 
@@ -188,6 +191,7 @@ export async function vincularCosmos(temaIdInterno, temaNome, ctx) {
     
     // Forçamos o popup a desenhar a nova pílula imediatamente
     renderizarNeuroniosNoPopup(caixaAlvo); 
+    renderizarHub(caixaAlvo);
 
     try {
         // 3. GRAVAR NA NOTA (LOCAL OU SHARE)
@@ -234,16 +238,18 @@ export async function vincularCosmos(temaIdInterno, temaNome, ctx) {
         // Reversão de emergência na UI caso a gravação falhe (Permissões/Rede)
         caixaAlvo.neuroniosCosmos = caixaAlvo.neuroniosCosmos.filter(t => t.id !== temaIdInterno);
         renderizarNeuroniosNoPopup(caixaAlvo);
+        renderizarHub(caixaAlvo);
         
         alert("Erro ao vincular tema. Verifica a tua ligação.");
     }
 }
 
-export async function desvincularCosmos(temaIdInterno, ctx) {
+export async function desvincularCosmos(temaIdInterno, ctx, options = {}) {
     const { dbRef, caixaAlvo, persistir, authRef } = ctx;
     const uid = authRef.currentUser.uid;
+    const { skipConfirm = false } = options;
 
-    if (await confirmarRemocaoBrain()) {
+    if (skipConfirm || await confirmarRemocaoBrain()) {
         const backupOriginal = [...caixaAlvo.neuroniosCosmos];
         
         // 1. UI OTIMISTA: Remove da RAM
@@ -296,6 +302,7 @@ export async function desvincularCosmos(temaIdInterno, ctx) {
             // Reverter em caso de erro para não perder dados
             caixaAlvo.neuroniosCosmos = backupOriginal;
             renderizarNeuroniosNoPopup(caixaAlvo);
+            renderizarHub(caixaAlvo);
         }
     }
 }

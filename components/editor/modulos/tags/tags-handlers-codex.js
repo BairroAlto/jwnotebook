@@ -73,7 +73,7 @@ export function renderizarCards(ctx) {
         <div class="codex-card-completo" id="card-${card.id}" style="border-left: 3px solid var(--primary); margin-bottom:15px; position:relative;">
             
             <!-- BOTÃO REMOVER -->
-            <button class="btn-remover-card" onclick="window.confirmarRemoverCodex('${card.id}')">
+            <button type="button" class="btn-remover-card tags-remove-btn" data-tags-remove="codex" data-remove-id="${encodeURIComponent(String(card.id || ''))}" aria-label="Remover card do codex">
                 <i class="fa-solid fa-xmark"></i>
             </button>
 

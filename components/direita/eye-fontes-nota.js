@@ -31,8 +31,9 @@ export function carregarFontesGlobaisDaNota(caixasFiltradas, append = false) {
     caixasFiltradas.forEach(caixa => {
         const links = caixa.referencias || [];
         const codices = (caixa.codex || []).filter(cx => cx.estado === 'on');
+        const palcoMeta = caixa.palcoMeta || null;
 
-        if (links.length > 0 || codices.length > 0) {
+        if (links.length > 0 || codices.length > 0 || palcoMeta) {
             encontrouQualquerCoisa = true;
             const config = IDENTIDADE_FERRAMENTAS[caixa.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
             
@@ -55,6 +56,10 @@ export function carregarFontesGlobaisDaNota(caixasFiltradas, append = false) {
                 window.__codexGlobalRegistry[itemCodex.id] = itemCodex;
                 listaAlvo.insertAdjacentHTML('beforeend', renderizarCardSimplificado('codex', itemCodex));
             });
+
+            if (palcoMeta?.title) {
+                listaAlvo.insertAdjacentHTML('beforeend', renderizarCardPalco(palcoMeta));
+            }
         }
     });
 
@@ -82,4 +87,31 @@ function renderizarCardSimplificado(tipo, dados) {
     temp.querySelectorAll('.fa-star, .fa-pen-to-square, .fa-regular.fa-star, .fa-trash-can').forEach(b => b.remove());
     
     return temp.innerHTML;
+}
+
+function renderizarCardPalco(meta) {
+    const palcoAtivo = Boolean(window.NotaBookUserPrefs?.listsFuseis?.palco);
+    const route = meta.route ? JSON.stringify(meta.route).replace(/"/g, '&quot;') : "";
+    if (!window.abrirPalcoLigado) {
+        window.abrirPalcoLigado = (payloadJson) => {
+            try {
+                const payload = JSON.parse(payloadJson);
+                localStorage.setItem('palco-route', JSON.stringify(payload));
+                window.location.href = 'palco.html';
+            } catch (_) {}
+        };
+    }
+    return `
+        <div style="display:flex; gap:12px; align-items:center; background:rgba(249,115,22,0.05); border:1px solid rgba(249,115,22,0.14); border-left:4px solid #f97316; border-radius:12px; padding:12px;">
+            <div style="width:54px; height:74px; border-radius:10px; overflow:hidden; background:rgba(255,255,255,0.04); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                ${meta.imageUrl ? `<img src="${meta.imageUrl}" alt="${meta.title}" style="width:100%; height:100%; object-fit:cover;">` : `<i class="fa-solid fa-masks-theater" style="color:#f97316;"></i>`}
+            </div>
+            <div style="flex:1; min-width:0;">
+                <p style="margin:0; font-size:10px; color:#f97316; font-weight:800; text-transform:uppercase;">Palco</p>
+                <p style="margin:6px 0 0; font-size:12px; color:#f8fafc; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${meta.title}</p>
+                <p style="margin:6px 0 0; font-size:10px; color:var(--text-muted);">${meta.subtitle || 'Conteúdo anexado do portal Palco'}</p>
+            </div>
+            ${palcoAtivo && route ? `<button onclick="window.abrirPalcoLigado('${route}')" style="background:rgba(249,115,22,0.16); border:1px solid rgba(249,115,22,0.3); color:#fed7aa; border-radius:999px; padding:8px 10px; font-size:10px; cursor:pointer;">Abrir</button>` : ``}
+        </div>
+    `;
 }

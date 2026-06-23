@@ -229,11 +229,15 @@ function renderizarResultados(lista) {
 function renderizarDefinicoesCanal(num) {
     const display = document.getElementById('xsat-display-content');
     const canal = estadosCanais[num];
+    if (!canal.versiculos.length) {
+        canal.versiculos = extrairPiccardsDosResultados(canal.dados);
+    }
+    const piccards = canal.versiculos;
     display.innerHTML = `
         <div style="padding:10px;">
             <p style="font-size:10px; color:var(--text-muted); text-transform:uppercase; font-weight:800; margin-bottom:15px;">Piccards do Canal</p>
             <div style="display:flex; flex-wrap: wrap; gap:8px; margin-bottom:30px;">
-                ${canal.versiculos.map(v => `
+                ${piccards.map(v => `
                     <div class="neuronio-pill" onclick="window.togglePiccard('${num}', '${v.nome}')"
                          style="background:rgba(255,255,255,0.05); border:1px solid ${v.ativo ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; padding:6px 12px; border-radius:20px; display:flex; align-items:center; gap:10px; cursor:pointer; opacity:${v.ativo ? '1' : '0.4'};">
                         <span style="font-size:11px; font-weight:700; color:white;">${v.nome}</span>
@@ -242,6 +246,20 @@ function renderizarDefinicoesCanal(num) {
             </div>
             <button onclick="window.limparCanalX(${num})" style="width:100%; padding:12px; background:rgba(239, 68, 68, 0.1); color:#f87171; border:1px solid #ef4444; border-radius:8px; cursor:pointer; font-weight:700; font-size:11px;">ENCERRAR CANAL ${num}</button>
         </div>`;
+}
+
+function extrairPiccardsDosResultados(dados) {
+    const vistos = new Set();
+    const refs = [];
+    ['publicacoes', 'livros', 'multimedia'].forEach(chave => {
+        (dados?.[chave] || []).forEach(item => {
+            const nome = item?.referencia;
+            if (!nome || vistos.has(nome)) return;
+            vistos.add(nome);
+            refs.push({ nome, ativo: true });
+        });
+    });
+    return refs;
 }
 
 window.togglePiccard = (canalId, nome) => {
@@ -275,7 +293,9 @@ window.saltarParaFonteSat = (index, canalId) => {
 
     jumpInProgress = true;
     const btnLists = Array.from(document.querySelectorAll('#left-buttons button')).find(b => b.innerText.trim().toUpperCase() === 'LISTS');
+    const officeListsTab = document.querySelector('.office-tab[data-tab="lists"]');
     if (btnLists) btnLists.click();
+    else if (officeListsTab) officeListsTab.click();
     setTimeout(() => {
         import('../lists/bridge-main.js').then(m => {
             m.abrirReferenciaDireta(item.bridge);

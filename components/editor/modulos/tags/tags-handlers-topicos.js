@@ -1,6 +1,6 @@
 // components/editor/modulos/tags/tags-handlers-topicos.js
 import { doc, updateDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
-import { renderizarVinculosTopicos } from './tags-ui.js';
+import { renderizarHub, renderizarVinculosTopicos } from './tags-ui.js';
 import { perguntarRemoverVinculo } from './tags-utils.js';
 
 /**
@@ -38,6 +38,7 @@ export async function vincularAoSubtopico(docIdFirebase, uuid, nomeSub, ctx) {
 
         // 5. Atualizar a interface (Pills no topo da aba Tópicos)
         renderizarVinculosTopicos(caixaAlvo);
+        renderizarHub(caixaAlvo);
         
     } catch (e) {
         console.error("Erro ao vincular subtópico:", e);
@@ -49,15 +50,16 @@ export async function vincularAoSubtopico(docIdFirebase, uuid, nomeSub, ctx) {
  * @param {string} uuid - O UUID do tópico a remover
  * @param {object} ctx - Contexto com dbRef, caixaAlvo e função persistir
  */
-export async function desvincularTopico(uuid, ctx) {
+export async function desvincularTopico(uuid, ctx, options = {}) {
     const { dbRef, caixaAlvo, persistir } = ctx;
+    const { skipConfirm = false } = options;
     
     // Localizar os dados do tópico no array da caixa
     const topicoObj = (caixaAlvo.vincTopicos || []).find(t => t.id === uuid);
     if (!topicoObj) return;
 
     // CHAMADA AO POPUP PERSONALIZADO (Substitui o confirm nativo)
-    const confirmou = await perguntarRemoverVinculo(topicoObj.nome);
+    const confirmou = skipConfirm ? true : await perguntarRemoverVinculo(topicoObj.nome);
     
     if (confirmou) {
         try {
@@ -73,6 +75,7 @@ export async function desvincularTopico(uuid, ctx) {
 
             // 4. Atualizar interface
             renderizarVinculosTopicos(caixaAlvo);
+            renderizarHub(caixaAlvo);
             
         } catch (e) {
             console.error("Erro ao desvincular tópico:", e);

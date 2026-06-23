@@ -12,11 +12,11 @@ export function perguntarRestauroBackup(dataBackup) {
         const btnNao = document.getElementById('btn-cancelar-restauro');
 
         if (!overlay) {
-            console.error("Popup de confirmação de restauro não encontrado.");
-            return resolve(confirm(`Restaurar a versão de ${dataBackup}?`));
+            console.error("Popup de confirmaÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o de restauro nÃƒÆ’Ã‚Â£o encontrado.");
+            return resolve(confirm(`Restaurar a versÃƒÆ’Ã‚Â£o de ${dataBackup}?`));
         }
 
-        if (msg) msg.innerHTML = `Desejas restaurar a versão de <br><b>${dataBackup}</b> como uma nova nota?`;
+        if (msg) msg.innerHTML = `Desejas restaurar a versÃƒÆ’Ã‚Â£o de <br><b>${dataBackup}</b> como uma nova nota?`;
         
         overlay.classList.add('active');
 
@@ -33,7 +33,7 @@ export function perguntarRestauroBackup(dataBackup) {
 }
 
 /**
- * POPUP: Configurar Imagem do Cartão de Visita
+ * POPUP: Configurar Imagem do CartÃƒÆ’Ã‚Â£o de Visita
  */
 export function abrirPopupImagemCartao(urlAtual, dimensaoAtual) {
     return new Promise((resolve) => {
@@ -61,7 +61,7 @@ export function abrirPopupImagemCartao(urlAtual, dimensaoAtual) {
 }
 
 /**
- * POPUP: Confirmar remoção de vínculo de TÓPICO
+ * POPUP: Confirmar remoÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o de vÃƒÆ’Ã‚Â­nculo de TÃƒÆ’Ã¢â‚¬Å“PICO
  */
 export function perguntarRemoverVinculo(nome) {
     return new Promise((resolve) => {
@@ -70,7 +70,11 @@ export function perguntarRemoverVinculo(nome) {
         const btnSim = document.getElementById('btn-confirmar-vinculo');
         const btnNao = document.getElementById('btn-cancelar-vinculo');
 
-        if (msg) msg.innerHTML = `Deseja remover o vínculo com o tópico <b>"${nome}"</b>?`;
+        if (!overlay || !btnSim || !btnNao) {
+            return resolve(false);
+        }
+
+        if (msg) msg.innerHTML = `Deseja remover o v&iacute;nculo com o t&oacute;pico <b>"${nome}"</b>?`;
         overlay.classList.add('active');
 
         const fechar = (resposta) => {
@@ -86,12 +90,42 @@ export function perguntarRemoverVinculo(nome) {
 }
 
 /**
- * Pesquisa de textos bíblicos para o sistema de Neurónios
+ * POPUP: Confirmar remoção genérica no Hub
+ */
+export function perguntarRemocaoHub({ titulo = "Remover item?", mensagem = "" } = {}) {
+    return new Promise((resolve) => {
+        const overlay = document.getElementById('popup-confirmar-remover-overlay');
+        const tituloEl = document.getElementById('titulo-confirmar-remover');
+        const msgEl = document.getElementById('msg-confirmar-remover');
+        const btnSim = document.getElementById('btn-confirmar-remover-final');
+        const btnNao = document.getElementById('btn-cancelar-remover');
+
+        if (!overlay || !btnSim || !btnNao) return resolve(false);
+
+        if (tituloEl) tituloEl.innerText = titulo;
+        if (msgEl) msgEl.innerText = mensagem || "Esta ação vai ocultar este item da tua nota.";
+
+        overlay.classList.add('active');
+
+        const fechar = (resposta) => {
+            overlay.classList.remove('active');
+            btnSim.onclick = null;
+            btnNao.onclick = null;
+            resolve(resposta);
+        };
+
+        btnSim.onclick = () => fechar(true);
+        btnNao.onclick = () => fechar(false);
+    });
+}
+
+/**
+ * Pesquisa de textos bÃƒÆ’Ã‚Â­blicos para o sistema de NeurÃƒÆ’Ã‚Â³nios
  */
 export function pesquisarTextoBiblicoLocal(termo) {
     const cleanTerm = termo.trim().toLowerCase();
     if(cleanTerm.length < 2) return [];
-    const regex = /^([1-3]?\s?[a-zA-Záàâãéèêíïóôõúüç]+)\s?(\d+)?(?::(\d+)?)?/i;
+    const regex = /^([1-3]?\s?[a-zA-ZÃƒÆ’Ã‚Â¡ÃƒÆ’Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÆ’Ã‚Â£ÃƒÆ’Ã‚Â©ÃƒÆ’Ã‚Â¨ÃƒÆ’Ã‚ÂªÃƒÆ’Ã‚Â­ÃƒÆ’Ã‚Â¯ÃƒÆ’Ã‚Â³ÃƒÆ’Ã‚Â´ÃƒÆ’Ã‚ÂµÃƒÆ’Ã‚ÂºÃƒÆ’Ã‚Â¼ÃƒÆ’Ã‚Â§]+)\s?(\d+)?(?::(\d+)?)?/i;
     const match = cleanTerm.match(regex);
     if (!match) return [];
     
@@ -113,7 +147,7 @@ export function pesquisarTextoBiblicoLocal(termo) {
 }
 
 /**
- * POPUP: Confirmar remoção de vínculo do Brain
+ * POPUP: Confirmar remoÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o de vÃƒÆ’Ã‚Â­nculo do Brain
  */
 export function confirmarRemocaoBrain() {
     return new Promise((resolve) => {
@@ -126,7 +160,7 @@ export function confirmarRemocaoBrain() {
 }
 
 /**
- * Exibe um popup de aviso genérico
+ * Exibe um popup de aviso genÃƒÆ’Ã‚Â©rico
  */
 export function mostrarAviso(mensagem) {
     const overlay = document.getElementById('popup-aviso-overlay');
@@ -135,10 +169,10 @@ export function mostrarAviso(mensagem) {
 
     if (!overlay || !texto) return alert(mensagem);
 
-    // Garante que o texto está correto e ativa o popup
+    // Garante que o texto estÃƒÆ’Ã‚Â¡ correto e ativa o popup
     texto.innerText = mensagem;
     
-    // FORÇA O Z-INDEX MÁXIMO NO MOMENTO DA EXIBIÇÃO
+    // FORÃƒÆ’Ã¢â‚¬Â¡A O Z-INDEX MÃƒÆ’Ã‚ÂXIMO NO MOMENTO DA EXIBIÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O
     overlay.style.zIndex = "20000"; 
     overlay.classList.add('active');
 
@@ -148,16 +182,16 @@ export function mostrarAviso(mensagem) {
 }
 
 /**
- * Abre o popup para capturar URL e Título de um link
+ * Abre o popup para capturar URL e TÃƒÆ’Ã‚Â­tulo de um link
  */
 export function abrirPopupLinkTopico(dadosIniciais = null) {
-    console.log("🚀 [UTILS] Função abrirPopupLinkTopico iniciada.");
+    console.log("ÃƒÂ°Ã…Â¸Ã…Â¡Ã¢â€šÂ¬ [UTILS] FunÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o abrirPopupLinkTopico iniciada.");
 
     return new Promise((resolve) => {
         const overlay = document.getElementById('popup-link-topico-overlay');
         
         if (!overlay) {
-            console.error("❌ [UTILS] ERRO CRÍTICO: O elemento HTML '#popup-link-topico-overlay' não foi encontrado no index.html.");
+            console.error("ÃƒÂ¢Ã‚ÂÃ…â€™ [UTILS] ERRO CRÃƒÆ’Ã‚ÂTICO: O elemento HTML '#popup-link-topico-overlay' nÃƒÆ’Ã‚Â£o foi encontrado no index.html.");
             return resolve(null);
         }
 
@@ -166,16 +200,16 @@ export function abrirPopupLinkTopico(dadosIniciais = null) {
         const btnSave = document.getElementById('btn-gravar-link-topico');
         const btnCancel = document.getElementById('btn-cancelar-link-topico');
 
-        // Preencher se for edição
+        // Preencher se for ediÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o
         inputUrl.value = dadosIniciais?.link || "";
         inputTit.value = dadosIniciais?.titulo || "";
         
-        console.log("✨ [UTILS] A mostrar overlay e focar no input.");
+        console.log("ÃƒÂ¢Ã…â€œÃ‚Â¨ [UTILS] A mostrar overlay e focar no input.");
         overlay.classList.add('active');
         inputUrl.focus();
 
         const fechar = (dados) => {
-            console.log("🔒 [UTILS] A fechar popup e remover listeners.");
+            console.log("ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ¢â‚¬â„¢ [UTILS] A fechar popup e remover listeners.");
             overlay.classList.remove('active');
             btnSave.onclick = null;
             btnCancel.onclick = null;
@@ -183,10 +217,10 @@ export function abrirPopupLinkTopico(dadosIniciais = null) {
         };
 
         btnSave.onclick = () => {
-            console.log("💾 [UTILS] Botão Gravar clicado no popup.");
+            console.log("ÃƒÂ°Ã…Â¸Ã¢â‚¬â„¢Ã‚Â¾ [UTILS] BotÃƒÆ’Ã‚Â£o Gravar clicado no popup.");
             const url = inputUrl.value.trim();
             if (!url) {
-                console.warn("⚠️ [UTILS] Tentativa de gravar sem URL.");
+                console.warn("ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [UTILS] Tentativa de gravar sem URL.");
                 inputUrl.style.borderColor = "#ef4444";
                 return;
             }
@@ -194,7 +228,7 @@ export function abrirPopupLinkTopico(dadosIniciais = null) {
         };
 
         btnCancel.onclick = () => {
-            console.log("❌ [UTILS] Botão Cancelar clicado no popup.");
+            console.log("ÃƒÂ¢Ã‚ÂÃ…â€™ [UTILS] BotÃƒÆ’Ã‚Â£o Cancelar clicado no popup.");
             fechar(null);
         };
     });

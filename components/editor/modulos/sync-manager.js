@@ -55,7 +55,9 @@ export const SyncManager = {
             await FeedRenderer.desenhar(state.caixasAtuais, document.getElementById('editor-feed'), {
                 dadosNota: state.dadosNotaOriginal,
                 acionarGravacao,
-                notaAbertaId: state.notaAbertaId
+                notaAbertaId: state.notaAbertaId,
+                dbRef: state.dbRef,
+                authRef: state.authRef
             });
         }
 

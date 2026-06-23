@@ -2,6 +2,7 @@
 import { collection, query, where, getDocs, doc, getDoc, updateDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { 
     renderizarNeuroniosNoPopup, 
+    renderizarHub,
     renderizarAssociados, 
     renderizarResultadosBiblia, 
     renderizarResultadosCosmos,
@@ -12,23 +13,24 @@ import { salvarCampoNaCaixa } from './tags-store.js';
 import { pesquisarTextoBiblicoLocal } from './tags-utils.js';
 import { renderizarVinculosTopicos } from './tags-ui.js';
 
-// Handlers de Sub-módulos
+// Handlers de Sub-mÃƒÆ’Ã‚Â³dulos
 import * as NeuronioHandlers from './tags-handlers-neuronios.js';
 import * as TopicoHandlers from './tags-handlers-topicos.js';
 import * as CodexHandlers from './tags-handlers-codex.js';
 import * as RefHandlers from './tags-handlers-referencias.js';
 import * as AssociarHandlers from './tags-handlers-associar.js';
 import { abrirPesquisaCodex } from '../codex-browser.js';
+import { perguntarRemocaoHub } from './tags-utils.js';
 
 let dbRef, authRef, caixaAlvo, notaMaeId;
-let topicoPaiSelecionado = null; // Estado para o filtro de subtópicos
+let topicoPaiSelecionado = null; // Estado para o filtro de subtÃƒÆ’Ã‚Â³picos
 let topicoPaiNotaSelecionado = null; 
 let notaAtivaIdLocal = null;
 let origemAtual = "Local"; 
 
 
 /**
- * CONTEXTO DE AUXÍLIO
+ * CONTEXTO DE AUXÃƒÆ’Ã‚ÂLIO
  */
 const getCtx = () => ({
     dbRef, authRef, caixaAlvo, notaMaeId,
@@ -37,7 +39,7 @@ const getCtx = () => ({
 });
 
 /**
- * Limpa os campos de pesquisa e esconde os resultados da aba Neurónios
+ * Limpa os campos de pesquisa e esconde os resultados da aba NeurÃƒÆ’Ã‚Â³nios
  */
 function resetInputsPesquisaTags() {
     const inBiblia = document.getElementById('search-biblia-neuronios');
@@ -52,12 +54,13 @@ function resetInputsPesquisaTags() {
 }
 
 /**
- * INICIALIZAÇÃO DO SISTEMA
+ * INICIALIZAÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O DO SISTEMA
  */
 export function iniciarSistemaTags(db, auth) {
     dbRef = db; authRef = auth;
+    configurarRemocoesTags();
 
-    // 1. Gestão de Abas
+    // 1. GestÃƒÆ’Ã‚Â£o de Abas
     document.querySelectorAll('.tab-tags').forEach(tab => {
         tab.onclick = () => {
              resetInputsPesquisaTags(); 
@@ -68,18 +71,19 @@ export function iniciarSistemaTags(db, auth) {
         };
     });
     
-    // Lógica do botão + nos Tópicos
+    // LÃƒÆ’Ã‚Â³gica do botÃƒÆ’Ã‚Â£o + nos TÃƒÆ’Ã‚Â³picos
 const btnToggleTopico = document.getElementById('btn-abrir-form-topico');
 if(btnToggleTopico) {
     btnToggleTopico.onclick = () => {
         const area = document.getElementById('area-form-topicos');
         const isHidden = area.style.display === 'none';
+        if (isHidden) prepararBuscaTopicosUnificada();
         area.style.display = isHidden ? 'block' : 'none';
         btnToggleTopico.classList.toggle('active', isHidden);
     };
 }
 
- // 2. Botão Fechar Popup
+ // 2. BotÃƒÆ’Ã‚Â£o Fechar Popup
     const btnFechar = document.getElementById('btn-fechar-tags');
     if(btnFechar) {
         btnFechar.onclick = () => {
@@ -89,7 +93,7 @@ if(btnToggleTopico) {
         };
     }
 
-    // 3. ABA ASSOCIAR: Botão Explorador
+    // 3. ABA ASSOCIAR: BotÃƒÆ’Ã‚Â£o Explorador
     const btnExpAssociar = document.getElementById('btn-mostrar-explorador-associar');
     if(btnExpAssociar) {
         btnExpAssociar.onclick = (e) => {
@@ -101,7 +105,7 @@ if(btnToggleTopico) {
         };
     }
 
-    // 4. ABA REFERÊNCIAS
+    // 4. ABA REFERÃƒÆ’Ã…Â NCIAS
     const btnAddRef = document.getElementById('btn-add-ref-completa');
     if(btnAddRef) btnAddRef.onclick = () => RefHandlers.adicionarReferencia(getCtx(), "completa");
 
@@ -123,24 +127,24 @@ export function abrirPopupTags(caixa, notaId, origemNota) {
     // --- 1. RESET DE INPUTS (Garantir limpeza ao abrir conforme solicitado) ---
     resetInputsPesquisaTags(); 
 
-    // --- 2. GESTÃO DE CONTEXTO (Sincronização Local vs Share) ---
+    // --- 2. GESTÃƒÆ’Ã†â€™O DE CONTEXTO (SincronizaÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o Local vs Share) ---
     // Determinamos a origem real: prioridade para o argumento do editor, 
     // fallback para o campo da caixa ou 'local' por defeito.
     const origemReal = origemNota || caixa.onde || "local";
     
-    // Atualiza a variável de estado do módulo (usada pela função persistir/getCtx)
+    // Atualiza a variÃƒÆ’Ã‚Â¡vel de estado do mÃƒÆ’Ã‚Â³dulo (usada pela funÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o persistir/getCtx)
     origemAtual = (origemReal === "share") ? "Share" : "Local";
     
     caixaAlvo = caixa; 
     notaMaeId = notaId;
     
-    console.log(`🛠️ [TAGS] Abrindo popup. Contexto: ${origemAtual} | Bloco: ${caixa.id}`);
+    console.log(`ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂºÃ‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [TAGS] Abrindo popup. Contexto: ${origemAtual} | Bloco: ${caixa.id}`);
 
-    // --- 3. EXIBIÇÃO DO OVERLAY ---
+    // --- 3. EXIBIÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O DO OVERLAY ---
     const overlay = document.getElementById('popup-tags-overlay');
     if (overlay) overlay.classList.add('active');
 
-    // --- 4. GESTÃO DE VISIBILIDADE DAS ABAS (Regras de Negócio) ---
+    // --- 4. GESTÃƒÆ’Ã†â€™O DE VISIBILIDADE DAS ABAS (Regras de NegÃƒÆ’Ã‚Â³cio) ---
     const isNotaShare = (origemReal === "share");
     const todasAbas = document.querySelectorAll('.tab-tags');
     const abasPrivadas = ['tags-neuronios', 'tags-associar', 'tags-topicos'];
@@ -148,11 +152,11 @@ export function abrirPopupTags(caixa, notaId, origemNota) {
     todasAbas.forEach(aba => {
         const target = aba.getAttribute('data-target');
 
-        // Regra A: Esconde abas de Inteligência Pessoal se a nota for Share
+        // Regra A: Esconde abas de InteligÃƒÆ’Ã‚Âªncia Pessoal se a nota for Share
         if (isNotaShare && abasPrivadas.includes(target)) {
             aba.style.display = 'none';
         } 
-        // Regra B: O Elevador apenas tem acesso à aba de Tópicos
+        // Regra B: O Elevador apenas tem acesso ÃƒÆ’Ã‚Â  aba de TÃƒÆ’Ã‚Â³picos
         else if (caixa.tipo === "elevador") {
             aba.style.display = (target === 'tags-topicos') ? 'flex' : 'none';
         } 
@@ -161,48 +165,50 @@ export function abrirPopupTags(caixa, notaId, origemNota) {
         }
     });
 
-    // --- 5. SELEÇÃO AUTOMÁTICA DA ABA INICIAL ---
+    // --- 5. SELEÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O AUTOMÃƒÆ’Ã‚ÂTICA DA ABA INICIAL ---
     if (isNotaShare) {
-        // Notas Share abrem direto nas Referências/Documentação
+        // Notas Share abrem direto nas ReferÃƒÆ’Ã‚Âªncias/DocumentaÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o
         const btnRef = document.querySelector('.tab-tags[data-target="tags-referencias"]');
         if (btnRef) btnRef.click();
     } else if (caixa.tipo === "elevador") {
         const btnTop = document.querySelector('.tab-tags[data-target="tags-topicos"]');
         if (btnTop) btnTop.click();
     } else {
-        // Notas Locais abrem nos Neurónios (Bíblia/Cosmos)
-        const btnDefault = document.querySelector('.tab-tags[data-target="tags-neuronios"]');
+        // Notas Locais abrem nos NeurÃƒÆ’Ã‚Â³nios (BÃƒÆ’Ã‚Â­blia/Cosmos)
+        const btnDefault = document.querySelector('.tab-tags[data-target="tags-hub"]');
         if (btnDefault) btnDefault.click();
     }
 
-    // --- 6. RENDERIZAR ÍCONES DE GENEALOGIA (Coroa / Peão) ---
+    // --- 6. RENDERIZAR ÃƒÆ’Ã‚ÂCONES DE GENEALOGIA (Coroa / PeÃƒÆ’Ã‚Â£o) ---
     if (typeof renderizarIconesGenealogia === 'function') {
         renderizarIconesGenealogia(caixa);
     }
 
-    // --- 7. RENDERIZAR CONTEÚDOS ATUAIS (Pills e Listas) ---
+    // --- 7. RENDERIZAR CONTEÃƒÆ’Ã…Â¡DOS ATUAIS (Pills e Listas) ---
+    renderizarHub(caixaAlvo);
     renderizarNeuroniosNoPopup(caixaAlvo);
     renderizarAssociados(caixaAlvo);
     renderizarVinculosTopicos(caixaAlvo);
+    prepararBuscaTopicosUnificada();
     
-    // --- 8. CARREGAR CARDS DE CODEX E REFERÊNCIAS ---
-    // Usamos import dinâmico para garantir que os handlers estão prontos
+    // --- 8. CARREGAR CARDS DE CODEX E REFERÃƒÆ’Ã…Â NCIAS ---
+    // Usamos import dinÃƒÆ’Ã‚Â¢mico para garantir que os handlers estÃƒÆ’Ã‚Â£o prontos
     import('./tags-handlers-codex.js').then(m => m.renderizarCards(getCtx()));
     import('./tags-handlers-referencias.js').then(m => m.renderizarCards(getCtx()));
 
-    // --- 9. SINCRONIZAÇÃO "IN LIVE" COM O PAINEL EYE (DIREITA) ---
-    // Forçamos a atualização da aba Fontes do EYE mal o popup abre, 
-    // garantindo que não há discrepância entre o que vês no popup e na barra lateral.
+    // --- 9. SINCRONIZAÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O "IN LIVE" COM O PAINEL EYE (DIREITA) ---
+    // ForÃƒÆ’Ã‚Â§amos a atualizaÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o da aba Fontes do EYE mal o popup abre, 
+    // garantindo que nÃƒÆ’Ã‚Â£o hÃƒÆ’Ã‚Â¡ discrepÃƒÆ’Ã‚Â¢ncia entre o que vÃƒÆ’Ã‚Âªs no popup e na barra lateral.
     import('../../../direita/eye-fontes-nota.js').then(m => {
         m.carregarFontesGlobaisDaNota(window.caixasAtuais);
     });
 }
 
 /**
- * LÓGICA DE PESQUISA
+ * LÃƒÆ’Ã¢â‚¬Å“GICA DE PESQUISA
  */
 function configurarInputsPesquisa() {
-    // Pesquisa Bíblia
+    // Pesquisa BÃƒÆ’Ã‚Â­blia
     const inBiblia = document.getElementById('search-biblia-neuronios');
     if(inBiblia) {
         inBiblia.oninput = (e) => {
@@ -227,7 +233,7 @@ function configurarInputsPesquisa() {
         };
     }
 
-    // PESQUISA TÓPICOS (Pai)
+    // PESQUISA TÃƒÆ’Ã¢â‚¬Å“PICOS (Pai)
     const inTopico = document.getElementById('search-tags-topico');
     if(inTopico) {
         inTopico.oninput = async (e) => {
@@ -243,7 +249,7 @@ function configurarInputsPesquisa() {
         };
     }
 
-    // PESQUISA SUBTÓPICOS
+    // PESQUISA SUBTÃƒÆ’Ã¢â‚¬Å“PICOS
     const inSubtopico = document.getElementById('search-tags-subtopico');
     if(inSubtopico) {
         inSubtopico.oninput = async (e) => {
@@ -266,26 +272,26 @@ function configurarInputsPesquisa() {
 }
 
 /**
- * EXPOSIÇÃO DE FUNÇÕES AO WINDOW
+ * EXPOSIÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O DE FUNÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã¢â‚¬Â¢ES AO WINDOW
  */
 /**
- * EXPOSIÇÃO DE FUNÇÕES AO WINDOW (Eventos de Clique do HTML)
+ * EXPOSIÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O DE FUNÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã¢â‚¬Â¢ES AO WINDOW (Eventos de Clique do HTML)
  */
 function exporFuncoesGlobais() {
     
     
-    // --- TÓPICOS E SUBTÓPICOS ---
+    // --- TÃƒÆ’Ã¢â‚¬Å“PICOS E SUBTÃƒÆ’Ã¢â‚¬Å“PICOS ---
  window.setTopicoPai = (id, nome) => {
     topicoPaiSelecionado = { id, nome };
     document.getElementById('search-tags-topico').value = "";
     document.getElementById('results-tags-topico').style.display = 'none';
     document.getElementById('selected-tags-topico-display').innerHTML = `
         <div class="neuronio-pill" style="border-color:var(--primary); background:rgba(99, 102, 241, 0.1); margin-bottom:10px;">
-            <i class="fa-solid fa-check"></i> <span>Tópico: ${nome}</span>
+            <i class="fa-solid fa-check"></i> <span>TÃƒÆ’Ã‚Â³pico: ${nome}</span>
             <i class="fa-solid fa-xmark" style="margin-left:10px; cursor:pointer;" onclick="window.limparTopicoFiltro()"></i>
         </div>`;
     
-    // Ativa a secção de subtópicos
+    // Ativa a secÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o de subtÃƒÆ’Ã‚Â³picos
     const secSub = document.getElementById('section-tags-subtopico');
     secSub.style.opacity = "1";
     secSub.style.pointerEvents = "auto";
@@ -293,7 +299,7 @@ function exporFuncoesGlobais() {
 
 window.formatarInputTempo = (input) => {
     let val = input.value.replace(/\D/g, ''); // Remove lixo
-    if (val.length > 6) val = val.substring(0, 6); // Limite de 6 dígitos
+    if (val.length > 6) val = val.substring(0, 6); // Limite de 6 dÃƒÆ’Ã‚Â­gitos
 
     let formatado = "";
     if (val.length > 0) formatado += val.substring(0, 2);
@@ -323,16 +329,16 @@ window.formatarInputTempo = (input) => {
         window.limparTopicoFiltro();
     };
 
-    // Remover Vínculo
+    // Remover VÃƒÆ’Ã‚Â­nculo
     window.removerVincTopico = (uuid) => {
         TopicoHandlers.desvincularTopico(uuid, getCtx());
     };
 
-    // --- NEURÓNIOS (BÍBLIA E COSMOS) ---
+    // --- NEURÃƒÆ’Ã¢â‚¬Å“NIOS (BÃƒÆ’Ã‚ÂBLIA E COSMOS) ---
     window.vincularBiblia = (ref) => {
     NeuronioHandlers.vincularBiblia(ref, getCtx());
     
-    // RESET UI BÍBLIA
+    // RESET UI BÃƒÆ’Ã‚ÂBLIA
     const inBiblia = document.getElementById('search-biblia-neuronios');
     const resBiblia = document.getElementById('results-biblia-neuronios');
     if (inBiblia) inBiblia.value = "";
@@ -346,7 +352,7 @@ window.formatarInputTempo = (input) => {
     window.desvincularBiblia = (ref) => NeuronioHandlers.desvincularBiblia(ref, getCtx());
     
     window.vincularCosmos = (id, nome) => {
-    // Executa a lógica de gravação no Firebase e RAM
+    // Executa a lÃƒÆ’Ã‚Â³gica de gravaÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o no Firebase e RAM
     NeuronioHandlers.vincularCosmos(id, nome, getCtx());
 
     // RESET UI COSMOS (O que pediste)
@@ -361,25 +367,37 @@ window.formatarInputTempo = (input) => {
         resCosmos.style.display = 'none'; // Esconde a lista de resultados
     }
     
-    console.log("🧹 [TAGS] Pesquisa Cosmos reiniciada após seleção.");
+    console.log("ÃƒÂ°Ã…Â¸Ã‚Â§Ã‚Â¹ [TAGS] Pesquisa Cosmos reiniciada apÃƒÆ’Ã‚Â³s seleÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o.");
 };
 
 
     window.desvincularCosmos = (id) => NeuronioHandlers.desvincularCosmos(id, getCtx());
 
-    // --- ASSOCIAÇÕES (NOTAS E CAIXAS) ---
+    // --- ASSOCIAÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã¢â‚¬Â¢ES (NOTAS E CAIXAS) ---
     window.vincularAoAssociado = (id, tit, tipo) => AssociarHandlers.vincular(id, tit, tipo, getCtx());
     window.removerAssociado = (id) => AssociarHandlers.remover(id, getCtx());
+    window.abrirNoBrowserExterno = async (id) => {
+        try {
+            const browser = await import('../browser.js');
+            const res = await browser.buscarNotaHibrida(id);
+            if (!res) return;
+
+            const editor = await import('../../editor.js');
+            await editor.abrirNotaNoEditor(id, res.dados, dbRef || window.db, authRef || window.auth, null, notaAtivaIdLocal);
+        } catch (error) {
+            console.error('Erro ao abrir nota no browser externo:', error);
+        }
+    };
     
     // Abre a nota no sistema de abas do editor
-    window.abrirNoBrowserExterno = (id) => {
+    window.abrirNoBrowserExternoLegacy = (id) => {
         if (window.abrirNoBrowserExterno) {
-            // Esta função é injetada pelo browser.js
+            // Esta funÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o ÃƒÆ’Ã‚Â© injetada pelo browser.js
             window.abrirNoBrowserExterno(id);
         }
     };
 
-    // --- CODEX (MAPEAMENTO BIBLIOGRÁFICO) ---
+    // --- CODEX (MAPEAMENTO BIBLIOGRÃƒÆ’Ã‚ÂFICO) ---
     window.updateCodexLista = (cardId, campo, valor) => {
         const card = caixaAlvo.codex.find(c => c.id === cardId);
         if (card) {
@@ -399,7 +417,7 @@ window.formatarInputTempo = (input) => {
                     if (!isNaN(num)) numerosFinais.push(num);
                 }
             });
-            // Grava array de números limpo e ordenado
+            // Grava array de nÃƒÆ’Ã‚Âºmeros limpo e ordenado
             card[campo] = [...new Set(numerosFinais)].sort((a, b) => a - b);
             getCtx().persistir('codex', caixaAlvo.codex);
         }
@@ -425,7 +443,7 @@ window.confirmarRemoverCodex = (cardId) => {
 
     if (!overlay) return;
 
-    // --- 1. RESET DOS BOTÕES (Garante que abrem ativos) ---
+    // --- 1. RESET DOS BOTÃƒÆ’Ã¢â‚¬Â¢ES (Garante que abrem ativos) ---
     [btnSim, btnNao].forEach(btn => {
         btn.disabled = false;
         btn.style.pointerEvents = "auto";
@@ -436,23 +454,23 @@ window.confirmarRemoverCodex = (cardId) => {
     overlay.classList.add('active');
 
     btnSim.onclick = async () => {
-        // --- 2. TRANCA TOTAL (Sim e Cancelar ficam inacessíveis) ---
+        // --- 2. TRANCA TOTAL (Sim e Cancelar ficam inacessÃƒÆ’Ã‚Â­veis) ---
         [btnSim, btnNao].forEach(btn => {
             btn.disabled = true;
             btn.style.pointerEvents = "none";
         });
         
-        btnNao.style.opacity = "0.3"; // O cancelar fica quase invisível
+        btnNao.style.opacity = "0.3"; // O cancelar fica quase invisÃƒÆ’Ã‚Â­vel
         btnSim.style.opacity = "0.7";
         btnSim.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> A eliminar...';
 
-        console.group("🗑️ [CODEX-ACTION] REMOVER CARD");
+        console.group("ÃƒÂ°Ã…Â¸Ã¢â‚¬â€Ã¢â‚¬ËœÃƒÂ¯Ã‚Â¸Ã‚Â [CODEX-ACTION] REMOVER CARD");
         
         try {
             const cardParaRemover = caixaAlvo.codex.find(c => c.id === cardId);
 
             if (cardParaRemover) {
-                // A) Atualização na Nota (Soft Delete)
+                // A) AtualizaÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o na Nota (Soft Delete)
                 cardParaRemover.estado = "off";
                 cardParaRemover.timedelete = new Date().toISOString();
                 await getCtx().persistir('codex', caixaAlvo.codex);
@@ -473,14 +491,14 @@ window.confirmarRemoverCodex = (cardId) => {
                 mEye.carregarFontesGlobaisDaNota(window.caixasAtuais);
             }
         } catch (error) {
-            console.error("Erro na remoção:", error);
+            console.error("Erro na remoÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o:", error);
         } finally {
             console.groupEnd();
             overlay.classList.remove('active');
         }
     };
 
-    // O botão Cancelar só funciona se o "Sim" ainda não tiver sido clicado
+    // O botÃƒÆ’Ã‚Â£o Cancelar sÃƒÆ’Ã‚Â³ funciona se o "Sim" ainda nÃƒÆ’Ã‚Â£o tiver sido clicado
     btnNao.onclick = () => {
         overlay.classList.remove('active');
     };
@@ -492,7 +510,7 @@ window.confirmarRemoverCodex = (cardId) => {
     if (card) {
         card.referencia = valor;
         
-        // Chamar a inteligência de identificação
+        // Chamar a inteligÃƒÆ’Ã‚Âªncia de identificaÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o
         const info = CodexHandlers.identificarSiglaETipo(valor);
         card.sigla = info.sigla;
         card.tipo = info.tipo;
@@ -504,7 +522,7 @@ window.confirmarRemoverCodex = (cardId) => {
     }
 };
 
-// ATUALIZAR TAMBÉM O BROWSER PARA IDENTIFICAR AO SELECIONAR NO EXPLORADOR
+// ATUALIZAR TAMBÃƒÆ’Ã¢â‚¬Â°M O BROWSER PARA IDENTIFICAR AO SELECIONAR NO EXPLORADOR
 window.triggerCodexBrowser = (cardId) => {
     const isNovo = (!cardId || cardId === "NEW");
 
@@ -515,7 +533,7 @@ window.triggerCodexBrowser = (cardId) => {
                 if (isNovo) {
                     await mHandler.adicionarItensAoCodex(dadosReferencia, getCtx());
                 } else {
-                    // SUBSTITUIÇÃO NO ARRAY PLANO COM LIMPEZA
+                    // SUBSTITUIÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O NO ARRAY PLANO COM LIMPEZA
                     const cardAlvo = caixaAlvo.codex.find(c => c.id === cardId);
                     if (cardAlvo && cardAlvo.groupId) {
                         const gId = cardAlvo.groupId;
@@ -557,7 +575,7 @@ window.triggerCodexBrowser = (cardId) => {
     });
 };
 
-    // --- REFERÊNCIAS EXTERNAS ---
+    // --- REFERÃƒÆ’Ã…Â NCIAS EXTERNAS ---
     window.updateRef = (id, campo, valor) => {
         const idx = caixaAlvo.referencias.findIndex(r => r.id === id);
         if(idx !== -1) {
@@ -604,7 +622,7 @@ export async function abrirPopupTagsNota(notaId, db, auth) {
     // 2. Evento de fecho
     document.getElementById('btn-fechar-tags-nota').onclick = () => overlay.classList.remove('active');
 
-    // 3. PESQUISA DE TÓPICO PAI (NOTA)
+    // 3. PESQUISA DE TÃƒÆ’Ã¢â‚¬Å“PICO PAI (NOTA)
     const inTopico = document.getElementById('search-tags-nota-topico');
     inTopico.oninput = async (e) => {
         const termo = e.target.value.toLowerCase();
@@ -626,7 +644,7 @@ export async function abrirPopupTagsNota(notaId, db, auth) {
         renderizarResultadosPesquisaNota(resultados, 'results-tags-nota-topico', 'setTopicoPaiNota');
     };
 
-    // 4. PESQUISA DE SUBTÓPICO (NOTA)
+    // 4. PESQUISA DE SUBTÃƒÆ’Ã¢â‚¬Å“PICO (NOTA)
     const inSubtopico = document.getElementById('search-tags-nota-subtopico');
     inSubtopico.oninput = async (e) => {
         const termo = e.target.value.toLowerCase();
@@ -651,16 +669,16 @@ export async function abrirPopupTagsNota(notaId, db, auth) {
 }
 
 /**
- * FUNÇÕES AUXILIARES DE RENDERIZAÇÃO E CLIQUE (Expostas ao Window)
+ * FUNÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã¢â‚¬Â¢ES AUXILIARES DE RENDERIZAÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O E CLIQUE (Expostas ao Window)
  */
 
 // Renderiza a lista de resultados (Dropdown)
 function renderizarResultadosPesquisaNota(lista, containerId, funcaoClique) {
     const div = document.getElementById(containerId);
     
-    // PROTEÇÃO: Se a div não existir no HTML, avisa mas não bloqueia o site
+    // PROTEÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O: Se a div nÃƒÆ’Ã‚Â£o existir no HTML, avisa mas nÃƒÆ’Ã‚Â£o bloqueia o site
     if (!div) {
-        console.error(`Erro: Contentor #${containerId} não encontrado no HTML.`);
+        console.error(`Erro: Contentor #${containerId} nÃƒÆ’Ã‚Â£o encontrado no HTML.`);
         return;
     }
 
@@ -685,7 +703,9 @@ function renderizarVinculosNotaUI(lista) {
         <div class="neuronio-pill" style="background: rgba(99, 102, 241, 0.1); color: var(--primary); border-color: rgba(99, 102, 241, 0.3);">
             <i class="fa-solid fa-hashtag"></i>
             <span>${t.nome}</span>
-            <i class="fa-solid fa-circle-xmark remove-icon" onclick="window.removerTopicoDaNota('${t.id}')"></i>
+            <button type="button" class="tags-remove-btn remove-icon" data-tags-remove="topico-nota" data-remove-id="${encodeURIComponent(String(t.id || ''))}" aria-label="Remover tópico da nota">
+                <i class="fa-solid fa-circle-xmark"></i>
+            </button>
         </div>
     `).join('');
 }
@@ -707,12 +727,12 @@ export function renderizarIconesGenealogia(caixa) {
 
     containerIcon.innerHTML = "";
 
-    // LÓGICA SIMPLIFICADA
+    // LÃƒÆ’Ã¢â‚¬Å“GICA SIMPLIFICADA
     if (caixa.origem === "original") {
         containerIcon.innerHTML = `<i class="fa-solid fa-crown" style="color: #fbbf24;" title="Original"></i>`;
     } 
     else if (caixa.origem === "copia") {
-        containerIcon.innerHTML = `<i class="fa-solid fa-chess-pawn" style="color: #94a3b8;" title="Cópia"></i>`;
+        containerIcon.innerHTML = `<i class="fa-solid fa-chess-pawn" style="color: #94a3b8;" title="CÃƒÆ’Ã‚Â³pia"></i>`;
     }
 }
 
@@ -733,12 +753,12 @@ window.mostrarListaRelacoes = async (lista, titulo) => {
     if (!overlay) return;
 
     // --- FILTRO CRUCIAL AQUI ---
-    // Apenas mostramos os links cujo estado NÃO seja 'desativo'
+    // Apenas mostramos os links cujo estado NÃƒÆ’Ã†â€™O seja 'desativo'
     const listaAtiva = lista.filter(link => link.estado !== 'off');
 
     if (listaAtiva.length === 0) {
-        // Se todos os vínculos foram apagados, podemos avisar ou nem mostrar a Coroa/Peão
-        texto.innerHTML = `<p style="color:gray; font-size:12px; padding:20px;">A nota de origem deste bloco já não está disponível.</p>`;
+        // Se todos os vÃƒÆ’Ã‚Â­nculos foram apagados, podemos avisar ou nem mostrar a Coroa/PeÃƒÆ’Ã‚Â£o
+        texto.innerHTML = `<p style="color:gray; font-size:12px; padding:20px;">A nota de origem deste bloco jÃƒÆ’Ã‚Â¡ nÃƒÆ’Ã‚Â£o estÃƒÆ’Ã‚Â¡ disponÃƒÆ’Ã‚Â­vel.</p>`;
     } else {
         let html = `<p style="font-weight:800; color:var(--primary); margin-bottom:15px; text-transform:uppercase; font-size:10px;">${titulo}</p>`;
         
@@ -761,9 +781,9 @@ window.mostrarListaRelacoes = async (lista, titulo) => {
  * EXECUTA O SALTO PARA A NOTA VINCULADA
  */
 window.viajarParaRelacao = async (notaId, caixaId, onde) => {
-    // Usamos o dbRef e authRef que já estão definidos no topo do teu ficheiro
+    // Usamos o dbRef e authRef que jÃƒÆ’Ã‚Â¡ estÃƒÆ’Ã‚Â£o definidos no topo do teu ficheiro
     if (!dbRef || !authRef) {
-        console.error("❌ Erro: Referências do Firebase não encontradas no módulo de Tags.");
+        console.error("ÃƒÂ¢Ã‚ÂÃ…â€™ Erro: ReferÃƒÆ’Ã‚Âªncias do Firebase nÃƒÆ’Ã‚Â£o encontradas no mÃƒÆ’Ã‚Â³dulo de Tags.");
         return;
     }
 
@@ -782,23 +802,23 @@ window.viajarParaRelacao = async (notaId, caixaId, onde) => {
             // 2. Abrir a nota alvo no editor central com foco na caixa
             // notaId: CnWCKX...
             // snap.data(): os dados da nota
-            // dbRef / authRef: as instâncias do Firebase
-            // caixaId: o ID do bloco para fazer o scroll automático
+            // dbRef / authRef: as instÃƒÆ’Ã‚Â¢ncias do Firebase
+            // caixaId: o ID do bloco para fazer o scroll automÃƒÆ’Ã‚Â¡tico
             import('../../editor.js').then(m => {
                 m.abrirNotaNoEditor(notaId, snap.data(), dbRef, authRef, caixaId);
             });
 
         } else {
-            alert("A nota de destino já não existe no banco de dados.");
+            alert("A nota de destino jÃƒÆ’Ã‚Â¡ nÃƒÆ’Ã‚Â£o existe no banco de dados.");
         }
     } catch (e) {
-        console.error("❌ Erro ao tentar viajar para a nota vinculada:", e);
-        alert("Ocorreu um erro ao aceder à nota vinculada.");
+        console.error("ÃƒÂ¢Ã‚ÂÃ…â€™ Erro ao tentar viajar para a nota vinculada:", e);
+        alert("Ocorreu um erro ao aceder ÃƒÆ’Ã‚Â  nota vinculada.");
     }
 };
 
 /**
- * EXPOSIÇÃO GLOBAL PARA CLIQUES NO HTML
+ * EXPOSIÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O GLOBAL PARA CLIQUES NO HTML
  */
 window.setTopicoPaiNota = (docId, idUuid, nome) => {
     topicoPaiNotaSelecionado = { docId, id: idUuid, nome };
@@ -806,7 +826,7 @@ window.setTopicoPaiNota = (docId, idUuid, nome) => {
     document.getElementById('results-tags-nota-topico').style.display = 'none';
     document.getElementById('selected-tags-nota-topico-display').innerHTML = `
         <div class="neuronio-pill" style="border-color:var(--primary); background:rgba(99, 102, 241, 0.1); margin-bottom:10px;">
-            <i class="fa-solid fa-check"></i> <span>Tópico Pai: ${nome}</span>
+            <i class="fa-solid fa-check"></i> <span>TÃƒÆ’Ã‚Â³pico Pai: ${nome}</span>
             <i class="fa-solid fa-xmark" style="margin-left:10px; cursor:pointer;" onclick="window.limparFiltroNotaPai()"></i>
         </div>`;
     
@@ -823,12 +843,12 @@ window.limparFiltroNotaPai = () => {
 };
 
 window.vincularSubtopicoANotaFinal = async (docIdFirebase, uuid, nome) => {
-    // USAR A VARIÁVEL LOCAL notaAtivaIdLocal
+    // USAR A VARIÃƒÆ’Ã‚ÂVEL LOCAL notaAtivaIdLocal
     const notaId = notaAtivaIdLocal; 
     const db = dbRef;
 
     try {
-        // 1. Gravar no Tópico (Firebase -> Topico -> notas)
+        // 1. Gravar no TÃƒÆ’Ã‚Â³pico (Firebase -> Topico -> notas)
         const subRef = doc(db, "Topico", docIdFirebase);
         await updateDoc(subRef, { notas: arrayUnion(notaId) });
 
@@ -852,11 +872,14 @@ window.vincularSubtopicoANotaFinal = async (docIdFirebase, uuid, nome) => {
 };
 
 window.removerTopicoDaNota = async (uuid) => {
-    // USAR A VARIÁVEL LOCAL notaAtivaIdLocal
+    // USAR A VARIÃƒÆ’Ã‚ÂVEL LOCAL notaAtivaIdLocal
     const notaId = notaAtivaIdLocal;
     const db = dbRef;
 
-    if (confirm("Remover este tópico da nota?")) {
+    if (await perguntarRemocaoHub({
+        titulo: "Remover Tópico?",
+        mensagem: "Desejas remover este tópico da nota?"
+    })) {
         try {
             const notaRef = doc(db, "Local", notaId);
             const notaSnap = await getDoc(notaRef);
@@ -865,7 +888,7 @@ window.removerTopicoDaNota = async (uuid) => {
                 const alvo = vincs.find(v => v.id === uuid);
                 
                 if (alvo) {
-                    // 1. Remover ID da nota do documento do Tópico
+                    // 1. Remover ID da nota do documento do TÃƒÆ’Ã‚Â³pico
                     const subRef = doc(db, "Topico", alvo.firebaseId);
                     await updateDoc(subRef, { notas: arrayRemove(notaId) });
 
@@ -877,7 +900,7 @@ window.removerTopicoDaNota = async (uuid) => {
                 }
             }
         } catch (e) {
-            console.error("Erro ao remover tópico:", e);
+            console.error("Erro ao remover tÃƒÆ’Ã‚Â³pico:", e);
         }
     }
 };
@@ -887,7 +910,165 @@ window.updateRefManual = (id, campo, valor) => {
 };
 
 window.removerRefManual = (id) => {
-    if(confirm("Remover esta referência?")) {
+    perguntarRemocaoHub({
+        titulo: "Remover Referência?",
+        mensagem: "Desejas remover esta referência?"
+    }).then(confirmou => {
+        if (!confirmou) return;
         RefHandlers.removerRef(id, getCtx());
-    }
+    });
 };
+function prepararBuscaTopicosUnificada() {
+    const area = document.getElementById('area-form-topicos');
+    if (!area) return;
+
+    area.innerHTML = `
+        <label style="display:block; font-size:10px; color:var(--primary); margin-bottom:8px; text-transform:uppercase; font-weight: 700;">Pesquisar T&oacute;picos e Subt&oacute;picos</label>
+        <div style="position: relative;">
+            <input type="text" id="search-tags-topic-unified" placeholder="Procurar por tudo..." style="width: 100%; padding: 12px; background: #0f172a; border: 1px solid var(--border-color); border-radius: 4px; color: white; outline: none;">
+            <div id="results-tags-topic-unified" class="tags-search-results"></div>
+        </div>
+    `;
+
+    const input = document.getElementById('search-tags-topic-unified');
+    const resultados = document.getElementById('results-tags-topic-unified');
+    if (!input || !resultados) return;
+
+    input.oninput = async (e) => {
+        const termo = e.target.value.toLowerCase().trim();
+        if (termo.length < 2) {
+            resultados.style.display = 'none';
+            resultados.innerHTML = "";
+            return;
+        }
+
+        const q = query(collection(dbRef, "Topico"), where("userId", "==", authRef.currentUser.uid), where("estado", "==", "on"));
+        const snap = await getDocs(q);
+        const lista = [];
+        snap.forEach(d => {
+            const dados = d.data();
+            if ((dados.nome || "").toLowerCase().includes(termo)) lista.push({ docIdFirebase: d.id, ...dados });
+        });
+
+        resultados.innerHTML = lista.map(item => `
+            <div class="neuronio-result-item" onclick="window.vincularTopicoPesquisa('${item.docIdFirebase}', '${item.id}', '${(item.nome || "").replace(/'/g, "\\'")}')">
+                <div style="display:flex; align-items:center; gap:12px;">
+                    <div class="result-icon-box ${item.tipo === 'subtopico' ? 'cosmos' : 'biblia'}" style="${item.tipo === 'subtopico' ? 'background:rgba(52, 211, 153, 0.1); color:#34d399;' : ''}">
+                        <i class="fa-solid ${item.tipo === 'subtopico' ? 'fa-hashtag' : 'fa-layer-group'}"></i>
+                    </div>
+                    <div style="display:flex; flex-direction:column;">
+                        <span style="font-size:13px; font-weight:600; color:#f1f5f9;">${item.nome}</span>
+                        <small style="font-size:9px; color:var(--text-muted); text-transform:uppercase;">${item.tipo === 'subtopico' ? 'Subt&oacute;pico' : 'T&oacute;pico'}</small>
+                    </div>
+                </div>
+                <i class="fa-solid fa-link" style="opacity:0.3; font-size:12px;"></i>
+            </div>
+        `).join('') || '<div style="padding:15px; font-size:11px; color:gray; text-align:center;">Sem resultados.</div>';
+        resultados.style.display = 'block';
+    };
+
+window.vincularTopicoPesquisa = async (docIdFirebase, uuid, nome) => {
+        await TopicoHandlers.vincularAoSubtopico(docIdFirebase, uuid, nome, getCtx());
+        input.value = "";
+        resultados.innerHTML = "";
+        resultados.style.display = 'none';
+        area.style.display = 'none';
+        document.getElementById('btn-abrir-form-topico')?.classList.remove('active');
+        renderizarHub(caixaAlvo);
+        renderizarVinculosTopicos(caixaAlvo);
+    };
+}
+
+function configurarRemocoesTags() {
+    if (window.__tagsRemovalDelegationInstalled) return;
+    window.__tagsRemovalDelegationInstalled = true;
+
+    document.addEventListener('click', async (event) => {
+        const removerBtn = event.target.closest('[data-tags-remove]');
+        if (!removerBtn) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const kind = removerBtn.dataset.tagsRemove;
+        const id = decodeURIComponent(removerBtn.dataset.removeId || '');
+        const fromHub = Boolean(removerBtn.closest('#tags-hub-list'));
+
+        const pedirConfirmacaoHub = async () => {
+            if (!fromHub) return true;
+
+            const itemTitulo = removerBtn
+                .closest('div[style*="justify-content:space-between"]')
+                ?.querySelector('span[style*="font-size:12px"]')
+                ?.textContent
+                ?.trim();
+
+            const mensagensHub = {
+                biblia: itemTitulo
+                    ? `Desejas remover "${itemTitulo}" do Hub?`
+                    : "Desejas remover este texto bÃ­blico do Hub?",
+                cosmos: itemTitulo
+                    ? `Desejas remover "${itemTitulo}" do Hub?`
+                    : "Desejas remover este tema do Hub?",
+                topico: itemTitulo
+                    ? `Desejas remover "${itemTitulo}" do Hub?`
+                    : "Desejas remover este tÃ³pico do Hub?"
+            };
+
+            if (!mensagensHub[kind]) return true;
+
+            return perguntarRemocaoHub({
+                titulo: "Remover do Hub?",
+                mensagem: mensagensHub[kind]
+            });
+        };
+
+        try {
+            if (kind === 'biblia' && typeof window.desvincularBiblia === 'function') {
+                if (fromHub) {
+                    if (!(await pedirConfirmacaoHub())) return;
+                    await NeuronioHandlers.desvincularBiblia(id, getCtx(), { skipConfirm: true });
+                } else {
+                    await window.desvincularBiblia(id);
+                }
+            } else if (kind === 'cosmos' && typeof window.desvincularCosmos === 'function') {
+                if (fromHub) {
+                    if (!(await pedirConfirmacaoHub())) return;
+                    await NeuronioHandlers.desvincularCosmos(id, getCtx(), { skipConfirm: true });
+                } else {
+                    await window.desvincularCosmos(id);
+                }
+            } else if (kind === 'topico' && typeof window.removerVincTopico === 'function') {
+                if (fromHub) {
+                    if (!(await pedirConfirmacaoHub())) return;
+                    await TopicoHandlers.desvincularTopico(id, getCtx(), { skipConfirm: true });
+                } else {
+                    await window.removerVincTopico(id);
+                }
+            } else if (kind === 'topico-nota' && typeof window.removerTopicoDaNota === 'function') {
+                await window.removerTopicoDaNota(id);
+            } else if (kind === 'associado' && typeof window.removerAssociado === 'function') {
+                await window.removerAssociado(id);
+            } else if (kind === 'referencia' && typeof window.removerRefManual === 'function') {
+                await window.removerRefManual(id);
+            } else if (kind === 'codex' && typeof window.confirmarRemoverCodex === 'function') {
+                await window.confirmarRemoverCodex(id);
+            }
+        } catch (error) {
+            console.error('Erro ao remover item:', error);
+        }
+    }, true);
+
+    document.addEventListener('click', (event) => {
+        const openNoteBtn = event.target.closest('[data-open-note]');
+        if (!openNoteBtn) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const id = decodeURIComponent(openNoteBtn.dataset.openNote || '');
+        if (typeof window.abrirNoBrowserExterno === 'function') {
+            window.abrirNoBrowserExterno(id);
+        }
+    }, true);
+}

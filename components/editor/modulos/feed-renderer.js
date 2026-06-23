@@ -3,7 +3,7 @@ import { renderizarFeed } from './editor-render.js';
 
 export const FeedRenderer = {
     desenhar: async (lista, target, ctx) => {
-        const { dadosNota, acionarGravacao, notaAbertaId } = ctx;
+        const { dadosNota, acionarGravacao, notaAbertaId, dbRef, authRef } = ctx;
 
         await renderizarFeed({
             caixasAtuais: lista,
@@ -17,7 +17,9 @@ export const FeedRenderer = {
             abrirPopupTags: (c) => window.abrirPopupTagsGlobal(c),
             prepararInsercao: (id) => window.prepararInsercaoGlobal(id),
             abrirLupaBiblia: (c) => window.abrirSeletorBibliaGlobal(c),
-            notaAbertaId: notaAbertaId
+            notaAbertaId: notaAbertaId,
+            dbRef,
+            authRef
         });
     }
 };

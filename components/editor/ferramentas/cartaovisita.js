@@ -6,6 +6,7 @@ import { abrirPopupImagemCartao } from '../modulos/tags/tags-utils.js';
  */
 export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onAddAbaixo) {
     const caixaDiv = document.createElement("div");
+    caixaDiv.classList.add('notebook-lines');
     const corOuro = "#d4af37";
 
     caixaDiv.style.cssText = `
@@ -87,7 +88,7 @@ export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onA
     inputTit.rows = 1;
     inputTit.style.cssText = `
         background: transparent; border: none; border-bottom: 1px solid ${corOuro}33; 
-        color: ${corOuro}; font-size: var(--fs-editor-titulo-ferramentas); 
+        color: ${corOuro}; font-size: var(--fs-note-title-tools, var(--fs-editor-titulo-ferramentas)); 
         font-weight: 700; outline: none; padding-bottom: 5px; resize: none; 
         overflow: hidden; font-family: inherit; line-height: 1.3;
     `;
@@ -115,7 +116,7 @@ export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onA
     areaTexto.placeholder = "Descrição...";
     areaTexto.style.cssText = `
         background: transparent; border: none; 
-        color: var(--text-main); font-size: var(--fs-editor-texto); 
+        color: var(--text-main); font-size: var(--fs-note-texto, var(--fs-editor-texto)); 
         line-height: 1.5; outline: none; resize: none; 
         min-height: 60px; font-family: inherit; overflow: hidden;
     `;

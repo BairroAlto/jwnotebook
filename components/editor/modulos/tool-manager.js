@@ -1,5 +1,7 @@
 // components/editor/modulos/tool-manager.js
 
+import { obterConfigNota } from '../../settings/preferences.js';
+
 export const ToolManager = {
     /**
      * INSERIR FERRAMENTA
@@ -18,6 +20,7 @@ export const ToolManager = {
         // 1. Identificar se o Modo Post está ativo
         const modos = Array.isArray(dadosNotaOriginal?.modo) ? dadosNotaOriginal.modo : [dadosNotaOriginal?.modo || 'normal'];
         const isModoPost = modos.includes('post');
+        const noteConfig = obterConfigNota(dadosNotaOriginal, state.authRef?.currentUser?.uid);
 
         // 2. Normalizar o array para ordem crescente (1...N) antes de manipular
         caixasAtuais.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
@@ -38,6 +41,7 @@ export const ToolManager = {
         if (tipo === "citacaobiblica") novaCaixa.textosanexados = [];
         if (tipo === "galeria") {  novaCaixa.links = []; novaCaixa.urldimensao = "medias";
 }
+        if (noteConfig.defaultFocos?.[tipo]) novaCaixa.foco = noteConfig.defaultFocos[tipo];
 
         // 4. Lógica de Posicionamento Inteligente
         if (window.idReferenciaInsercao) {
@@ -67,6 +71,21 @@ export const ToolManager = {
 
         // 6. Atualizar a Interface e Gravar
         atualizarFeedEGravar(true);
+
+        if (dadosNotaOriginal?.onde === "share") {
+            const uid = state.authRef?.currentUser?.uid;
+            const userName = state.authRef?.currentUser?.displayName || state.authRef?.currentUser?.email || "Utilizador";
+            dadosNotaOriginal.shareNovidades = {
+                ...(dadosNotaOriginal.shareNovidades || {}),
+                [novaCaixa.id]: {
+                    tipo: "criado",
+                    by: uid,
+                    byName: userName,
+                    viewedBy: uid ? [uid] : [],
+                    timestamp: new Date().toISOString()
+                }
+            };
+        }
         
         // Fechar o seletor de ferramentas
         document.getElementById('popup-ferramentas-inline')?.classList.remove('active');
