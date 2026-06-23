@@ -61,7 +61,15 @@ export const BibleNav = {
                     <i class="fa-solid fa-chevron-down"></i>
                 </button>
                 <div id="nav-books-grid" class="nav-books-grid hidden">
-                    ${BIBLIA_METADATA.map(item => `
+                    <div class="nav-books-testament-title">Antigo Testamento</div>
+                    ${BIBLIA_METADATA.filter(item => item.id <= 39).map(item => `
+                        <button class="nav-book-mini" style="background:${item.grupo.cor}"
+                                onclick="window.mostrarCapitulosDoLivro('${escapar(item.nome)}'); window.fecharPainelNavBiblia();">
+                            ${item.abrev}
+                        </button>
+                    `).join('')}
+                    <div class="nav-books-testament-title">Novo Testamento</div>
+                    ${BIBLIA_METADATA.filter(item => item.id > 39).map(item => `
                         <button class="nav-book-mini" style="background:${item.grupo.cor}"
                                 onclick="window.mostrarCapitulosDoLivro('${escapar(item.nome)}'); window.fecharPainelNavBiblia();">
                             ${item.abrev}

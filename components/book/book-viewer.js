@@ -3,6 +3,7 @@ import { MobileUI } from '../ui/mobile-manager.js';
 import { BookState, setBookState } from './book-state.js';
 import { renderBookFeed } from './book-renderer.js';
 import { ensureBookRightPanel, refreshBookIntelligence } from './book-right-panel.js';
+import { atualizarBookAIFloatingUI, resetBookAIConversation } from './book-ai.js';
 
 export async function abrirNotaNoBook(notaId, dadosNota, db, auth, idCaixaFoco = null) {
     if (BookState.unsubscribe) {
@@ -24,12 +25,16 @@ export async function abrirNotaNoBook(notaId, dadosNota, db, auth, idCaixaFoco =
         notaId,
         dadosNota: { ...dadosNota, onde: dadosNota.onde || inferCollection(dadosNota) },
         caixas: dadosNota.caixas || [],
+        activeTab: 'feed',
+        archiveNav: { view: 'raiz', gavetaId: null, prateleiraId: null },
         highlightNames: await carregarNomesDestaques(db, auth)
     });
+    resetBookAIConversation();
     window.atualizarBookGameBadge?.();
 
     window.itemSelecionadoId = notaId;
     renderBookFeed();
+    atualizarBookAIFloatingUI();
     window.renderBookRespondiHands?.();
     await refreshBookIntelligence({ revealPanel: window.innerWidth > 768 });
 
@@ -47,6 +52,7 @@ export async function abrirNotaNoBook(notaId, dadosNota, db, auth, idCaixaFoco =
 
 export function refreshNotaAtual() {
     renderBookFeed();
+    atualizarBookAIFloatingUI();
     refreshBookIntelligence({ revealPanel: window.innerWidth > 768 });
 }
 
@@ -70,6 +76,7 @@ async function iniciarSnapshotNota() {
             caixas: remote.caixas || []
         });
         renderBookFeed();
+        atualizarBookAIFloatingUI();
         window.atualizarBookGameBadge?.();
         window.renderBookRespondiHands?.();
         refreshBookIntelligence({ revealPanel: window.innerWidth > 768 });

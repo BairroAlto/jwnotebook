@@ -1,16 +1,19 @@
-// components/bible-portal/bible-ai.js
 import { NexoEngine } from '../direita/ai-engine.js';
 import { PROTOCOLOS } from '../direita/ai-view.js';
 
 export const BibleAI = {
     chatHistory: [],
-    mode: "net",
+    mode: 'net',
+    thinking: false,
 
-    setMode: (mode) => {
-        BibleAI.mode = mode === "local" ? "local" : "net";
+    setMode: mode => {
+        BibleAI.mode = mode === 'local' ? 'local' : 'net';
+        document.querySelectorAll('.bookai-mode-pill[data-ai-mode]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.aiMode === BibleAI.mode);
+        });
     },
 
-    enviarPergunta: async (pergunta) => {
+    enviarPergunta: async pergunta => {
         const capituloTexto = window.textoCapituloAtual;
         const referencia = window.referenciaAtiva;
 
@@ -18,33 +21,33 @@ export const BibleAI = {
 
         BibleAI.adicionarBolha(pergunta, 'user');
 
-        const fonteRegra = BibleAI.mode === "local"
-            ? "Responde apenas com base no texto completo do capítulo fornecido. Se a informação não estiver no capítulo, diz isso claramente."
-            : "Responde com base no texto do capítulo e em informação da internet, dando prioridade a jw.org e wol.jw.org.";
+        const fonteRegra = BibleAI.mode === 'local'
+            ? 'Responde apenas com base no texto completo do capitulo fornecido. Se a informacao nao estiver no capitulo, diz isso claramente.'
+            : 'Responde com base no texto do capitulo e em informacao da internet, dando prioridade a jw.org e wol.jw.org.';
 
-        const contextPrompt = `ESTÁS A ANALISAR O CAPÍTULO: ${referencia}.
-TEXTO COMPLETO DO CAPÍTULO: "${capituloTexto}".
+        const contextPrompt = `ESTAS A ANALISAR O CAPITULO: ${referencia}.
+TEXTO COMPLETO DO CAPITULO: "${capituloTexto}".
 
 REGRAS DE RESPOSTA:
 1. ${fonteRegra}
-2. Se mencionares um versículo do texto acima, usa SEMPRE o formato [[V-NUM]] (ex: [[V-5]] ou [[V-12]]).
-3. Se o utilizador perguntar "onde diz que...", responde com o versículo e o código [[V-X]].
-4. Responde de forma natural em Português de Portugal.`;
+2. Se mencionares um versiculo do texto acima, usa SEMPRE o formato [[V-NUM]] (ex: [[V-5]] ou [[V-12]]).
+3. Se o utilizador perguntar "onde diz que...", responde com o versiculo e o codigo [[V-X]].
+4. Responde de forma natural em Portugues de Portugal.`;
 
         try {
             BibleAI.mostrarPensando(true);
-            const resposta = await NexoEngine.perguntar(pergunta, "normal", contextPrompt);
+            const resposta = await NexoEngine.perguntar(pergunta, 'normal', contextPrompt);
             BibleAI.mostrarPensando(false);
             BibleAI.adicionarBolha(resposta, 'ai');
             BibleAI.processarComandosDeNavegacao(resposta);
         } catch (e) {
-            console.error("Erro AI Bible:", e);
+            console.error('Erro AI Bible:', e);
             BibleAI.mostrarPensando(false);
-            BibleAI.adicionarBolha("Lamento, tive um problema ao sintonizar o BookAI.", 'ai');
+            BibleAI.adicionarBolha('Lamento, tive um problema ao sintonizar o BookAI.', 'ai');
         }
     },
 
-    executarProtocolo: async (protocoloId) => {
+    executarProtocolo: async protocoloId => {
         const capituloTexto = window.textoCapituloAtual;
         const referencia = window.referenciaAtiva;
         if (!capituloTexto) return;
@@ -70,39 +73,43 @@ REGRAS:
             BibleAI.processarComandosDeNavegacao(resposta);
         } catch (e) {
             BibleAI.mostrarPensando(false);
-            BibleAI.adicionarBolha("Não consegui executar esse protocolo agora.", 'ai');
+            BibleAI.adicionarBolha('Nao consegui executar esse protocolo agora.', 'ai');
         }
     },
 
     adicionarBolha: (texto, tipo) => {
-        const container = document.getElementById('chat-messages-container');
-        if (!container) return;
-
-        const div = document.createElement('div');
-        div.className = `chat-bubble ${tipo}`;
-        div.innerText = String(texto).replace(/\[\[V-(\d+)\]\]/g, 'v. $1');
-
-        container.appendChild(div);
-        container.scrollTop = container.scrollHeight;
+        BibleAI.chatHistory.push({ texto, tipo });
+        BibleAI.renderizarMensagens();
     },
 
-    mostrarPensando: (status) => {
-        const container = document.getElementById('chat-messages-container');
-        if (!container) return;
+    mostrarPensando: status => {
+        BibleAI.thinking = Boolean(status);
+        BibleAI.renderizarMensagens();
+    },
 
-        if (status) {
-            const loader = document.createElement('div');
-            loader.id = 'ai-typing';
-            loader.className = 'chat-bubble ai';
-            loader.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> O BookAI está a analisar...';
-            container.appendChild(loader);
+    renderizarMensagens: () => {
+        ['chat-messages-container', 'chat-messages-container-floating'].forEach(id => {
+            const container = document.getElementById(id);
+            if (!container) return;
+            container.innerHTML = BibleAI.chatHistory.map(item => `
+                <div class="chat-bubble ${item.tipo}">${escapeHtml(String(item.texto).replace(/\[\[V-(\d+)\]\]/g, 'v. $1')).replace(/\n/g, '<br>')}</div>
+            `).join('') + (BibleAI.thinking ? '<div class="chat-bubble ai"><i class="fa-solid fa-circle-notch fa-spin"></i> O BookAI esta a analisar...</div>' : '');
             container.scrollTop = container.scrollHeight;
-        } else {
-            document.getElementById('ai-typing')?.remove();
+        });
+    },
+
+    toggleFloatingChat: forceOpen => {
+        const panel = document.getElementById('bookai-floating-chat');
+        if (!panel) return;
+        const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : panel.classList.contains('hidden');
+        panel.classList.toggle('hidden', !shouldOpen);
+        if (shouldOpen) {
+            BibleAI.renderizarMensagens();
+            document.getElementById('input-chat-bible-floating')?.focus();
         }
     },
 
-    processarComandosDeNavegacao: (texto) => {
+    processarComandosDeNavegacao: texto => {
         const matches = [...String(texto).matchAll(/\[\[V-(\d+)\]\]/g)];
         if (!matches.length) return;
 
@@ -127,5 +134,14 @@ REGRAS:
         `).join('');
     }
 };
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 window.BibleAI = BibleAI;

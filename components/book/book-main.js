@@ -12,9 +12,11 @@ import { MobileBottomSheet } from '../ui/mobile-bottom-sheet.js';
 import { iniciarXSat } from '../direita/xsat-controller.js';
 import { iniciarBookSettings } from './book-settings.js';
 import { iniciarBookToolbar } from './book-toolbar.js';
-import { iniciarBookReader } from './book-reader.js';
+import { iniciarBookReader, sincronizarBookReaderPrefs } from './book-reader.js';
 import { iniciarBookGames } from './book-games.js';
 import { iniciarBookAI } from './book-ai.js';
+import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
+import { aplicarPreferenciaBotaoColapsoColunaEsquerda, iniciarControloColunaEsquerda } from '../ui/left-column-collapse.js';
 import './book-viewer.js';
 
 window.NotaBookMode = "book";
@@ -49,6 +51,7 @@ document.getElementById('area-direita')?.classList.add('book-readonly-panel');
 MobileBottomSheet.iniciar();
 iniciarControladorEsquerda();
 iniciarXSat();
+iniciarControloColunaEsquerda();
 iniciarBookSettings();
 iniciarBookToolbar();
 iniciarBookReader();
@@ -70,6 +73,11 @@ onAuthStateChanged(auth, async user => {
 
     if (bootDone) return;
     bootDone = true;
+    window.NotaBookUserPrefs = await carregarPreferenciasUtilizador(db, user.uid);
+    aplicarPreferenciaBotaoColapsoColunaEsquerda(Boolean(window.NotaBookUserPrefs?.leftColumnCollapseButton));
+    const collapseToggle = document.getElementById('book-left-collapse-toggle');
+    if (collapseToggle) collapseToggle.checked = Boolean(window.NotaBookUserPrefs?.leftColumnCollapseButton);
+    sincronizarBookReaderPrefs();
     document.getElementById('login-screen').style.display = 'none';
     inicializarLeituraLocal(db, auth);
     inicializarLeituraShare(db, auth);

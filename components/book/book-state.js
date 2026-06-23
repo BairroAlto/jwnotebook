@@ -7,10 +7,21 @@ export const BookState = {
     unsubscribe: null,
     settings: {
         fontSize: 17,
+        fontSizeDesktop: 17,
+        fontSizeMobile: 17,
         viewMode: "cards",
         tagPosition: "bottom",
         marginStyle: "solid",
-        speechRate: 1
+        speechRate: 1,
+        teleprompterRate: 1,
+        aiFloating: false,
+        selectedVoiceId: null
+    },
+    activeTab: "feed",
+    archiveNav: {
+        view: "raiz",
+        gavetaId: null,
+        prateleiraId: null
     },
     highlightNames: {},
     teleprompterTimer: null

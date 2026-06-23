@@ -2,7 +2,7 @@ import { BookState } from './book-state.js';
 import { getVisibleBookBoxes } from './book-renderer.js';
 import { textoDaNota, detectarReferenciasBiblicas } from './book-utils.js';
 import { refreshNotaAtual } from './book-viewer.js';
-import { abrirSpeechPopup, toggleTeleprompter } from './book-reader.js';
+import { abrirBarraLeitura, toggleSpeakerMenu } from './book-reader.js';
 import { abrirBookGames } from './book-games.js';
 import { abrirBookAI } from './book-ai.js';
 import { baixarPdfNota } from './book-pdf.js';
@@ -14,13 +14,20 @@ export function iniciarBookToolbar() {
     document.getElementById('book-copy')?.addEventListener('click', copiarNota);
     document.getElementById('book-pdf')?.addEventListener('click', baixarPdfNota);
     document.getElementById('book-refresh')?.addEventListener('click', refreshNotaAtual);
-    document.getElementById('book-read')?.addEventListener('click', abrirSpeechPopup);
-    document.getElementById('book-speaker')?.addEventListener('click', toggleTeleprompter);
+    document.getElementById('book-read')?.addEventListener('click', abrirBarraLeitura);
+    document.getElementById('book-speaker')?.addEventListener('click', toggleSpeakerMenu);
     document.getElementById('book-games')?.addEventListener('click', abrirBookGames);
     document.getElementById('book-ai')?.addEventListener('click', abrirBookAI);
     document.getElementById('book-satellite')?.addEventListener('click', pesquisarReferencias);
 
     document.addEventListener('click', async (event) => {
+        if (!event.target.closest('#book-speaker') && !event.target.closest('#book-speaker-menu')) {
+            const menu = document.getElementById('book-speaker-menu');
+            if (menu && !menu.classList.contains('hidden')) {
+                menu.classList.add('hidden');
+                menu.style.display = 'none';
+            }
+        }
         const refBtn = event.target.closest('.book-bible-ref');
         if (!refBtn) return;
         await ensureBookRightPanel();

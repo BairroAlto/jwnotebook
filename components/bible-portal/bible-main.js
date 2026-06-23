@@ -43,6 +43,8 @@ onAuthStateChanged(auth, async (user) => {
     bootDone = true;
 
     await BibleUI.carregarMenuSuperior();
+    const preloadBiblia = BibleSearch.preload().catch(error => console.warn("[BIBLE] Preload da pesquisa falhou.", error));
+    await preloadBiblia;
     BibleUI.finalizarLoading();
     vincularEventos();
     BibleSettings.iniciar();
@@ -100,11 +102,11 @@ function renderizarMosaicoInicial() {
     feed.className = "bible-mosaico-view";
     feed.innerHTML = `
         <section class="testamento-section">
-            <h4 class="testamento-title">Escrituras Hebraico-Aramaicas</h4>
+            <h4 class="testamento-title">Antigo Testamento</h4>
             <div class="books-horizontal-grid">${gerarGrid(antigoT)}</div>
         </section>
         <section class="testamento-section">
-            <h4 class="testamento-title">Escrituras Gregas Cristas</h4>
+            <h4 class="testamento-title">Novo Testamento</h4>
             <div class="books-horizontal-grid">${gerarGrid(novoT)}</div>
         </section>
     `;
@@ -208,8 +210,17 @@ function navegarCapitulo(direcao) {
 
 function atualizarBookAiFloating() {
     const iconBarra = document.getElementById('btn-abrir-ai-biblia');
-    if (BibleSettings.state.aiFloating && iconBarra) {
-        iconBarra.style.setProperty('display', 'none', 'important');
+    const zonaFlutuante = document.getElementById('bookai-floating-zone');
+    if (BibleSettings.state.aiFloating) {
+        if (iconBarra) iconBarra.style.setProperty('display', 'none', 'important');
+        if (zonaFlutuante) {
+            zonaFlutuante.classList.remove('hidden');
+            zonaFlutuante.style.display = 'flex';
+        }
+    } else if (zonaFlutuante) {
+        zonaFlutuante.classList.add('hidden');
+        zonaFlutuante.style.display = 'none';
+        document.getElementById('bookai-floating-chat')?.classList.add('hidden');
     }
 }
 
@@ -242,8 +253,18 @@ function vincularEventos() {
         input.value = "";
         BibleAI.enviarPergunta(pergunta);
     });
+    bind('btn-enviar-chat-floating', () => {
+        const input = document.getElementById('input-chat-bible-floating');
+        const pergunta = input?.value.trim();
+        if (!pergunta) return;
+        input.value = "";
+        BibleAI.enviarPergunta(pergunta);
+    });
     document.getElementById('input-chat-bible')?.addEventListener('keydown', (event) => {
         if (event.key === "Enter") document.getElementById('btn-enviar-chat')?.click();
+    });
+    document.getElementById('input-chat-bible-floating')?.addEventListener('keydown', (event) => {
+        if (event.key === "Enter") document.getElementById('btn-enviar-chat-floating')?.click();
     });
 
     document.querySelectorAll('.ai-tab').forEach(btn => {
@@ -257,8 +278,6 @@ function vincularEventos() {
 
     document.querySelectorAll('.bookai-mode-pill').forEach(btn => {
         btn.onclick = () => {
-            document.querySelectorAll('.bookai-mode-pill').forEach(item => item.classList.remove('active'));
-            btn.classList.add('active');
             BibleAI.setMode(btn.dataset.aiMode);
         };
     });

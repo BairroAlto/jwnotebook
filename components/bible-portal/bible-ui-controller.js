@@ -11,7 +11,7 @@ export const BibleUI = {
 
             menuArea.querySelectorAll('.nav-item').forEach(link => {
                 const texto = link.textContent.trim().toLowerCase();
-                link.classList.toggle('active', texto.includes('bíblia') || texto.includes('bÃ­blia'));
+                link.classList.toggle('active', texto.includes('bíblia') || texto.includes('bã­blia') || texto.includes('bÃ­blia') || texto.includes('biblia'));
             });
         } catch (e) {
             console.error("Erro ao carregar menu superior:", e);
@@ -59,7 +59,8 @@ export const BibleUI = {
         idsContextuais.forEach(id => {
             const el = document.getElementById(id);
             if (el) {
-                const valorDisplay = ativo ? 'inline-flex' : 'none';
+                const esconderAi = id === 'btn-abrir-ai-biblia' && ativo && window.BibleSettings?.state?.aiFloating;
+                const valorDisplay = ativo && !esconderAi ? 'inline-flex' : 'none';
                 el.style.setProperty('display', valorDisplay, 'important');
             }
         });

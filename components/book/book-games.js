@@ -12,6 +12,7 @@ let bookAiMode = null;
 let respondiMode = false;
 let lastScoreTotal = null;
 let sentinelBackHandler = null;
+let dragState = null;
 
 const SCORE_LABELS = {
     tradicionalverdadeirofalso: "Verdadeiro/Falso",
@@ -38,6 +39,7 @@ export function iniciarBookGames() {
     document.getElementById('book-sentinel-top-back')?.addEventListener('click', () => sentinelBackHandler?.());
     window.atualizarBookGameBadge = updateGameBadge;
     window.renderBookRespondiHands = renderRespondiHands;
+    bindGamesDrag();
     updateGameBadge();
 }
 
@@ -132,8 +134,8 @@ function ativarBookAiMode(mode, callback) {
 
 function renderRespondiHands() {
     document.querySelectorAll('.book-hand-action').forEach(el => el.remove());
+    if (!respondiMode) return;
     getVisibleBookBoxes().forEach(caixa => {
-        if (!respondiMode && !caixa.respondi) return;
         const card = document.querySelector(`[data-caixa-id="${CSS.escape(caixa.id)}"]`);
         if (!card) return;
         const btn = document.createElement('button');
@@ -146,6 +148,40 @@ function renderRespondiHands() {
         };
         card.appendChild(btn);
     });
+}
+
+function bindGamesDrag() {
+    const modal = document.querySelector('#book-popup-games .book-games-modal');
+    const header = document.querySelector('#book-popup-games .popup-header');
+    if (!modal || !header) return;
+    header.style.cursor = 'grab';
+    header.addEventListener('pointerdown', event => {
+        if (event.target.closest('button')) return;
+        dragState = {
+            startX: event.clientX,
+            startY: event.clientY,
+            startLeft: modal.offsetLeft,
+            startTop: modal.offsetTop
+        };
+        modal.classList.add('dragging');
+        header.style.cursor = 'grabbing';
+        header.setPointerCapture?.(event.pointerId);
+    });
+    header.addEventListener('pointermove', event => {
+        if (!dragState) return;
+        const nextLeft = dragState.startLeft + (event.clientX - dragState.startX);
+        const nextTop = dragState.startTop + (event.clientY - dragState.startY);
+        modal.style.left = `${Math.max(8, nextLeft)}px`;
+        modal.style.top = `${Math.max(58, nextTop)}px`;
+        modal.style.right = 'auto';
+    });
+    const endDrag = () => {
+        dragState = null;
+        modal.classList.remove('dragging');
+        header.style.cursor = 'grab';
+    };
+    header.addEventListener('pointerup', endDrag);
+    header.addEventListener('pointercancel', endDrag);
 }
 
 function renderFlashcards() {
