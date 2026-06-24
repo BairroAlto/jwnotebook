@@ -1,4 +1,5 @@
 import { abrirPopupPartilhar, iniciarSistemaPartilha } from '../editor/modulos/partilhar.js';
+import { abrirPaleta, iniciarSistemaCores } from '../editor/modulos/paleta-cores.js';
 import { carregarFeedAmigosPalco, carregarAtividadeAmigosNoItem } from './palco-social.js';
 import { fetchLyricsOvh } from './palco-api-client.js';
 import { loadPalcoDoc, savePalcoNote, savePalcoRating, updatePalcoFlags, watchPalcoByUser, sincronizarNotificacoesWishlist } from './palco-store.js';
@@ -147,6 +148,27 @@ const state = {
     noteDraft: null,
     stats: null
 };
+
+async function ensurePalcoColorPopups() {
+    const components = [
+        ['popup-cores-overlay', 'components/popup/popup-cores.html', 'area-palco-popup-cores'],
+        ['popup-editar-cor-overlay', 'components/popup/popup-editar-cor.html', 'area-palco-popup-editar-cor']
+    ];
+
+    await Promise.all(components.map(async ([overlayId, path, hostId]) => {
+        if (document.getElementById(overlayId)) return;
+        const host = document.createElement('div');
+        host.id = hostId;
+        document.body.appendChild(host);
+        const res = await fetch(path);
+        host.innerHTML = await res.text();
+    }));
+
+    const colorOverlay = document.getElementById('popup-cores-overlay');
+    const editOverlay = document.getElementById('popup-editar-cor-overlay');
+    if (colorOverlay) colorOverlay.style.zIndex = "10060";
+    if (editOverlay) editOverlay.style.zIndex = "10070";
+}
 
 function getToolConfig() {
     return TOOLSETS[state.category] || null;
@@ -476,6 +498,24 @@ function renderGridMarkup(items, emptyMessage) {
     `;
 }
 
+function renderRightListCard(item) {
+    const image = item.imageurl || "";
+    const kind = item.oque || "Item";
+    return `
+        <div class="palco-right-card palco-right-list-card" data-right-open="${item.id}">
+            <div class="palco-right-cover">
+                ${image
+                    ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(item.nome || kind)}">`
+                    : `<i class="fa-solid ${iconFor(kind)}" aria-hidden="true"></i>`}
+            </div>
+            <div class="palco-right-card-body">
+                <strong>${escapeHtml(item.nome)}</strong>
+                <span>${escapeHtml(kind)} · wishlist ${item.wishlist} · watched ${item.watched} · rating ${item.rating || "--"}</span>
+            </div>
+        </div>
+    `;
+}
+
 function renderCategoryLoading(message = "A carregar os itens do Palco...") {
     const center = document.getElementById('palco-center');
     const cfg = getToolConfig();
@@ -510,7 +550,7 @@ async function renderCategoryCenter() {
             <div class="palco-toolbar-meta">
                 <div>
                     <h2>${cfg.title}</h2>
-                    <p>Conteudo, filtros reais, persistencia e integracoes de API centralizadas.</p>
+                    <p>Conteudo, filtros, listas pessoais e notas reunidos num so espaco.</p>
                 </div>
             </div>
             <div class="palco-toolbar-line">
@@ -595,7 +635,7 @@ function renderCenterHome() {
     center.innerHTML = `
         <section class="palco-hero">
             <h1>PALCO</h1>
-            <p>Um portal modular para filmes, series, musica, eventos e livros, agora com a camada de APIs separada da UI e dos adapters.</p>
+            <p>Um portal para filmes, series, musica, eventos e livros, com listas, notas e contexto num so lugar.</p>
         </section>
         <div class="palco-grid">
             ${Object.entries(TOOLSETS).map(([key, cfg]) => `
@@ -603,7 +643,7 @@ function renderCenterHome() {
                     <div class="palco-content-art"><i class="fa-solid ${cfg.icon}"></i></div>
                     <div class="palco-content-body">
                         <h3>${cfg.title}</h3>
-                        <p>Capas, filtros, popup rico, listas e integracao com index.</p>
+                        <p>Capas, filtros, detalhes, listas e ligacao as tuas notas.</p>
                     </div>
                 </div>
             `).join('')}
@@ -669,10 +709,6 @@ function renderLeftCategories() {
                     <span>${copy}</span>
                 </div>
             `).join('')}
-            <div class="palco-status-card">
-                <strong>Arquitetura modular</strong>
-                <span>As conexoes de API vivem agora num modulo proprio e os adapters so tratam de normalizacao.</span>
-            </div>
         </div>
     `;
     area.querySelectorAll('[data-palco-category]').forEach(card => {
@@ -824,20 +860,29 @@ function renderRight() {
             area.innerHTML = `<div class="palco-empty-state">Sem registos guardados ainda. Interage com um item do PALCO para comecar.</div>`;
             return;
         }
-        area.innerHTML = grouped.map(item => `
-            <div class="palco-right-card" data-right-open="${item.id}">
-                <strong>${escapeHtml(item.nome)}</strong>
-                <span>${escapeHtml(item.oque)} · wishlist ${item.wishlist} · watched ${item.watched} · rating ${item.rating || "--"}</span>
-            </div>
-        `).join('');
+        area.innerHTML = grouped.map(renderRightListCard).join('');
         area.querySelectorAll('[data-right-open]').forEach(card => {
             card.addEventListener('click', async () => {
                 const docItem = state.persisted.find(item => item.id === card.dataset.rightOpen);
                 if (!docItem) return;
-                if (state.category !== inferCategoryFromTag(docItem.tag)) {
-                    await abrirCategoria(inferCategoryFromTag(docItem.tag), docItem.sourceId);
-                    return;
-                }
+                await abrirItemPopup(toDisplayItemFromPersisted(docItem), docItem);
+            });
+        });
+        return;
+    }
+
+    if (state.rightTab === "notes") {
+        const grouped = (currentTag ? state.persisted.filter(item => item.tag === currentTag) : state.persisted)
+            .filter(item => Array.isArray(item.caixas) && item.caixas.length);
+        if (!grouped.length) {
+            area.innerHTML = `<div class="palco-empty-state">Ainda nao ha conteudos com anotacoes nesta lista.</div>`;
+            return;
+        }
+        area.innerHTML = grouped.map(renderRightListCard).join('');
+        area.querySelectorAll('[data-right-open]').forEach(card => {
+            card.addEventListener('click', async () => {
+                const docItem = state.persisted.find(item => item.id === card.dataset.rightOpen);
+                if (!docItem) return;
                 await abrirItemPopup(toDisplayItemFromPersisted(docItem), docItem);
             });
         });
@@ -908,6 +953,46 @@ function ensureDetailsShape(baseItem, details) {
     };
 }
 
+function inferKindFromRelated(rel) {
+    const text = normalizeText(`${rel.kind || ""} ${rel.subtitle || ""}`);
+    if (text.includes("serie")) return "series";
+    if (text.includes("album")) return "album";
+    if (text.includes("musica") || text.includes("faixa")) return "track";
+    if (text.includes("artista")) return "artist";
+    if (text.includes("autor")) return "author";
+    if (text.includes("livro")) return "book";
+    if (text.includes("evento")) return "event";
+    if (text.includes("ator") || text.includes("atriz")) return "actor";
+    if (text.includes("filme")) return "movie";
+    return rel.kind || "item";
+}
+
+function buildRelatedPopupItem(rel, parentDetails, index) {
+    const title = rel.title || "Sem titulo";
+    const kind = inferKindFromRelated(rel);
+    return {
+        source: rel.source || parentDetails.source || "palco-related",
+        sourceId: rel.sourceId || `related-${normalizeText(title).replace(/[^a-z0-9]+/g, "-")}-${rel.year || index}`,
+        kind,
+        title,
+        subtitle: rel.subtitle || parentDetails.subtitle || "",
+        description: rel.description || `${rel.subtitle || "Conteudo relacionado"} ligado a ${parentDetails.title}.`,
+        imageUrl: rel.imageUrl || "",
+        year: rel.year || null,
+        month: rel.month || null,
+        releaseDate: rel.releaseDate || "",
+        genres: Array.isArray(rel.genres) ? rel.genres : [rel.subtitle || kind].filter(Boolean),
+        people: Array.isArray(rel.people) ? rel.people : [],
+        related: Array.isArray(rel.related) ? rel.related : [],
+        awards: Array.isArray(rel.awards) ? rel.awards : [],
+        liveMoments: Array.isArray(rel.liveMoments) ? rel.liveMoments : [],
+        externalIds: rel.externalIds || {},
+        externalLinks: Array.isArray(rel.externalLinks) ? rel.externalLinks : [],
+        previewUrl: rel.previewUrl || "",
+        trailerUrl: rel.trailerUrl || ""
+    };
+}
+
 function buildAlbumItemFromTrack(details) {
     if (details.kind !== "track" || !details.albumTitle) return null;
     if (details.source?.startsWith("deezer-track") && details.externalIds?.deezerAlbumId) {
@@ -972,7 +1057,8 @@ function buildAlbumItemFromTrack(details) {
 }
 
 async function abrirItemPopup(item, persistedOverride = null) {
-    const cfg = getToolConfig() || TOOLSETS[inferCategoryFromTag(persistedOverride?.tag || "")];
+    const persistedCategory = persistedOverride?.tag ? inferCategoryFromTag(persistedOverride.tag) : null;
+    const cfg = (persistedCategory ? TOOLSETS[persistedCategory] : null) || getToolConfig();
     if (!cfg) return;
 
     const detailsPromise = cfg.adapterGet(item.sourceId, item).catch(error => {
@@ -982,11 +1068,12 @@ async function abrirItemPopup(item, persistedOverride = null) {
     const palcoDocPromise = persistedOverride ? Promise.resolve(persistedOverride) : loadPalcoDoc(item, cfg.tag);
     const socialPromise = carregarAtividadeAmigosNoItem(item.source, item.sourceId);
 
-    const [fetchedDetails, palcoDoc, social] = await Promise.all([
+    const [fetchedDetails, initialPalcoDoc, social] = await Promise.all([
         detailsPromise,
         palcoDocPromise,
         socialPromise
     ]);
+    let palcoDoc = initialPalcoDoc;
     const details = ensureDetailsShape(item, fetchedDetails);
     const existingBox = Array.isArray(palcoDoc?.caixas) && palcoDoc.caixas[0] ? palcoDoc.caixas[0] : null;
 
@@ -1060,17 +1147,16 @@ async function abrirItemPopup(item, persistedOverride = null) {
                         <div>
                             <label class="palco-section-label">Estado</label>
                             <div class="palco-toggle-grid palco-toggle-grid-compact">
-                                <button class="palco-action-button" id="palco-action-watched">${watchLabel(details.kind)}</button>
-                                <button class="palco-action-button" id="palco-action-wishlist">${wishlistLabel(details.kind)}</button>
-                                <button class="palco-action-button" id="palco-action-favorite">Favorito</button>
-                                <button class="palco-action-button" id="palco-action-stats">Estatisticas</button>
+                                <button class="palco-action-button palco-state-watched" id="palco-action-watched">${watchLabel(details.kind)}</button>
+                                <button class="palco-action-button palco-state-wishlist" id="palco-action-wishlist">${wishlistLabel(details.kind)}</button>
+                                <button class="palco-action-button palco-state-favorite" id="palco-action-favorite">Favorito</button>
                             </div>
                         </div>
                     </div>
                     <p class="palco-section-label">Relacoes e contexto</p>
                     <div class="palco-related-grid">
-                        ${(details.related || []).map(rel => `
-                            <article class="palco-related-card" style="cursor:default;">
+                        ${(details.related || []).map((rel, index) => `
+                            <article class="palco-related-card" data-palco-related="${index}">
                                 <div class="palco-related-art">
                                     ${rel.imageUrl ? `<img src="${rel.imageUrl}" alt="${escapeHtml(rel.title)}">` : `<div class="palco-content-art"><i class="fa-solid fa-image"></i></div>`}
                                 </div>
@@ -1132,6 +1218,20 @@ async function abrirItemPopup(item, persistedOverride = null) {
     overlay.addEventListener('click', event => {
         if (event.target === overlay) close();
     });
+
+    function syncPopupStateButtons() {
+        const stateButtons = [
+            ['#palco-action-watched', palcoDoc?.watched === "on"],
+            ['#palco-action-wishlist', palcoDoc?.wishlist === "on"],
+            ['#palco-action-favorite', palcoDoc?.favorito === "on"]
+        ];
+        stateButtons.forEach(([selector, isActive]) => {
+            const button = overlay.querySelector(selector);
+            if (!button) return;
+            button.classList.toggle('active', isActive);
+            button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+        });
+    }
 
     function mergePersistedDocs(...docs) {
         docs.flat().filter(Boolean).forEach(docItem => {
@@ -1215,7 +1315,8 @@ async function abrirItemPopup(item, persistedOverride = null) {
                         ${[
                             ["contentor", "CONTENTOR", "fa-box", "accent-contentor"],
                             ["subnota", "SUBNOTA", "fa-box", "accent-subnota"],
-                            ["questao", "QUESTAO", "fa-box", "accent-questao"]
+                            ["questao", "QUESTAO", "fa-box", "accent-questao"],
+                            ["raciocinio", "RACIOCINIO", "fa-box", "accent-raciocinio"]
                         ].map(([id, label, icon, accent]) => `
                             <button class="palco-note-option ${accent}" data-note-type="${id}">
                                 <span class="palco-note-option-icon"><i class="fa-solid ${icon}"></i></span>
@@ -1245,7 +1346,6 @@ async function abrirItemPopup(item, persistedOverride = null) {
                 </div>
                 <div class="palco-popup-actions" style="margin-top:12px;">
                     <button class="palco-action-button primary" id="palco-save-note">Guardar nota</button>
-                    <button class="palco-action-button" id="palco-share-note">Enviar</button>
                 </div>
             `;
         }
@@ -1264,11 +1364,19 @@ async function abrirItemPopup(item, persistedOverride = null) {
             renderNotePanel();
         });
 
-        panel.querySelector('#palco-note-color')?.addEventListener('click', () => {
-            const palette = ["#fef3c7", "#dbeafe", "#dcfce7", "#fce7f3", "#ede9fe", ""];
-            const next = palette[(palette.indexOf(noteHighlight) + 1 + palette.length) % palette.length];
-            noteHighlight = next;
-            renderNotePanel();
+        panel.querySelector('#palco-note-color')?.addEventListener('click', async () => {
+            await ensurePalcoColorPopups();
+            const previewBox = {
+                tipo: selectedType || "contentor",
+                foco: selectedType === "contentor" ? "comentario" : "original",
+                destaques: noteHighlight,
+                __skipBrainTransmit: true
+            };
+            abrirPaleta(previewBox, "tab-destaques", () => {
+                selectedType = previewBox.tipo;
+                noteHighlight = previewBox.destaques || "";
+                renderNotePanel();
+            });
         });
 
         panel.querySelector('#palco-share-note-inline')?.addEventListener('click', async () => {
@@ -1290,19 +1398,11 @@ async function abrirItemPopup(item, persistedOverride = null) {
             renderRight();
         });
 
-        panel.querySelector('#palco-share-note')?.addEventListener('click', async () => {
-            const box = buildPalcoBox(details, palcoDoc?.id, cfg.tag, selectedType || "contentor", overlay);
-            const palcoId = await savePalcoNote(details, cfg.tag, box);
-            box.palco = palcoId || box.palco;
-            state.noteDraft = { title: details.title, typeLabel: labelForType(selectedType || "contentor"), box };
-            await reloadCurrentViewAfterMutation();
-            renderRight();
-            abrirPopupPartilhar(box, "__PALCO__", () => {});
-        });
     }
 
     renderNotePanel();
     applyRatingSelectTheme(overlay.querySelector('#palco-rating-select'));
+    syncPopupStateButtons();
     if (details.kind === "album") {
         await refreshAlbumTracksPanel();
     }
@@ -1341,16 +1441,22 @@ async function abrirItemPopup(item, persistedOverride = null) {
             if (link?.url) window.open(link.url, '_blank');
         });
     });
+    overlay.querySelectorAll('[data-palco-related]').forEach(card => {
+        card.addEventListener('click', async () => {
+            const rel = details.related?.[Number(card.dataset.palcoRelated)];
+            if (!rel) return;
+            const relatedItem = buildRelatedPopupItem(rel, details, Number(card.dataset.palcoRelated));
+            close();
+            await abrirItemPopup(relatedItem);
+        });
+    });
     overlay.querySelector('#palco-rating-select')?.addEventListener('change', async event => {
         applyRatingSelectTheme(event.target);
         if (!event.target.value) return;
         spawnRatingFx(event.target);
         const updatedDoc = await savePalcoRating(details, cfg.tag, Number(event.target.value));
-        if (updatedDoc && palcoDoc) {
-            palcoDoc.rating = updatedDoc.rating;
-            palcoDoc.watched = updatedDoc.watched;
-            palcoDoc.vistoem = updatedDoc.vistoem;
-        }
+        if (updatedDoc) palcoDoc = { ...(palcoDoc || {}), ...updatedDoc };
+        syncPopupStateButtons();
         await reloadCurrentViewAfterMutation();
     });
 
@@ -1363,10 +1469,8 @@ async function abrirItemPopup(item, persistedOverride = null) {
         const updatedDocs = await Promise.all(updates);
         const [updatedDoc] = updatedDocs;
         mergePersistedDocs(updatedDocs);
-        if (updatedDoc && palcoDoc) {
-            palcoDoc.watched = updatedDoc.watched;
-            palcoDoc.vistoem = updatedDoc.vistoem;
-        }
+        if (updatedDoc) palcoDoc = { ...(palcoDoc || {}), ...updatedDoc };
+        syncPopupStateButtons();
         await reloadCurrentViewAfterMutation();
         await refreshAlbumTracksPanel();
     });
@@ -1375,9 +1479,8 @@ async function abrirItemPopup(item, persistedOverride = null) {
         const next = palcoDoc?.wishlist === "on" ? "off" : "on";
         const updatedDoc = await updatePalcoFlags(details, cfg.tag, { wishlist: next });
         mergePersistedDocs(updatedDoc);
-        if (updatedDoc && palcoDoc) {
-            palcoDoc.wishlist = updatedDoc.wishlist;
-        }
+        if (updatedDoc) palcoDoc = { ...(palcoDoc || {}), ...updatedDoc };
+        syncPopupStateButtons();
         await reloadCurrentViewAfterMutation();
     });
 
@@ -1385,14 +1488,9 @@ async function abrirItemPopup(item, persistedOverride = null) {
         const next = palcoDoc?.favorito === "on" ? "off" : "on";
         const updatedDoc = await updatePalcoFlags(details, cfg.tag, { favorito: next });
         mergePersistedDocs(updatedDoc);
-        if (updatedDoc && palcoDoc) {
-            palcoDoc.favorito = updatedDoc.favorito;
-        }
+        if (updatedDoc) palcoDoc = { ...(palcoDoc || {}), ...updatedDoc };
+        syncPopupStateButtons();
         await reloadCurrentViewAfterMutation();
-    });
-
-    overlay.querySelector('#palco-action-stats')?.addEventListener('click', () => {
-        alert(`Resumo rapido\nRating: ${palcoDoc?.rating || "--"}\nWishlist: ${palcoDoc?.wishlist || "off"}\nWatched: ${palcoDoc?.watched || "off"}\nFavorito: ${palcoDoc?.favorito || "off"}`);
     });
 
 }
@@ -1403,8 +1501,6 @@ async function reloadCurrentViewAfterMutation() {
     await renderCategoryCenter();
     renderRight();
 }
-
-function syncPopupStateButtons() {}
 
 function buildPalcoBox(details, palcoDocId, tag, type, overlay) {
     const title = overlay.querySelector('#palco-note-title')?.value?.trim() || details.title;
@@ -1531,6 +1627,7 @@ async function loadLyricsIntoPanel(details, overlay) {
 function labelForType(type) {
     if (type === "subnota") return "SUBNOTA";
     if (type === "questao") return "QUESTAO";
+    if (type === "raciocinio") return "RACIOCINIO";
     return "CONTENTOR";
 }
 
@@ -1538,7 +1635,8 @@ function getNoteTypeMeta(type) {
     const map = {
         contentor: { label: "CONTENTOR", icon: "fa-box", color: "#ea580c", focusLabel: "Comentario" },
         subnota: { label: "SUBNOTA", icon: "fa-box", color: "#3b82f6", focusLabel: "Original" },
-        questao: { label: "QUESTAO", icon: "fa-box", color: "#10b981", focusLabel: "Original" }
+        questao: { label: "QUESTAO", icon: "fa-box", color: "#10b981", focusLabel: "Original" },
+        raciocinio: { label: "RACIOCINIO", icon: "fa-box", color: "#f59e0b", focusLabel: "Original" }
     };
     return map[type] || map.contentor;
 }
@@ -1596,6 +1694,8 @@ export async function abrirCategoria(category, preferredId = null, preferredTool
 }
 
 export async function iniciarPalcoUI({ db, auth }) {
+    await ensurePalcoColorPopups();
+    iniciarSistemaCores(db, auth.currentUser, () => {});
     iniciarSistemaPartilha(db, auth, () => {});
     bindShellButtons();
     renderLeft();

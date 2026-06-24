@@ -440,10 +440,18 @@ export async function getMovieDetails(sourceId, fallbackItem = null) {
         try {
             const details = await fetchTmdbMovieDetails(cached.externalIds?.tmdb || sourceId.replace("tmdb-movie-", ""));
             const related = (details.recommendations?.results || []).slice(0, 10).map(item => ({
+                source: "tmdb-movie",
+                sourceId: `tmdb-movie-${item.id}`,
+                kind: "movie",
                 title: item.title || item.original_title || "Filme",
                 subtitle: "Filme",
                 imageUrl: tmdbImageUrl(item.poster_path || item.backdrop_path),
-                year: item.release_date ? Number(item.release_date.slice(0, 4)) : null
+                releaseDate: item.release_date || "",
+                year: item.release_date ? Number(item.release_date.slice(0, 4)) : null,
+                description: item.overview || "Filme relacionado via TMDB.",
+                externalIds: { tmdb: String(item.id || "") },
+                trailerUrl: youtubeSearchUrl(`${item.title || item.original_title || "movie"} trailer`),
+                previewUrl: item.id ? `https://www.themoviedb.org/movie/${item.id}` : ""
             }));
             return {
                 ...cached,
@@ -464,10 +472,18 @@ export async function getMovieDetails(sourceId, fallbackItem = null) {
         try {
             const details = await fetchTmdbTvDetails(cached.externalIds?.tmdb || sourceId.replace("tmdb-tv-", ""));
             const related = (details.recommendations?.results || []).slice(0, 10).map(item => ({
+                source: "tmdb-tv",
+                sourceId: `tmdb-tv-${item.id}`,
+                kind: "series",
                 title: item.name || item.original_name || "Serie",
                 subtitle: "Serie",
                 imageUrl: tmdbImageUrl(item.poster_path || item.backdrop_path),
-                year: item.first_air_date ? Number(item.first_air_date.slice(0, 4)) : null
+                releaseDate: item.first_air_date || "",
+                year: item.first_air_date ? Number(item.first_air_date.slice(0, 4)) : null,
+                description: item.overview || "Serie relacionada via TMDB.",
+                externalIds: { tmdb: String(item.id || "") },
+                trailerUrl: youtubeSearchUrl(`${item.name || item.original_name || "series"} trailer`),
+                previewUrl: item.id ? `https://www.themoviedb.org/tv/${item.id}` : ""
             }));
             return {
                 ...cached,
@@ -488,10 +504,18 @@ export async function getMovieDetails(sourceId, fallbackItem = null) {
         try {
             const details = await fetchTmdbPersonDetails(cached.externalIds?.tmdb || sourceId.replace("tmdb-person-", ""));
             const related = (details.combined_credits?.cast || []).slice(0, 10).map(item => ({
+                source: item.media_type === "tv" ? "tmdb-tv" : "tmdb-movie",
+                sourceId: `${item.media_type === "tv" ? "tmdb-tv" : "tmdb-movie"}-${item.id}`,
+                kind: item.media_type === "tv" ? "series" : "movie",
                 title: item.title || item.name || "Titulo",
                 subtitle: item.media_type === "tv" ? "Serie" : "Filme",
                 imageUrl: tmdbImageUrl(item.poster_path || item.backdrop_path),
-                year: item.release_date ? Number(item.release_date.slice(0, 4)) : (item.first_air_date ? Number(item.first_air_date.slice(0, 4)) : null)
+                releaseDate: item.release_date || item.first_air_date || "",
+                year: item.release_date ? Number(item.release_date.slice(0, 4)) : (item.first_air_date ? Number(item.first_air_date.slice(0, 4)) : null),
+                description: item.overview || "Titulo relacionado via TMDB.",
+                externalIds: { tmdb: String(item.id || "") },
+                trailerUrl: youtubeSearchUrl(`${item.title || item.name || "title"} trailer`),
+                previewUrl: item.id ? `https://www.themoviedb.org/${item.media_type === "tv" ? "tv" : "movie"}/${item.id}` : ""
             }));
             return {
                 ...cached,
