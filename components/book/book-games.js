@@ -754,19 +754,26 @@ function setSentinelHeader(config = {}) {
 }
 
 function openGameCard(title, html) {
+    const overlay = document.getElementById('book-game-card-overlay');
     const modal = document.querySelector('#book-game-card-overlay .book-game-card-modal');
     modal?.classList.remove('minimized');
+    overlay?.classList.remove('game-card-minimized');
     document.getElementById('book-game-card-title').innerHTML = escapeHtml(title);
     document.getElementById('book-game-card-body').innerHTML = html;
-    document.getElementById('book-game-card-overlay')?.classList.add('active');
+    overlay?.classList.add('active');
 }
 
 function closeGameCard() {
-    document.getElementById('book-game-card-overlay')?.classList.remove('active');
+    const overlay = document.getElementById('book-game-card-overlay');
+    overlay?.classList.remove('active', 'game-card-minimized');
+    document.querySelector('#book-game-card-overlay .book-game-card-modal')?.classList.remove('minimized');
 }
 
 function minimizeGameCard() {
-    document.querySelector('#book-game-card-overlay .book-game-card-modal')?.classList.toggle('minimized');
+    const overlay = document.getElementById('book-game-card-overlay');
+    const modal = document.querySelector('#book-game-card-overlay .book-game-card-modal');
+    const minimized = modal?.classList.toggle('minimized') || false;
+    overlay?.classList.toggle('game-card-minimized', minimized);
 }
 
 function bindGameCardDrag() {

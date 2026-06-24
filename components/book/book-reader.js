@@ -330,7 +330,10 @@ function renderPresentationSlide() {
     stage.innerHTML = `
         <article class="book-presentation-slide">
             <div class="book-presentation-badge">${escapeHtml(slide.tipo)}</div>
-            <h2>${escapeHtml(slide.titulo)}</h2>
+            <h2>
+                ${escapeHtml(slide.titulo)}
+                ${slide.indicador ? `<span class="book-presentation-title-marker">${escapeHtml(slide.indicador)}</span>` : ''}
+            </h2>
             <div class="book-presentation-content">${slide.conteudo}</div>
         </article>
     `;
@@ -351,7 +354,8 @@ function buildPresentationSlides(caixa) {
     const partes = chunkPresentationText(texto);
     return partes.map((parte, index) => ({
         tipo,
-        titulo: partes.length > 1 ? `${titulo} (${index + 1}/${partes.length})` : titulo,
+        titulo,
+        indicador: partes.length > 1 ? `(${index + 1}/${partes.length})` : '',
         conteudo: `<p>${escapeHtml(parte).replace(/\n/g, '<br>')}</p>`
     }));
 }
@@ -369,7 +373,7 @@ function formatSlideContent(caixa) {
 }
 
 function chunkPresentationText(texto) {
-    const maxChars = window.innerWidth <= 768 ? 520 : 820;
+    const maxChars = window.innerWidth <= 768 ? 320 : (window.innerWidth <= 1200 ? 520 : 650);
     const paragraphs = String(texto || '').split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
     const chunks = [];
     let current = '';
