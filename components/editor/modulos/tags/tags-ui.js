@@ -10,6 +10,32 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+function primeiroTexto(...valores) {
+    for (const valor of valores) {
+        if (Array.isArray(valor)) {
+            const textoArray = valor.filter(Boolean).join(' ').trim();
+            if (textoArray) return textoArray;
+            continue;
+        }
+
+        const texto = String(valor ?? '').trim();
+        if (texto) return texto;
+    }
+
+    return '';
+}
+
+function tituloCodexNoHub(item, idx) {
+    return primeiroTexto(
+        item?.referencia,
+        item?.referenciacodex,
+        item?.ref,
+        item?.titulo,
+        item?.obra,
+        item?.nome
+    ) || `Codex ${idx + 1}`;
+}
+
 /**
  * Renderiza as etiquetas (pills) de Bíblia e Cosmos no topo do popup (Itens já adicionados)
  */
@@ -252,12 +278,22 @@ export function renderizarHub(caixa) {
     (caixa.associados || []).forEach(item => {
         blocos.push({ tipo: 'Associado', titulo: item.titulo || item.nome || 'Sem título', removeKind: 'associado', removeId: item.id, cor: '#60a5fa', icon: 'fa-diagram-project' });
     });
+    (caixa.referencias || []).forEach((item, idx) => {
+        const label = item?.titulo || item?.link || `Referencia ${idx + 1}`;
+        blocos.push({ tipo: 'Referencia', titulo: label, removeKind: 'referencia', removeId: item.id, cor: '#f97316', icon: 'fa-link' });
+    });
     (caixa.links || []).forEach((item, idx) => {
         const label = item?.titulo || item?.url || `Referência ${idx + 1}`;
         blocos.push({ tipo: 'Referência', titulo: label, acao: '', cor: '#f97316', icon: 'fa-link' });
     });
     (caixa.codex || []).forEach((item, idx) => {
-        const label = item?.titulo || item?.obra || item?.nome || `Codex ${idx + 1}`;
+        if (item?.estado && item.estado !== 'on') return;
+        const label = tituloCodexNoHub(item, idx);
+        blocos.push({ tipo: 'Codex', titulo: label, removeKind: 'codex', removeId: item.id, cor: '#818cf8', icon: 'fa-book' });
+    });
+    (caixa.__hubLegacyCodex || []).forEach((item, idx) => {
+        if (item?.estado && item.estado !== 'on') return;
+        const label = tituloCodexNoHub(item, idx);
         blocos.push({ tipo: 'Codex', titulo: label, acao: '', cor: '#818cf8', icon: 'fa-book' });
     });
     if (caixa.palcoMeta?.title) {

@@ -487,6 +487,7 @@ window.confirmarRemoverCodex = (cardId) => {
 
                 // D) Atualizar UI das Tags e do EYE (Direita)
                 m.renderizarCards(getCtx());
+                renderizarHub(caixaAlvo);
                 const mEye = await import('../../../direita/eye-fontes-nota.js');
                 mEye.carregarFontesGlobaisDaNota(window.caixasAtuais);
             }
@@ -561,6 +562,7 @@ window.triggerCodexBrowser = (cardId) => {
                         }
 
                         mHandler.renderizarCards(getCtx());
+                        renderizarHub(caixaAlvo);
                     }
                 }
 
@@ -983,6 +985,27 @@ function configurarRemocoesTags() {
     if (window.__tagsRemovalDelegationInstalled) return;
     window.__tagsRemovalDelegationInstalled = true;
 
+    const sincronizarPopupAposRemocaoHub = async () => {
+        renderizarHub(caixaAlvo);
+        renderizarNeuroniosNoPopup(caixaAlvo);
+        renderizarVinculosTopicos(caixaAlvo);
+        renderizarAssociados(caixaAlvo);
+        RefHandlers.renderizarCards(getCtx());
+        CodexHandlers.renderizarCards(getCtx());
+
+        if (window.caixasAtuais) {
+            const idx = window.caixasAtuais.findIndex(c => c.id === caixaAlvo.id);
+            if (idx !== -1) window.caixasAtuais[idx] = { ...window.caixasAtuais[idx], ...caixaAlvo };
+        }
+
+        try {
+            const mEye = await import('../../../direita/eye-fontes-nota.js');
+            mEye.carregarFontesGlobaisDaNota(window.caixasAtuais);
+        } catch (error) {
+            console.warn('Nao foi possivel atualizar o painel de fontes apos remover no Hub:', error);
+        }
+    };
+
     document.addEventListener('click', async (event) => {
         const removerBtn = event.target.closest('[data-tags-remove]');
         if (!removerBtn) return;
@@ -1024,25 +1047,25 @@ function configurarRemocoesTags() {
         };
 
         try {
-            if (kind === 'biblia' && typeof window.desvincularBiblia === 'function') {
+            if (kind === 'biblia') {
                 if (fromHub) {
                     if (!(await pedirConfirmacaoHub())) return;
                     await NeuronioHandlers.desvincularBiblia(id, getCtx(), { skipConfirm: true });
-                } else {
+                } else if (typeof window.desvincularBiblia === 'function') {
                     await window.desvincularBiblia(id);
                 }
-            } else if (kind === 'cosmos' && typeof window.desvincularCosmos === 'function') {
+            } else if (kind === 'cosmos') {
                 if (fromHub) {
                     if (!(await pedirConfirmacaoHub())) return;
                     await NeuronioHandlers.desvincularCosmos(id, getCtx(), { skipConfirm: true });
-                } else {
+                } else if (typeof window.desvincularCosmos === 'function') {
                     await window.desvincularCosmos(id);
                 }
-            } else if (kind === 'topico' && typeof window.removerVincTopico === 'function') {
+            } else if (kind === 'topico') {
                 if (fromHub) {
                     if (!(await pedirConfirmacaoHub())) return;
                     await TopicoHandlers.desvincularTopico(id, getCtx(), { skipConfirm: true });
-                } else {
+                } else if (typeof window.removerVincTopico === 'function') {
                     await window.removerVincTopico(id);
                 }
             } else if (kind === 'topico-nota' && typeof window.removerTopicoDaNota === 'function') {
@@ -1054,6 +1077,8 @@ function configurarRemocoesTags() {
             } else if (kind === 'codex' && typeof window.confirmarRemoverCodex === 'function') {
                 await window.confirmarRemoverCodex(id);
             }
+
+            if (fromHub) await sincronizarPopupAposRemocaoHub();
         } catch (error) {
             console.error('Erro ao remover item:', error);
         }
