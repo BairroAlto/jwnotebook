@@ -367,14 +367,17 @@ function getCurrentNoteCtx() {
 export function syncCurrentNoteToggle() {
     const ctx = getCurrentNoteCtx();
     const checkDiario = document.getElementById('check-diario-linhas');
-    if (!checkDiario) return;
     if (!ctx?.dadosNota || !ctx?.auth?.currentUser) {
-        checkDiario.checked = false;
-        checkDiario.disabled = true;
+        if (checkDiario) {
+            checkDiario.checked = false;
+            checkDiario.disabled = true;
+        }
         return;
     }
-    checkDiario.disabled = false;
     const config = obterConfigNota(ctx.dadosNota, ctx.auth.currentUser.uid);
-    checkDiario.checked = Boolean(config.diarioLines);
+    if (checkDiario) {
+        checkDiario.disabled = false;
+        checkDiario.checked = Boolean(config.diarioLines);
+    }
     aplicarPreferenciasDeNota(obterConfigNotaEfetiva(ctx.dadosNota, ctx.auth.currentUser.uid, userPrefs));
 }
