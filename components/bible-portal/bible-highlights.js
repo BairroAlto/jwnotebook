@@ -354,7 +354,8 @@ async function gravarFragmento(fragment, color, groupId) {
     const uid = state.auth?.currentUser?.uid;
     if (!uid) return;
 
-    const nomeRef = `${state.livro} ${state.cap}:${fragment.verseNum}`;
+    const verseKey = String(fragment.verseNum);
+    const nomeRef = `${state.livro} ${state.cap}:${verseKey}`;
     const highlight = {
         id: crypto.randomUUID(),
         groupId,
@@ -362,7 +363,7 @@ async function gravarFragmento(fragment, color, groupId) {
         start: fragment.start,
         end: fragment.end,
         texto: fragment.texto,
-        versiculo: Number(fragment.verseNum),
+        versiculo: Number(verseKey),
         createdAt: Date.now()
     };
 
@@ -376,14 +377,15 @@ async function gravarFragmento(fragment, color, groupId) {
 
     if (!snap.empty) {
         const docSnap = snap.docs[0];
-        const data = docSnap.data();
-        const current = Array.isArray(data.Sublinhado) ? data.Sublinhado : [];
+        const current = obterHighlightsDoEstado(verseKey, [highlight]);
         await updateDoc(docSnap.ref, {
-            Sublinhado: [...current, highlight],
+            Sublinhado: current,
             timestamp: serverTimestamp()
         });
         return;
     }
+
+    const current = obterHighlightsDoEstado(verseKey, [highlight]);
 
     await addDoc(collection(state.db, "TextosBiblia"), {
         id: crypto.randomUUID(),
@@ -391,13 +393,13 @@ async function gravarFragmento(fragment, color, groupId) {
         nome: nomeRef,
         livro: state.livro,
         capitulo: state.cap,
-        versiculo: Number(fragment.verseNum),
+        versiculo: Number(verseKey),
         tipo: "textobiblico",
         estado: "on",
         timestamp: serverTimestamp(),
         Dossie: { mica: {}, Apto: [] },
         Puzzle: { quadros: [] },
-        Sublinhado: [highlight]
+        Sublinhado: current
     });
 }
 
@@ -443,11 +445,13 @@ async function removerSelecaoAtual() {
     const snap = await getDocs(highlightsQuery);
     for (const docSnap of snap.docs) {
         const data = docSnap.data();
+        const verseKey = String(data.versiculo ?? "");
         const current = Array.isArray(data.Sublinhado) ? data.Sublinhado : [];
-        const filtered = current.filter(item => !groupIds.includes(item?.groupId));
-        if (filtered.length !== current.length) {
+        const next = obterHighlightsDoEstado(verseKey);
+
+        if (next.length !== current.length || current.some(item => groupIds.includes(item?.groupId))) {
             await updateDoc(docSnap.ref, {
-                Sublinhado: filtered,
+                Sublinhado: next,
                 timestamp: serverTimestamp()
             });
         }
@@ -465,6 +469,11 @@ function removerHighlightsLocais(groupIds) {
         if (filtered.length) state.highlights.set(verseKey, filtered);
         else state.highlights.delete(verseKey);
     }
+}
+
+function obterHighlightsDoEstado(verseKey, fallback = []) {
+    const current = state.highlights.get(String(verseKey));
+    return Array.isArray(current) && current.length ? current.map(item => ({ ...item })) : fallback.map(item => ({ ...item }));
 }
 
 function encontrarGroupIdsSelecionados(fragments) {
