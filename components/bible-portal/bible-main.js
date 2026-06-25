@@ -14,7 +14,9 @@ import { BibleMarkers } from './bible-markers.js';
 import { BibleAnchors } from './bible-anchors.js';
 import { BibleAI } from './bible-ai.js';
 import { BibleSatellite } from './bible-satellite.js';
+import { BibleHighlights } from './bible-highlights.js';
 import { iniciarXSat } from '../direita/xsat-controller.js';
+import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -28,6 +30,7 @@ window.referenciaAtiva = null;
 window.textoCapituloAtual = "";
 
 let bootDone = false;
+let versiculosAtuais = null;
 
 iniciarAutenticacao(app, db);
 
@@ -42,12 +45,23 @@ onAuthStateChanged(auth, async (user) => {
     if (bootDone) return;
     bootDone = true;
 
+    window.NotaBookUserPrefs = await carregarPreferenciasUtilizador(db, user.uid);
+
     await BibleUI.carregarMenuSuperior();
     const preloadBiblia = BibleSearch.preload().catch(error => console.warn("[BIBLE] Preload da pesquisa falhou.", error));
     await preloadBiblia;
     BibleUI.finalizarLoading();
     vincularEventos();
     BibleSettings.iniciar();
+    BibleHighlights.iniciar({
+        db,
+        auth,
+        onRender: () => {
+            if (versiculosAtuais && window.livroAtivo && window.capAtivo) {
+                renderizarVersiculosNoFeed({ preserveScroll: true });
+            }
+        }
+    });
     BibleAI.renderizarProtocolos();
     BibleMarkers.iniciar(db, auth, (livro, cap, ver) => window.carregarCapituloNoPortal(livro, cap, ver));
     renderizarMosaicoInicial();
@@ -84,6 +98,8 @@ function renderizarMosaicoInicial() {
     window.capAtivo = null;
     window.referenciaAtiva = null;
     window.textoCapituloAtual = "";
+    versiculosAtuais = null;
+    BibleHighlights.limparCapitulo();
 
     const feed = document.getElementById('bible-feed');
     if (!feed) return;
@@ -122,6 +138,8 @@ function mostrarCapitulosDoLivro(livroNome) {
 
     window.livroAtivo = livro.nome;
     window.capAtivo = null;
+    versiculosAtuais = null;
+    BibleHighlights.limparCapitulo();
     document.body.classList.add('bible-book-select-active');
 
     feed.className = "bible-mosaico-view";
@@ -158,20 +176,19 @@ async function carregarCapituloNoPortal(livroNome, cap, verAlvo = null) {
         const res = await fetch(`data/biblia/${slugLivro(livro.nome)}.json`);
         const data = await res.json();
         const versiculos = data[livro.nome][cap];
-        const feed = document.getElementById('bible-feed');
-        const modo = BibleSettings.state.viewMode || "grid";
+        versiculosAtuais = versiculos;
 
         window.textoCapituloAtual = Object.entries(versiculos)
             .map(([num, texto]) => `${num}. ${texto}`)
             .join("\n");
 
-        feed.className = modo === "sequence" ? "view-sequence" : "view-grid";
-        feed.innerHTML = Object.entries(versiculos).map(([num, texto]) => `
-            <div class="bible-verse-row" data-v="${num}">
-                <button class="v-num" onclick="window.ativarBrainBiblia('${num}', '${escaparAtributo(texto)}')" aria-label="Abrir estudo de ${livro.nome} ${cap}:${num}">${num}</button>
-                <span class="v-text">${texto}</span>
-            </div>
-        `).join('');
+        await BibleHighlights.definirCapitulo({
+            livro: livro.nome,
+            cap: Number(cap),
+            verses: versiculos
+        });
+
+        renderizarVersiculosNoFeed({ verAlvo, resetScroll: !verAlvo });
 
         guardarTextoRecente(livro.nome, cap);
         BibleUI.ativarModoLeitura(true, `${livro.nome.toUpperCase()} ${cap}`);
@@ -179,14 +196,35 @@ async function carregarCapituloNoPortal(livroNome, cap, verAlvo = null) {
 
         if (verAlvo) {
             setTimeout(() => BibleUI.scrollParaVersiculo(verAlvo), 250);
-        } else {
-            document.getElementById('bible-reader-container')?.scrollTo({ top: 0, behavior: "auto" });
         }
     } catch (error) {
         console.error("[BIBLE] Falha ao carregar capitulo:", error);
         renderizarMosaicoInicial();
     } finally {
         BibleUI.mostrarLoadingLeitura(false);
+    }
+}
+
+function renderizarVersiculosNoFeed({ preserveScroll = false, resetScroll = false } = {}) {
+    const feed = document.getElementById('bible-feed');
+    const reader = document.getElementById('bible-reader-container');
+    if (!feed || !reader || !versiculosAtuais) return;
+
+    const scrollTop = reader.scrollTop;
+    const modo = BibleSettings.state.viewMode || "grid";
+
+    feed.className = modo === "sequence" ? "view-sequence" : "view-grid";
+    feed.innerHTML = Object.entries(versiculosAtuais).map(([num, texto]) => `
+        <div class="bible-verse-row" data-v="${num}">
+            <button class="v-num" onclick="window.ativarBrainBiblia('${num}', '${escaparAtributo(texto)}')" aria-label="Abrir estudo de ${window.livroAtivo} ${window.capAtivo}:${num}">${num}</button>
+            <span class="v-text" data-verse="${num}">${BibleHighlights.renderizarTextoVersiculo(num, texto)}</span>
+        </div>
+    `).join('');
+
+    if (preserveScroll) {
+        reader.scrollTop = scrollTop;
+    } else if (resetScroll) {
+        reader.scrollTo({ top: 0, behavior: "auto" });
     }
 }
 

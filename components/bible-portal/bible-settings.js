@@ -1,3 +1,5 @@
+import { guardarPreferenciasUtilizador } from '../settings/preferences.js';
+
 export const BibleSettings = {
     state: {
         verseSize: 16,
@@ -9,10 +11,34 @@ export const BibleSettings = {
     },
 
     iniciar: () => {
+        BibleSettings.carregarPreferencias();
         BibleSettings.vincularSliders();
         BibleSettings.vincularModoVisao();
         BibleSettings.vincularFloatingAI();
         BibleSettings.aplicarTamanhoVersiculos();
+    },
+
+    carregarPreferencias: () => {
+        const prefs = window.NotaBookUserPrefs?.bibleSettings || {};
+        BibleSettings.state = {
+            ...BibleSettings.state,
+            ...prefs,
+            verseSizeDesktop: Number(prefs.verseSizeDesktop ?? BibleSettings.state.verseSizeDesktop),
+            verseSizeMobile: Number(prefs.verseSizeMobile ?? BibleSettings.state.verseSizeMobile),
+            titleSize: Number(prefs.titleSize ?? BibleSettings.state.titleSize),
+            aiFloating: Boolean(prefs.aiFloating),
+            viewMode: prefs.viewMode || BibleSettings.state.viewMode
+        };
+    },
+
+    persistir: async () => {
+        const uid = window.auth?.currentUser?.uid;
+        if (!window.NotaBookUserPrefs) window.NotaBookUserPrefs = {};
+        window.NotaBookUserPrefs.bibleSettings = { ...BibleSettings.state };
+        if (!uid || !window.db) return;
+        await guardarPreferenciasUtilizador(window.db, uid, {
+            bibleSettings: { ...BibleSettings.state }
+        });
     },
 
     vincularSliders: () => {
@@ -22,8 +48,11 @@ export const BibleSettings = {
 
         if (rangeVDesktop) rangeVDesktop.value = String(BibleSettings.state.verseSizeDesktop);
         if (rangeVMobile) rangeVMobile.value = String(BibleSettings.state.verseSizeMobile);
+        if (rangeT) rangeT.value = String(BibleSettings.state.titleSize);
         document.getElementById('val-font-verses-desktop')?.replaceChildren(document.createTextNode(`${BibleSettings.state.verseSizeDesktop}px`));
         document.getElementById('val-font-verses-mobile')?.replaceChildren(document.createTextNode(`${BibleSettings.state.verseSizeMobile}px`));
+        document.getElementById('val-font-books')?.replaceChildren(document.createTextNode(`${BibleSettings.state.titleSize}px`));
+        document.documentElement.style.setProperty('--bible-title-size', `${BibleSettings.state.titleSize}px`);
 
         const bindVerseRange = (input, key, labelId) => {
             if (!input) return;
@@ -33,6 +62,7 @@ export const BibleSettings = {
                 BibleSettings.aplicarTamanhoVersiculos();
                 const label = document.getElementById(labelId);
                 if (label) label.innerText = `${val}px`;
+                void BibleSettings.persistir();
             };
         };
         bindVerseRange(rangeVDesktop, 'verseSizeDesktop', 'val-font-verses-desktop');
@@ -44,7 +74,8 @@ export const BibleSettings = {
                 document.documentElement.style.setProperty('--bible-title-size', `${val}px`);
                 const label = document.getElementById('val-font-books');
                 if (label) label.innerText = `${val}px`;
-                BibleSettings.state.titleSize = val;
+                BibleSettings.state.titleSize = Number(val);
+                void BibleSettings.persistir();
             };
         }
     },
@@ -61,12 +92,20 @@ export const BibleSettings = {
         const feed = document.getElementById('bible-feed');
 
         btns.forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === BibleSettings.state.viewMode);
+        });
+        if (feed && !feed.classList.contains('bible-mosaico-view')) {
+            feed.className = BibleSettings.state.viewMode === 'sequence' ? 'view-sequence' : 'view-grid';
+        }
+
+        btns.forEach(btn => {
             btn.onclick = () => {
                 const mode = btn.dataset.mode;
                 btns.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 if (feed) feed.className = mode === 'sequence' ? 'view-sequence' : 'view-grid';
                 BibleSettings.state.viewMode = mode;
+                void BibleSettings.persistir();
             };
         });
     },
@@ -99,7 +138,10 @@ export const BibleSettings = {
                 }
                 chatFlutuante?.classList.add('hidden');
             }
+            void BibleSettings.persistir();
         };
+
+        check.checked = Boolean(BibleSettings.state.aiFloating);
 
         document.getElementById('btn-bookai-float')?.addEventListener('click', () => {
             window.BibleAI?.toggleFloatingChat();
