@@ -356,7 +356,10 @@ async function gravarFragmento(fragment, color, groupId) {
 
     const verseKey = String(fragment.verseNum);
     const nomeRef = `${state.livro} ${state.cap}:${verseKey}`;
-    const highlight = {
+    const docQuery = construirQueryVersiculo(uid, verseKey);
+
+    const snap = await getDocs(docQuery);
+    const current = obterHighlightsDoEstado(verseKey, [{
         id: crypto.randomUUID(),
         groupId,
         cor: color,
@@ -365,27 +368,17 @@ async function gravarFragmento(fragment, color, groupId) {
         texto: fragment.texto,
         versiculo: Number(verseKey),
         createdAt: Date.now()
-    };
-
-    const docQuery = query(
-        collection(state.db, "TextosBiblia"),
-        where("userId", "==", uid),
-        where("nome", "==", nomeRef)
-    );
-
-    const snap = await getDocs(docQuery);
+    }]);
 
     if (!snap.empty) {
-        const docSnap = snap.docs[0];
-        const current = obterHighlightsDoEstado(verseKey, [highlight]);
-        await updateDoc(docSnap.ref, {
-            Sublinhado: current,
-            timestamp: serverTimestamp()
-        });
+        for (const docSnap of snap.docs) {
+            await updateDoc(docSnap.ref, {
+                Sublinhado: current,
+                timestamp: serverTimestamp()
+            });
+        }
         return;
     }
-
-    const current = obterHighlightsDoEstado(verseKey, [highlight]);
 
     await addDoc(collection(state.db, "TextosBiblia"), {
         id: crypto.randomUUID(),
@@ -461,6 +454,16 @@ async function removerSelecaoAtual() {
     state.selectedGroupIds = [];
     esconderToolbar();
     limparSelecaoDom();
+}
+
+function construirQueryVersiculo(uid, verseKey) {
+    return query(
+        collection(state.db, "TextosBiblia"),
+        where("userId", "==", uid),
+        where("livro", "==", state.livro),
+        where("capitulo", "==", state.cap),
+        where("versiculo", "==", Number(verseKey))
+    );
 }
 
 function removerHighlightsLocais(groupIds) {
