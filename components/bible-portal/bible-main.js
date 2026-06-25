@@ -230,6 +230,10 @@ function vincularEventos() {
         if (el) el.onclick = action;
     };
 
+    document.getElementById('mobile-overlay')?.addEventListener('click', () => {
+        BibleUI.fecharPainelLateral();
+    });
+
     bind('btn-prev-cap', () => navegarCapitulo(-1));
     bind('btn-next-cap', () => navegarCapitulo(1));
     bind('bible-context-title', () => {

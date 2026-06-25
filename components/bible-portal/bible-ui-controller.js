@@ -73,15 +73,11 @@ export const BibleUI = {
         const colDireita = document.getElementById('bible-right-col');
         if (!colDireita) return;
 
-        colDireita.classList.add('active');
-        colDireita.classList.remove('closed');
-        colDireita.style.setProperty('display', 'flex', 'important');
+        setBibleRightPanelState(colDireita, true);
         if (isBibleTouchMobile()) {
-            colDireita.style.removeProperty('width');
-            colDireita.style.removeProperty('min-width');
-            colDireita.style.setProperty('height', `${Number(colDireita.dataset.sheetPct || 55)}vh`, 'important');
+            colDireita.style.setProperty('height', `${Number(colDireita.dataset.sheetPct || 48)}vh`, 'important');
         } else {
-            colDireita.style.setProperty('width', '380px', 'important');
+            colDireita.style.removeProperty('height');
         }
 
         if (colDireita.innerHTML.trim() === "" || !document.getElementById('panel-brain')) {
@@ -110,9 +106,7 @@ export const BibleUI = {
     fecharPainelLateral: () => {
         const colDireita = document.getElementById('bible-right-col');
         if (colDireita) {
-            colDireita.classList.remove('active');
-            colDireita.classList.add('closed');
-            colDireita.style.width = "0";
+            setBibleRightPanelState(colDireita, false);
         }
     },
 
@@ -136,7 +130,14 @@ export const BibleUI = {
 };
 
 function instalarBibleMobileSheet(col) {
-    if (!col || col.querySelector('.mobile-sheet-chrome')) return;
+    if (!col) return;
+
+    if (!isBibleTouchMobile()) {
+        col.querySelector('.mobile-sheet-chrome')?.remove();
+        return;
+    }
+
+    if (col.querySelector('.mobile-sheet-chrome')) return;
 
     const chrome = document.createElement('div');
     chrome.className = 'mobile-sheet-chrome';
@@ -147,12 +148,7 @@ function instalarBibleMobileSheet(col) {
     col.prepend(chrome);
 
     chrome.querySelector('.mobile-sheet-close').onclick = () => {
-        col.classList.remove('active');
-        col.classList.add('closed');
-        col.style.removeProperty('width');
-        col.style.removeProperty('min-width');
-        col.style.removeProperty('height');
-        col.style.removeProperty('bottom');
+        setBibleRightPanelState(col, false);
     };
 
     const handle = chrome.querySelector('.mobile-sheet-handle');
@@ -165,7 +161,7 @@ function instalarBibleMobileSheet(col) {
         col.style.setProperty('height', `${clamped}vh`, 'important');
         col.dataset.sheetPct = String(clamped);
     };
-    if (isBibleTouchMobile()) setPct(Number(col.dataset.sheetPct || 55));
+    if (isBibleTouchMobile()) setPct(Number(col.dataset.sheetPct || 48));
 
     const iniciarDrag = (event) => {
         if (event.target.closest('button')) return;
@@ -173,7 +169,7 @@ function instalarBibleMobileSheet(col) {
         event.preventDefault();
         event.stopPropagation();
         startY = event.clientY;
-        startHeight = Number(col.dataset.sheetPct || 55);
+        startHeight = Number(col.dataset.sheetPct || 48);
         col.classList.add('dragging');
         event.currentTarget.setPointerCapture?.(event.pointerId);
         document.body.style.overflow = 'hidden';
@@ -201,5 +197,28 @@ function instalarBibleMobileSheet(col) {
 }
 
 function isBibleTouchMobile() {
-    return window.matchMedia('(max-width: 760px)').matches;
+    return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function setBibleRightPanelState(col, isOpen) {
+    if (!col) return;
+
+    col.classList.toggle('active', isOpen);
+    col.classList.toggle('closed', !isOpen);
+    col.style.removeProperty('width');
+    col.style.removeProperty('min-width');
+
+    if (!isOpen) {
+        col.style.removeProperty('height');
+        col.style.removeProperty('bottom');
+    }
+
+    const overlay = document.getElementById('mobile-overlay');
+    if (isBibleTouchMobile()) {
+        overlay?.classList.toggle('active', isOpen);
+        document.body.style.overflow = isOpen ? 'hidden' : '';
+    } else {
+        overlay?.classList.remove('active');
+        document.body.style.overflow = '';
+    }
 }
