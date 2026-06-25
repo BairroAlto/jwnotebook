@@ -32,6 +32,7 @@ const state = {
     toolbarReady: false,
     eventsBound: false,
     selectionTimer: null,
+    selectionRetryTimers: [],
     feedBound: false,
     mobileWatchTimer: null
 };
@@ -97,6 +98,9 @@ function garantirToolbar() {
     `;
 
     toolbar.addEventListener('mousedown', event => event.preventDefault());
+    toolbar.addEventListener('touchstart', event => event.stopPropagation(), { passive: true });
+    toolbar.addEventListener('touchend', event => event.stopPropagation());
+    toolbar.addEventListener('pointerdown', event => event.stopPropagation());
     toolbar.addEventListener('click', async event => {
         const removeBtn = event.target.closest('.bible-selection-remove');
         if (removeBtn) {
@@ -117,9 +121,8 @@ function ligarEventosSelecao() {
     if (state.eventsBound) return;
     state.eventsBound = true;
 
-    const reagendar = () => {
-        clearTimeout(state.selectionTimer);
-        state.selectionTimer = setTimeout(atualizarSelecaoAtual, 40);
+    const reagendar = (burst = false) => {
+        agendarVerificacaoSelecao(burst ? [20, 90, 180, 320, 520, 760] : [20, 100, 220]);
     };
 
     const observarJanelaMobile = () => {
@@ -134,13 +137,15 @@ function ligarEventosSelecao() {
             }
             state.mobileWatchTimer = setTimeout(tick, 120);
         };
-        state.mobileWatchTimer = setTimeout(tick, 120);
+        state.mobileWatchTimer = setTimeout(tick, 80);
     };
 
-    document.addEventListener('selectionchange', reagendar);
-    document.addEventListener('mouseup', reagendar);
-    document.addEventListener('keyup', reagendar);
-    document.addEventListener('touchend', reagendar);
+    document.addEventListener('selectionchange', () => reagendar(true));
+    document.addEventListener('mouseup', () => reagendar(false));
+    document.addEventListener('pointerup', () => reagendar(true));
+    document.addEventListener('keyup', () => reagendar(false));
+    document.addEventListener('touchend', () => reagendar(true));
+    document.addEventListener('contextmenu', () => reagendar(true));
     document.addEventListener('touchstart', observarJanelaMobile, { passive: true });
     document.addEventListener('touchend', observarJanelaMobile, { passive: true });
     window.addEventListener('resize', () => {
@@ -154,15 +159,24 @@ function ligarEventosFeed() {
 
     feed.dataset.highlightSelectionBound = 'true';
 
-    const reagendar = () => {
-        clearTimeout(state.selectionTimer);
-        state.selectionTimer = setTimeout(atualizarSelecaoAtual, 40);
-    };
+    const reagendar = (burst = false) => agendarVerificacaoSelecao(burst ? [20, 90, 180, 320, 520] : [20, 100, 220]);
 
-    feed.addEventListener('mouseup', reagendar);
-    feed.addEventListener('touchend', reagendar);
-    feed.addEventListener('pointerup', reagendar);
-    feed.addEventListener('touchstart', reagendar, { passive: true });
+    feed.addEventListener('mouseup', () => reagendar(false));
+    feed.addEventListener('touchend', () => reagendar(true));
+    feed.addEventListener('pointerup', () => reagendar(true));
+    feed.addEventListener('touchstart', () => reagendar(true), { passive: true });
+}
+
+function agendarVerificacaoSelecao(delays = [20, 100, 220]) {
+    clearTimeout(state.selectionTimer);
+    state.selectionRetryTimers.forEach(timerId => clearTimeout(timerId));
+    state.selectionRetryTimers = [];
+
+    state.selectionTimer = setTimeout(atualizarSelecaoAtual, delays[0] ?? 20);
+    delays.slice(1).forEach(delay => {
+        const timerId = setTimeout(atualizarSelecaoAtual, delay);
+        state.selectionRetryTimers.push(timerId);
+    });
 }
 
 function subscreverHighlightsCapitulo() {
