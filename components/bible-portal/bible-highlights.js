@@ -356,9 +356,7 @@ async function gravarFragmento(fragment, color, groupId) {
 
     const verseKey = String(fragment.verseNum);
     const nomeRef = `${state.livro} ${state.cap}:${verseKey}`;
-    const docQuery = construirQueryVersiculo(uid, verseKey);
-
-    const snap = await getDocs(docQuery);
+    const docsVersiculo = await carregarDocsVersiculo(uid, verseKey);
     const current = obterHighlightsDoEstado(verseKey, [{
         id: crypto.randomUUID(),
         groupId,
@@ -370,8 +368,8 @@ async function gravarFragmento(fragment, color, groupId) {
         createdAt: Date.now()
     }]);
 
-    if (!snap.empty) {
-        for (const docSnap of snap.docs) {
+    if (docsVersiculo.length) {
+        for (const docSnap of docsVersiculo) {
             await updateDoc(docSnap.ref, {
                 Sublinhado: current,
                 timestamp: serverTimestamp()
@@ -428,15 +426,8 @@ async function removerSelecaoAtual() {
     const uid = state.auth?.currentUser?.uid;
     if (!uid || !state.livro || !state.cap) return;
 
-    const highlightsQuery = query(
-        collection(state.db, "TextosBiblia"),
-        where("userId", "==", uid),
-        where("livro", "==", state.livro),
-        where("capitulo", "==", state.cap)
-    );
-
-    const snap = await getDocs(highlightsQuery);
-    for (const docSnap of snap.docs) {
+    const docsCapitulo = await carregarDocsCapitulo(uid);
+    for (const docSnap of docsCapitulo) {
         const data = docSnap.data();
         const verseKey = String(data.versiculo ?? "");
         const current = Array.isArray(data.Sublinhado) ? data.Sublinhado : [];
@@ -456,14 +447,24 @@ async function removerSelecaoAtual() {
     limparSelecaoDom();
 }
 
-function construirQueryVersiculo(uid, verseKey) {
-    return query(
+async function carregarDocsCapitulo(uid) {
+    const docsLivro = await carregarDocsLivro(uid);
+    return docsLivro.filter(docSnap => Number(docSnap.data()?.capitulo) === Number(state.cap));
+}
+
+async function carregarDocsVersiculo(uid, verseKey) {
+    const docsCapitulo = await carregarDocsCapitulo(uid);
+    return docsCapitulo.filter(docSnap => Number(docSnap.data()?.versiculo) === Number(verseKey));
+}
+
+async function carregarDocsLivro(uid) {
+    const docsQuery = query(
         collection(state.db, "TextosBiblia"),
         where("userId", "==", uid),
-        where("livro", "==", state.livro),
-        where("capitulo", "==", state.cap),
-        where("versiculo", "==", Number(verseKey))
+        where("livro", "==", state.livro)
     );
+    const snap = await getDocs(docsQuery);
+    return snap.docs;
 }
 
 function removerHighlightsLocais(groupIds) {
