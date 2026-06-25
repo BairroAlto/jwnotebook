@@ -32,7 +32,8 @@ const state = {
     toolbarReady: false,
     eventsBound: false,
     selectionTimer: null,
-    feedBound: false
+    feedBound: false,
+    mobileWatchTimer: null
 };
 
 export const BibleHighlights = {
@@ -121,10 +122,27 @@ function ligarEventosSelecao() {
         state.selectionTimer = setTimeout(atualizarSelecaoAtual, 40);
     };
 
+    const observarJanelaMobile = () => {
+        clearTimeout(state.mobileWatchTimer);
+        let tentativas = 0;
+        const tick = () => {
+            atualizarSelecaoAtual();
+            tentativas += 1;
+            if (state.currentSelection.length || tentativas >= 12) {
+                state.mobileWatchTimer = null;
+                return;
+            }
+            state.mobileWatchTimer = setTimeout(tick, 120);
+        };
+        state.mobileWatchTimer = setTimeout(tick, 120);
+    };
+
     document.addEventListener('selectionchange', reagendar);
     document.addEventListener('mouseup', reagendar);
     document.addEventListener('keyup', reagendar);
     document.addEventListener('touchend', reagendar);
+    document.addEventListener('touchstart', observarJanelaMobile, { passive: true });
+    document.addEventListener('touchend', observarJanelaMobile, { passive: true });
     window.addEventListener('resize', () => {
         if (state.currentSelection.length) mostrarToolbar();
     });
@@ -144,6 +162,7 @@ function ligarEventosFeed() {
     feed.addEventListener('mouseup', reagendar);
     feed.addEventListener('touchend', reagendar);
     feed.addEventListener('pointerup', reagendar);
+    feed.addEventListener('touchstart', reagendar, { passive: true });
 }
 
 function subscreverHighlightsCapitulo() {
