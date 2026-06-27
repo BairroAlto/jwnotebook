@@ -97,6 +97,32 @@ function getSlug(nome) {
                .replace(/\s+/g, '_');
 }
 
+function normalizarChave(valor) {
+    return String(valor || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .trim();
+}
+
+function resolverChaveLivro(data, livroNome) {
+    if (!data || typeof data !== 'object') return null;
+    if (data[livroNome]) return livroNome;
+
+    const nomeNormalizado = normalizarChave(livroNome);
+    return Object.keys(data).find(chave => normalizarChave(chave) === nomeNormalizado) || null;
+}
+
+function obterVersiculosDoCapitulo(data, livroNome, capNum) {
+    const chaveLivro = resolverChaveLivro(data, livroNome);
+    if (!chaveLivro) return null;
+
+    const livroData = data[chaveLivro];
+    if (!livroData || typeof livroData !== 'object') return null;
+
+    return livroData[String(capNum)] || livroData[Number(capNum)] || null;
+}
+
 /**
  * INICIALIZAÇÃO DA BÍBLIA
  */
@@ -233,8 +259,13 @@ async function carregarVersiculos(livro, capNum, container) {
 
     try {
         const response = await fetch(`data/biblia/${slug}.json`);
+        if (!response.ok) throw new Error(`Falha ao carregar ${slug}.json`);
+
         const data = await response.json();
-        const versiculosObj = data[livro.nome][capNum];
+        const versiculosObj = obterVersiculosDoCapitulo(data, livro.nome, capNum);
+        if (!versiculosObj || typeof versiculosObj !== 'object') {
+            throw new Error(`Capítulo não encontrado para ${livro.nome} ${capNum}`);
+        }
 
         // Nota: O clique do #btn-voltar-caps agora é gerido pelo document.addEventListener acima
         container.innerHTML = `
@@ -246,7 +277,7 @@ async function carregarVersiculos(livro, capNum, container) {
             </div>
         `;
 
-        const scrollArea = document.getElementById('biblia-scroll');
+        const scrollArea = container.querySelector('#biblia-scroll');
         Object.keys(versiculosObj).forEach(vNum => {
             const item = document.createElement('div');
             item.style.cssText = `font-size: var(--fs-biblia-versiculos, 14px); line-height: 1.6; color: var(--text-main); cursor: pointer;`;
@@ -256,6 +287,7 @@ async function carregarVersiculos(livro, capNum, container) {
         });
 
     } catch (e) {
+        console.error('[BIBLIA] Falha ao abrir capítulo:', livro?.nome, capNum, e);
         renderizarCapitulos(livro, container);
     }
 }
