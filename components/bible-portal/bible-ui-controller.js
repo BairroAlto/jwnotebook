@@ -18,7 +18,9 @@ export const BibleUI = {
         }
     },
 
-    finalizarLoading: () => {
+    finalizarLoading: async () => {
+        await aguardarPrimeiraVistaPronta();
+        document.body.classList.remove('bible-booting');
         const loader = document.getElementById('loading-screen');
         if (loader) {
             loader.style.opacity = '0';
@@ -221,4 +223,32 @@ function setBibleRightPanelState(col, isOpen) {
         overlay?.classList.remove('active');
         document.body.style.overflow = '';
     }
+}
+
+async function aguardarPrimeiraVistaPronta() {
+    const maxTentativas = 40;
+
+    for (let tentativa = 0; tentativa < maxTentativas; tentativa++) {
+        const quadradosLivros = document.querySelectorAll('.mosaico-book-card');
+        const botaoBookAi = document.getElementById('btn-abrir-ai-biblia');
+        const botaoParabolica = document.getElementById('btn-xsat-bible');
+
+        if (!quadradosLivros.length || !botaoBookAi || !botaoParabolica) {
+            await esperarFrame();
+            continue;
+        }
+
+        const estiloBookAi = window.getComputedStyle(botaoBookAi);
+        const estiloParabolica = window.getComputedStyle(botaoParabolica);
+        const bookAiOculto = estiloBookAi.display === 'none' || estiloBookAi.visibility === 'hidden';
+        const parabolicaOculta = estiloParabolica.display === 'none' || estiloParabolica.visibility === 'hidden';
+
+        if (bookAiOculto && parabolicaOculta) return;
+
+        await esperarFrame();
+    }
+}
+
+function esperarFrame() {
+    return new Promise(resolve => requestAnimationFrame(() => resolve()));
 }

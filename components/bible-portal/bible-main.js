@@ -48,9 +48,7 @@ onAuthStateChanged(auth, async (user) => {
     window.NotaBookUserPrefs = await carregarPreferenciasUtilizador(db, user.uid);
 
     await BibleUI.carregarMenuSuperior();
-    const preloadBiblia = BibleSearch.preload().catch(error => console.warn("[BIBLE] Preload da pesquisa falhou.", error));
-    await preloadBiblia;
-    BibleUI.finalizarLoading();
+    BibleSearch.preload().catch(error => console.warn("[BIBLE] Preload da pesquisa falhou.", error));
     vincularEventos();
     BibleSettings.iniciar();
     BibleHighlights.iniciar({
@@ -65,6 +63,7 @@ onAuthStateChanged(auth, async (user) => {
     BibleAI.renderizarProtocolos();
     BibleMarkers.iniciar(db, auth, (livro, cap, ver) => window.carregarCapituloNoPortal(livro, cap, ver));
     renderizarMosaicoInicial();
+    await BibleUI.finalizarLoading();
 });
 
 function slugLivro(nome) {
