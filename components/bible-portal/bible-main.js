@@ -32,6 +32,11 @@ window.textoCapituloAtual = "";
 let bootDone = false;
 let versiculosAtuais = null;
 
+await Promise.all([
+    carregarComponente('area-popup-cosmos', 'components/popup/popup-cosmos.html'),
+    carregarComponente('area-popup-cosmos-fontes', 'components/popup/popup-cosmos-fontes.html')
+]);
+
 iniciarAutenticacao(app, db);
 
 onAuthStateChanged(auth, async (user) => {
@@ -70,6 +75,14 @@ function slugLivro(nome) {
     return nome.toLowerCase()
         .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
         .replace(/\s+/g, '_');
+}
+
+async function carregarComponente(id, path) {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    const res = await fetch(path);
+    el.innerHTML = await res.text();
 }
 
 function escaparAtributo(valor) {

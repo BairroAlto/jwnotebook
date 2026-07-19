@@ -9,6 +9,7 @@ import { inicializarLists } from '../lists/ler-lists.js';
 import { inicializarLeituraPins } from '../esquerda/ler-pins.js';
 import { iniciarControladorEsquerda } from '../esquerda/esquerda-controller.js';
 import { MobileBottomSheet } from '../ui/mobile-bottom-sheet.js';
+import { MobileBibleBar } from "../editor/modulos/mobile-bible-bar.js";
 import { iniciarXSat } from '../direita/xsat-controller.js';
 import { iniciarBookSettings } from './book-settings.js';
 import { iniciarBookToolbar } from './book-toolbar.js';
@@ -74,6 +75,7 @@ onAuthStateChanged(auth, async user => {
     if (bootDone) return;
     bootDone = true;
     window.NotaBookUserPrefs = await carregarPreferenciasUtilizador(db, user.uid);
+    MobileBibleBar.iniciar();
     aplicarPreferenciaBotaoColapsoColunaEsquerda(Boolean(window.NotaBookUserPrefs?.leftColumnCollapseButton));
     const collapseToggle = document.getElementById('book-left-collapse-toggle');
     if (collapseToggle) collapseToggle.checked = Boolean(window.NotaBookUserPrefs?.leftColumnCollapseButton);
