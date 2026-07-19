@@ -55,6 +55,51 @@ export async function inicializarSettings(db, auth) {
     bindLogout(auth);
     bindSearch(db, auth, overlay);
     inicializarAmigos(db, auth);
+    ativarFiltroDispositivo();
+    ativarVisibilidadeBarraSuperior();
+}
+
+function ativarVisibilidadeBarraSuperior() {
+    const aplicar = () => {
+        const desktopHidden = userPrefs?.barraSuperiorDesktop === false;
+        const mobileHidden = window.notaAtualContext
+            ? userPrefs?.barraSuperiorMobileNota === false
+            : userPrefs?.barraSuperiorMobilePrincipal === false;
+        document.body.classList.toggle('barra-superior-oculta-desktop', desktopHidden);
+        document.body.classList.toggle('barra-superior-oculta-mobile', mobileHidden);
+    };
+
+    window.addEventListener('nota:aberta', aplicar);
+    window.addEventListener('nota:fechada', aplicar);
+    aplicar();
+    window.atualizarVisibilidadeBarraSuperior = aplicar;
+}
+
+function ativarFiltroDispositivo() {
+    const filters = document.querySelectorAll('[data-device-filter]');
+    const options = document.querySelectorAll('#set-fontes .font-info');
+
+    filters.forEach(filter => {
+        filter.onclick = () => {
+            const device = filter.dataset.deviceFilter;
+            filters.forEach(item => {
+                const active = item === filter;
+                item.classList.toggle('active', active);
+                item.setAttribute('aria-selected', String(active));
+            });
+
+            options.forEach(option => {
+                const control = option.closest('.field-font')?.querySelector('input');
+                const varName = control?.dataset.var || '';
+                const optionDevice = option.dataset.deviceOption
+                    || ((control?.id || '').endsWith('-mobile') || varName.endsWith('-mobile') ? 'mobile' : varName.includes('editor-texto-desktop') || varName.includes('biblia') || varName === '--fs-left-items' || varName === '--fs-right-results' || control?.id === 'check-colapso-titulos' || control?.id === 'check-colapso-titulo-nota' ? 'desktop' : 'shared');
+                const visible = optionDevice === 'shared' || optionDevice === device;
+                option.closest('.field-font').style.display = visible ? '' : 'none';
+            });
+        };
+    });
+
+    filters[0]?.click();
 }
 
 function ativarTabs(db, uid) {
@@ -87,9 +132,26 @@ function aplicarToggles(prefs) {
     if (toolCollapse) toolCollapse.checked = Boolean(prefs.colapsoTitulos);
     document.body.classList.toggle('modo-colapso-titulos', Boolean(prefs.colapsoTitulos));
 
+    const toolCollapseMobile = document.getElementById('check-colapso-titulos-mobile');
+    if (toolCollapseMobile) toolCollapseMobile.checked = Boolean(prefs.colapsoTitulosMobile);
+    document.body.classList.toggle('modo-colapso-titulos-mobile', Boolean(prefs.colapsoTitulosMobile));
+
     const noteCollapse = document.getElementById('check-colapso-titulo-nota');
     if (noteCollapse) noteCollapse.checked = Boolean(prefs.noteTitleCollapse);
     document.body.classList.toggle('modo-colapso-titulos-nota', Boolean(prefs.noteTitleCollapse));
+
+    const noteCollapseMobile = document.getElementById('check-colapso-titulo-nota-mobile');
+    if (noteCollapseMobile) noteCollapseMobile.checked = Boolean(prefs.noteTitleCollapseMobile);
+    document.body.classList.toggle('modo-colapso-titulos-nota-mobile', Boolean(prefs.noteTitleCollapseMobile));
+
+    const topDesktop = document.getElementById('check-barra-superior-desktop');
+    if (topDesktop) topDesktop.checked = prefs.barraSuperiorDesktop !== false;
+    const topMobileNota = document.getElementById('check-barra-superior-mobile-nota');
+    if (topMobileNota) topMobileNota.checked = prefs.barraSuperiorMobileNota !== false;
+    const topMobilePrincipal = document.getElementById('check-barra-superior-mobile-principal');
+    const mobileBibleHelper = document.getElementById("check-barra-biblica-teclado-mobile");
+    if (mobileBibleHelper) mobileBibleHelper.checked = prefs.mobileBibleHelperBar !== false;
+    if (topMobilePrincipal) topMobilePrincipal.checked = prefs.barraSuperiorMobilePrincipal !== false;
 
     const shareAnswers = document.getElementById('check-partilhar-respostas');
     if (shareAnswers) shareAnswers.checked = prefs.shareAnswers === "on";
@@ -154,6 +216,53 @@ function bindToggles(db, auth) {
         };
     }
 
+    const checkColapsoMobile = document.getElementById('check-colapso-titulos-mobile');
+    if (checkColapsoMobile) {
+        checkColapsoMobile.onchange = async (e) => {
+            const checked = e.target.checked;
+            document.body.classList.toggle('modo-colapso-titulos-mobile', checked);
+            userPrefs.colapsoTitulosMobile = checked;
+            await guardarPreferenciasUtilizador(db, uid, { colapsoTitulosMobile: checked });
+            window.refreshNotaAtualBook?.();
+        };
+    }
+
+    const checkColapsoNotaMobile = document.getElementById('check-colapso-titulo-nota-mobile');
+    if (checkColapsoNotaMobile) {
+        checkColapsoNotaMobile.onchange = async (e) => {
+            const checked = e.target.checked;
+            document.body.classList.toggle('modo-colapso-titulos-nota-mobile', checked);
+            userPrefs.noteTitleCollapseMobile = checked;
+            await guardarPreferenciasUtilizador(db, uid, { noteTitleCollapseMobile: checked });
+            window.refreshNotaAtualBook?.();
+        };
+    }
+
+    const barraSuperior = [
+        ['check-barra-superior-desktop', 'barraSuperiorDesktop'],
+        ['check-barra-superior-mobile-nota', 'barraSuperiorMobileNota'],
+        ['check-barra-superior-mobile-principal', 'barraSuperiorMobilePrincipal']
+    ];
+    barraSuperior.forEach(([id, key]) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        input.onchange = async () => {
+            userPrefs[key] = input.checked;
+            await guardarPreferenciasUtilizador(db, uid, { [key]: input.checked });
+            window.atualizarVisibilidadeBarraSuperior?.();
+        };
+    });
+
+    const mobileBibleHelper = document.getElementById("check-barra-biblica-teclado-mobile");
+    if (mobileBibleHelper) {
+        mobileBibleHelper.onchange = async () => {
+            userPrefs.mobileBibleHelperBar = mobileBibleHelper.checked;
+            if (window.NotaBookUserPrefs) window.NotaBookUserPrefs.mobileBibleHelperBar = mobileBibleHelper.checked;
+            await guardarPreferenciasUtilizador(db, uid, { mobileBibleHelperBar: mobileBibleHelper.checked });
+            document.body.dispatchEvent(new CustomEvent("mobile-bible-helper-preference", { detail: { enabled: mobileBibleHelper.checked } }));
+        };
+    }
+
     const checkShare = document.getElementById('check-partilhar-respostas');
     if (checkShare) {
         checkShare.onchange = async (e) => {
@@ -202,8 +311,18 @@ function bindToggles(db, auth) {
 function aplicarFontesResponsivas(values = {}) {
     const desktop = Number(values['--fs-editor-texto-desktop'] ?? values['--fs-editor-texto'] ?? 15);
     const mobile = Number(values['--fs-editor-texto-mobile'] ?? values['--fs-editor-texto'] ?? desktop);
+    const bibleEyeMobile = Number(values['--fs-biblia-coluna-inteligente-mobile'] ?? values['--fs-biblia-coluna-inteligente'] ?? 13);
+    const bibleBoxMobile = Number(values['--fs-biblia-box-mobile'] ?? values['--fs-biblia-box'] ?? 45);
+    const bibleVersesMobile = Number(values['--fs-biblia-versiculos-mobile'] ?? values['--fs-biblia-versiculos'] ?? 14);
+    const leftItemsMobile = Number(values['--fs-left-items-mobile'] ?? values['--fs-left-items'] ?? 13);
+    const rightResultsMobile = Number(values['--fs-right-results-mobile'] ?? values['--fs-right-results'] ?? 13);
     document.documentElement.style.setProperty('--fs-editor-texto-desktop', `${desktop}px`);
     document.documentElement.style.setProperty('--fs-editor-texto-mobile', `${mobile}px`);
+    document.documentElement.style.setProperty('--fs-biblia-coluna-inteligente-mobile', `${bibleEyeMobile}px`);
+    document.documentElement.style.setProperty('--fs-biblia-box-mobile', `${bibleBoxMobile}px`);
+    document.documentElement.style.setProperty('--fs-biblia-versiculos-mobile', `${bibleVersesMobile}px`);
+    document.documentElement.style.setProperty('--fs-left-items-mobile', `${leftItemsMobile}px`);
+    document.documentElement.style.setProperty('--fs-right-results-mobile', `${rightResultsMobile}px`);
     document.documentElement.style.setProperty('--fs-editor-texto', `${window.innerWidth <= 768 ? mobile : desktop}px`);
 }
 

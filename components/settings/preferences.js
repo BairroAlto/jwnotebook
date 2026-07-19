@@ -57,6 +57,12 @@ export async function carregarPreferenciasUtilizador(db, uid) {
         return {
             listsFuseis: normalizarFuseis(),
             noteTitleCollapse: false,
+            colapsoTitulosMobile: false,
+            noteTitleCollapseMobile: false,
+            barraSuperiorDesktop: true,
+            barraSuperiorMobileNota: true,
+            barraSuperiorMobilePrincipal: true,
+            mobileBibleHelperBar: true,
             leftColumnCollapseButton: false
         };
     }
@@ -68,12 +74,24 @@ export async function carregarPreferenciasUtilizador(db, uid) {
             ...dados,
             listsFuseis: normalizarFuseis(dados),
             noteTitleCollapse: Boolean(dados.noteTitleCollapse),
+            colapsoTitulosMobile: Boolean(dados.colapsoTitulosMobile),
+            noteTitleCollapseMobile: Boolean(dados.noteTitleCollapseMobile),
+            barraSuperiorDesktop: dados.barraSuperiorDesktop !== false,
+            barraSuperiorMobileNota: dados.barraSuperiorMobileNota !== false,
+            barraSuperiorMobilePrincipal: dados.barraSuperiorMobilePrincipal !== false,
+            mobileBibleHelperBar: dados.mobileBibleHelperBar !== false,
             leftColumnCollapseButton: Boolean(dados.leftColumnCollapseButton)
         };
     } catch (_) {
         return {
             listsFuseis: normalizarFuseis(),
             noteTitleCollapse: false,
+            colapsoTitulosMobile: false,
+            noteTitleCollapseMobile: false,
+            barraSuperiorDesktop: true,
+            barraSuperiorMobileNota: true,
+            barraSuperiorMobilePrincipal: true,
+            mobileBibleHelperBar: true,
             leftColumnCollapseButton: false
         };
     }
