@@ -87,7 +87,7 @@ export const MobileBibleBar = {
         const mobile = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 768;
         const keyboardOpen = window.visualViewport ? (window.innerHeight - window.visualViewport.height > 120) : Boolean(state.activeInput);
         const visible = state.enabled && mobile && (Boolean(state.activeInput) || keyboardOpen);
-        bar.style.bottom = `calc(var(--mobile-keyboard-offset, 0px) + env(safe-area-inset-bottom))`;
+        bar.style.bottom = "0px";
         bar.style.display = visible ? "flex" : "none";
         bar.style.transform = visible ? "translateY(0)" : "translateY(120%)";
         bar.classList.toggle('is-visible', visible);
@@ -162,6 +162,8 @@ export const MobileBibleBar = {
         const actualizar = () => {
             const offset = Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop);
             document.documentElement.style.setProperty('--mobile-keyboard-offset', `${offset}px`);
+            const bar = document.getElementById(BAR_ID);
+            if (bar) bar.style.bottom = `${offset}px`;
             this.atualizarVisibilidade();
         };
         window.visualViewport.addEventListener('resize', actualizar);
