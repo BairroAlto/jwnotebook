@@ -1,4 +1,4 @@
-const CACHE_NAME = 'notabook-x-v18';
+const CACHE_NAME = 'notabook-x-v20';
 
 const PRE_CACHE_ASSETS = [
   './',
@@ -15,6 +15,8 @@ const PRE_CACHE_ASSETS = [
   './styles/global.css',
   './styles/typography.css',
   './styles/mobile.css',
+  './components/editor/modulos/mobile-bible-bar.css',
+  './components/editor/modulos/mobile-bible-bar.js',
   './styles/nexo.css',
   './styles/loading-sentinela.css',
   './firebase-config.js'
@@ -58,6 +60,7 @@ self.addEventListener('fetch', (event) => {
           if (cachedResponse) return cachedResponse;
           // Se for uma página e estiver offline, volta ao index
           if (event.request.mode === 'navigate') return caches.match('./index.html');
+          return Response.error();
         });
       })
   );
