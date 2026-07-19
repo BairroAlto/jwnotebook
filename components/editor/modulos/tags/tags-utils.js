@@ -102,6 +102,13 @@ export function perguntarRemocaoHub({ titulo = "Remover item?", mensagem = "" } 
 
         if (!overlay || !btnSim || !btnNao) return resolve(false);
 
+        [btnSim, btnNao].forEach(btn => {
+            btn.disabled = false;
+            btn.style.pointerEvents = "auto";
+            btn.style.opacity = "1";
+        });
+        btnSim.innerText = "Sim, Remover";
+
         if (tituloEl) tituloEl.innerText = titulo;
         if (msgEl) msgEl.innerText = mensagem || "Esta ação vai ocultar este item da tua nota.";
 

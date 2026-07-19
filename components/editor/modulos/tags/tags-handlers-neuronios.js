@@ -151,6 +151,7 @@ export async function desvincularBiblia(referencia, ctx, options = {}) {
                 });
                 console.log("✅ TEXTOSBIBLIA: Vínculos removidos.");
             }
+            renderizarHub(caixaAlvo);
         } catch (e) {
             console.error("Erro ao desvincular:", e);
         }
@@ -297,6 +298,7 @@ export async function desvincularCosmos(temaIdInterno, ctx, options = {}) {
                 await updateDoc(docRef, updates);
                 console.log("✅ [COSMO] Desvinculação completa realizada.");
             }
+            renderizarHub(caixaAlvo);
         } catch (e) {
             console.error("❌ Erro na desvinculação:", e);
             // Reverter em caso de erro para não perder dados

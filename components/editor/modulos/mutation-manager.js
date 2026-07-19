@@ -4,7 +4,6 @@ import { transmitirParaBrainVivo } from '../../biblioteca-brain/biblio-transmitt
 
 const TIPOS_MUTAVEIS = [
     { id: 'contentor', nome: 'Contentor', icon: 'fa-box', cor: '#ea580c' },
-    { id: 'subnota', nome: 'SubNota', icon: 'fa-box', cor: '#3b82f6' },
     { id: 'questao', nome: 'Questão', icon: 'fa-box', cor: '#10b981' },
     { id: 'raciocinio', nome: 'Raciocínio', icon: 'fa-box', cor: '#f59e0b' }
 ];
@@ -13,7 +12,7 @@ export const MutationManager = {
     /**
      * Verifica se a caixa atual pode sofrer mutação
      */
-    podeMutar: (tipo) => TIPOS_MUTAVEIS.some(t => t.id === tipo),
+    podeMutar: (tipo) => ['contentor', 'subnota', 'questao', 'raciocinio'].includes(tipo),
 
     /**
      * Renderiza a lista de opções de transformação
@@ -49,7 +48,9 @@ export const MutationManager = {
                 
                 // 1. Alteração Atómica
                 caixaAlvo.tipo = t.id; 
-                transmitirParaBrainVivo(caixaAlvo);
+                if (!caixaAlvo.__skipBrainTransmit) {
+                    transmitirParaBrainVivo(caixaAlvo);
+                }
                 caixaAlvo.foco = "original"; // Reset de segurança
                 
                 // 2. Feedback visual antes de fechar

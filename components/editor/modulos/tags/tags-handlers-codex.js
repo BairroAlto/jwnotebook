@@ -2,6 +2,7 @@
 import { MultimediaProcessor } from './codex-processor-multimedia.js';
 import { LivrosProcessor } from './codex-processor-livros.js';
 import { PublicacoesProcessor } from './codex-processor-publicacoes.js';
+import { renderizarHub } from './tags-ui.js';
 
 import { collection, query, where, getDocs, addDoc, updateDoc, arrayUnion, serverTimestamp, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
@@ -31,6 +32,7 @@ export async function adicionarItensAoCodex(dadosVindosDoBrowser, ctx) {
     }
 
     renderizarCards(ctx);
+    renderizarHub(caixaAlvo);
 }
 
 /**

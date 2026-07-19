@@ -4,6 +4,7 @@ import { moverCaixa, prepararInsercao } from './editor-actions.js';
 import { abrirPaleta } from './paleta-cores.js';
 import { abrirPopupPartilhar } from './partilhar.js';
 import { abrirPopupTags } from './tags/tags-controller.js';
+import { MobileBibleBar } from "./mobile-bible-bar.js";
 
 export const EventManager = {
     /**
@@ -12,6 +13,7 @@ export const EventManager = {
      */
     init: (ctx) => {
         console.log(`ÃƒÂ°Ã…Â¸Ã…Â½Ã‚Â¯ [EVENT-MANAGER] Maestro ativo para: ${ctx.notaAbertaId}`);
+        MobileBibleBar.iniciar();
 
         // ========================================================
         // 1. NAVEGAÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O DE PAINÃƒÆ’Ã¢â‚¬Â°IS (EYE / BRAIN / X-SAT)

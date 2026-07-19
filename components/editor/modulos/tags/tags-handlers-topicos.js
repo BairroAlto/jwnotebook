@@ -64,8 +64,10 @@ export async function desvincularTopico(uuid, ctx, options = {}) {
     if (confirmou) {
         try {
             // 1. Remover o ID da CAIXA do documento do TÓPICO no Firebase
-            const subRef = doc(dbRef, "Topico", topicoObj.firebaseId);
-            await updateDoc(subRef, { caixas: arrayRemove(caixaAlvo.id) });
+            if (topicoObj.firebaseId) {
+                const subRef = doc(dbRef, "Topico", topicoObj.firebaseId);
+                await updateDoc(subRef, { caixas: arrayRemove(caixaAlvo.id) });
+            }
 
             // 2. Remover o objeto do array local da CAIXA
             caixaAlvo.vincTopicos = caixaAlvo.vincTopicos.filter(t => t.id !== uuid);

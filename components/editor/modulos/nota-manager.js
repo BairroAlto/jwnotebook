@@ -37,6 +37,7 @@ export const NotaManager = {
                         db,
                         auth
                     };
+                    window.dispatchEvent(new Event('nota:aberta'));
 
                     // 3. CARREGAR ABAS (Agora o dbRef já está pronto)
                     await carregarAbasDaNota(maeId || id, dados, id);
