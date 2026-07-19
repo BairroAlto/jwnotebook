@@ -288,7 +288,7 @@ window.abrirEditorItemLocal = async (id, tipo, nome) => {
         document.getElementById('btn-gestao-mover').onclick = (e) => {
             e.stopPropagation();
             overlay.classList.remove('active');
-            iniciarMotorMover(itemAtual.id, itemAtual.tipo); 
+            iniciarMotorMover(itemAtual.id, itemAtual.tipo, itemAtual.dados.pastapai || "root"); 
         };
 
         document.getElementById('btn-gestao-ordenar').onclick = (e) => {

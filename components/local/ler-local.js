@@ -166,6 +166,11 @@ function carregarPasta(idPasta) {
 }
 
 
+window.carregarPastaLocalManual = (idPasta) => {
+    window.pastaAtual = idPasta || "root";
+    carregarPasta(window.pastaAtual);
+};
+
 function atualizarUI() {
     const navPastaNome = document.getElementById('nav-pasta-nome');
     const navIconVoltar = document.getElementById('nav-icon-voltar');
