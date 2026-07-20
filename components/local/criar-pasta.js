@@ -77,12 +77,8 @@ export function inicializarCriacaoPasta(db, auth) {
                 fecharPopup();
                 btnConfirmar.innerText = "Criar Pasta";
 
-                if (window.innerWidth <= 768) {
-                document.getElementById('area-esquerda').classList.add('closed');
-                document.getElementById('mobile-overlay').classList.remove('active');
-            }
-            
-            } catch (error) {
+                // No mobile, uma criação de pasta mantém a pasta-pai actual aberta.
+                } catch (error) {
                 console.error("Erro do Firestore:", error);
                 alert("Erro: " + error.message);
                 btnConfirmar.innerText = "Criar Pasta";

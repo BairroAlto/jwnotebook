@@ -7,6 +7,8 @@ window.historicoPastas = [{ id: "root", nome: "Local" }];
 let unsubscribeAtual = null;
 let dbReferencia = null; 
 let authReferencia = null;
+let carregamentoLocalAtual = 0;
+let timeoutCarregamentoLocal = null;
 
 
 export function inicializarLeituraLocal(db, auth) {
@@ -40,6 +42,9 @@ function carregarPasta(idPasta) {
     const listaLocal = document.getElementById('lista-local');
     if (!listaLocal) return;
 
+    const carregamentoId = ++carregamentoLocalAtual;
+    clearTimeout(timeoutCarregamentoLocal);
+
     // 1. ESTADO DE CARREGAMENTO (Visual)
     listaLocal.innerHTML = `
         <div style="text-align:center; padding:30px; opacity:0.5;">
@@ -50,7 +55,11 @@ function carregarPasta(idPasta) {
     // Mata o "ouvinte" anterior para não haver conflitos de dados de pastas diferentes
     if (unsubscribeAtual) unsubscribeAtual();
 
-    const userId = authReferencia.currentUser.uid;
+    const userId = authReferencia?.currentUser?.uid;
+    if (!userId) {
+        mostrarErroListaLocal(idPasta, 'Não foi possível validar a sessão.');
+        return;
+    }
     const localRef = collection(dbReferencia, "Local");
 
     // 3. QUERY DO FIREBASE
@@ -63,7 +72,14 @@ function carregarPasta(idPasta) {
         orderBy("ordem", "asc")
     );
 
+    timeoutCarregamentoLocal = setTimeout(() => {
+        if (carregamentoId !== carregamentoLocalAtual) return;
+        mostrarErroListaLocal(idPasta, 'A lista demorou demasiado tempo a responder.');
+    }, 12000);
+
     unsubscribeAtual = onSnapshot(q, (snapshot) => {
+        if (carregamentoId !== carregamentoLocalAtual) return;
+        clearTimeout(timeoutCarregamentoLocal);
         const fragmento = document.createDocumentFragment();
 
         if (snapshot.empty) {
@@ -160,9 +176,27 @@ function carregarPasta(idPasta) {
         listaLocal.appendChild(fragmento);
 
     }, (error) => {
-        console.error("❌ [LOCAL] Erro no Listener:", error);
-        listaLocal.innerHTML = `<p style="color:#ef4444; font-size:10px; text-align:center; padding:20px;">Erro de ligação ou permissão.</p>`;
+        if (carregamentoId !== carregamentoLocalAtual) return;
+        clearTimeout(timeoutCarregamentoLocal);
+        console.error("[LOCAL] Erro no Listener:", error);
+        mostrarErroListaLocal(idPasta, "Erro de ligação ou permissão.");
     });
+}
+
+function mostrarErroListaLocal(idPasta, mensagem) {
+    const listaLocal = document.getElementById('lista-local');
+    if (!listaLocal) return;
+
+    listaLocal.innerHTML = `
+        <div style="text-align:center; padding:20px;">
+            <p style="color:#ef4444; font-size:10px; margin-bottom:10px;">${mensagem}</p>
+            <button type="button" id="btn-retry-lista-local" style="background:var(--primary); color:white; border-radius:6px; padding:7px 12px; font-size:10px;">
+                Tentar novamente
+            </button>
+        </div>
+`;
+
+    listaLocal.querySelector('#btn-retry-lista-local')?.addEventListener('click', () => carregarPasta(idPasta), { once: true });
 }
 
 

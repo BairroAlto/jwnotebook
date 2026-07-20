@@ -39,8 +39,22 @@ export function configurarBotaoShare(notaId, dadosNota, auth) {
     };
 }
 
+let aberturaAtual = 0;
+const TEMPO_MAXIMO_ABERTURA = 15000;
+
+function comTempoLimite(promessa, tempo, descricao) {
+    let timer;
+    const limite = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(descricao + " excedeu o tempo limite.")), tempo);
+    });
+
+    return Promise.race([promessa, limite]).finally(() => clearTimeout(timer));
+}
+
 export async function processarAberturaNota(ctx) {
     const { notaId, dadosNota, db, auth, idCaixaFoco, maeIdOverride, stateManager } = ctx;
+    const aberturaId = ++aberturaAtual;
+    const eAberturaActual = () => aberturaId === aberturaAtual;
 
     const placeholder = document.getElementById('editor-placeholder');
     const container = document.getElementById('editor-container');
@@ -54,54 +68,76 @@ export async function processarAberturaNota(ctx) {
     if (placeholder) placeholder.style.display = 'none';
     container.style.display = 'none';
     loading.style.display = 'flex';
-    if (typeof MobileUI !== 'undefined') MobileUI.fecharColunaEsquerda();
+    try {
+        if (typeof MobileUI !== 'undefined') MobileUI.fecharColunaEsquerda();
 
-    if (typeof window.sincronizarBarraLateralComNota === 'function') {
-        window.sincronizarBarraLateralComNota(notaId, dadosNota, auth);
-    }
+        if (typeof window.sincronizarBarraLateralComNota === 'function') {
+            window.sincronizarBarraLateralComNota(notaId, dadosNota, auth);
+        }
+        if (dadosNota.onde === "share") {
+            const uid = auth.currentUser.uid;
+            window.sessaoUltimaLeitura = dadosNota[uid]?.ultimaLeitura || 0;
+            try {
+                await updateDoc(doc(db, "Share", notaId), {
+                    vistoPor: arrayUnion(uid),
+                    [uid + ".ultimaLeitura"]: new Date().toISOString()
+                });
+            } catch (_) {}
+        }
 
-    if (dadosNota.onde === "share") {
-        const uid = auth.currentUser.uid;
-        window.sessaoUltimaLeitura = dadosNota[uid]?.ultimaLeitura || 0;
-        try {
-            await updateDoc(doc(db, "Share", notaId), {
-                vistoPor: arrayUnion(uid),
-                [`${uid}.ultimaLeitura`]: new Date().toISOString()
+        await comTempoLimite(
+            stateManager.inicializarDadosNota(notaId, dadosNota, maeIdOverride),
+            TEMPO_MAXIMO_ABERTURA,
+            "A abertura da nota"
+        );
+
+        if (!eAberturaActual()) return;
+
+        const tituloEditor = document.getElementById('editor-titulo');
+        if (tituloEditor) tituloEditor.innerText = dadosNota.nome || "Sem Título";
+        if (auth?.currentUser) {
+            const noteConfig = obterConfigNota(dadosNota, auth.currentUser.uid);
+            aplicarPreferenciasDeNota({
+                ...noteConfig,
+                collapseNoteTitle: noteConfig.collapseNoteTitle || Boolean(window.NotaBookUserPrefs?.noteTitleCollapse)
             });
-        } catch (_) {}
-    }
+        }
 
-    await stateManager.inicializarDadosNota(notaId, dadosNota, maeIdOverride);
+        container.style.visibility = 'hidden';
+        container.style.display = 'block';
+        await new Promise(res => requestAnimationFrame(res));
+        if (!eAberturaActual()) return;
+        ajustarAlturasCampos();
+        container.style.visibility = 'visible';
 
-    const tituloEditor = document.getElementById('editor-titulo');
-    if (tituloEditor) tituloEditor.innerText = dadosNota.nome || "Sem Título";
-    if (auth?.currentUser) {
-        const noteConfig = obterConfigNota(dadosNota, auth.currentUser.uid);
-        aplicarPreferenciasDeNota({
-            ...noteConfig,
-            collapseNoteTitle: noteConfig.collapseNoteTitle || Boolean(window.NotaBookUserPrefs?.noteTitleCollapse)
-        });
-    }
+        const primeiraCaixaVazia = (dadosNota.caixas || []).length === 1 &&
+            !(dadosNota.caixas?.[0]?.conteudo || "").trim() &&
+            !(dadosNota.caixas?.[0]?.titulo || "").trim();
+        if (!idCaixaFoco && primeiraCaixaVazia) {
+            setTimeout(() => {
+                if (eAberturaActual()) container.querySelector('#editor-feed textarea, #editor-feed input')?.focus();
+            }, 80);
+        }
 
-    container.style.visibility = 'hidden';
-    container.style.display = 'block';
-    await new Promise(res => requestAnimationFrame(res));
-    ajustarAlturasCampos();
-    container.style.visibility = 'visible';
-    loading.style.display = 'none';
-
-    const primeiraCaixaVazia = (dadosNota.caixas || []).length === 1 &&
-        !(dadosNota.caixas?.[0]?.conteudo || "").trim() &&
-        !(dadosNota.caixas?.[0]?.titulo || "").trim();
-    if (!idCaixaFoco && primeiraCaixaVazia) {
-        setTimeout(() => {
-            container.querySelector('#editor-feed textarea, #editor-feed input')?.focus();
-        }, 80);
-    }
-
-    if (idCaixaFoco) {
-        setTimeout(() => {
-            document.getElementById(`bloco-${idCaixaFoco}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 500);
+        if (idCaixaFoco) {
+            setTimeout(() => {
+                if (eAberturaActual()) {
+                    document.getElementById('bloco-' + idCaixaFoco)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }, 500);
+        }
+    } catch (error) {
+        console.error("[EDITOR] Não foi possível abrir a nota:", error);
+        if (eAberturaActual()) {
+            container.style.display = 'none';
+            container.style.visibility = 'visible';
+            if (placeholder) {
+                placeholder.style.display = 'flex';
+                const mensagem = placeholder.querySelector('p');
+                if (mensagem) mensagem.textContent = "Não foi possível abrir esta nota. Toca novamente para tentar.";
+            }
+        }
+    } finally {
+        if (eAberturaActual()) loading.style.display = 'none';
     }
 }
