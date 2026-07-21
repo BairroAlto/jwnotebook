@@ -4,6 +4,7 @@ import { transmitirParaBrainVivo } from '../../biblioteca-brain/biblio-transmitt
 
 const TIPOS_MUTAVEIS = [
     { id: 'contentor', nome: 'Contentor', icon: 'fa-box', cor: '#ea580c' },
+    { id: 'subnota', nome: 'SubNota', icon: 'fa-box', cor: '#3b82f6' },
     { id: 'questao', nome: 'Questão', icon: 'fa-box', cor: '#10b981' },
     { id: 'raciocinio', nome: 'Raciocínio', icon: 'fa-box', cor: '#f59e0b' }
 ];
