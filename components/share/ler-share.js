@@ -38,18 +38,13 @@ export function inicializarShare(db, auth) {
         }
 
         // B) BOTÃO LÁPIS (EDITAR)
-       const btnEditToggle = e.target.closest('#btn-editar-share-toggle');
-if (btnEditToggle) {
-    e.stopPropagation();
-    modoEdicaoShare = !modoEdicaoShare;
-    
-    // USAR TOGGLE DE CLASSE (Igual ao Local)
-    btnEditToggle.classList.toggle('active', modoEdicaoShare);
-    
-    // Removemos as linhas antigas que forçavam style.opacity = "1" ou "0.6"
-    
-    carregarDadosShare(); 
-}
+        const btnEditToggle = e.target.closest('#btn-editar-share-toggle');
+        if (btnEditToggle) {
+            e.stopPropagation();
+            modoEdicaoShare = !modoEdicaoShare;
+            btnEditToggle.classList.toggle('active', modoEdicaoShare);
+            carregarDadosShare(); 
+        }
     });
 
     window.dispararLeituraShare = () => { 
@@ -86,7 +81,7 @@ function atualizarUIShare() {
 }
 
 /**
- * 4. LEITURA DOS DADOS COM SNAPSHOT E LÓGICA DE NOTIFICAÇÃO (PONTO VERMELHO)
+ * 4. LEITURA DOS DADOS COM SNAPSHOT E LÓGICA DE NOTIFICAÇÃO (PONTO VERMELHO & TEXTO VERMELHO)
  */
 function carregarDadosShare() {
     const listaCont = document.getElementById('lista-share');
@@ -97,7 +92,6 @@ function carregarDadosShare() {
     const uid = authRef.currentUser.uid;
 
     // 2. QUERY DO FIREBASE
-    // Procuramos itens onde o utilizador é Dono, Aprovado ou Convidado
     const q = query(
         collection(dbRef, "Share"),
         and(
@@ -114,7 +108,6 @@ function carregarDadosShare() {
     unsubscribeShare = onSnapshot(q, (snapshot) => {
         const fragmento = document.createDocumentFragment();
         
-        // Sincronizar o estado da lista com o modo de edição (Lápis)
         listaCont.classList.toggle('lista-modo-edicao', modoEdicaoShare);
 
         const todosOsDocumentos = [];
@@ -128,17 +121,20 @@ function carregarDadosShare() {
             const id = docSnap.id;
             todosOsDocumentos.push({ id, ...d });
 
-            // A) Identificar convites para mostrar no topo
             if (d.convidado && d.convidado.includes(uid)) {
                 convitesPendentes.push({ id, ...d });
                 return;
             }
 
-            // B) Lógica do Ponto Vermelho (Conteúdo que ainda não vi)
-            const naoViAinda = d.tipo === "nota" && d.vistoPor && !d.vistoPor.includes(uid);
+            // Lógica de Novidades não lidas (no documento ou em caixas internas)
+            const novidadesCaixas = d.shareNovidades || {};
+            const temCaixaNaoVista = Object.values(novidadesCaixas).some(
+                nov => nov && nov.by !== uid && !(nov.viewedBy || []).includes(uid)
+            );
+            const naoViAinda = d.tipo === "nota" && ((d.vistoPor && !d.vistoPor.includes(uid)) || temCaixaNaoVista);
+
             if (naoViAinda) {
                 idsComNovidades.add(id);
-                // Propagar o ponto vermelho para as pastas pai
                 let paiId = d[uid]?.pastapai;
                 while (paiId && paiId !== "home") {
                     pastasComNovidades.add(paiId);
@@ -148,7 +144,7 @@ function carregarDadosShare() {
             }
         });
 
-        // 4. RENDERIZAR CARDS DE CONVITE (Topo da lista)
+        // 4. RENDERIZAR CARDS DE CONVITE
         convitesPendentes.forEach(c => {
             const card = document.createElement('div');
             card.style.cssText = "background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; padding: 12px; border-radius: 8px; margin-bottom: 15px;";
@@ -170,7 +166,6 @@ function carregarDadosShare() {
             return minhaPosicao === window.pastaShareAtual && !item.convidado?.includes(uid);
         });
 
-        // Ordenação: Favoritos (Top) primeiro, depois ordem manual
         itensParaMostrar.sort((a, b) => {
             const aTop = (a[uid]?.Top && a[uid].Top.estado === "on") ? 1 : 0;
             const bTop = (b[uid]?.Top && b[uid].Top.estado === "on") ? 1 : 0;
@@ -182,60 +177,67 @@ function carregarDadosShare() {
         itensParaMostrar.forEach(item => {
             const div = document.createElement('div');
             
-            // --- VERIFICAÇÃO DE SELEÇÃO ATIVA ---
             const isAtivo = (item.id === window.itemSelecionadoId);
             const souTop = (item[uid]?.Top && item[uid].Top.estado === "on");
 
             div.className = `item-local ${isAtivo ? 'active' : ''}`; 
-            div.setAttribute('data-id', item.id); // Crucial para o sincronizador global
+            div.setAttribute('data-id', item.id);
             
-            // Estilo TOP (Favorito privado no Share)
             if (souTop) {
                 div.style.background = "rgba(239, 68, 68, 0.04)"; 
                 div.style.borderRight = "3px solid #ef4444";     
             }
 
-            // Ponto Vermelho de Novidade
             const temNovidadeAqui = (item.tipo === "nota" && idsComNovidades.has(item.id)) || 
                                    (item.tipo === "pasta" && pastasComNovidades.has(item.id));
             if (temNovidadeAqui) div.classList.add('has-update');
 
-            // Definição de Ícones (20px largura fixa)
-           const souDono = item.userId === uid;
-let nomeIcone = "";
-let corIcone = "";
+            const souDono = item.userId === uid;
+            let nomeIcone = "";
+            let corIcone = "";
 
-if (item.tipo === "pasta") {
-    nomeIcone = item.icon || "folder"; // Ex: 'folder', 'bolt', etc.
-    corIcone = "#fca5a5"; 
-} else {
-    nomeIcone = souDono ? "share-nodes" : "user-group";
-    corIcone = souDono ? "#ef4444" : "#fca5a5";
-}
+            if (item.tipo === "pasta") {
+                nomeIcone = item.icon || "folder";
+                corIcone = "#fca5a5"; 
+            } else {
+                nomeIcone = souDono ? "share-nodes" : "user-group";
+                corIcone = souDono ? "#ef4444" : "#fca5a5";
+            }
 
-// 2. Limpar o nome (caso venha com fa- do banco de dados) e montar a classe completa
-const iconeLimpo = nomeIcone.replace('fa-', '');
-const classeFinal = `fa-solid fa-${iconeLimpo}`;
+            const iconeLimpo = nomeIcone.replace('fa-', '');
+            const classeFinal = `fa-solid fa-${iconeLimpo}`;
 
-div.innerHTML = `
-    <i class="${classeFinal}" style="color: ${corIcone}; width: 20px; text-align: center;"></i>
-    <div style="flex:1; display:flex; align-items:center; overflow:hidden;">
-        <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-left-items); font-weight: ${souTop ? '700' : '500'};">
-            ${item.nome}
-        </span>
-    </div>
-    <i class="fa-solid fa-gear btn-edit-item-local" 
-       onclick="event.stopPropagation(); window.abrirGestaoItemShare('${item.id}', '${item.tipo}', '${item.nome.replace(/'/g, "\\'")}')">
-    </i>
-`;
+            // 🔴 NOME EM VERMELHO E NEGRITO SE HOUVER NOVIDADE NÃO LIDA
+            const corTextoItem = temNovidadeAqui ? "#ef4444" : "inherit";
+            const pesoTextoItem = temNovidadeAqui ? "800" : (souTop ? '700' : '500');
 
-            // Lógica de Clique
+            div.innerHTML = `
+                <i class="${classeFinal}" style="color: ${corIcone}; width: 20px; text-align: center;"></i>
+                <div style="flex:1; display:flex; align-items:center; overflow:hidden;">
+                    <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-left-items); font-weight: ${pesoTextoItem}; color: ${corTextoItem};">
+                        ${item.nome}
+                    </span>
+                </div>
+                <i class="fa-solid fa-gear btn-edit-item-local" 
+                   onclick="event.stopPropagation(); window.abrirGestaoItemShare('${item.id}', '${item.tipo}', '${item.nome.replace(/'/g, "\\'")}')">
+                </i>
+            `;
+
+            // LÓGICA DE CLIQUE
             div.onclick = () => {
                 window.itemSelecionadoId = item.id;
+
+                // 🎯 Marcar como visto no Firebase para remover o texto/ponto vermelho
+                if (item.tipo === "nota" && temNovidadeAqui) {
+                    updateDoc(doc(dbRef, "Share", item.id), {
+                        vistoPor: arrayUnion(uid)
+                    }).catch(err => console.error("Erro ao marcar vistoPor:", err));
+                }
+
                 if (item.tipo === "pasta") {
                     window.historicoPastasShare.push({ id: item.id, nome: item.nome });
                     window.pastaShareAtual = item.id;
-                    atualizarUIShare(); // Atualiza rótulo "Voltar a..."
+                    atualizarUIShare();
                     carregarDadosShare();
                 } else {
                     if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
@@ -243,7 +245,6 @@ div.innerHTML = `
                     } else {
                         abrirNotaNoEditor(item.id, item, dbRef, authRef);
                     }
-                    // Atualização visual imediata
                     document.querySelectorAll('#lista-share .item-local').forEach(el => el.classList.remove('active'));
                     div.classList.add('active');
                 }
@@ -251,7 +252,6 @@ div.innerHTML = `
             fragmento.appendChild(div);
         });
 
-        // 7. INJEÇÃO FINAL
         listaCont.innerHTML = ""; 
         listaCont.appendChild(fragmento);
 
@@ -267,10 +267,9 @@ export function vigiarConvitesPendentes(db, auth) {
     if (!auth.currentUser) return;
     const uid = auth.currentUser.uid;
     
-    // A CORREÇÃO ESTÁ AQUI: Envolver os filtros num and(...)
     const q = query(
         collection(db, "Share"),
-        and( // Adicionado este wrapper
+        and(
             where("estado", "==", "on"),
             or(
                 where("userId", "==", uid),
@@ -288,13 +287,11 @@ export function vigiarConvitesPendentes(db, auth) {
         let temNovidade = false;
         snapshot.forEach(docSnap => {
             const d = docSnap.data();
-            // Verifica se sou convidado ou se alguém editou e eu não vi
             if ((d.convidado && d.convidado.includes(uid)) || (d.vistoPor && !d.vistoPor.includes(uid))) {
                 temNovidade = true;
             }
         });
 
-        // Aplica o estilo vermelho no texto do botão da aba
         btnShare.style.color = temNovidade ? "#ef4444" : "";
         btnShare.style.fontWeight = temNovidade ? "900" : "";
     }, (error) => {
@@ -302,7 +299,6 @@ export function vigiarConvitesPendentes(db, auth) {
     });
 }
 
-// ... rest of the file (aceitar/rejeitar partilha)
 window.aceitarPartilha = async (docId) => {
     const uid = authRef.currentUser.uid;
     const q = query(collection(dbRef, "Share"), and(where("userId", "==", uid), where(`${uid}.pastapai`, "==", "home")));
