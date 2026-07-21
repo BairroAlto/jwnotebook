@@ -5,6 +5,7 @@ import { abrirPaleta } from './paleta-cores.js';
 import { abrirPopupPartilhar } from './partilhar.js';
 import { abrirPopupTags } from './tags/tags-controller.js';
 import { MobileBibleBar } from "./mobile-bible-bar.js";
+import { abrirPopupImportarTexto } from './importar-texto.js';
 function reposicionarTituloMobile(campo) {
     if (window.innerWidth > 768 || !campo) return;
 
@@ -40,7 +41,11 @@ export const EventManager = {
      */
     init: (ctx) => {
         console.log(`ÃƒÂ°Ã…Â¸Ã…Â½Ã‚Â¯ [EVENT-MANAGER] Maestro ativo para: ${ctx.notaAbertaId}`);
-        MobileBibleBar.iniciar();
+        try {
+            MobileBibleBar.iniciar();
+        } catch (erro) {
+            console.error('[MOBILE-BIBLE-BAR] Não foi possível iniciar a barra:', erro);
+        }
         iniciarScrollHorizontalDosTitulos();
 
         // ========================================================
@@ -312,6 +317,11 @@ const btnCancelarOcultar = document.getElementById('btn-cancelar-ocultar');
         // ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂºÃ‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â PONTES GLOBAIS EXISTENTES (HEADER E ACTIONS)
         // ========================================================
         window.inserirFerramentaNoEditor = (tipo) => ctx.inserirFerramentaNoEditor(tipo);
+        window.abrirImportarTexto = () => {
+            document.getElementById('popup-lab-overlay')?.classList.remove('active');
+            abrirPopupImportarTexto(ctx);
+        };
+
         window.abrirFerramentasDoNexo = () => {
             document.getElementById('popup-lab-overlay')?.classList.remove('active');
             window.idReferenciaInsercao = null; 

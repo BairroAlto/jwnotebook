@@ -310,9 +310,71 @@ function renderizarHistorico() {
     `;
     lista.appendChild(divCriacao);
 
-    // 2. LISTA DE FERRAMENTAS ATUAIS
-    const caixasAtivas = arrayCaixas.filter(c => c.estado === 'on');
-    caixasAtivas.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    const caixasAtivas = arrayCaixas.filter(caixa => caixa.estado === 'on');
+    const totalFerramentas = caixasAtivas.length;
+    const contagemPorTipo = caixasAtivas.reduce((contagem, caixa) => {
+        contagem.set(caixa.tipo, (contagem.get(caixa.tipo) || 0) + 1);
+        return contagem;
+    }, new Map());
+
+    const resumoFerramentas = document.createElement('div');
+    resumoFerramentas.setAttribute('role', 'button');
+    resumoFerramentas.setAttribute('tabindex', '0');
+    resumoFerramentas.setAttribute('aria-expanded', 'false');
+    resumoFerramentas.style.cssText = "display:flex; align-items:center; gap:10px; margin:-8px 4px 0; padding:9px 12px; border:1px solid rgba(99,102,241,.16); border-radius:7px; background:rgba(99,102,241,.035); cursor:pointer;";
+    resumoFerramentas.innerHTML = `
+        <i class="fa-solid fa-layer-group" style="color:var(--primary); font-size:11px;"></i>
+        <span style="font-size:10px; color:var(--text-muted); flex:1;">
+            <strong style="color:var(--text-main);">${totalFerramentas}</strong>
+            ${totalFerramentas === 1 ? 'ferramenta ativa' : 'ferramentas ativas'} atualmente nesta nota
+        </span>
+        <i class="fa-solid fa-chevron-down" data-contador-seta style="color:var(--text-muted); font-size:9px; transition:transform .18s ease;"></i>
+    `;
+
+    const detalhesFerramentas = document.createElement('div');
+    detalhesFerramentas.hidden = true;
+    detalhesFerramentas.style.cssText = "margin:5px 4px 14px; padding:6px 10px; border:1px solid rgba(255,255,255,.06); border-radius:7px; background:rgba(2,6,23,.2);";
+
+    if (contagemPorTipo.size === 0) {
+        detalhesFerramentas.innerHTML = '<p style="margin:5px 0; color:var(--text-muted); font-size:10px;">Nenhuma ferramenta ativa.</p>';
+    } else {
+        [...contagemPorTipo.entries()]
+            .map(([tipo, quantidade]) => ({
+                quantidade,
+                config: IDENTIDADE_FERRAMENTAS[tipo] || IDENTIDADE_FERRAMENTAS.contentor
+            }))
+            .sort((a, b) => a.config.nome.localeCompare(b.config.nome, 'pt-PT'))
+            .forEach(({ quantidade, config }) => {
+                const linha = document.createElement('div');
+                linha.style.cssText = "display:flex; align-items:center; gap:8px; padding:6px 2px; border-bottom:1px solid rgba(255,255,255,.035);";
+                linha.innerHTML = `
+                    <i class="${config.icon}" style="width:16px; color:${config.cor}; font-size:10px; text-align:center;"></i>
+                    <span style="flex:1; color:var(--text-main); font-size:10px;">${config.nome}</span>
+                    <strong style="min-width:22px; padding:2px 6px; border-radius:10px; background:${config.cor}22; color:${config.cor}; font-size:10px; text-align:center;">${quantidade}</strong>
+                `;
+                detalhesFerramentas.appendChild(linha);
+            });
+    }
+
+    const alternarDetalhes = () => {
+        const expandido = resumoFerramentas.getAttribute('aria-expanded') === 'true';
+        resumoFerramentas.setAttribute('aria-expanded', String(!expandido));
+        detalhesFerramentas.hidden = !expandido;
+        const seta = resumoFerramentas.querySelector('[data-contador-seta]');
+        if (seta) seta.style.transform = expandido ? 'rotate(0deg)' : 'rotate(180deg)';
+    };
+
+    resumoFerramentas.addEventListener('click', alternarDetalhes);
+    resumoFerramentas.addEventListener('keydown', evento => {
+        if (evento.key !== 'Enter' && evento.key !== ' ') return;
+        evento.preventDefault();
+        alternarDetalhes();
+    });
+
+    lista.appendChild(resumoFerramentas);
+    lista.appendChild(detalhesFerramentas);
+
+    // 2. LISTA DE FERRAMENTAS ATUAIS    caixasAtivas.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
     caixasAtivas.forEach(caixa => {
         const config = IDENTIDADE_FERRAMENTAS[caixa.tipo] || IDENTIDADE_FERRAMENTAS.contentor;

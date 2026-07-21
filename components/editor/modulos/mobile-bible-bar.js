@@ -44,7 +44,7 @@ export const MobileBibleBar = {
             if (!input) return;
             state.activeInput = input;
             this.atualizarReferencias();
-            this.actualizarVisibilidade();
+            this.atualizarVisibilidade();
         });
 
         document.addEventListener('input', (event) => {
@@ -56,7 +56,7 @@ export const MobileBibleBar = {
                 setTimeout(() => {
                     if (!document.activeElement?.matches('#editor-container textarea, #editor-container input, #editor-titulo')) {
                         state.activeInput = null;
-                        this.actualizarVisibilidade();
+                        this.atualizarVisibilidade();
                     }
                 }, 120);
             }
@@ -78,7 +78,7 @@ export const MobileBibleBar = {
             state.expanded = false;
             state.activeInput = null;
         }
-        this.actualizarVisibilidade();
+        this.atualizarVisibilidade();
     },
 
     atualizarVisibilidade() {

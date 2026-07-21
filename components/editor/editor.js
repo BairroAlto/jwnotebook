@@ -143,6 +143,8 @@ function assinaturaCaixas(caixas) {
         conteudo: caixa.conteudo || "",
         foco: caixa.foco || "",
         destaques: caixa.destaques || "",
+        corFirmamento: caixa.corFirmamento || "",
+        textoFirmamento: caixa.textoFirmamento || "",
         estado: caixa.estado || "on",
         ref: caixa.referenciacodex || null,
         timestamp: caixa.timestamp || ""
