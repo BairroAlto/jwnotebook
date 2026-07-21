@@ -626,6 +626,22 @@ if (tit) {
             await updateDoc(doc(ctx.dbRef, col, ctx.notaAbertaId), payload);
             await ctx.atualizarFeedEGravar(false);
             document.getElementById('popup-lab-overlay')?.classList.remove('active');
+
+            if (novos.includes('sentinela')) {
+                const caixasVivas = ctx.caixasAtuais || [];
+                const jaTemEstudo = caixasVivas.some(c => c.referenciacodex && c.estado === 'on');
+                if (!jaTemEstudo) {
+                    console.log("📚 [SENTINELA] Sem caixas vinculadas. Abrindo Explorador Codex...");
+                    Promise.all([
+                        import('./sentinela-browser.js'),
+                        import('./sentinela-manager.js')
+                    ]).then(([browser, manager]) => {
+                        browser.SentinelaBrowser.abrir((json, artigoIdx) => {
+                            manager.SentinelaManager.configurarNota(json, artigoIdx, ctx);
+                        });
+                    }).catch(err => console.error("Erro ao abrir Explorador Codex:", err));
+                }
+            }
         };
     }
 };

@@ -57,5 +57,28 @@ export const ModoManager = {
             console.error("Erro ao gravar modo no Firestore:", e);
             alert("Não tens permissão para alterar o modo desta nota.");
         }
+
+        // 🚀 ABRIR EXPLORADOR CODEX: Se ativou o Sentinela e a nota não tem nenhuma caixa vinculada ao Codex
+        if (modosAtuais.includes('sentinela')) {
+            const caixasVivas = dadosNota.caixas || [];
+            const jaTemEstudo = caixasVivas.some(c => c.referenciacodex && c.estado === 'on');
+            if (!jaTemEstudo) {
+                console.log("📚 [SENTINELA] Sem caixas vinculadas. Abrindo Explorador Codex...");
+                
+                // Fecha o popup do laboratório para dar espaço ao Codex
+                const popupLab = document.getElementById('popup-lab-overlay');
+                if (popupLab) popupLab.classList.remove('active');
+
+                // Importa dinamicamente os browsers e inicializa a seleção
+                Promise.all([
+                    import('./sentinela-browser.js'),
+                    import('./sentinela-manager.js')
+                ]).then(([browser, manager]) => {
+                    browser.SentinelaBrowser.abrir((json, artigoIdx) => {
+                        manager.SentinelaManager.configurarNota(json, artigoIdx, ctx);
+                    });
+                }).catch(err => console.error("Erro ao abrir Explorador Codex:", err));
+            }
+        }
     }
 };
