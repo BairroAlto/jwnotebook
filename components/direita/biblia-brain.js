@@ -115,9 +115,15 @@ const atualizarBotaoAcao = (dentroDeMica = false) => {
     if (abaAtivaBiblia === 'puzzle') {
         // Sem onclick. O index.html deteta o ícone fa-plus.
         btnCont.innerHTML = `<button style="${btnStyle} background:#818cf8;" title="Adicionar Texto"><i class="fa-solid fa-plus"></i></button>`;
+        btnCont.querySelector('button').onclick = () => {
+            window.dispatchEvent(new CustomEvent('bible:adicionarTexto'));
+        };
     } 
     else if (abaAtivaBiblia === 'links') {
         btnCont.innerHTML = `<button style="${btnStyle} background:#34d399;" title="Adicionar Fontes"><i class="fa-solid fa-link"></i></button>`;
+        btnCont.querySelector('button').onclick = () => {
+            window.dispatchEvent(new CustomEvent('brain:abrirPopupFontes'));
+        };
     } 
     else if (abaAtivaBiblia === 'dossie') {
         const cor = dentroDeMica ? "#10b981" : "#f59e0b";
@@ -126,8 +132,8 @@ const atualizarBotaoAcao = (dentroDeMica = false) => {
         
         // Mantemos os onclicks que abrem popups simples, pois não conflituam com o Puzzle
         btnCont.querySelector('button').onclick = () => {
-            if (dentroDeMica) abrirPopupRefApta(currentDb);
-            else abrirPopupMica(currentDb, currentAuth);
+            if (dentroDeMica) abrirPopupRefApta(db);
+            else abrirPopupMica(db, auth);
         };
     }
     else {

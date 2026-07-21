@@ -21,7 +21,7 @@ export function renderizarIndice(caixasFiltradas, isModoPost = false) {
     }
 
     const fragmento = document.createDocumentFragment();
-    const CORES_IDENTIDADE = { webcard: "#8b5cf6", cartaovisita: "#d4af37", citacaobiblica: "#94a3b8", elevador: "#ef4444" };
+    const CORES_IDENTIDADE = { webcard: "#8b5cf6", cartaovisita: "#d4af37", citacaobiblica: "#94a3b8", elevador: "#ef4444", firmamento: "#cbd5e1" };
 
     ativas.forEach(caixa => {
         const config = IDENTIDADE_FERRAMENTAS[caixa.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
