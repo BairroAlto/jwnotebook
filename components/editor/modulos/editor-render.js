@@ -227,30 +227,47 @@ function aplicarMarcadorNovidade(el, caixa, dadosNota, notaId, db, auth) {
     const uid = auth?.currentUser?.uid;
     if (!novidade || !uid || novidade.by === uid || (novidade.viewedBy || []).includes(uid)) return;
 
+    // Procura o input/textarea do título da ferramenta
+    const titleInput = el.querySelector('.tool-title-input') || el.querySelector('textarea, input[type="text"]');
+    
+    // Ponto visual de novidade
     const dot = document.createElement('span');
     dot.className = `share-change-dot ${novidade.tipo === 'criado' ? 'criado' : 'editado'}`;
     const header = el.querySelector('span')?.parentElement || el.firstElementChild;
     if (header) header.appendChild(dot);
 
-    const observer = new IntersectionObserver(async (entries) => {
-        const entry = entries[0];
-        if (!entry?.isIntersecting) return;
-        observer.disconnect();
-        setTimeout(async () => {
-            dot.remove();
-            if (!db || !notaId) return;
-            const updated = {
-                ...(dadosNota.shareNovidades || {})
-            };
-            updated[caixa.id] = {
-                ...novidade,
-                viewedBy: [...new Set([...(novidade.viewedBy || []), uid])]
-            };
-            dadosNota.shareNovidades = updated;
-            await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js").then(async mod => {
-                await mod.updateDoc(mod.doc(db, "Share", notaId), { shareNovidades: updated });
-            });
-        }, 2600);
-    }, { threshold: 0.55 });
-    observer.observe(el);
+    let corOriginalTitulo = "";
+
+    if (titleInput) {
+        corOriginalTitulo = titleInput.style.color;
+        titleInput.style.color = "#ef4444"; // 🔴 Título fica vermelho!
+        titleInput.style.transition = "color 0.4s ease";
+    }
+
+    const limparNovidade = async () => {
+        if (titleInput) {
+            titleInput.style.color = corOriginalTitulo || "white";
+        }
+        dot.remove();
+
+        el.removeEventListener('mouseenter', limparNovidade);
+        el.removeEventListener('touchstart', limparNovidade);
+
+        if (!db || !notaId) return;
+        const updated = {
+            ...(dadosNota.shareNovidades || {})
+        };
+        updated[caixa.id] = {
+            ...novidade,
+            viewedBy: [...new Set([...(novidade.viewedBy || []), uid])]
+        };
+        dadosNota.shareNovidades = updated;
+        await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js").then(async mod => {
+            await mod.updateDoc(mod.doc(db, "Share", notaId), { shareNovidades: updated });
+        }).catch(err => console.error("Erro ao atualizar viewedBy da caixa:", err));
+    };
+
+    // 🖱️ / 📱 Ao passar com o rato ou tocar no ecrã (mobile), limpa o vermelho!
+    el.addEventListener('mouseenter', limparNovidade, { once: true });
+    el.addEventListener('touchstart', limparNovidade, { once: true });
 }
