@@ -105,6 +105,18 @@ async function renderizarCaixa(caixa, raciociniosVivos, handlers) {
         case "sumariar":
             modulo = await import('../ferramentas/sumariar.js');
             return modulo.criarSumariarIA(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
+        case "firmamento": {
+            modulo = await import('../ferramentas/firmamento.js');
+            const { abrirPaletaFirmamento } = await import('./firmamento-paleta.js');
+            return modulo.criarFirmamento(
+                caixa,
+                acionarGravacao,
+                onApagar,
+                moverCaixa,
+                prepararInsercao,
+                alvo => abrirPaletaFirmamento(alvo, acionarGravacao)
+            );
+        }
         default:
             modulo = await import('../ferramentas/contentor.js');
             return modulo.criarContentorLaranja(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);

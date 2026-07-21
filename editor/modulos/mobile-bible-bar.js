@@ -19,6 +19,12 @@ export const MobileBibleBar = {
         bar.id = BAR_ID;
         bar.className = 'mobile-bible-helper-bar';
         bar.setAttribute('aria-label', 'Textos bíblicos rápidos');
+        Object.assign(bar.style, {
+            position: "fixed", left: "0", right: "0", minHeight: "42px", padding: "5px 8px",
+            boxSizing: "border-box", alignItems: "center", gap: "8px", zIndex: "10050",
+            background: "rgba(15, 23, 42, 0.98)", borderTop: "1px solid rgba(148, 163, 184, 0.24)",
+            boxShadow: "0 -5px 18px rgba(2, 6, 23, 0.28)"
+        });
         bar.innerHTML = `
             <button type="button" class="mobile-bible-helper-toggle" aria-label="Mostrar textos bíblicos">
                 <i class="fa-solid fa-book-open"></i>
@@ -34,11 +40,11 @@ export const MobileBibleBar = {
         bar.querySelector('.mobile-bible-helper-back').addEventListener('click', () => this.mostrarReferencias());
 
         document.addEventListener('focusin', (event) => {
-            const input = event.target.closest?.('#editor-feed textarea, #editor-feed input, #editor-titulo');
+            const input = event.target.closest?.('#editor-container textarea, #editor-container input, #editor-titulo');
             if (!input) return;
             state.activeInput = input;
             this.atualizarReferencias();
-            this.actualizarVisibilidade();
+            this.atualizarVisibilidade();
         });
 
         document.addEventListener('input', (event) => {
@@ -48,9 +54,9 @@ export const MobileBibleBar = {
         document.addEventListener('focusout', (event) => {
             if (event.target === state.activeInput) {
                 setTimeout(() => {
-                    if (!document.activeElement?.matches('#editor-feed textarea, #editor-feed input, #editor-titulo')) {
+                    if (!document.activeElement?.matches('#editor-container textarea, #editor-container input, #editor-titulo')) {
                         state.activeInput = null;
-                        this.actualizarVisibilidade();
+                        this.atualizarVisibilidade();
                     }
                 }, 120);
             }
@@ -72,14 +78,18 @@ export const MobileBibleBar = {
             state.expanded = false;
             state.activeInput = null;
         }
-        this.actualizarVisibilidade();
+        this.atualizarVisibilidade();
     },
 
     atualizarVisibilidade() {
         const bar = document.getElementById(BAR_ID);
         if (!bar) return;
         const mobile = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 768;
-        const visible = state.enabled && mobile && Boolean(state.activeInput);
+        const keyboardOpen = window.visualViewport ? (window.innerHeight - window.visualViewport.height > 120) : Boolean(state.activeInput);
+        const visible = state.enabled && mobile && (Boolean(state.activeInput) || keyboardOpen);
+        bar.style.bottom = "0px";
+        bar.style.display = visible ? "flex" : "none";
+        bar.style.transform = visible ? "translateY(0)" : "translateY(120%)";
         bar.classList.toggle('is-visible', visible);
         bar.classList.toggle('is-expanded', visible && state.expanded);
     },
@@ -97,7 +107,7 @@ export const MobileBibleBar = {
 
     atualizarReferencias() {
         if (!state.activeInput) return;
-        const inputs = [...document.querySelectorAll('#editor-feed textarea, #editor-feed input, #editor-titulo')];
+        const inputs = [...document.querySelectorAll('#editor-container textarea, #editor-container input, #editor-titulo')];
         const index = inputs.indexOf(state.activeInput);
         const fontes = (index < 0 ? [state.activeInput] : inputs.slice(0, index + 1))
             .map(input => input.value || input.textContent || '')
@@ -152,6 +162,9 @@ export const MobileBibleBar = {
         const actualizar = () => {
             const offset = Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop);
             document.documentElement.style.setProperty('--mobile-keyboard-offset', `${offset}px`);
+            const bar = document.getElementById(BAR_ID);
+            if (bar) bar.style.bottom = `${offset}px`;
+            this.atualizarVisibilidade();
         };
         window.visualViewport.addEventListener('resize', actualizar);
         window.visualViewport.addEventListener('scroll', actualizar);

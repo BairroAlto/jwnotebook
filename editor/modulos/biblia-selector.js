@@ -10,6 +10,93 @@ let currentTarget = null;
 let tempSelecao = [];
 let callbackFinal = null;
 
+function normalizarNomeBiblico(valor) {
+    return String(valor || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\./g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
+
+function encontrarLivroBiblico(nome) {
+    const chave = normalizarNomeBiblico(nome);
+    return BIBLE_DATA.find(livro =>
+        normalizarNomeBiblico(livro.nome) === chave ||
+        normalizarNomeBiblico(livro.abrev) === chave
+    );
+}
+
+export function interpretarReferenciasBiblicas(valor) {
+    const entradas = String(valor || '').split(/[;\n]+/).map(item => item.trim()).filter(Boolean);
+
+    return entradas.map(entrada => {
+        const partes = entrada.match(/^(.+?)\s+(\d+)\s*:\s*(\d+(?:\s*[-–—]\s*\d+)?(?:\s*,\s*\d+(?:\s*[-–—]\s*\d+)?)*)$/);
+        if (!partes) throw new Error(`Referência inválida: “${entrada}”.`);
+
+        const livro = encontrarLivroBiblico(partes[1]);
+        if (!livro) throw new Error(`Livro bíblico não reconhecido: “${partes[1]}”.`);
+
+        const capitulo = Number(partes[2]);
+        const totalVersiculos = livro.versiculos?.[capitulo - 1];
+        if (!totalVersiculos) throw new Error(`${livro.nome} não tem o capítulo ${capitulo}.`);
+
+        const versiculos = partes[3].split(',').flatMap(segmento => {
+            const limites = segmento.trim().match(/^(\d+)(?:\s*[-–—]\s*(\d+))?$/);
+            const primeiro = Number(limites[1]);
+            const ultimo = Number(limites[2] || limites[1]);
+
+            if (primeiro < 1 || ultimo < primeiro || ultimo > totalVersiculos) {
+                throw new Error(`Intervalo inválido em ${livro.nome} ${capitulo}:${segmento.trim()}.`);
+            }
+
+            return Array.from({ length: ultimo - primeiro + 1 }, (_, indice) => primeiro + indice);
+        });
+
+        return {
+            livro,
+            capitulo,
+            versiculos: [...new Set(versiculos)]
+        };
+    });
+}
+async function adicionarReferenciasManuais(valor) {
+    const referencias = interpretarReferenciasBiblicas(valor);
+    if (!referencias.length) return 0;
+
+    const dadosPorLivro = new Map();
+    const novasSelecoes = [];
+
+    for (const referencia of referencias) {
+        const { livro, capitulo, versiculos } = referencia;
+        let dados = dadosPorLivro.get(livro.nome);
+
+        if (!dados) {
+            const slug = normalizarNomeBiblico(livro.nome).replace(/\s+/g, '_');
+            const resposta = await fetch(`data/biblia/${slug}.json`);
+            if (!resposta.ok) throw new Error(`Não foi possível carregar ${livro.nome}.`);
+            dados = await resposta.json();
+            dadosPorLivro.set(livro.nome, dados);
+        }
+
+        const capituloDados = dados[livro.nome]?.[capitulo];
+        if (!capituloDados) throw new Error(`Não foi possível ler ${livro.nome} ${capitulo}.`);
+
+        versiculos.forEach(versiculo => {
+            const textoVersiculo = capituloDados[versiculo];
+            if (!textoVersiculo) throw new Error(`Não foi possível ler ${livro.nome} ${capitulo}:${versiculo}.`);
+            novasSelecoes.push({ livro: livro.nome, cap: capitulo, ver: String(versiculo), texto: textoVersiculo });
+        });
+    }
+
+    const selecoesUnicas = new Map(
+        [...tempSelecao, ...novasSelecoes].map(item => [`${item.livro}|${item.cap}|${item.ver}`, item])
+    );
+    tempSelecao = [...selecoesUnicas.values()];
+    return novasSelecoes.length;
+}
+
 /**
  * INICIALIZAÇÃO
  */
@@ -20,6 +107,17 @@ export function iniciarSelectorBiblia(onSave) {
 
     const btnFechar = document.getElementById('btn-fechar-biblia-citacao');
     if (btnFechar) btnFechar.onclick = () => document.getElementById('popup-biblia-citacao-overlay').classList.remove('active');
+
+    const campoManual = document.getElementById('biblia-citacao-referencias');
+    if (campoManual) {
+        campoManual.oninput = () => {
+            const estado = document.getElementById('biblia-citacao-manual-estado');
+            if (estado) {
+                estado.className = '';
+                estado.textContent = '';
+            }
+        };
+    }
 }
 
 
@@ -29,7 +127,15 @@ export function iniciarSelectorBiblia(onSave) {
  */
 export function abrirSelector(target) {
     currentTarget = target;
-    tempSelecao = []; 
+    tempSelecao = [];
+
+    const campoManual = document.getElementById('biblia-citacao-referencias');
+    const estadoManual = document.getElementById('biblia-citacao-manual-estado');
+    if (campoManual) campoManual.value = '';
+    if (estadoManual) {
+        estadoManual.className = '';
+        estadoManual.textContent = '';
+    }
     
     const overlay = document.getElementById('popup-biblia-citacao-overlay');
     if (overlay) {
@@ -110,7 +216,34 @@ function atualizarContadorUI() {
 async function confirmarSelecao() {
     console.log("🚀 [BIBLIA-SELECTOR] Iniciando gravação bidirecional...");
 
-    if (tempSelecao.length === 0) return alert("Seleciona pelo menos um versículo.");
+    const campoManual = document.getElementById('biblia-citacao-referencias');
+    const estadoManual = document.getElementById('biblia-citacao-manual-estado');
+
+    if (campoManual?.value.trim()) {
+        try {
+            const adicionados = await adicionarReferenciasManuais(campoManual.value);
+            atualizarContadorUI();
+            if (estadoManual) {
+                estadoManual.className = '';
+                estadoManual.textContent = `${adicionados} versículos reconhecidos.`;
+            }
+        } catch (erro) {
+            if (estadoManual) {
+                estadoManual.className = 'erro';
+                estadoManual.textContent = erro.message;
+            }
+            campoManual.focus();
+            return;
+        }
+    }
+
+    if (tempSelecao.length === 0) {
+        if (estadoManual) {
+            estadoManual.className = 'erro';
+            estadoManual.textContent = 'Seleciona ou escreve pelo menos um versículo.';
+        }
+        return;
+    }
 
     const btn = document.getElementById('btn-confirmar-selecao-biblia');
     btn.disabled = true;

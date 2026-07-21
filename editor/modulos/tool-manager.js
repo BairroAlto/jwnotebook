@@ -39,9 +39,14 @@ export const ToolManager = {
         if (["subnota", "questao", "raciocinio", "cartaovisita"].includes(tipo)) novaCaixa.titulo = "";
         if (tipo === "webcard") novaCaixa.links = [];
         if (tipo === "citacaobiblica") novaCaixa.textosanexados = [];
+        if (tipo === "firmamento") {
+            novaCaixa.foco = "original";
+            novaCaixa.corFirmamento = "#050505";
+            novaCaixa.textoFirmamento = "#ffffff";
+        }
         if (tipo === "galeria") {  novaCaixa.links = []; novaCaixa.urldimensao = "medias";
 }
-        if (noteConfig.defaultFocos?.[tipo]) novaCaixa.foco = noteConfig.defaultFocos[tipo];
+        if (tipo !== "firmamento" && noteConfig.defaultFocos?.[tipo]) novaCaixa.foco = noteConfig.defaultFocos[tipo];
 
         // 4. Lógica de Posicionamento Inteligente
         if (window.idReferenciaInsercao) {

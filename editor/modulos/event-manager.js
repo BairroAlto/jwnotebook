@@ -5,6 +5,34 @@ import { abrirPaleta } from './paleta-cores.js';
 import { abrirPopupPartilhar } from './partilhar.js';
 import { abrirPopupTags } from './tags/tags-controller.js';
 import { MobileBibleBar } from "./mobile-bible-bar.js";
+import { abrirPopupImportarTexto } from './importar-texto.js';
+function reposicionarTituloMobile(campo) {
+    if (window.innerWidth > 768 || !campo) return;
+
+    const estilo = window.getComputedStyle(campo);
+    const permiteScrollHorizontal = estilo.whiteSpace === 'nowrap' &&
+        (estilo.overflowX === 'auto' || estilo.overflowX === 'scroll');
+    if (!permiteScrollHorizontal) return;
+
+    requestAnimationFrame(() => {
+        campo.scrollLeft = 0;
+    });
+}
+
+function iniciarScrollHorizontalDosTitulos() {
+    if (window._notebookScrollTitulosMobileIniciado) return;
+    window._notebookScrollTitulosMobileIniciado = true;
+
+    document.addEventListener('input', (evento) => {
+        const campo = evento.target.closest?.('#editor-titulo, .tool-title-input');
+        if (campo) reposicionarTituloMobile(campo);
+    });
+
+    document.addEventListener('paste', (evento) => {
+        const campo = evento.target.closest?.('#editor-titulo, .tool-title-input');
+        if (campo) requestAnimationFrame(() => reposicionarTituloMobile(campo));
+    });
+}
 
 export const EventManager = {
     /**
@@ -13,7 +41,12 @@ export const EventManager = {
      */
     init: (ctx) => {
         console.log(`ÃƒÂ°Ã…Â¸Ã…Â½Ã‚Â¯ [EVENT-MANAGER] Maestro ativo para: ${ctx.notaAbertaId}`);
-        MobileBibleBar.iniciar();
+        try {
+            MobileBibleBar.iniciar();
+        } catch (erro) {
+            console.error('[MOBILE-BIBLE-BAR] Não foi possível iniciar a barra:', erro);
+        }
+        iniciarScrollHorizontalDosTitulos();
 
         // ========================================================
         // 1. NAVEGAÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O DE PAINÃƒÆ’Ã¢â‚¬Â°IS (EYE / BRAIN / X-SAT)
@@ -284,6 +317,11 @@ const btnCancelarOcultar = document.getElementById('btn-cancelar-ocultar');
         // ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂºÃ‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â PONTES GLOBAIS EXISTENTES (HEADER E ACTIONS)
         // ========================================================
         window.inserirFerramentaNoEditor = (tipo) => ctx.inserirFerramentaNoEditor(tipo);
+        window.abrirImportarTexto = () => {
+            document.getElementById('popup-lab-overlay')?.classList.remove('active');
+            abrirPopupImportarTexto(ctx);
+        };
+
         window.abrirFerramentasDoNexo = () => {
             document.getElementById('popup-lab-overlay')?.classList.remove('active');
             window.idReferenciaInsercao = null; 
@@ -306,7 +344,9 @@ if (tit) {
     tit.oninput = () => ctx.acionarGravacao();
 
     // ÃƒÂ°Ã…Â¸Ã…Â¡Ã¢â€šÂ¬ 2. LÃƒÆ’Ã¢â‚¬Å“GICA DE COLAGEM LIMPA (PLAIN TEXT)
-    tit.addEventListener('paste', (e) => {
+    // O EventManager é reiniciado ao abrir notas; onpaste substitui o
+    // handler anterior e impede que uma colagem seja processada várias vezes.
+    tit.onpaste = (e) => {
         // Impede o comportamento padrÃƒÆ’Ã‚Â£o (que colaria HTML/FormataÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o)
         e.preventDefault();
 
@@ -318,10 +358,11 @@ if (tit) {
 
         // Insere o texto limpo na posiÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o onde estÃƒÆ’Ã‚Â¡ o cursor
         document.execCommand('insertText', false, cleanText);
+         reposicionarTituloMobile(tit);
         
         // Notifica o sistema que houve uma alteraÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o para gravar
         ctx.acionarGravacao();
-    });
+    };
 }
 
         window.alterarModoNota = async (m) => {
