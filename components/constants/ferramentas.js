@@ -9,4 +9,5 @@ export const IDENTIDADE_FERRAMENTAS = {
      webcard: { id: "webcard", nome: "WebCard", icon: "fa-solid fa-globe", cor: "#8b5cf6" },
      galeria: { id: "galeria", nome: "Imagens", icon: "fa-solid fa-panorama", cor: "#ec4899" },
      sumariar: { id: "sumariar", nome: "Sumariar", icon: "fa-brands fa-mailchimp", cor: "#6366f1" },
+     firmamento: { id: "firmamento", nome: "Firmamento", icon: "fa-solid fa-aquarius", cor: "#d4af37" },
 };

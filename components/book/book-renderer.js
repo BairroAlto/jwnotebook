@@ -93,6 +93,8 @@ function caixasVisiveis(caixas, dadosNota) {
 }
 
 function renderBookBox(caixa, index, raciocinioNumero = null) {
+    if (caixa.tipo === 'firmamento') return renderBookFirmamento(caixa);
+
     const config = IDENTIDADE_FERRAMENTAS[caixa.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
     const focoInfo = getFocoInfo(caixa);
     const accent = getAccentColor(caixa, config, focoInfo);
@@ -129,6 +131,22 @@ function renderBookBox(caixa, index, raciocinioNumero = null) {
         ${tagsBottom}
     `;
 
+    return card;
+}
+
+function renderBookFirmamento(caixa) {
+    const card = document.createElement('article');
+    const fundo = caixa.corFirmamento || '#050505';
+    const corTexto = caixa.textoFirmamento || '#ffffff';
+
+    card.id = `bloco-${caixa.id}`;
+    card.className = 'book-box book-box-firmamento';
+    card.dataset.caixaId = caixa.id;
+    card.dataset.tipo = 'firmamento';
+    card.style.setProperty('--book-firmamento-fundo', fundo);
+    card.style.setProperty('--book-firmamento-texto', corTexto);
+    card.style.setProperty('--book-firmamento-destaque', caixa.destaques || 'transparent');
+    card.innerHTML = `<div class="book-firmamento-content">${renderConteudo(caixa)}</div>`;
     return card;
 }
 
