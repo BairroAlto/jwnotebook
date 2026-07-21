@@ -1,5 +1,5 @@
 // components/local/criar-nota.js
-import { collection, addDoc, getDocs, query, where, serverTimestamp, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { collection, addDoc, getDoc, getDocs, query, where, serverTimestamp, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { abrirNotaNoEditor, forcarGravacaoImediata } from '../editor/editor.js';
 
 /**
@@ -74,7 +74,19 @@ export function inicializarCriacaoNota(db, auth) {
                 });
 
                 // 3. ABRIR NO EDITOR IMEDIATAMENTE
-                await abrirNotaNoEditor(docRef.id, dadosNovaNota, db, auth);
+                let dadosNotaCriada = {
+                    ...dadosNovaNota,
+                    timestamp: new Date().toISOString()
+                };
+
+                try {
+                    const snapshotCriado = await getDoc(docRef);
+                    if (snapshotCriado.exists()) dadosNotaCriada = snapshotCriado.data();
+                } catch (erroTimestamp) {
+                    console.warn('[CRIAR-NOTA] Não foi possível reler o timestamp do servidor; será usada a data local.', erroTimestamp);
+                }
+
+                await abrirNotaNoEditor(docRef.id, dadosNotaCriada, db, auth);
 
                 if (window.innerWidth <= 768) {
     document.getElementById('area-esquerda').classList.add('closed');
