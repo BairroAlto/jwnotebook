@@ -40,7 +40,7 @@ export function configurarBotaoShare(notaId, dadosNota, auth) {
 }
 
 let aberturaAtual = 0;
-const TEMPO_MAXIMO_ABERTURA = 15000;
+const TEMPO_MAXIMO_ABERTURA = 30000;
 
 function comTempoLimite(promessa, tempo, descricao) {
     let timer;
@@ -61,8 +61,8 @@ export async function processarAberturaNota(ctx) {
     const loading = document.getElementById('editor-loading');
 
     if (!container || !loading) {
-        setTimeout(() => processarAberturaNota(ctx), 150);
-        return;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return processarAberturaNota(ctx);
     }
 
     if (placeholder) placeholder.style.display = 'none';

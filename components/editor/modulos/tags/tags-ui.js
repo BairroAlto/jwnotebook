@@ -1,5 +1,6 @@
 // components/editor/modulos/tags/tags-ui.js
 import { IDENTIDADE_FERRAMENTAS } from '../../../constants/ferramentas.js';
+import { CAMPO_LIGACAO_BAIRRO } from '../bairro-ligacoes.js';
 
 function escapeHtml(value) {
     return String(value ?? '')
@@ -281,6 +282,16 @@ export function renderizarHub(caixa) {
     (caixa.referencias || []).forEach((item, idx) => {
         const label = item?.titulo || item?.link || `Referencia ${idx + 1}`;
         blocos.push({ tipo: 'Referencia', titulo: label, removeKind: 'referencia', removeId: item.id, cor: '#f97316', icon: 'fa-link' });
+    });
+    (caixa[CAMPO_LIGACAO_BAIRRO] || []).forEach((item, idx) => {
+        blocos.push({
+            tipo: 'Bairro',
+            titulo: item.nome || 'Ligação Bairro',
+            removeKind: 'ligacao-bairro',
+            removeId: JSON.stringify(item),
+            cor: '#c084fc',
+            icon: 'fa-city'
+        });
     });
     (caixa.links || []).forEach((item, idx) => {
         const label = item?.titulo || item?.url || `Referência ${idx + 1}`;

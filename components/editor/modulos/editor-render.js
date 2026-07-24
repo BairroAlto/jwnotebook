@@ -59,9 +59,15 @@ export async function renderizarFeed(params) {
             }
         }
 
-        const el = await renderizarCaixa(caixa, raciociniosVivos, {
-            acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao
-        });
+        let el;
+        try {
+            el = await renderizarCaixa(caixa, raciociniosVivos, {
+                acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao
+            });
+        } catch (error) {
+            console.error(`[EDITOR-RENDER] Falha ao carregar a caixa ${caixa.id} (${caixa.tipo}):`, error, error?.stack || '');
+            el = criarAvisoFalhaCaixa(caixa);
+        }
         if (!el) continue;
         el.id = `bloco-${caixa.id}`;
         if (isModoSocial) {
@@ -74,6 +80,21 @@ export async function renderizarFeed(params) {
     setTimeout(() => { feed.style.minHeight = ""; }, 200);
 }
 
+function criarAvisoFalhaCaixa(caixa) {
+    const aviso = document.createElement('section');
+    aviso.className = 'tool-box';
+    aviso.style.cssText = 'padding:14px; border:1px solid #ef4444; border-radius:8px; background:rgba(239,68,68,.08); color:#fecaca;';
+
+    const titulo = document.createElement('strong');
+    titulo.textContent = `Não foi possível carregar a ferramenta ${caixa.tipo || 'desconhecida'}.`;
+
+    const detalhe = document.createElement('small');
+    detalhe.style.cssText = 'display:block; margin-top:5px; color:#fca5a5;';
+    detalhe.textContent = `ID: ${caixa.id || 'sem ID'}`;
+
+    aviso.append(titulo, detalhe);
+    return aviso;
+}
 async function renderizarCaixa(caixa, raciociniosVivos, handlers) {
     const { acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao } = handlers;
     let modulo;
@@ -105,6 +126,24 @@ async function renderizarCaixa(caixa, raciociniosVivos, handlers) {
         case "sumariar":
             modulo = await import('../ferramentas/sumariar.js');
             return modulo.criarSumariarIA(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
+        case "bairro": {
+            try {
+                modulo = await import('../ferramentas/bairro.js?v=30');
+            } catch (error) {
+                console.error('[BAIRRO] Falha ao importar o módulo visual principal:', error);
+                throw error;
+            }
+            return modulo.criarBairro(
+                caixa,
+                acionarGravacao,
+                onApagar,
+                alvo => import('./bairro-paleta.js?v=30')
+                    .then(({ abrirPaletaBairro }) => abrirPaletaBairro(alvo, acionarGravacao))
+                    .catch(error => console.error('[BAIRRO] Falha ao abrir a paleta:', error)),
+                moverCaixa,
+                prepararInsercao
+            );
+        }
         case "firmamento": {
             modulo = await import('../ferramentas/firmamento.js');
             const { abrirPaletaFirmamento } = await import('./firmamento-paleta.js');
@@ -169,9 +208,9 @@ function abrirPopupReacoes(caixa, dadosNota, notaId, db, auth, anchor) {
             ${opcoes.map(([tipo, icon, cor]) => `<button data-reaction="${tipo}" style="width:32px; height:32px; border-radius:999px; background:rgba(255,255,255,0.05); color:${cor};"><i class="fa-solid ${icon}"></i></button>`).join('')}
         </div>
         <div style="max-height:140px; overflow:auto; display:flex; flex-direction:column; gap:6px;">
-            ${reactions.length ? reactions.map(item => `<div style="font-size:11px; color:#e2e8f0;"><b>${item.nome}</b> • ${item.tipo}</div>`).join('') : `<div style="font-size:11px; color:#94a3b8;">Sem reações ainda.</div>`}
+            ${reactions.length ? reactions.map(item => `<div style="font-size:11px; color:#e2e8f0;"><b>${item.nome}</b> â€¢ ${item.tipo}</div>`).join('') : `<div style="font-size:11px; color:#94a3b8;">Sem reaÃ§Ãµes ainda.</div>`}
         </div>
-        ${minhas ? `<button data-remove-reaction style="background:rgba(248,113,113,0.12); color:#fca5a5; padding:8px; border-radius:8px; font-size:11px;">Remover a minha reação</button>` : ``}
+        ${minhas ? `<button data-remove-reaction style="background:rgba(248,113,113,0.12); color:#fca5a5; padding:8px; border-radius:8px; font-size:11px;">Remover a minha reaÃ§Ã£o</button>` : ``}
     `;
 
     if (anchor.closest('[id^="bloco-"]')) {
@@ -227,7 +266,7 @@ function aplicarMarcadorNovidade(el, caixa, dadosNota, notaId, db, auth) {
     const uid = auth?.currentUser?.uid;
     if (!novidade || !uid || novidade.by === uid || (novidade.viewedBy || []).includes(uid)) return;
 
-    // Procura o input/textarea do título da ferramenta
+    // Procura o input/textarea do tÃ­tulo da ferramenta
     const titleInput = el.querySelector('.tool-title-input') || el.querySelector('textarea, input[type="text"]');
     
     // Ponto visual de novidade
@@ -240,7 +279,7 @@ function aplicarMarcadorNovidade(el, caixa, dadosNota, notaId, db, auth) {
 
     if (titleInput) {
         corOriginalTitulo = titleInput.style.color;
-        titleInput.style.color = "#ef4444"; // 🔴 Título fica vermelho!
+        titleInput.style.color = "#ef4444"; // ðŸ”´ TÃ­tulo fica vermelho!
         titleInput.style.transition = "color 0.4s ease";
     }
 
@@ -267,7 +306,8 @@ function aplicarMarcadorNovidade(el, caixa, dadosNota, notaId, db, auth) {
         }).catch(err => console.error("Erro ao atualizar viewedBy da caixa:", err));
     };
 
-    // 🖱️ / 📱 Ao passar com o rato ou tocar no ecrã (mobile), limpa o vermelho!
+    // ðŸ–±ï¸ / ðŸ“± Ao passar com o rato ou tocar no ecrÃ£ (mobile), limpa o vermelho!
     el.addEventListener('mouseenter', limparNovidade, { once: true });
     el.addEventListener('touchstart', limparNovidade, { once: true });
 }
+

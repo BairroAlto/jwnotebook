@@ -65,7 +65,7 @@ export function criarContentorLaranja(caixa, onTextoAlterado, onApagar, onPaleta
     // --- CORPO (TEXTAREA) ---
     const corpo = document.createElement("textarea");
     corpo.value = caixa.conteudo || "";
-    
+
     if (typeof window.aplicarEscudoBloqueio === 'function') {
         window.aplicarEscudoBloqueio(caixa, corpo, caixaDiv);
     }

@@ -21,6 +21,8 @@ import * as RefHandlers from './tags-handlers-referencias.js';
 import * as AssociarHandlers from './tags-handlers-associar.js';
 import { abrirPesquisaCodex } from '../codex-browser.js';
 import { perguntarRemocaoHub } from './tags-utils.js';
+import { removerLigacaoBairroDoAlvo } from '../bairro-ligacoes.js';
+import { configurarToggleArranqueDaNota } from '../../../settings/startup.js';
 
 let dbRef, authRef, caixaAlvo, notaMaeId;
 let topicoPaiSelecionado = null; // Estado para o filtro de subtÃƒÆ’Ã‚Â³picos
@@ -143,6 +145,7 @@ export function abrirPopupTags(caixa, notaId, origemNota) {
     // --- 3. EXIBIÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O DO OVERLAY ---
     const overlay = document.getElementById('popup-tags-overlay');
     if (overlay) overlay.classList.add('active');
+
 
     // --- 4. GESTÃƒÆ’Ã†â€™O DE VISIBILIDADE DAS ABAS (Regras de NegÃƒÆ’Ã‚Â³cio) ---
     const isNotaShare = (origemReal === "share");
@@ -376,6 +379,23 @@ window.formatarInputTempo = (input) => {
     // --- ASSOCIAÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã¢â‚¬Â¢ES (NOTAS E CAIXAS) ---
     window.vincularAoAssociado = (id, tit, tipo) => AssociarHandlers.vincular(id, tit, tipo, getCtx());
     window.removerAssociado = (id) => AssociarHandlers.remover(id, getCtx());
+    window.removerLigacaoBairro = async (valor) => {
+        try {
+            const ligacao = typeof valor === 'string' ? JSON.parse(valor) : valor;
+            await removerLigacaoBairroDoAlvo({
+                db: dbRef,
+                notaIdAlvo: notaMaeId,
+                caixaAlvo,
+                ligacao,
+                onAtualizar: () => {
+                    renderizarHub(caixaAlvo);
+                    window.atualizarFeedEGravarGlobal?.(false);
+                }
+            });
+        } catch (error) {
+            console.error('Erro ao remover ligação Bairro:', error);
+        }
+    };
     window.abrirNoBrowserExterno = async (id) => {
         try {
             const browser = await import('../browser.js');
@@ -620,6 +640,7 @@ export async function abrirPopupTagsNota(notaId, db, auth) {
     if (notaSnap.exists()) {
         renderizarVinculosNotaUI(notaSnap.data().vincTopicos || []);
     }
+    configurarToggleArranqueDaNota(notaId, { onde: "local" });
 
     // 2. Evento de fecho
     document.getElementById('btn-fechar-tags-nota').onclick = () => overlay.classList.remove('active');
@@ -1070,6 +1091,9 @@ function configurarRemocoesTags() {
                 }
             } else if (kind === 'topico-nota' && typeof window.removerTopicoDaNota === 'function') {
                 await window.removerTopicoDaNota(id);
+            } else if (kind === 'ligacao-bairro' && typeof window.removerLigacaoBairro === 'function') {
+                if (fromHub && !(await perguntarRemocaoHub({ titulo: 'Remover do Hub?', mensagem: 'Desejas remover esta ligação Bairro do Hub?' }))) return;
+                await window.removerLigacaoBairro(id);
             } else if (kind === 'associado' && typeof window.removerAssociado === 'function') {
                 await window.removerAssociado(id);
             } else if (kind === 'referencia' && typeof window.removerRefManual === 'function') {

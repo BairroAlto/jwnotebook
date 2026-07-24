@@ -80,7 +80,7 @@ async function carregarNotasParaBrowser() {
         const items = [];
         snap.forEach(docSnap => {
             if (docSnap.id === notaMaeIdLocal) return;
-            items.push({ id: docSnap.id, ...docSnap.data() });
+            items.push({ ...docSnap.data(), id: docSnap.id, onde: abaBrowserAtiva.toLowerCase() });
         });
 
         container.innerHTML = "";
@@ -167,6 +167,7 @@ function obterOrdemItem(item, uid) {
 }
 
 export async function carregarAbasDaNota(maeId, dadosNota, notaAtivaId) {
+    console.log("📂 [TABS-DEBUG] carregarAbasDaNota iniciada:", { maeId, notaAtivaId });
     notaMaeIdLocal = maeId;
     notaAtivaIdGlobal = notaAtivaId;
     const container = document.getElementById('editor-tabs-list');
@@ -174,24 +175,36 @@ export async function carregarAbasDaNota(maeId, dadosNota, notaAtivaId) {
     container.innerHTML = `<div id="tab-spinner" style="display:flex; align-items:center; padding:0 15px; color:var(--primary);"><i class="fa-solid fa-circle-notch fa-spin" style="font-size:14px;"></i></div>`;
 
     const resMae = await buscarNotaHibrida(maeId);
+    console.log("📂 [TABS-DEBUG] resMae carregada:", resMae);
     if (!resMae) {
         container.innerHTML = "";
         return;
     }
 
     const listaAbas = resMae.dados.browser || [];
+    console.log("📂 [TABS-DEBUG] listaAbas da nota mãe:", listaAbas);
     const fragmento = document.createDocumentFragment();
     fragmento.appendChild(criarElementoAba(maeId, resMae.dados.nome, true, false, resMae.dados.onde || "local", (maeId === notaAtivaId)));
 
     const promessas = listaAbas.map(async (item) => {
         const idAba = (typeof item === 'string') ? item : item.id;
-        const res = await buscarNotaHibrida(idAba);
-        return res ? { id: idAba, data: res.dados, onde: res.dados.onde || "local" } : null;
+        try {
+            const res = await buscarNotaHibrida(idAba);
+            console.log(`📂 [TABS-DEBUG] buscarNotaHibrida para idAba=${idAba} resultou em:`, res);
+            return res ? { id: idAba, data: res.dados, onde: res.dados.onde || "local" } : null;
+        } catch (e) {
+            console.error(`📂 [TABS-DEBUG] Erro em buscarNotaHibrida para idAba=${idAba}:`, e);
+            return null;
+        }
     });
 
     const resultados = await Promise.all(promessas);
+    console.log("📂 [TABS-DEBUG] resultados Finais das Abas:", resultados);
     resultados.forEach(item => {
-        if (item) fragmento.appendChild(criarElementoAba(item.id, item.data.nome, false, true, item.onde, (item.id === notaAtivaId)));
+        if (item) {
+            console.log("📂 [TABS-DEBUG] Renderizando aba secundária:", item.id, "ActiveState:", (item.id === notaAtivaId));
+            fragmento.appendChild(criarElementoAba(item.id, item.data.nome, false, true, item.onde, (item.id === notaAtivaId)));
+        }
     });
     container.innerHTML = "";
     container.appendChild(fragmento);
@@ -268,9 +281,11 @@ export async function buscarNotaHibrida(id) {
     const db = dbRef || window.db;
     try {
         const sLocal = await getDoc(doc(db, "Local", id));
-        if (sLocal.exists()) return { dados: sLocal.data(), colecao: "Local" };
+        if (sLocal.exists()) return { dados: { ...sLocal.data(), onde: "local" }, colecao: "Local" };
         const sShare = await getDoc(doc(db, "Share", id));
-        if (sShare.exists()) return { dados: sShare.data(), colecao: "Share" };
-    } catch (_) {}
+        if (sShare.exists()) return { dados: { ...sShare.data(), onde: "share" }, colecao: "Share" };
+    } catch (e) {
+        console.error("📂 [TABS-DEBUG] Erro em buscarNotaHibrida:", e);
+    }
     return null;
 }

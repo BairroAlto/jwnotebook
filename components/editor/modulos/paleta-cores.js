@@ -1,9 +1,9 @@
-// components/editor/modulos/paleta-cores.js
+﻿// components/editor/modulos/paleta-cores.js
 import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
-import { MutationManager } from './mutation-manager.js'; // 🚀 NOVO MÓDULO
+import { MutationManager } from './mutation-manager.js'; // ðŸš€ NOVO MÃ“DULO
 import { transmitirParaBrainVivo } from '../../biblioteca-brain/biblio-transmitter.js';
 
-const CORES_BASE = [
+export const CORES_BASE = [
     { code: "#B12823", name: "Vermelho" }, { code: "#AC4A0B", name: "Laranja" },
     { code: "#D8B200", name: "Amarelo" }, { code: "#436C21", name: "Verde" },
     { code: "#006042", name: "Esmeralda" }, { code: "#1F7AC4", name: "Azul" },
@@ -13,18 +13,18 @@ const CORES_BASE = [
 
 export const FOCOS_BASE = {
     "original": { nome: "Original", corForte: "#ea580c" },
-    "comentario": { nome: "Comentário", corForte: "#F86B44" }, 
-    "transcricao": { nome: "Transcrição", corForte: "#f97316" },
-    "reflexao": { nome: "Reflexão", corForte: "#C23515" },
+    "comentario": { nome: "ComentÃ¡rio", corForte: "#F86B44" }, 
+    "transcricao": { nome: "TranscriÃ§Ã£o", corForte: "#f97316" },
+    "reflexao": { nome: "ReflexÃ£o", corForte: "#C23515" },
     "desafio": { nome: "Desafio", corForte: "#9a3412" },
     "rascunho": { nome: "Rascunho", corForte: "#573516" },
     "exemplo": { nome: "Exemplo", corForte: "#854d0e" },
-    "camaleao": { nome: "Camaleão", corForte: "var(--bg-body)" }
+    "camaleao": { nome: "CamaleÃ£o", corForte: "var(--bg-body)" }
 };
 
 export const FOCOS_SUBNOTA = {
     "original": { nome: "Original", corForte: "#2563eb" },
-    "perola": { nome: "Pérola", corForte: "#0032FD" },
+    "perola": { nome: "PÃ©rola", corForte: "#0032FD" },
     "estudo": { nome: "Estudo", corForte: "#4169E1" },
     "resumo": { nome: "Resumo", corForte: "#1a3a5f" },
     "palestra": { nome: "Palestra", corForte: "#5c6bc0" },
@@ -35,13 +35,13 @@ export const FOCOS_QUESTAO = {
     "original": { nome: "Original", corForte: "#10b981" },
     "paradoxo": { nome: "Paradoxo", corForte: "#82e0aa" },
     "dilema": { nome: "Dilema", corForte: "#D1E491" },
-    "hipotese": { nome: "Hipótese", corForte: "#607455" },
-    "revisao": { nome: "Revisão", corForte: "#2B4B44" }
+    "hipotese": { nome: "HipÃ³tese", corForte: "#607455" },
+    "revisao": { nome: "RevisÃ£o", corForte: "#2B4B44" }
 };
 
 export const FOCOS_RACIOCINIO = {
     "original": { nome: "Original", corForte: "#f59e0b" },
-    "socratico": { nome: "Socrático", corForte: "#FFD155" }
+    "socratico": { nome: "SocrÃ¡tico", corForte: "#FFD155" }
 };
 
 let nomesCoresCustom = {};
@@ -50,9 +50,23 @@ let corSendoEditada = null;
 let dbReferencia = null;
 let uidLogado = null;
 let callbackAtualizarEditor = null;
+export function obterNomeDestaque(codigo, fallback = 'Destaque') {
+    return nomesCoresCustom[codigo] || fallback;
+}
+
+export async function guardarNomeDestaque(codigo, nome) {
+    const nomeLimpo = String(nome || '').trim();
+    if (!codigo || !nomeLimpo) return false;
+
+    nomesCoresCustom[codigo] = nomeLimpo;
+    if (dbReferencia && uidLogado) {
+        await setDoc(doc(dbReferencia, 'users', uidLogado), { caixadestaques: nomesCoresCustom }, { merge: true });
+    }
+    return true;
+}
 
 /**
- * INICIALIZAÇÃO
+ * INICIALIZAÃ‡ÃƒO
  */
 export async function iniciarSistemaCores(db, user, callbackUpdate) {
     if (!user) return;
@@ -69,7 +83,7 @@ export async function iniciarSistemaCores(db, user, callbackUpdate) {
 }
 
 /**
- * GESTÃO DE NAVEGAÇÃO ENTRE ABAS
+ * GESTÃƒO DE NAVEGAÃ‡ÃƒO ENTRE ABAS
  */
 function vincularCliquesAbas() {
     const tabs = document.querySelectorAll('.tab-cor');
@@ -79,11 +93,11 @@ function vincularCliquesAbas() {
             e.stopPropagation();
             const targetId = tab.getAttribute('data-target');
             
-            // Ativa o botão clicado
+            // Ativa o botÃ£o clicado
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             
-            // Mostra o conteúdo correspondente (Destaques, Focos ou Mutação)
+            // Mostra o conteÃºdo correspondente (Destaques, Focos ou MutaÃ§Ã£o)
             document.querySelectorAll('.cor-tab-content').forEach(c => c.style.display = 'none');
             const targetEl = document.getElementById(targetId);
             if (targetEl) targetEl.style.display = 'block';
@@ -92,14 +106,14 @@ function vincularCliquesAbas() {
 }
 
 /**
- * ABRIR POPUP DE CORES E MUTAÇÃO
+ * ABRIR POPUP DE CORES E MUTAÃ‡ÃƒO
  */
 /**
- * ABRIR POPUP DE CORES E MUTAÇÃO (CENTRO DE PERSONALIZAÇÃO)
- * Versão Master: Auto-vínculo de abas e correção de Z-Index para popups sobrepostos.
+ * ABRIR POPUP DE CORES E MUTAÃ‡ÃƒO (CENTRO DE PERSONALIZAÃ‡ÃƒO)
+ * VersÃ£o Master: Auto-vÃ­nculo de abas e correÃ§Ã£o de Z-Index para popups sobrepostos.
  */
 export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTemporario = null) {
-    console.log("🎨 [PALETA] Iniciando painel para:", caixaAlvo.tipo);
+    console.log("ðŸŽ¨ [PALETA] Iniciando painel para:", caixaAlvo.tipo);
     caixaParaColorir = caixaAlvo;
 
     const funcUpdate = callbackTemporario || callbackAtualizarEditor;
@@ -111,13 +125,13 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
     const listaFoco = document.getElementById('lista-cores-foco');
 
     if (!overlay) {
-        console.error("❌ Erro: Contentor #popup-cores-overlay não encontrado no DOM.");
+        console.error("âŒ Erro: Contentor #popup-cores-overlay nÃ£o encontrado no DOM.");
         return;
     }
 
     // ========================================================
-    // 🚀 1. MOTOR DE ATIVAÇÃO DE ABAS (RESOLVE O PROBLEMA DO BRAIN)
-    // Re-vincula os cliques sempre que a paleta abre para garantir que as abas não ficam mortas.
+    // ðŸš€ 1. MOTOR DE ATIVAÃ‡ÃƒO DE ABAS (RESOLVE O PROBLEMA DO BRAIN)
+    // Re-vincula os cliques sempre que a paleta abre para garantir que as abas nÃ£o ficam mortas.
     // ========================================================
     const todasAsAbas = document.querySelectorAll('.tab-cor');
     todasAsAbas.forEach(tab => {
@@ -126,13 +140,13 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
             e.stopPropagation();
             
             const targetId = tab.getAttribute('data-target');
-            console.log("📑 [PALETA] Trocando para aba:", targetId);
+            console.log("ðŸ“‘ [PALETA] Trocando para aba:", targetId);
 
-            // Alternar estado visual dos botões
+            // Alternar estado visual dos botÃµes
             todasAsAbas.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             
-            // Alternar visibilidade dos painéis
+            // Alternar visibilidade dos painÃ©is
             document.querySelectorAll('.cor-tab-content').forEach(c => c.style.display = 'none');
             const targetEl = document.getElementById(targetId);
             if (targetEl) {
@@ -142,7 +156,7 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
     });
 
     // ========================================================
-    // 🧬 2. LÓGICA DE MUTAÇÃO (CONVERTER FERRAMENTA)
+    // ðŸ§¬ 2. LÃ“GICA DE MUTAÃ‡ÃƒO (CONVERTER FERRAMENTA)
     // ========================================================
     const btnMutacao = document.querySelector('.tab-cor[data-target="tab-mutacao"]');
     const areaMutacao = document.getElementById('tab-mutacao');
@@ -152,12 +166,12 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
         MutationManager.render(caixaAlvo, areaMutacao, funcUpdate); 
     } else {
         if (btnMutacao) btnMutacao.style.display = "none";
-        // Se a aba mutação estivesse selecionada mas o bloco não permitir, volta para destaques
+        // Se a aba mutaÃ§Ã£o estivesse selecionada mas o bloco nÃ£o permitir, volta para destaques
         if (abaAlvo === "tab-mutacao") abaAlvo = "tab-destaques";
     }
 
     // ========================================================
-    // 🎨 3. RENDERIZAÇÃO DE DESTAQUES (CORES DE FUNDO)
+    // ðŸŽ¨ 3. RENDERIZAÃ‡ÃƒO DE DESTAQUES (CORES DE FUNDO)
     // ========================================================
     if (listaDest) {
         listaDest.innerHTML = "";
@@ -181,9 +195,9 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
                     <i class="fa-solid fa-pen btn-edit-cor" style="font-size:11px; color:var(--primary); opacity:0.5; padding:5px;"></i>
                 </div>`;
 
-            // Clique na área da cor
+            // Clique na Ã¡rea da cor
             div.querySelector('.click-area').onclick = (e) => {
-                // Se clicou no ícone de lápis (Editar Nome)
+                // Se clicou no Ã­cone de lÃ¡pis (Editar Nome)
                 if (e.target.classList.contains('btn-edit-cor')) {
                     e.stopPropagation();
                     
@@ -193,12 +207,12 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
                     const btnCancelar = document.getElementById('btn-cancelar-nome-cor');
 
                     if (editOverlay) {
-                        // 🚀 RESOLVE O PROBLEMA DO POPUP INVISÍVEL: Força o Z-Index máximo
+                        // ðŸš€ RESOLVE O PROBLEMA DO POPUP INVISÃVEL: ForÃ§a o Z-Index mÃ¡ximo
                         editOverlay.style.zIndex = "60000";
                         document.getElementById('amostra-cor-edicao').style.backgroundColor = corObj.code;
                         inputNome.value = nomeReal;
                         
-                        // Fecha este popup para dar lugar ao de edição
+                        // Fecha este popup para dar lugar ao de ediÃ§Ã£o
                         overlay.classList.remove('active');
                         editOverlay.classList.add('active');
 
@@ -211,7 +225,7 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
                             await setDoc(doc(dbReferencia, "users", uidLogado), { caixadestaques: nomesCoresCustom }, { merge: true });
                             
                             editOverlay.classList.remove('active');
-                            abrirPaleta(caixaParaColorir, "tab-destaques"); // Regressa à paleta atualizada
+                            abrirPaleta(caixaParaColorir, "tab-destaques"); // Regressa Ã  paleta atualizada
                         };
 
                         btnCancelar.onclick = () => {
@@ -224,11 +238,11 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
                     return;
                 }
 
-                // Lógica de seleção da cor (Toggle)
+                // LÃ³gica de seleÃ§Ã£o da cor (Toggle)
                 caixaParaColorir.destaques = isSel ? "" : corObj.code; 
                 if (funcUpdate) funcUpdate();
 
-                // SÓ transmite para o Brain se a paleta NÃO foi aberta pelo próprio Brain
+                // SÃ“ transmite para o Brain se a paleta NÃƒO foi aberta pelo prÃ³prio Brain
                 if (!callbackTemporario) {
                     transmitirParaBrainVivo(caixaParaColorir);
                 }
@@ -241,7 +255,7 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
     }
 
     // ========================================================
-    // 🎭 4. RENDERIZAÇÃO DE FOCOS (TEMAS VISUAIS)
+    // ðŸŽ­ 4. RENDERIZAÃ‡ÃƒO DE FOCOS (TEMAS VISUAIS)
     // ========================================================
     if (listaFoco) {
         listaFoco.innerHTML = "";
@@ -265,7 +279,7 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
                 
                 if (funcUpdate) funcUpdate();
                 
-                // SÓ transmite para o Brain se a paleta NÃO foi aberta pelo próprio Brain
+                // SÃ“ transmite para o Brain se a paleta NÃƒO foi aberta pelo prÃ³prio Brain
                 if (!callbackTemporario) {
                     transmitirParaBrainVivo(caixaParaColorir);
                 }
@@ -278,7 +292,7 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
     }
 
     // ========================================================
-    // 🚪 5. ACÇÕES FINAIS (FECHO E RESET)
+    // ðŸšª 5. ACÃ‡Ã•ES FINAIS (FECHO E RESET)
     // ========================================================
     if (btnRemover) {
         btnRemover.onclick = () => {
@@ -295,7 +309,7 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
     // Mostrar o Overlay
     overlay.classList.add('active');
     
-    // 🚀 ATIVAÇÃO AUTOMÁTICA: Simula o clique na aba solicitada para desenhar o conteúdo
+    // ðŸš€ ATIVAÃ‡ÃƒO AUTOMÃTICA: Simula o clique na aba solicitada para desenhar o conteÃºdo
     const selectorAba = document.querySelector(`.tab-cor[data-target="${abaAlvo}"]`);
     if (selectorAba) {
         selectorAba.click();
@@ -310,7 +324,7 @@ function abrirPopupEditarNomeCor(hex, nomeAtual) {
 
     if (!editOverlay) return;
 
-    // 🚀 FORÇA O POPUP PARA A FRENTE
+    // ðŸš€ FORÃ‡A O POPUP PARA A FRENTE
     editOverlay.style.zIndex = "60000"; 
     
     document.getElementById('amostra-cor-edicao').style.backgroundColor = hex;

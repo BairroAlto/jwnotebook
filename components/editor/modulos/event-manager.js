@@ -6,6 +6,8 @@ import { abrirPopupPartilhar } from './partilhar.js';
 import { abrirPopupTags } from './tags/tags-controller.js';
 import { MobileBibleBar } from "./mobile-bible-bar.js";
 import { abrirPopupImportarTexto } from './importar-texto.js';
+import { LabModelos } from './lab-modelos.js';
+
 function reposicionarTituloMobile(campo) {
     if (window.innerWidth > 768 || !campo) return;
 
@@ -37,10 +39,10 @@ function iniciarScrollHorizontalDosTitulos() {
 export const EventManager = {
     /**
      * INICIALIZADOR DE EVENTOS
-     * @param {Object} ctx - Objeto de estado vivo vindo do editor.js (contÃƒÆ’Ã‚Â©m dbRef, authRef, caixasAtuais, etc.)
+     * @param {Object} ctx - Objeto de estado vivo vindo do editor.js (contém dbRef, authRef, caixasAtuais, etc.)
      */
     init: (ctx) => {
-        console.log(`ÃƒÂ°Ã…Â¸Ã…Â½Ã‚Â¯ [EVENT-MANAGER] Maestro ativo para: ${ctx.notaAbertaId}`);
+        console.log(`🎯 [EVENT-MANAGER] Maestro ativo for: ${ctx.notaAbertaId}`);
         try {
             MobileBibleBar.iniciar();
         } catch (erro) {
@@ -49,7 +51,7 @@ export const EventManager = {
         iniciarScrollHorizontalDosTitulos();
 
         // ========================================================
-        // 1. NAVEGAÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O DE PAINÃƒÆ’Ã¢â‚¬Â°IS (EYE / BRAIN / X-SAT)
+        // 1. NAVEGAÇÃO DE PAINÉIS (EYE / BRAIN / X-SAT)
         // ========================================================
         window.switchPanel = (p) => {
             document.querySelectorAll('.tab-content').forEach(c => {
@@ -68,7 +70,7 @@ export const EventManager = {
                 if (!canalA || canalA.dataset.num === "6") {
                     const b6 = document.querySelector('.xsat-num[data-num="6"]');
                     if (b6) b6.classList.add('active');
-                    // ForÃƒÆ’Ã‚Â§a a IA a ler os dados da nota atual respeitando o modo
+                    // Força a IA a ler os dados da nota atual respeitando o modo
                     import('../../direita/ai-controller.js').then(m => {
                         m.AIController.renderizarLista(null, ctx.dadosNotaOriginal);
                         });
@@ -83,7 +85,7 @@ export const EventManager = {
         };
 
         // ========================================================
-        // 2. NAVEGAÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O INTERNA DO "EYE" (COM FILTRO DE EXCLUSIVIDADE)
+        // 2. NAVEGAÇÃO INTERNA DO "EYE" (COM FILTRO DE EXCLUSIVIDADE)
         // ========================================================
         window.switchEyeTab = (t) => {
             const ids = ['indice-nota-container', 'textos-container', 'ancora-nota-container', 'fontes-nota-container', 'caixas-associadas-container'];
@@ -93,7 +95,7 @@ export const EventManager = {
             const modos = Array.isArray(ctx.dadosNotaOriginal.modo) ? ctx.dadosNotaOriginal.modo : [ctx.dadosNotaOriginal.modo || 'normal'];
             const isSentinela = modos.includes('sentinela');
             
-            // ÃƒÂ°Ã…Â¸Ã…Â¡Ã¢â€šÂ¬ FILTRO RIGOROSO: A direita sÃƒÆ’Ã‚Â³ vÃƒÆ’Ã‚Âª o que o modo permite
+            // 🚀 FILTRO RIGOROSO: A direita só vê o que o modo permite
             const flt = ctx.caixasAtuais.filter(c => {
                 if (c.estado !== 'on') return false;
                 return isSentinela ? !!c.referenciacodex : !c.referenciacodex;
@@ -107,21 +109,20 @@ export const EventManager = {
             if (t === 'textos') import('../../direita/eye-textos-biblia.js').then(m => m.detectarEExibirTextosBiblicos(flt));
             if (t === 'fontes') import('../../direita/eye-fontes-nota.js').then(m => m.carregarFontesGlobaisDaNota(flt));
             if (t === 'indice') import('../../direita/indice.js').then(m => m.renderizarIndice(flt, modos.includes('post')));
-            if (t === 'ancora') {import('../../direita/eye-ancora.js').then(m => m.iniciarAbaAncora(ctx.notaAbertaId, ctx.dbRef, ctx.authRef) );
-}
+            if (t === 'ancora') {import('../../direita/eye-ancora.js').then(m => m.iniciarAbaAncora(ctx.notaAbertaId, ctx.dbRef, ctx.authRef) );}
         };
 
         // ========================================================
-        // 3. LABORATÃƒÆ’Ã¢â‚¬Å“RIO (MODOS E FERRAMENTAS)
+        // 3. LABORATÓRIO (MODOS E FERRAMENTAS)
         // ========================================================
         window.alterarModoNota = async (m) => {
             if (ctx.dadosNotaOriginal.onde === "share" && m === "sentinela") {
-        console.warn("ÃƒÂ°Ã…Â¸Ã…Â¡Ã‚Â« [SISTEMA] Notas partilhadas nÃƒÆ’Ã‚Â£o suportam o Modo Sentinela.");
-        return; 
-    }
+                console.warn("🚫 [SISTEMA] Notas partilhadas não suportam o Modo Sentinela.");
+                return; 
+            }
             if (!ctx.notaAbertaId || !ctx.dbRef) return;
 
-            // A) TRATAMENTO DA PESQUISA GLOBAL (FERRAMENTA ÃƒÆ’Ã…Â¡NICA)
+            // A) TRATAMENTO DA PESQUISA GLOBAL (FERRAMENTA ÚNICA)
             if (m === 'global') {
                 const caixasVivas = ctx.caixasAtuais.filter(c => c.estado === 'on');
                 const textoFull = caixasVivas.map(c => `${c.titulo || ""} ${c.conteudo || ""}`).join(" [BLOCK] ");
@@ -130,16 +131,15 @@ export const EventManager = {
                 return; 
             }
 
-
             if (m === 'sumar-global') {
-    import('./sumariar-service.js').then(mod => {
-        mod.SumariarService.abrirSumarioGlobal();
-    });
-    document.getElementById('popup-lab-overlay')?.classList.remove('active');
-    return;
-}
+                import('./sumariar-service.js').then(mod => {
+                    mod.SumariarService.abrirSumarioGlobal();
+                });
+                document.getElementById('popup-lab-overlay')?.classList.remove('active');
+                return;
+            }
 
-            // B) LÃƒÆ’Ã¢â‚¬Å“GICA DE EXCLUSIVIDADE DE MODOS
+            // B) LÓGICA DE EXCLUSIVIDADE DE MODOS
             let atual = Array.isArray(ctx.dadosNotaOriginal.modo) ? [...ctx.dadosNotaOriginal.modo] : [ctx.dadosNotaOriginal.modo || 'normal'];
             let novos = [];
 
@@ -161,18 +161,18 @@ export const EventManager = {
             const nexoSec = document.getElementById('lab-nexo-section');
             if (nexoSec) nexoSec.style.display = novos.includes('sentinela') ? 'none' : 'block';
 
-            // C) LÃƒÆ’Ã¢â‚¬Å“GICA MODO SENTINELA (BROWSER + DUPLICADOS)
+            // C) Lógica Modo Sentinela (Browser + Duplicados)
             if (m === 'sentinela' && !ctx.caixasAtuais.some(c => c.referenciacodex)) {
                 import('./sentinela-browser.js').then(sb => sb.SentinelaBrowser.abrir(async (json, idx) => {
                     const artigo = json.artigos[idx];
                     const uid = ctx.authRef.currentUser.uid;
 
                     const { SentinelaManager } = await import('./sentinela-manager.js');
-const notaDuplicadaId = await SentinelaManager.verificarSeJaExiste(ctx.dbRef, ctx.authRef.currentUser.uid, artigo.referencia);
+                    const notaDuplicadaId = await SentinelaManager.verificarSeJaExiste(ctx.dbRef, ctx.authRef.currentUser.uid, artigo.referencia);
 
                     if (notaDuplicadaId) {
                         const { mostrarAviso } = await import('./tags/tags-utils.js');
-                        mostrarAviso(`JÃƒÆ’Ã‚Â¡ existe uma nota para este estudo! Verifica a tua lista ou a reciclagem.`);
+                        mostrarAviso(`Já existe uma nota para este estudo! Verifica a tua lista ou a reciclagem.`);
                         // Reset para normal
                         ctx.dadosNotaOriginal.modo = ['normal'];
                         await updateDoc(doc(ctx.dbRef, "Local", ctx.notaAbertaId), { modo: ['normal'] });
@@ -192,36 +192,6 @@ const notaDuplicadaId = await SentinelaManager.verificarSeJaExiste(ctx.dbRef, ct
                 document.getElementById('popup-lab-overlay')?.classList.remove('active');
             } catch (e) { console.error("Erro ao mudar modo:", e); }
         };
-
-        // ========================================================
-        // 4. PONTES GLOBAIS E HEADER
-        // ========================================================
-       document.getElementById('btn-editor-lab').onclick = () => {
-    // 1. Verificar se a nota atual ÃƒÆ’Ã‚Â© do tipo Share
-    const isNotaShare = ctx.dadosNotaOriginal.onde === "share";
-const btnAncora = document.getElementById('btn-tab-ancora');
-if (btnAncora) {
-    // Se for nota partilhada, o utilizador nÃƒÆ’Ã‚Â£o pode ancorar temas pessoais nela
-    btnAncora.style.display = isNotaShare ? 'none' : 'flex';
-}
-
-    // 2. Localizar o item do Modo Sentinela no HTML do popup
-    const itemSentinela = document.querySelector('.lab-item[data-mode="sentinela"]');
-
-    // 3. Ocultar se for Share, mostrar se for Local
-    if (itemSentinela) {
-        itemSentinela.style.display = isNotaShare ? 'none' : 'flex';
-    }
-
-    // --- LÃƒÆ’Ã‚Â³gica que jÃƒÆ’Ã‚Â¡ tinhas para ativar os botÃƒÆ’Ã‚Âµes ---
-    const m = Array.isArray(ctx.dadosNotaOriginal.modo) ? ctx.dadosNotaOriginal.modo : [ctx.dadosNotaOriginal.modo || 'normal'];
-    document.querySelectorAll('.lab-item').forEach(card => card.classList.toggle('active', m.includes(card.dataset.mode)));
-    
-    const nexoSec = document.getElementById('lab-nexo-section');
-    if (nexoSec) nexoSec.style.display = m.includes('sentinela') ? 'none' : 'block';
-    
-    document.getElementById('popup-lab-overlay')?.classList.add('active');
-};
 
         document.getElementById('btn-abrir-browser').onclick = () => {
             import('./browser.js').then(m => {
@@ -246,7 +216,7 @@ if (btnAncora) {
             document.getElementById('popup-confirmar-overlay')?.classList.add('active');
         };
 
-const btnCancelarOcultar = document.getElementById('btn-cancelar-ocultar');
+        const btnCancelarOcultar = document.getElementById('btn-cancelar-ocultar');
         if (btnCancelarOcultar) {
             btnCancelarOcultar.onclick = () => {
                 document.getElementById('popup-confirmar-overlay').classList.remove('active');
@@ -263,17 +233,22 @@ const btnCancelarOcultar = document.getElementById('btn-cancelar-ocultar');
                     SentinelaManager.sincronizarParaBiblioteca(c, ctx.dbRef, ctx.authRef.currentUser.uid);
                 }
                 document.getElementById('popup-confirmar-overlay').classList.remove('active');
-                await ctx.atualizarFeedEGravar();
+                // Redesenha a UI sem agendar novo debounce de 1.5s
+                await ctx.atualizarFeedEGravar(false);
+                // Grava imediatamente no Firebase
+                if (typeof ctx.gravarImediatamente === 'function') {
+                    await ctx.gravarImediatamente();
+                }
             }
         };
 
-              // ========================================================
-        // ÃƒÂ°Ã…Â¸Ã…Â¡Ã¢â€šÂ¬ PONTES PARA FERRAMENTAS ESPECIAIS (LUPAS)
+        // ========================================================
+        // 🚀 PONTES PARA FERRAMENTAS ESPECIAIS (LUPAS)
         // ========================================================
 
-        // 1. CITAÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O BÃƒÆ’Ã‚ÂBLICA
+        // 1. CITAÇÃO BÍBLICA
         window.abrirSeletorBibliaGlobal = (caixa) => {
-            console.log("ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬â€œ [EVENT] Abrindo seletor bÃƒÆ’Ã‚Â­blico para a caixa.");
+            console.log("📖 [EVENT] Abrindo seletor bíblico para a caixa.");
             import('./biblia-selector.js').then(m => {
                 m.abrirSelector(caixa);
             });
@@ -281,7 +256,7 @@ const btnCancelarOcultar = document.getElementById('btn-cancelar-ocultar');
 
         // 2. WEBCARD (LINKS VISUAIS)
         window.abrirWebCardConfigGlobal = (caixa) => {
-            console.log("ÃƒÂ°Ã…Â¸Ã…â€™Ã‚Â [EVENT] Abrindo configurador de WebCards.");
+            console.log("🌍 [EVENT] Abrindo configurador de WebCards.");
             import('./webcard-service.js').then(async m => {
                 const urls = await m.WebCardService.abrirConfigurador(caixa);
                 if (urls) {
@@ -297,14 +272,14 @@ const btnCancelarOcultar = document.getElementById('btn-cancelar-ocultar');
 
         // 3. IMAGENS (GALERIA ROSA)
         window.abrirImagensConfigGlobal = (caixa) => {
-            console.log("ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â¸ [EVENT] Abrindo configurador de Galeria.");
+            console.log("📸 [EVENT] Abrindo configurador de Galeria.");
             import('./imagens-service.js').then(async m => {
                 const dados = await m.ImagensService.abrirConfigurador(caixa);
                 if (dados) {
                     caixa.links = dados.links;
                     caixa.urldimensao = dados.urldimensao;
                     
-                    // Atualiza a visualizaÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o da galeria sem recarregar a nota toda
+                    // Updates gallery visualization without reloading whole note
                     const el = document.getElementById(`bloco-${caixa.id}`);
                     if (el && el.refreshGaleria) el.refreshGaleria();
                     
@@ -313,9 +288,6 @@ const btnCancelarOcultar = document.getElementById('btn-cancelar-ocultar');
             });
         };
 
-      // ========================================================
-        // ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂºÃ‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â PONTES GLOBAIS EXISTENTES (HEADER E ACTIONS)
-        // ========================================================
         window.inserirFerramentaNoEditor = (tipo) => ctx.inserirFerramentaNoEditor(tipo);
         window.abrirImportarTexto = () => {
             document.getElementById('popup-lab-overlay')?.classList.remove('active');
@@ -338,68 +310,21 @@ const btnCancelarOcultar = document.getElementById('btn-cancelar-ocultar');
             abrirPopupTags(caixa, id || ctx.notaAbertaId, origem);
         };
 
-       const tit = document.getElementById('editor-titulo');
-if (tit) {
-    // 1. GravaÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o ao digitar
-    tit.oninput = () => ctx.acionarGravacao();
+        const tit = document.getElementById('editor-titulo');
+        if (tit) {
+            // 1. Gravação ao digitar
+            tit.oninput = () => ctx.acionarGravacao();
 
-    // ÃƒÂ°Ã…Â¸Ã…Â¡Ã¢â€šÂ¬ 2. LÃƒÆ’Ã¢â‚¬Å“GICA DE COLAGEM LIMPA (PLAIN TEXT)
-    // O EventManager é reiniciado ao abrir notas; onpaste substitui o
-    // handler anterior e impede que uma colagem seja processada várias vezes.
-    tit.onpaste = (e) => {
-        // Impede o comportamento padrÃƒÆ’Ã‚Â£o (que colaria HTML/FormataÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o)
-        e.preventDefault();
-
-        // Extrai apenas o texto puro do clipboard
-        const text = (e.originalEvent || e).clipboardData.getData('text/plain');
-
-        // Limpeza extra: remove quebras de linha para o tÃƒÆ’Ã‚Â­tulo nÃƒÆ’Ã‚Â£o "partir"
-        const cleanText = text.replace(/\r?\n|\r/g, " ");
-
-        // Insere o texto limpo na posiÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o onde estÃƒÆ’Ã‚Â¡ o cursor
-        document.execCommand('insertText', false, cleanText);
-         reposicionarTituloMobile(tit);
-        
-        // Notifica o sistema que houve uma alteraÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o para gravar
-        ctx.acionarGravacao();
-    };
-}
-
-        window.alterarModoNota = async (m) => {
-            if (!ctx.notaAbertaId || !ctx.dbRef) return;
-            if (ctx.dadosNotaOriginal.onde === "share" && m === "sentinela") return;
-            if (ctx.dadosNotaOriginal.onde !== "share" && m === "social") return;
-            if (m === 'global') {
-                const caixasVivas = ctx.caixasAtuais.filter(c => c.estado === 'on');
-                const textoFull = caixasVivas.map(c => `${c.titulo || ""} ${c.conteudo || ""}`).join(" [BLOCK] ");
-                if (textoFull) window.dispararPesquisaParabolica(textoFull, true);
-                document.getElementById('popup-lab-overlay')?.classList.remove('active');
-                return;
-            }
-            if (m === 'sumar-global') {
-                import('./sumariar-service.js').then(mod => mod.SumariarService.abrirSumarioGlobal());
-                document.getElementById('popup-lab-overlay')?.classList.remove('active');
-                return;
-            }
-
-            let atual = Array.isArray(ctx.dadosNotaOriginal.modo) ? [...ctx.dadosNotaOriginal.modo] : [ctx.dadosNotaOriginal.modo || 'normal'];
-            let novos = [];
-            if (m === 'normal' || m === 'sentinela') novos = [m];
-            else {
-                novos = atual.filter(x => x !== 'normal' && x !== 'sentinela');
-                if (novos.includes(m)) novos = novos.filter(x => x !== m);
-                else novos.push(m);
-            }
-            if (novos.length === 0) novos = ['normal'];
-
-            ctx.dadosNotaOriginal.modo = novos;
-            document.querySelectorAll('.lab-item').forEach(c => c.classList.toggle('active', novos.includes(c.dataset.mode)));
-            import('./lab-status.js').then(mod => mod.atualizarIconeLab(novos));
-            const col = (ctx.dadosNotaOriginal.onde === "share") ? "Share" : "Local";
-            await updateDoc(doc(ctx.dbRef, col, ctx.notaAbertaId), { modo: novos });
-            await ctx.atualizarFeedEGravar(false);
-            document.getElementById('popup-lab-overlay')?.classList.remove('active');
-        };
+            // 🚀 2. LÓGICA DE COLAGEM LIMPA (PLAIN TEXT)
+            tit.onpaste = (e) => {
+                e.preventDefault();
+                const text = (e.originalEvent || e).clipboardData.getData('text/plain');
+                const cleanText = text.replace(/\r?\n|\r/g, " ");
+                document.execCommand('insertText', false, cleanText);
+                reposicionarTituloMobile(tit);
+                ctx.acionarGravacao();
+            };
+        }
 
         window.abrirDefinicoesDaNota = async () => {
             const { obterConfigNota, guardarConfigNota } = await import('../../settings/preferences.js');
@@ -413,7 +338,7 @@ if (tit) {
             popup.innerHTML = `
                 <div class="popup-content" style="max-width:460px; width:94%;">
                     <div class="popup-header">
-                        <h3>Defini??es desta Nota</h3>
+                        <h3>Definições desta Nota</h3>
                         <button data-close-note-settings><i class="fa-solid fa-xmark"></i></button>
                     </div>
                     <div style="padding:18px; display:flex; flex-direction:column; gap:16px; background:var(--bg-body);">
@@ -421,8 +346,8 @@ if (tit) {
                             <span style="font-size:12px; color:#e2e8f0; font-weight:700;">Tamanho do Texto (coluna do centro)</span>
                             <input id="note-text-size-input" type="range" min="12" max="30" value="${config.textSize || 15}">
                         </label>
-                        <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do T?tulo (ferramentas)</span><input id="note-collapse-tools" type="checkbox" ${config.collapseToolTitles ? 'checked' : ''}></label>
-                        <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do TÃƒÆ’Ã‚Â­tulo (tÃƒÆ’Ã‚Â­tulo nota)</span><input id="note-collapse-title" type="checkbox" ${config.collapseNoteTitle ? 'checked' : ''}></label>
+                        <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do Título (ferramentas)</span><input id="note-collapse-tools" type="checkbox" ${config.collapseToolTitles ? 'checked' : ''}></label>
+                        <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do Título (título nota)</span><input id="note-collapse-title" type="checkbox" ${config.collapseNoteTitle ? 'checked' : ''}></label>
                         <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Linhas de caderno</span><input id="note-diario-lines" type="checkbox" ${config.diarioLines ? 'checked' : ''}></label>
                         <div style="display:flex; flex-direction:column; gap:10px;">
                             <div style="font-size:12px; color:#e2e8f0; font-weight:700;">Mudar Foco (Nascimento)</div>
@@ -431,9 +356,9 @@ if (tit) {
                                     <span style="font-size:11px; color:var(--text-muted); text-transform:capitalize;">${tipo}</span>
                                     <select data-foco-tipo="${tipo}" style="background:#0f172a; color:white; border:1px solid rgba(255,255,255,0.1); padding:6px 8px; border-radius:8px;">
                                         <option value="original" ${config.defaultFocos?.[tipo] === 'original' ? 'selected' : ''}>Original</option>
-                                        <option value="comentario" ${config.defaultFocos?.[tipo] === 'comentario' ? 'selected' : ''}>ComentÃƒÆ’Ã‚Â¡rio</option>
-                                        <option value="revisao" ${config.defaultFocos?.[tipo] === 'revisao' ? 'selected' : ''}>RevisÃƒÆ’Ã‚Â£o</option>
-                                        <option value="camaleao" ${config.defaultFocos?.[tipo] === 'camaleao' ? 'selected' : ''}>CamaleÃƒÆ’Ã‚Â£o</option>
+                                        <option value="comentario" ${config.defaultFocos?.[tipo] === 'comentario' ? 'selected' : ''}>Comentário</option>
+                                        <option value="revisao" ${config.defaultFocos?.[tipo] === 'revisao' ? 'selected' : ''}>Revisão</option>
+                                        <option value="camaleao" ${config.defaultFocos?.[tipo] === 'camaleao' ? 'selected' : ''}>Camaleão</option>
                                     </select>
                                 </label>
                             `).join('')}
@@ -509,27 +434,27 @@ if (tit) {
             popup.innerHTML = `
                 <div class="popup-content" style="max-width:540px; width:94%; border-radius:20px; overflow:hidden;">
                     <div class="popup-header" style="padding:18px 22px; background:linear-gradient(135deg, rgba(99,102,241,0.18), rgba(15,23,42,0.95)); border-bottom:1px solid rgba(255,255,255,0.08);">
-                        <h3>Defini&ccedil;&otilde;es desta Nota</h3>
+                        <h3>Definições desta Nota</h3>
                         <button data-close-note-settings><i class="fa-solid fa-xmark"></i></button>
                     </div>
                     <div style="padding:20px; display:flex; flex-direction:column; gap:18px; background:linear-gradient(180deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98)); max-height:75vh; overflow:auto;">
                         <div style="padding:16px; border:1px solid rgba(255,255,255,0.08); border-radius:16px; background:rgba(255,255,255,0.03); display:flex; flex-direction:column; gap:14px;">
                             <div>
                                 <div style="font-size:11px; color:#cbd5e1; font-weight:800; text-transform:uppercase; letter-spacing:1px;">Leitura</div>
-                                <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">As altera&ccedil;&otilde;es s&atilde;o guardadas automaticamente.</div>
+                                <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">As alterações são guardadas automaticamente.</div>
                             </div>
                             <label style="display:flex; flex-direction:column; gap:8px;">
                                 <span style="font-size:12px; color:#e2e8f0; font-weight:700;">Tamanho do Texto</span>
                                 <input id="note-text-size-input" type="range" min="12" max="30" value="${config.textSize || 15}">
                             </label>
-                            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do T&iacute;tulo (ferramentas)</span><input id="note-collapse-tools" type="checkbox" ${config.collapseToolTitles ? 'checked' : ''}></label>
-                            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do T&iacute;tulo (nota)</span><input id="note-collapse-title" type="checkbox" ${config.collapseNoteTitle ? 'checked' : ''}></label>
+                            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do Título (ferramentas)</span><input id="note-collapse-tools" type="checkbox" ${config.collapseToolTitles ? 'checked' : ''}></label>
+                            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do Título (nota)</span><input id="note-collapse-title" type="checkbox" ${config.collapseNoteTitle ? 'checked' : ''}></label>
                         </div>
                         ${mostrarLinhasDiario ? `
                         <div style="padding:16px; border:1px solid rgba(96,165,250,0.18); border-radius:16px; background:rgba(59,130,246,0.08); display:flex; flex-direction:column; gap:12px;">
                             <div>
-                                <div style="font-size:11px; color:#bfdbfe; font-weight:800; text-transform:uppercase; letter-spacing:1px;">Modo Di&aacute;rio</div>
-                                <div style="font-size:11px; color:#93c5fd; margin-top:4px;">Esta op&ccedil;&atilde;o s&oacute; aparece quando o Modo Di&aacute;rio est&aacute; ativo.</div>
+                                <div style="font-size:11px; color:#bfdbfe; font-weight:800; text-transform:uppercase; letter-spacing:1px;">Modo Diário</div>
+                                <div style="font-size:11px; color:#93c5fd; margin-top:4px;">Esta opção só aparece quando o Modo Diário está ativo.</div>
                             </div>
                             <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Linhas de caderno</span><input id="note-diario-lines" type="checkbox" ${config.diarioLines ? 'checked' : ''}></label>
                         </div>` : ``}
@@ -643,5 +568,8 @@ if (tit) {
                 }
             }
         };
+
+        // Inicializar controlador modular de modelos
+        LabModelos.init(ctx);
     }
 };

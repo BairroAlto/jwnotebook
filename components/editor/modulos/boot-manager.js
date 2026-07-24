@@ -10,7 +10,7 @@ import { EventManager } from './event-manager.js';
 export const BootManager = {
     motores: async (state, callbacks) => {
         const { dbRef, authRef } = state;
-        const { guardarNotaNoFirebase, atualizarFeedEGravar, acionarGravacao, inserirFerramentaNoEditor } = callbacks;
+        const { guardarNotaNoFirebase, atualizarFeedEGravar, acionarGravacao, inserirFerramentaNoEditor, gravarImediatamente } = callbacks;
 
         console.log("⚙️ [BOOT] Iniciando subsistemas...");
 
@@ -34,7 +34,8 @@ export const BootManager = {
             ...state,
             atualizarFeedEGravar,
             acionarGravacao,
-            inserirFerramentaNoEditor 
+            inserirFerramentaNoEditor,
+            gravarImediatamente
         });
 
         console.log("🚀 [BOOT] Sistema modular pronto e ScrollSpy ativo.");

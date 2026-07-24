@@ -44,6 +44,11 @@ export const ToolManager = {
             novaCaixa.corFirmamento = "#050505";
             novaCaixa.textoFirmamento = "#ffffff";
         }
+        if (tipo === "bairro") {
+            novaCaixa.corBairro = "#c084fc";
+            novaCaixa.pastapai = [];
+            novaCaixa.ligaçãoBairro = [];
+        }
         if (tipo === "galeria") {  novaCaixa.links = []; novaCaixa.urldimensao = "medias";
 }
         if (tipo !== "firmamento" && noteConfig.defaultFocos?.[tipo]) novaCaixa.foco = noteConfig.defaultFocos[tipo];

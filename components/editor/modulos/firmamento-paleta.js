@@ -1,3 +1,5 @@
+﻿import { CORES_BASE, guardarNomeDestaque, obterNomeDestaque } from './paleta-cores.js';
+
 export const CORES_FIRMAMENTO = [
     { nome: 'Preto', valor: '#050505', texto: '#ffffff', grupo: 'Cores sólidas' },
     { nome: 'Grafite', valor: '#1f2937', texto: '#ffffff', grupo: 'Cores sólidas' },
@@ -13,7 +15,6 @@ export const CORES_FIRMAMENTO = [
     { nome: 'Azul', valor: '#1d4ed8', texto: '#ffffff', grupo: 'Cores sólidas' },
     { nome: 'Roxo', valor: '#7e22ce', texto: '#ffffff', grupo: 'Cores sólidas' },
     { nome: 'Rosa', valor: '#be185d', texto: '#ffffff', grupo: 'Cores sólidas' },
-
     { nome: 'Noite', valor: 'linear-gradient(135deg, #020617, #1e293b)', texto: '#ffffff', grupo: 'Gradientes' },
     { nome: 'Oceano', valor: 'linear-gradient(135deg, #0f172a, #075985)', texto: '#ffffff', grupo: 'Gradientes' },
     { nome: 'Aurora', valor: 'linear-gradient(135deg, #312e81, #0f766e)', texto: '#ffffff', grupo: 'Gradientes' },
@@ -32,11 +33,6 @@ export const CORES_FIRMAMENTO = [
     { nome: 'Solar', valor: 'linear-gradient(135deg, #fde047, #fb7185)', texto: '#3f171d', grupo: 'Gradientes' }
 ];
 
-const DESTAQUES_FIRMAMENTO = [
-    '#ef4444', '#f97316', '#facc15', '#22c55e', '#14b8a6',
-    '#38bdf8', '#6366f1', '#a855f7', '#ec4899'
-];
-
 export function obterTextoFirmamento(cor) {
     return CORES_FIRMAMENTO.find(item => item.valor === cor)?.texto || '#ffffff';
 }
@@ -51,7 +47,88 @@ function criarAmostra(item, selecionado, aoClicar) {
     return botao;
 }
 
-export function abrirPaletaFirmamento(caixa, onAtualizar) {
+function criarCartaoDestaque(corObj, selecionado, aoSelecionar, aoEditar) {
+    const cartao = document.createElement('div');
+    cartao.className = 'card-cor-item';
+    cartao.style.cssText = `display:flex; flex-direction:column; background:${selecionado ? 'rgba(255,255,255,0.08)' : 'var(--bg-panel)'}; border:2px solid ${selecionado ? corObj.code : 'transparent'}; border-radius:6px; overflow:hidden; cursor:pointer; transition:0.2s; margin-bottom:5px;`;
+
+    const faixa = document.createElement('div');
+    faixa.style.cssText = `height:8px; width:100%; background-color:${corObj.code};`;
+
+    const area = document.createElement('div');
+    area.className = 'click-area';
+    area.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:12px 10px; gap:10px;';
+
+    const identidade = document.createElement('div');
+    identidade.style.cssText = 'display:flex; align-items:center; gap:10px; pointer-events:none; flex:1; overflow:hidden;';
+    const amostra = document.createElement('div');
+    amostra.style.cssText = `width:18px; height:18px; border-radius:50%; background:${corObj.code}; display:flex; align-items:center; justify-content:center; flex-shrink:0;`;
+    if (selecionado) {
+        const check = document.createElement('i');
+        check.className = 'fa-solid fa-check';
+        check.style.cssText = 'color:white; font-size:9px;';
+        amostra.appendChild(check);
+    }
+    const nome = document.createElement('span');
+    nome.textContent = obterNomeDestaque(corObj.code, corObj.name);
+    nome.style.cssText = `font-size:12px; font-weight:600; color:${selecionado ? 'white' : 'var(--text-muted)'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`;
+    identidade.append(amostra, nome);
+
+    const editar = document.createElement('button');
+    editar.type = 'button';
+    editar.className = 'btn-edit-cor';
+    editar.title = 'Editar nome da cor';
+    editar.setAttribute('aria-label', 'Editar nome da cor');
+    editar.style.cssText = 'border:0; background:transparent; font-size:11px; color:var(--primary); opacity:0.5; padding:5px; cursor:pointer;';
+    editar.appendChild(document.createElement('i'));
+    editar.firstChild.className = 'fa-solid fa-pen';
+
+    area.append(identidade, editar);
+    area.addEventListener('click', event => {
+        if (event.target.closest('.btn-edit-cor')) {
+            event.stopPropagation();
+            aoEditar(corObj, obterNomeDestaque(corObj.code, corObj.name));
+            return;
+        }
+        aoSelecionar();
+    });
+    cartao.append(faixa, area);
+    return cartao;
+}
+
+function obterCoresDestaque(caixa) {
+    const atual = caixa.destaques;
+    if (!atual || CORES_BASE.some(cor => cor.code === atual)) return CORES_BASE;
+    return [{ code: atual, name: 'Destaque actual' }, ...CORES_BASE];
+}
+function abrirEditorNomeDestaque(caixa, corObj, nomeAtual, overlay, onAtualizar) {
+    const editOverlay = document.getElementById('popup-editar-cor-overlay');
+    const inputNome = document.getElementById('input-nome-cor');
+    const amostra = document.getElementById('amostra-cor-edicao');
+    const btnGuardar = document.getElementById('btn-guardar-nome-cor');
+    const btnCancelar = document.getElementById('btn-cancelar-nome-cor');
+    if (!editOverlay || !inputNome || !amostra || !btnGuardar || !btnCancelar) return;
+
+    editOverlay.style.zIndex = '60000';
+    amostra.style.backgroundColor = corObj.code;
+    inputNome.value = nomeAtual;
+    overlay.classList.remove('active');
+    editOverlay.classList.add('active');
+
+    btnGuardar.onclick = async () => {
+        const guardado = await guardarNomeDestaque(corObj.code, inputNome.value);
+        if (!guardado) return;
+        editOverlay.classList.remove('active');
+        abrirPaletaFirmamento(caixa, onAtualizar, 'destaques');
+    };
+    btnCancelar.onclick = () => {
+        editOverlay.classList.remove('active');
+        overlay.classList.add('active');
+    };
+    setTimeout(() => inputNome.focus(), 150);
+}
+
+export function abrirPaletaFirmamento(caixa, onAtualizar, abaInicial = 'colorir') {
     const overlay = document.getElementById('popup-firmamento-cores-overlay');
     const listaCores = document.getElementById('firmamento-lista-cores');
     const listaDestaques = document.getElementById('firmamento-lista-destaques');
@@ -76,20 +153,24 @@ export function abrirPaletaFirmamento(caixa, onAtualizar) {
                 caixa.corFirmamento = item.valor;
                 caixa.textoFirmamento = item.texto;
                 atualizar();
-                abrirPaletaFirmamento(caixa, onAtualizar);
+                abrirPaletaFirmamento(caixa, onAtualizar, 'colorir');
             }));
         });
         listaCores.appendChild(grelha);
     });
 
     listaDestaques.replaceChildren();
-    DESTAQUES_FIRMAMENTO.forEach(cor => {
-        const item = { nome: cor, valor: cor };
-        listaDestaques.appendChild(criarAmostra(item, caixa.destaques === cor, () => {
-            caixa.destaques = caixa.destaques === cor ? '' : cor;
-            atualizar();
-            abrirPaletaFirmamento(caixa, onAtualizar);
-        }));
+    obterCoresDestaque(caixa).forEach(corObj => {
+        listaDestaques.appendChild(criarCartaoDestaque(
+            corObj,
+            caixa.destaques === corObj.code,
+            () => {
+                caixa.destaques = caixa.destaques === corObj.code ? '' : corObj.code;
+                atualizar();
+                abrirPaletaFirmamento(caixa, onAtualizar, 'destaques');
+            },
+            (cor, nome) => abrirEditorNomeDestaque(caixa, cor, nome, overlay, onAtualizar)
+        ));
     });
 
     const tabs = [...overlay.querySelectorAll('[data-firmamento-tab]')];
@@ -99,13 +180,14 @@ export function abrirPaletaFirmamento(caixa, onAtualizar) {
         paineis.forEach(painel => { painel.hidden = painel.dataset.firmamentoPainel !== alvo; });
     };
     tabs.forEach(tab => { tab.onclick = () => selecionarTab(tab.dataset.firmamentoTab); });
-    selecionarTab('colorir');
+    selecionarTab(abaInicial);
 
     document.getElementById('btn-fechar-firmamento-cores').onclick = () => overlay.classList.remove('active');
     document.getElementById('btn-remover-destaque-firmamento').onclick = () => {
         caixa.destaques = '';
         atualizar();
-        abrirPaletaFirmamento(caixa, onAtualizar);
+        abrirPaletaFirmamento(caixa, onAtualizar, 'destaques');
     };
     overlay.classList.add('active');
 }
+

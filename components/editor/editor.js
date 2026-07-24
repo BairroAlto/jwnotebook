@@ -39,7 +39,8 @@ export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco
             guardarNotaNoFirebase, 
             atualizarFeedEGravar, 
             acionarGravacao,
-            inserirFerramentaNoEditor 
+            inserirFerramentaNoEditor,
+            gravarImediatamente
         });
     },
             atualizarFeedEGravar,
@@ -97,7 +98,17 @@ async function guardarNotaNoFirebase() {
     await PersistenceManager.guardar(state);
 }
 
-// 6. FORÇAR GRAVAÇÃO
+// 6. GRAVAÇÃO IMEDIATA
+export async function gravarImediatamente() {
+    if (state.timerGravacao) {
+        clearTimeout(state.timerGravacao);
+        state.timerGravacao = null;
+    }
+    state.notaComAlteracoes = true;
+    await guardarNotaNoFirebase();
+}
+
+// 7. FORÇAR GRAVAÇÃO
 export async function forcarGravacaoImediata() {
     if (state.timerGravacao) {
         clearTimeout(state.timerGravacao);
@@ -145,6 +156,9 @@ function assinaturaCaixas(caixas) {
         destaques: caixa.destaques || "",
         corFirmamento: caixa.corFirmamento || "",
         textoFirmamento: caixa.textoFirmamento || "",
+        corBairro: caixa.corBairro || "",
+        pastapai: caixa.pastapai || [],
+        ligaçãoBairro: caixa.ligaçãoBairro || [],
         estado: caixa.estado || "on",
         ref: caixa.referenciacodex || null,
         timestamp: caixa.timestamp || ""
