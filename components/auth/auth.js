@@ -13,7 +13,7 @@ import {
  * @param {object} app - Instância do Firebase App
  * @param {object} db - Instância do Firestore
  */
-export function iniciarAutenticacao(app, db) {
+export function iniciarAutenticacao(app, db, { gerirLoading = true } = {}) {
     const auth = getAuth(app);
 
     // 🚀 CORREÇÃO 1: Forçar persistência local. 
@@ -41,7 +41,7 @@ export function iniciarAutenticacao(app, db) {
             
             // Esconder ecrãs de acesso
             if(loginScreen) loginScreen.style.display = 'none';
-            if(loadingScreen) {
+            if(gerirLoading && loadingScreen) {
                 loadingScreen.style.opacity = '0';
                 setTimeout(() => { loadingScreen.style.display = 'none'; }, 500);
             }

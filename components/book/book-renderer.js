@@ -1,4 +1,5 @@
-import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
+﻿import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
+import { urlElevadorSegura } from '../constants/elevador.js';
 import { FOCOS_BASE, FOCOS_SUBNOTA, FOCOS_QUESTAO, FOCOS_RACIOCINIO } from '../editor/modulos/paleta-cores.js';
 import { BookState } from './book-state.js';
 import { escapeHtml, linkarReferencias, textoDaCaixa } from './book-utils.js';
@@ -362,39 +363,58 @@ function renderGallery(caixa) {
     </div>`;
 }
 
+function linksElevadorParaLeitura(item) {
+    if (Array.isArray(item?.links)) return item.links;
+    return item?.url ? [{ url: item.url }] : [];
+}
+
+function renderBookElevadorLink(link) {
+    const url = urlElevadorSegura(link?.url);
+    const texto = escapeHtml(link?.url || 'Link');
+    return url
+        ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">
+            <i class="fa-solid fa-link"></i>
+            <span>${texto}</span>
+        </a>`
+        : `<span class="book-elevator-invalid-link">
+            <i class="fa-solid fa-link-slash"></i>
+            <span>${texto}</span>
+        </span>`;
+}
+
 function renderElevator(caixa) {
     if (!Array.isArray(caixa.pastapai) || !caixa.pastapai.length) {
         return `<p class="book-inline-empty">Nenhuma estrutura adicionada no elevador.</p>`;
     }
+
     return `<div class="book-elevator">
-        ${caixa.pastapai.map((pai, index) => `
+        ${caixa.pastapai.map((pai, index) => {
+            const linksPai = linksElevadorParaLeitura(pai);
+            return `
             <section class="book-elevator-parent">
                 <div class="book-elevator-head">
                     <strong>${escapeHtml(pai?.nome || `Barra ${index + 1}`)}</strong>
                 </div>
                 ${pai?.oculto ? '' : `
-                    ${(pai.links || []).length ? `<div class="book-elevator-links">
-                        ${(pai.links || []).map(link => `
-                            <a href="${escapeHtml(link?.url || '#')}" target="_blank" rel="noopener">
-                                <i class="fa-solid fa-link"></i>
-                                <span>${escapeHtml(link?.url || 'Link')}</span>
-                            </a>
-                        `).join('')}
+                    ${linksPai.length ? `<div class="book-elevator-links">
+                        ${linksPai.map(renderBookElevadorLink).join('')}
                     </div>` : ''}
                     ${(pai.pastafilho || []).filter(filho => !filho?.oculto).length ? `<div class="book-elevator-children">
-                        ${(pai.pastafilho || []).filter(filho => !filho?.oculto).map((filho, childIndex) => `
-                            <article class="book-elevator-child">
+                        ${(pai.pastafilho || []).filter(filho => !filho?.oculto).map((filho, childIndex) => {
+                            const linksFilho = linksElevadorParaLeitura(filho);
+                            return `<article class="book-elevator-child">
                                 <strong>${escapeHtml(filho?.nome || `Filho ${childIndex + 1}`)}</strong>
-                                ${filho?.url ? `<a href="${escapeHtml(filho.url)}" target="_blank" rel="noopener">${escapeHtml(filho.url)}</a>` : ''}
-                            </article>
-                        `).join('')}
+                                ${linksFilho.length ? `<div class="book-elevator-links book-elevator-child-links">
+                                    ${linksFilho.map(renderBookElevadorLink).join('')}
+                                </div>` : ''}
+                            </article>`;
+                        }).join('')}
                     </div>` : ''}
                 `}
-            </section>
-        `).join('')}
+            </section>`;
+        }).join('')}
     </div>`;
 }
-
 function renderBusinessCard(caixa) {
     const sizeClass = {
         pequena: 'book-business-card-small',
@@ -464,3 +484,5 @@ function isHeadlessPrintTool(caixa) {
 export function getVisibleBookBoxes() {
     return caixasVisiveis(BookState.caixas, BookState.dadosNota);
 }
+
+
