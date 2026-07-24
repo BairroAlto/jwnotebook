@@ -10,4 +10,5 @@ export const IDENTIDADE_FERRAMENTAS = {
      galeria: { id: "galeria", nome: "Imagens", icon: "fa-solid fa-panorama", cor: "#ec4899" },
      sumariar: { id: "sumariar", nome: "Sumariar", icon: "fa-brands fa-mailchimp", cor: "#6366f1" },
      firmamento: { id: "firmamento", nome: "Firmamento", icon: "fa-solid fa-aquarius", cor: "#d4af37" },
+     bairro: { id: "bairro", nome: "Bairro", icon: "fa-solid fa-city", cor: "#c084fc" },
 };
