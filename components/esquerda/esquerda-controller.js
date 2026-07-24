@@ -24,6 +24,33 @@ export function iniciarControladorEsquerda() {
         // 1. IDENTIFICAÇÃO DA ABA CLICADA
         const nomeAbaAlvo = btnAba.innerText.trim().toUpperCase();
 
+        // Se a aba clicada já for a ativa, voltamos à raiz da mesma (se aplicável)
+        const jaEstavaAtiva = btnAba.classList.contains('active');
+        if (jaEstavaAtiva) {
+            if (nomeAbaAlvo === 'LOCAL') {
+                window.pastaAtual = "root";
+                window.historicoPastas = [{ id: "root", nome: "Local" }];
+                const navPastaNome = document.getElementById('nav-pasta-nome');
+                const navIconVoltar = document.getElementById('nav-icon-voltar');
+                if (navPastaNome) navPastaNome.innerText = "LOCAL";
+                if (navIconVoltar) navIconVoltar.style.display = "none";
+                if (typeof window.carregarPastaLocalManual === 'function') {
+                    window.carregarPastaLocalManual("root");
+                }
+            } else if (nomeAbaAlvo === 'SHARE') {
+                window.pastaShareAtual = "home";
+                window.historicoPastasShare = [{ id: "home", nome: "Share" }];
+                const labelNome = document.getElementById('nav-share-nome');
+                const iconeVoltar = document.getElementById('nav-icon-voltar-share');
+                if (labelNome) labelNome.innerText = "SHARE";
+                if (iconeVoltar) iconeVoltar.style.display = "none";
+                if (typeof window.dispararLeituraShare === 'function') {
+                    window.dispararLeituraShare();
+                }
+            }
+            return;
+        }
+
         // 2. SEGURANÇA: LIBERTAR NOTAS SHARE AO SAIR DA ABA
         // Se o utilizador não está a ir para SHARE, mas estava a editar uma nota de Share, libertamos a tranca.
         if (nomeAbaAlvo !== 'SHARE') {
@@ -65,24 +92,25 @@ export function iniciarControladorEsquerda() {
                 }
                 break;
 
-       case 'LOCAL':
-    alternarDisplays([navLocal, listaLocal], 'flex');
-    alternarDisplays([navShare, navPins, listaShare, listaLists, listaPins], 'none');
-    // Forçar a atualização visual das classes active
-    document.querySelectorAll('.item-local').forEach(el => {
-        el.classList.toggle('active', el.dataset.id === window.itemSelecionadoId);
-    });
-    break;
+            case 'LOCAL':
+                alternarDisplays([navLocal, listaLocal], 'flex');
+                alternarDisplays([navShare, navPins, listaShare, listaLists, listaPins], 'none');
+                // Forçar a atualização visual das classes active
+                document.querySelectorAll('.item-local').forEach(el => {
+                    el.classList.toggle('active', el.dataset.id === window.itemSelecionadoId);
+                });
+                break;
 
-case 'PINS':
-    alternarDisplays([navPins, listaPins], 'flex');
-    alternarDisplays([navLocal, navShare, listaLocal, listaShare, listaLists], 'none');
-    // Forçar a atualização visual nos Pins
-    document.querySelectorAll('#lista-pins .item-local').forEach(el => {
-        // Nos pins, o ID real do item está no dataset.itemid
-        el.classList.toggle('active', el.dataset.itemid === window.itemSelecionadoId);
-    });
-    break;
+            case 'PINS':
+                alternarDisplays([navPins, listaPins], 'flex');
+                alternarDisplays([navLocal, navShare, listaLocal, listaShare, listaLists], 'none');
+                // Forçar a atualização visual nos Pins
+                document.querySelectorAll('#lista-pins .item-local').forEach(el => {
+                    // Nos pins, o ID real do item está no dataset.itemid
+                    el.classList.toggle('active', el.dataset.itemid === window.itemSelecionadoId);
+                });
+                break;
+                
             case 'LISTS':
                 alternarDisplays([listaLists], 'flex');
                 alternarDisplays([navLocal, navShare, navPins, listaLocal, listaShare, listaPins], 'none');

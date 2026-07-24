@@ -12,9 +12,6 @@ let timeoutCarregamentoLocal = null;
 
 
 export function inicializarLeituraLocal(db, auth) {
-    // REMOVE esta linha ou comenta-a:
-    // if (!auth.currentUser) return; 
-
     dbReferencia = db;
     authReferencia = auth;
 
@@ -31,12 +28,9 @@ export function inicializarLeituraLocal(db, auth) {
         };
     }
 
-    // Se o user já existir, carrega. Se não, o onSnapshot lá dentro espera por ele.
     carregarPasta(window.pastaAtual);
     atualizarUI();
 }
-
-
 
 function carregarPasta(idPasta) {
     const listaLocal = document.getElementById('lista-local');
@@ -45,14 +39,12 @@ function carregarPasta(idPasta) {
     const carregamentoId = ++carregamentoLocalAtual;
     clearTimeout(timeoutCarregamentoLocal);
 
-    // 1. ESTADO DE CARREGAMENTO (Visual)
+    // 1. Mostrar o spinner (roldana) imediatamente
     listaLocal.innerHTML = `
         <div style="text-align:center; padding:30px; opacity:0.5;">
             <i class="fa-solid fa-circle-notch fa-spin" style="color: var(--primary);"></i>
         </div>`;
 
-    // 2. LIMPEZA DE SEGURANÇA
-    // Mata o "ouvinte" anterior para não haver conflitos de dados de pastas diferentes
     if (unsubscribeAtual) unsubscribeAtual();
 
     const userId = authReferencia?.currentUser?.uid;
@@ -62,8 +54,6 @@ function carregarPasta(idPasta) {
     }
     const localRef = collection(dbReferencia, "Local");
 
-    // 3. QUERY DO FIREBASE
-    // Filtramos por utilizador, localização (pastapai) e apenas itens ativos (não ocultos)
     const q = query(
         localRef, 
         where("pastapai", "==", idPasta),
@@ -77,103 +67,102 @@ function carregarPasta(idPasta) {
         mostrarErroListaLocal(idPasta, 'A lista demorou demasiado tempo a responder.');
     }, 12000);
 
+    let timeoutCache = null;
+
     unsubscribeAtual = onSnapshot(q, (snapshot) => {
         if (carregamentoId !== carregamentoLocalAtual) return;
         clearTimeout(timeoutCarregamentoLocal);
-        const fragmento = document.createDocumentFragment();
 
-        if (snapshot.empty) {
-            const aviso = document.createElement("div");
-            aviso.style.cssText = "text-align:center; color:gray; font-size:11px; padding:30px; opacity:0.6;";
-            aviso.innerHTML = window.NotaBookMode === "book" ? "Pasta vazia." : "Pasta vazia.<br>Clica no '+' para criar.";
-            fragmento.appendChild(aviso);
-        } else {
-            
-            // 3.1 RECOLHER E ORDENAR (Lógica TOP + ORDEM)
-            const itensParaDesenhar = [];
-            snapshot.forEach((docSnap) => {
-                itensParaDesenhar.push({ idFirestore: docSnap.id, ...docSnap.data() });
-            });
+        const executarRender = () => {
+            if (carregamentoId !== carregamentoLocalAtual) return;
+            const fragmento = document.createDocumentFragment();
 
-            // Ordenação: Itens marcados como TOP sobem, o resto respeita a ordem manual
-            itensParaDesenhar.sort((a, b) => {
-                const aTop = (a.Top && a.Top.estado === "on") ? 1 : 0;
-                const bTop = (b.Top && b.Top.estado === "on") ? 1 : 0;
-                if (aTop !== bTop) return bTop - aTop;
-                return (a.ordem || 0) - (b.ordem || 0);
-            });
+            if (snapshot.empty) {
+                const aviso = document.createElement("div");
+                aviso.style.cssText = "text-align:center; color:gray; font-size:11px; padding:30px; opacity:0.6;";
+                aviso.innerHTML = window.NotaBookMode === "book" ? "Pasta vazia." : "Pasta vazia.<br>Clica no '+' para criar.";
+                fragmento.appendChild(aviso);
+            } else {
+                const itensParaDesenhar = [];
+                snapshot.forEach((docSnap) => {
+                    itensParaDesenhar.push({ idFirestore: docSnap.id, ...docSnap.data() });
+                });
 
-            // 3.2 RENDERIZAÇÃO DOS ITENS
-            itensParaDesenhar.forEach((d) => {
-                const docId = d.idFirestore; 
-                const item = document.createElement("div");
-                
-                // --- VERIFICAÇÃO DE SELEÇÃO ATIVA ---
-                // Crucial para manter o destaque visual quando o Firebase redesenha a lista
-                const isAtivo = (docId === window.itemSelecionadoId);
-                
-                // Configuração de Identidade do Elemento
-                item.className = `item-local tipo-${d.tipo} ${isAtivo ? 'active' : ''}`;
-                item.setAttribute('data-id', docId); // Usado pelo sincronizador global
-                
-                // Estilo Especial para Itens TOP
-                const isTop = (d.Top && d.Top.estado === "on");
-                if (isTop) {
-                    item.style.background = "rgba(251, 191, 36, 0.04)";
-                    item.style.borderRight = "3px solid #fbbf24";
-                }
+                itensParaDesenhar.sort((a, b) => {
+                    const aTop = (a.Top && a.Top.estado === "on") ? 1 : 0;
+                    const bTop = (b.Top && b.Top.estado === "on") ? 1 : 0;
+                    if (aTop !== bTop) return bTop - aTop;
+                    return (a.ordem || 0) - (b.ordem || 0);
+                });
 
-                // Definição de Ícones e Cores
-                let nomeIcone = (d.tipo === "pasta") ? (d.icon || "folder") : "note-sticky";
-                if (!nomeIcone.startsWith('fa-')) nomeIcone = `fa-${nomeIcone}`;
-                let corIcone = (d.tipo === "pasta") ? "#eab308" : "#6366f1";
-
-                const nomeEscapado = d.nome.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-
-                item.innerHTML = `
-                    <i class="fa-solid ${nomeIcone}" style="color: ${corIcone};"></i>
-                    <div style="flex: 1; display: flex; align-items: center; overflow: hidden;">
-                        <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-left-items); font-weight: ${isTop ? '700' : '500'};">
-                            ${d.nome}
-                        </span>
-                    </div>
-                    <i class="fa-solid fa-gear btn-edit-item-local" 
-                       onclick="event.stopPropagation(); window.abrirEditorItemLocal('${docId}', '${d.tipo}', '${nomeEscapado}')">
-                    </i>
-                `;
-                
-                // LÓGICA DE CLIQUE
-                item.onclick = () => {
-                    // Atualiza o ID global para que outros Snapshots saibam que esta nota foi selecionada
-                    window.itemSelecionadoId = docId; 
-
-                    if (d.tipo === "pasta") {
-                        // Navegação para dentro da pasta
-                        window.historicoPastas.push({ id: docId, nome: d.nome });
-                        window.pastaAtual = docId;
-                        atualizarUI(); // Muda o rótulo do topo "Voltar a..."
-                        carregarPasta(docId); 
-                    } else {
-                        // Abrir nota no editor central
-                        if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
-                            window.abrirNotaNoBook(docId, { ...d, onde: "local" }, dbReferencia, authReferencia);
-                        } else {
-                            abrirNotaNoEditor(docId, d, dbReferencia, authReferencia);
-                        }
-                        
-                        // Atualização visual imediata (limpa outros e acende este)
-                        document.querySelectorAll('.item-local').forEach(el => el.classList.remove('active'));
-                        item.classList.add('active');
+                itensParaDesenhar.forEach((d) => {
+                    const docId = d.idFirestore; 
+                    const item = document.createElement("div");
+                    
+                    const isAtivo = (docId === window.itemSelecionadoId);
+                    
+                    item.className = `item-local tipo-${d.tipo} ${isAtivo ? 'active' : ''}`;
+                    item.setAttribute('data-id', docId);
+                    
+                    const isTop = (d.Top && d.Top.estado === "on");
+                    if (isTop) {
+                        item.style.background = "rgba(251, 191, 36, 0.04)";
+                        item.style.borderRight = "3px solid #fbbf24";
                     }
-                };
 
-                fragmento.appendChild(item);
-            });
+                    let nomeIcone = (d.tipo === "pasta") ? (d.icon || "folder") : "note-sticky";
+                    if (!nomeIcone.startsWith('fa-')) nomeIcone = `fa-${nomeIcone}`;
+                    let corIcone = (d.tipo === "pasta") ? "#eab308" : "#6366f1";
+
+                    const nomeEscapado = d.nome.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+                    item.innerHTML = `
+                        <i class="fa-solid ${nomeIcone}" style="color: ${corIcone};"></i>
+                        <div style="flex: 1; display: flex; align-items: center; overflow: hidden;">
+                            <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-left-items); font-weight: ${isTop ? '700' : '500'};">
+                                ${d.nome}
+                            </span>
+                        </div>
+                        <i class="fa-solid fa-gear btn-edit-item-local" 
+                           onclick="event.stopPropagation(); window.abrirEditorItemLocal('${docId}', '${d.tipo}', '${nomeEscapado}')">
+                        </i>
+                    `;
+                    
+                    item.onclick = () => {
+                        if (d.tipo === "pasta") {
+                            window.historicoPastas.push({ id: docId, nome: d.nome });
+                            window.pastaAtual = docId;
+                            atualizarUI();
+                            carregarPasta(docId); 
+                        } else {
+                            window.itemSelecionadoId = docId; 
+                            if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+                                window.abrirNotaNoBook(docId, { ...d, onde: "local" }, dbReferencia, authReferencia);
+                            } else {
+                                abrirNotaNoEditor(docId, d, dbReferencia, authReferencia);
+                            }
+                            document.querySelectorAll('.item-local').forEach(el => el.classList.remove('active'));
+                            item.classList.add('active');
+                        }
+                    };
+
+                    fragmento.appendChild(item);
+                });
+            }
+
+            listaLocal.innerHTML = "";
+            listaLocal.appendChild(fragmento);
+        };
+
+        // Gestão inteligente do cache-flash:
+        if (!snapshot.metadata.fromCache) {
+            if (timeoutCache) clearTimeout(timeoutCache);
+            setTimeout(executarRender, 150); // Transição suave de 150ms do servidor
+        } else {
+            if (timeoutCache) clearTimeout(timeoutCache);
+            // Aguarda até 450ms pelo sinal do servidor. Se demorar mais, mostra a cache.
+            timeoutCache = setTimeout(executarRender, 450);
         }
-
-        // 4. INJEÇÃO FINAL NO DOM (Limpando o loader)
-        listaLocal.innerHTML = "";
-        listaLocal.appendChild(fragmento);
 
     }, (error) => {
         if (carregamentoId !== carregamentoLocalAtual) return;
@@ -198,7 +187,6 @@ function mostrarErroListaLocal(idPasta, mensagem) {
 
     listaLocal.querySelector('#btn-retry-lista-local')?.addEventListener('click', () => carregarPasta(idPasta), { once: true });
 }
-
 
 window.carregarPastaLocalManual = (idPasta) => {
     window.pastaAtual = idPasta || "root";
