@@ -35,6 +35,7 @@ export function syncButton() {
     const collapsed = document.body.classList.contains('left-column-collapsed');
 
     btn.hidden = !visible;
+    btn.style.display = visible ? 'inline-flex' : 'none';
     btn.setAttribute('aria-hidden', visible ? 'false' : 'true');
     btn.setAttribute('aria-label', collapsed ? 'Expandir coluna esquerda' : 'Colapsar coluna esquerda');
     btn.title = collapsed ? 'Expandir coluna esquerda' : 'Colapsar coluna esquerda';

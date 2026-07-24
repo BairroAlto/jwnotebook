@@ -1,4 +1,4 @@
-// components/share/shareout.js
+﻿// components/share/shareout.js
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
 import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { firebaseConfig } from '../../firebase-config.js';
@@ -18,7 +18,7 @@ async function carregarNotaPublica() {
     try {
         const snap = await getDoc(doc(db, "RUA", id));
         if (!snap.exists()) {
-            tituloEl.innerText = "Nota não encontrada";
+            tituloEl.innerText = "Nota nÃ£o encontrada";
             return;
         }
 
@@ -26,7 +26,7 @@ async function carregarNotaPublica() {
         tituloEl.innerText = nota.nome;
 
         const caixas = nota.caixas || [];
-        // Ordenação rigorosa
+        // OrdenaÃ§Ã£o rigorosa
         caixas.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
 
         let contadorRaciocinio = 1;
@@ -34,7 +34,7 @@ async function carregarNotaPublica() {
         for (const caixa of caixas) {
             try {
                 let elemento = null;
-                // Importação dinâmica individual para evitar que um erro quebre o loop
+                // ImportaÃ§Ã£o dinÃ¢mica individual para evitar que um erro quebre o loop
                 if (caixa.tipo === "subnota") {
                     const m = await import('../editor/ferramentas/subnota.js');
                     elemento = m.criarSubNotaAzul(caixa, noop, noop, noop, noop, noop, noop, noop);
@@ -59,15 +59,15 @@ async function carregarNotaPublica() {
                 }
 
                 if (elemento) {
-                    // Configurações de exibição do elemento
+                    // ConfiguraÃ§Ãµes de exibiÃ§Ã£o do elemento
                     elemento.style.marginBottom = "20px";
-                    elemento.style.pointerEvents = "none"; // Desativa cliques em tudo por segurança
+                    elemento.style.pointerEvents = "none"; // Desativa cliques em tudo por seguranÃ§a
 
-                    // Forçar expansão de todos os campos de texto
+                    // ForÃ§ar expansÃ£o de todos os campos de texto
                     const textAreas = elemento.querySelectorAll('textarea, input');
                     textAreas.forEach(ta => {
                         ta.readOnly = true;
-                        // Forçar altura baseada no conteúdo
+                        // ForÃ§ar altura baseada no conteÃºdo
                         ta.style.height = 'auto';
                         setTimeout(() => {
                             ta.style.height = ta.scrollHeight + 'px';
