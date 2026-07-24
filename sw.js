@@ -1,4 +1,4 @@
-const CACHE_NAME = 'notabook-x-v23';
+const CACHE_NAME = 'notabook-x-v32';
 
 const PRE_CACHE_ASSETS = [
   './',
