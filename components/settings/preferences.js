@@ -11,6 +11,31 @@ export const DEFAULT_LIST_FUSEIS = {
     palco: true
 };
 
+
+export const DEFAULT_ARRANQUE = [
+    { dispositivo: "pcTablet", arraque: "off", arrancarem: null },
+    { dispositivo: "mobile", arraque: "off", arrancarem: null }
+];
+
+export function normalizarArranque(raw = {}) {
+    const entradas = Array.isArray(raw?.arranque) ? raw.arranque : (Array.isArray(raw?.Arraque) ? raw.Arraque : []);
+    return DEFAULT_ARRANQUE.map((base) => {
+        const entrada = entradas.find((item) => item?.dispositivo === base.dispositivo) || {};
+        return {
+            ...base,
+            arraque: entrada.arraque === "on" ? "on" : "off",
+            arrancarem: typeof entrada.arrancarem === "string" && entrada.arrancarem.trim()
+                ? entrada.arrancarem.trim()
+                : null
+        };
+    });
+}
+
+export function atualizarEntradaArranque(raw, dispositivo, alteracoes = {}) {
+    return normalizarArranque({ Arraque: normalizarArranque(raw).map((entrada) => (
+        entrada.dispositivo === dispositivo ? { ...entrada, ...alteracoes } : entrada
+    )) });
+}
 export const DEFAULT_NOTE_CONFIG = {
     textSize: null,
     collapseToolTitles: false,
@@ -56,6 +81,8 @@ export async function carregarPreferenciasUtilizador(db, uid) {
     if (!db || !uid) {
         return {
             listsFuseis: normalizarFuseis(),
+            arranque: normalizarArranque(),
+            Arraque: normalizarArranque(),
             noteTitleCollapse: false,
             colapsoTitulosMobile: false,
             noteTitleCollapseMobile: false,
@@ -73,6 +100,8 @@ export async function carregarPreferenciasUtilizador(db, uid) {
         return {
             ...dados,
             listsFuseis: normalizarFuseis(dados),
+            arranque: normalizarArranque(dados),
+            Arraque: normalizarArranque(dados),
             noteTitleCollapse: Boolean(dados.noteTitleCollapse),
             colapsoTitulosMobile: Boolean(dados.colapsoTitulosMobile),
             noteTitleCollapseMobile: Boolean(dados.noteTitleCollapseMobile),
@@ -85,6 +114,8 @@ export async function carregarPreferenciasUtilizador(db, uid) {
     } catch (_) {
         return {
             listsFuseis: normalizarFuseis(),
+            arranque: normalizarArranque(),
+            Arraque: normalizarArranque(),
             noteTitleCollapse: false,
             colapsoTitulosMobile: false,
             noteTitleCollapseMobile: false,

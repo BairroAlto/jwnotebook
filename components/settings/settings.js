@@ -12,6 +12,7 @@ import {
     obterConfigNotaEfetiva
 } from './preferences.js';
 import { aplicarPreferenciaBotaoColapsoColunaEsquerda, iniciarControloColunaEsquerda } from '../ui/left-column-collapse.js';
+import { inicializarArranque } from './startup.js';
 
 const FUSEIS_META = [
     { key: "topicos", label: "Tópicos", desc: "Taxonomia e vínculos de tópico" },
@@ -56,7 +57,9 @@ export async function inicializarSettings(db, auth) {
     bindSearch(db, auth, overlay);
     inicializarAmigos(db, auth);
     ativarFiltroDispositivo();
+    inicializarArranque(db, auth, userPrefs);
     ativarVisibilidadeBarraSuperior();
+    return userPrefs;
 }
 
 function ativarVisibilidadeBarraSuperior() {
