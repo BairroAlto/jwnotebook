@@ -208,9 +208,9 @@ function abrirPopupReacoes(caixa, dadosNota, notaId, db, auth, anchor) {
             ${opcoes.map(([tipo, icon, cor]) => `<button data-reaction="${tipo}" style="width:32px; height:32px; border-radius:999px; background:rgba(255,255,255,0.05); color:${cor};"><i class="fa-solid ${icon}"></i></button>`).join('')}
         </div>
         <div style="max-height:140px; overflow:auto; display:flex; flex-direction:column; gap:6px;">
-            ${reactions.length ? reactions.map(item => `<div style="font-size:11px; color:#e2e8f0;"><b>${item.nome}</b> â€¢ ${item.tipo}</div>`).join('') : `<div style="font-size:11px; color:#94a3b8;">Sem reaÃ§Ãµes ainda.</div>`}
+            ${reactions.length ? reactions.map(item => `<div style="font-size:11px; color:#e2e8f0;"><b>${item.nome}</b> • ${item.tipo}</div>`).join('') : `<div style="font-size:11px; color:#94a3b8;">Sem reações ainda.</div>`}
         </div>
-        ${minhas ? `<button data-remove-reaction style="background:rgba(248,113,113,0.12); color:#fca5a5; padding:8px; border-radius:8px; font-size:11px;">Remover a minha reaÃ§Ã£o</button>` : ``}
+        ${minhas ? `<button data-remove-reaction style="background:rgba(248,113,113,0.12); color:#fca5a5; padding:8px; border-radius:8px; font-size:11px;">Remover a minha reação</button>` : ``}
     `;
 
     if (anchor.closest('[id^="bloco-"]')) {

@@ -1,4 +1,4 @@
-﻿import { collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { renderizarAssociados, renderizarHub } from './tags-ui.js';
 import { IDENTIDADE_FERRAMENTAS } from '../../../constants/ferramentas.js';
 import { carregarExploradorAssociar } from './tags-associar-explorer.js';
@@ -41,7 +41,7 @@ export async function remover(idAlvo, ctx) {
     const { caixaAlvo, persistir, dbRef, authRef } = ctx;
     const alvo = (caixaAlvo.associados || []).find(a => a.id === idAlvo);
     const confirmou = await perguntarRemocaoHub({
-        titulo: "Remover AssociaÃ§Ã£o?",
+        titulo: "Remover Associação?",
         mensagem: alvo?.titulo
             ? `Desejas remover "${alvo.titulo}" do Hub?`
             : "Desejas remover este item do Hub?"

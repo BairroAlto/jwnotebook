@@ -1050,13 +1050,13 @@ function configurarRemocoesTags() {
             const mensagensHub = {
                 biblia: itemTitulo
                     ? `Desejas remover "${itemTitulo}" do Hub?`
-                    : "Desejas remover este texto bÃ­blico do Hub?",
+                    : "Desejas remover este texto bíblico do Hub?",
                 cosmos: itemTitulo
                     ? `Desejas remover "${itemTitulo}" do Hub?`
                     : "Desejas remover este tema do Hub?",
                 topico: itemTitulo
                     ? `Desejas remover "${itemTitulo}" do Hub?`
-                    : "Desejas remover este tÃ³pico do Hub?"
+                    : "Desejas remover este tópico do Hub?"
             };
 
             if (!mensagensHub[kind]) return true;

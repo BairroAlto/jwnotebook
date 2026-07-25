@@ -66,7 +66,7 @@ export function renderizarCards(ctx) {
 
     const refs = caixaAlvo.referencias || [];
     if (refs.length === 0) {
-        container.innerHTML = `<p style="text-align:center; padding:30px; color:gray; font-size:11px; opacity:0.5;">Nenhuma referÃªncia vinculada.</p>`;
+        container.innerHTML = `<p style="text-align:center; padding:30px; color:gray; font-size:11px; opacity:0.5;">Nenhuma referência vinculada.</p>`;
         return;
     }
 
