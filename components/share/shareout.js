@@ -1,4 +1,4 @@
-﻿// components/share/shareout.js
+// components/share/shareout.js
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
 import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { firebaseConfig } from '../../firebase-config.js';
@@ -18,7 +18,7 @@ async function carregarNotaPublica() {
     try {
         const snap = await getDoc(doc(db, "RUA", id));
         if (!snap.exists()) {
-            tituloEl.innerText = "Nota nÃ£o encontrada";
+            tituloEl.innerText = "Nota não encontrada";
             return;
         }
 
