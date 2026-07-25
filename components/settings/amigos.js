@@ -150,7 +150,7 @@ async function processarConvite() {
 
     if (!meuUser || !emailAlvo) return;
     if (emailAlvo === meuUser.email?.toLowerCase()) {
-        showFeedback("NÃ£o podes convidar-te a ti mesmo.", "#ef4444");
+        showFeedback("Não podes convidar-te a ti mesmo.", "#ef4444");
         return;
     }
 
@@ -164,7 +164,7 @@ async function processarConvite() {
         });
 
         if (!docAmigo) {
-            showFeedback("Utilizador nÃ£o encontrado.", "#ef4444");
+            showFeedback("Utilizador não encontrado.", "#ef4444");
             return;
         }
 
@@ -179,7 +179,7 @@ async function processarConvite() {
         });
 
         if (jaExiste) {
-            showFeedback("Pedido jÃ¡ enviado ou jÃ¡ sÃ£o amigos.", "#fbbf24");
+            showFeedback("Pedido já enviado ou já são amigos.", "#fbbf24");
             return;
         }
 
