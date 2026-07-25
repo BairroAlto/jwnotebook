@@ -1,4 +1,4 @@
-﻿// components/editor/modulos/paleta-cores.js
+// components/editor/modulos/paleta-cores.js
 import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { MutationManager } from './mutation-manager.js'; // ðŸš€ NOVO MÃ“DULO
 import { transmitirParaBrainVivo } from '../../biblioteca-brain/biblio-transmitter.js';
@@ -13,18 +13,18 @@ export const CORES_BASE = [
 
 export const FOCOS_BASE = {
     "original": { nome: "Original", corForte: "#ea580c" },
-    "comentario": { nome: "ComentÃ¡rio", corForte: "#F86B44" }, 
-    "transcricao": { nome: "TranscriÃ§Ã£o", corForte: "#f97316" },
-    "reflexao": { nome: "ReflexÃ£o", corForte: "#C23515" },
+    "comentario": { nome: "Comentário", corForte: "#F86B44" }, 
+    "transcricao": { nome: "Transcrição", corForte: "#f97316" },
+    "reflexao": { nome: "Reflexão", corForte: "#C23515" },
     "desafio": { nome: "Desafio", corForte: "#9a3412" },
     "rascunho": { nome: "Rascunho", corForte: "#573516" },
     "exemplo": { nome: "Exemplo", corForte: "#854d0e" },
-    "camaleao": { nome: "CamaleÃ£o", corForte: "var(--bg-body)" }
+    "camaleao": { nome: "Camaleão", corForte: "var(--bg-body)" }
 };
 
 export const FOCOS_SUBNOTA = {
     "original": { nome: "Original", corForte: "#2563eb" },
-    "perola": { nome: "PÃ©rola", corForte: "#0032FD" },
+    "perola": { nome: "Pérola", corForte: "#0032FD" },
     "estudo": { nome: "Estudo", corForte: "#4169E1" },
     "resumo": { nome: "Resumo", corForte: "#1a3a5f" },
     "palestra": { nome: "Palestra", corForte: "#5c6bc0" },
@@ -35,13 +35,13 @@ export const FOCOS_QUESTAO = {
     "original": { nome: "Original", corForte: "#10b981" },
     "paradoxo": { nome: "Paradoxo", corForte: "#82e0aa" },
     "dilema": { nome: "Dilema", corForte: "#D1E491" },
-    "hipotese": { nome: "HipÃ³tese", corForte: "#607455" },
-    "revisao": { nome: "RevisÃ£o", corForte: "#2B4B44" }
+    "hipotese": { nome: "Hipótese", corForte: "#607455" },
+    "revisao": { nome: "Revisão", corForte: "#2B4B44" }
 };
 
 export const FOCOS_RACIOCINIO = {
     "original": { nome: "Original", corForte: "#f59e0b" },
-    "socratico": { nome: "SocrÃ¡tico", corForte: "#FFD155" }
+    "socratico": { nome: "Socrático", corForte: "#FFD155" }
 };
 
 let nomesCoresCustom = {};
