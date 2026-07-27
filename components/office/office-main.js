@@ -28,6 +28,7 @@ import {
 import { carregarMenuSuperior, finalizarLoading, mostrarLogin } from './office-ui.js';
 import { extrairTextoConteudo, normalizarItensPublicacao } from './office-content.js';
 import { filtrarIndice, filtrosAtivos } from './office-search.js';
+import { iniciarIndicadoresAnotacoes, pararIndicadoresAnotacoes, definirContextoAnotacoes } from './office-annotations.js';
 import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
@@ -41,12 +42,14 @@ iniciarAutenticacao(app, db);
 
 onAuthStateChanged(auth, async (user) => {
     if (!user) {
+        pararIndicadoresAnotacoes();
         setTimeout(() => {
             if (!auth.currentUser) mostrarLogin();
         }, 700);
         return;
     }
 
+    iniciarIndicadoresAnotacoes(db, auth);
     window.NotaBookUserPrefs = await carregarPreferenciasUtilizador(db, user.uid);
     await carregarMenuSuperior();
     await carregarPopupsBrain();
@@ -379,7 +382,16 @@ function abrirConteudo(item, parent, siblings, index, path, kind, ano = "") {
     $('office-nav-panel').classList.add('hidden');
 }
 
+function obterReferenciaOffice(item, parent) {
+    if (parent?.artigos) return item?.referencia || "";
+    if (parent?.capitulos) return (parent.titulo || "") + " cap. " + (item?.capitulo || "");
+    if (parent?.video) return parent.video.referencia || "";
+    return item?.referencia || "";
+}
+
 function prepararConteudoCentral() {
+    definirContextoAnotacoes({ referencia: obterReferenciaOffice(state.currentData, state.currentParent) });
+
     document.querySelectorAll('#office-reader [data-p]').forEach(bloco => {
         bloco.addEventListener('click', () => abrirPainelDireito('brain'));
     });
