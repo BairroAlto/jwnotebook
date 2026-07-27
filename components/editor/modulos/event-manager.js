@@ -1,4 +1,4 @@
-﻿// components/editor/modulos/event-manager.js
+// components/editor/modulos/event-manager.js
 import { doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { moverCaixa, prepararInsercao } from './editor-actions.js';
 import { abrirPaleta } from './paleta-cores.js';
@@ -88,8 +88,17 @@ export const EventManager = {
         // ========================================================
         // 2. NAVEGAÃ‡ÃƒO INTERNA DO "EYE" (COM FILTRO DE EXCLUSIVIDADE)
         // ========================================================
+        window.__atualizarGlosasEye = () => {
+            const modosLive = Array.isArray(ctx.dadosNotaOriginal.modo) ? ctx.dadosNotaOriginal.modo : [ctx.dadosNotaOriginal.modo || 'normal'];
+            const sentinelaLive = modosLive.includes('sentinela');
+            const caixasLive = (window.caixasAtuais || ctx.caixasAtuais).filter(caixa => {
+                if (caixa.estado !== 'on') return false;
+                return sentinelaLive ? !!caixa.referenciacodex : !caixa.referenciacodex;
+            });
+            return import('../../direita/eye-glosas.js').then(modulo => modulo.carregarGlosasDaNota(caixasLive));
+        };
         window.switchEyeTab = (t) => {
-            const ids = ['indice-nota-container', 'textos-container', 'ancora-nota-container', 'fontes-nota-container', 'caixas-associadas-container'];
+            const ids = ['indice-nota-container', 'textos-container', 'ancora-nota-container', 'fontes-nota-container', 'glosas-nota-container', 'caixas-associadas-container'];
             ids.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
             document.querySelectorAll('#sub-tabs-eye i').forEach(i => i.classList.remove('active'));
 
@@ -102,13 +111,14 @@ export const EventManager = {
                 return isSentinela ? !!c.referenciacodex : !c.referenciacodex;
             });
 
-            const map = { 'indice':'indice-nota-container', 'textos':'textos-container', 'ancora':'ancora-nota-container', 'fontes':'fontes-nota-container', 'caixas':'caixas-associadas-container' }[t];
+            const map = { 'indice':'indice-nota-container', 'textos':'textos-container', 'ancora':'ancora-nota-container', 'fontes':'fontes-nota-container', 'glosas':'glosas-nota-container', 'caixas':'caixas-associadas-container' }[t];
             const target = document.getElementById(map);
             if (target) { target.style.display = 'flex'; target.style.flexDirection = 'column'; }
             document.getElementById(`btn-tab-${t}`)?.classList.add('active');
 
             if (t === 'textos') import('../../direita/eye-textos-biblia.js').then(m => m.detectarEExibirTextosBiblicos(flt));
             if (t === 'fontes') import('../../direita/eye-fontes-nota.js').then(m => m.carregarFontesGlobaisDaNota(flt));
+            if (t === 'glosas') import('../../direita/eye-glosas.js').then(m => m.carregarGlosasDaNota(flt));
             if (t === 'indice') import('../../direita/indice.js').then(m => m.renderizarIndice(flt, modos.includes('post')));
             if (t === 'ancora') {import('../../direita/eye-ancora.js').then(m => m.iniciarAbaAncora(ctx.notaAbertaId, ctx.dbRef, ctx.authRef) );}
         };
