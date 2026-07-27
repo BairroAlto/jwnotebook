@@ -63,6 +63,11 @@ export function despacharInteligenciaEye(caixas, nota, db, auth) {
             m.carregarFontesGlobaisDaNota(caixasFiltradas);
         });
 
+        // D) Glosas agrupadas por caixa, apenas quando têm conteúdo
+        import('../../../direita/eye-glosas.js').then(m => {
+            m.carregarGlosasDaNota(caixasFiltradas);
+        });
+
         // D) Detetor Bíblico - Leituras automáticas
         import('../../../direita/eye-textos-biblia.js').then(m => {
             m.detectarEExibirTextosBiblicos(caixasFiltradas);
