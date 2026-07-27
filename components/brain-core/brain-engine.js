@@ -4,6 +4,7 @@ import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
 import { abrirNotaNoEditor } from '../editor/editor.js';
 import { SharedPuzzleUI } from '../direita/shared-puzzle-ui.js';
 import { SharedUI } from '../editor/modulos/shared/shared-ui.js';
+import { FOCOS_BASE, FOCOS_SUBNOTA, FOCOS_QUESTAO, FOCOS_RACIOCINIO } from '../editor/modulos/paleta-cores.js';
 
 // --- ESTADO GLOBAL DO MÓDULO ---
 let unsubDoc = null;
@@ -53,7 +54,6 @@ export function limparEngine() {
 async function handlePlusClick() {
     const cacheValido = dadosAtuais || dadosSincronizados;
 
-    // Se estiver bloqueado há mais de 5 segundos, assumimos erro e libertamos
     if (travaDuploClique && estaAEscrever) {
         if (!window._lastClickTime) window._lastClickTime = Date.now();
         if (Date.now() - window._lastClickTime > 5000) {
@@ -63,48 +63,87 @@ async function handlePlusClick() {
         }
     }
 
-    if (travaDuploClique || !cacheValido) {
+    if (travaDuploClique || !cacheValido || !currentDocRef) {
         console.warn("🚫 [SISTEMA] Clique bloqueado ou dados ausentes.");
         return;
     }
     
+    // 🚀 NOVO POPUP: Escolha entre Nota Simples e Caixa Conectora
+    const escolha = await SharedPuzzleUI.abrirPopupTipoNota();
+    if (!escolha) return;
+
     window._lastClickTime = Date.now();
     travaDuploClique = true; 
     estaAEscrever = true;
 
     try {
-        const quadrosNaRam = [...(cacheValido.Puzzle?.quadros || [])];
-        
-        currentContainer.querySelectorAll('textarea[data-id]').forEach(ta => {
-            const item = quadrosNaRam.find(q => q.id === ta.dataset.id);
-            if (item) item.conteudo = ta.value;
-        });
+        if (escolha === 'simples') {
+            // === OPÇÃO 1: NOTA SIMPLES (QUADRO NO PUZZLE.QUADROS) ===
+            const quadrosNaRam = [...(cacheValido.Puzzle?.quadros || [])];
+            
+            currentContainer.querySelectorAll('textarea[data-id]').forEach(ta => {
+                const item = quadrosNaRam.find(q => q.id === ta.dataset.id);
+                if (item) item.conteudo = ta.value;
+            });
 
-        const novoId = crypto.randomUUID();
-        const novo = { 
-            id: novoId, 
-            userId: currentUid, 
-            timestamp: new Date().toISOString(), 
-            estado: "on", 
-            tipo: "caixatexto", 
-            conteudo: "" 
-        };
+            const novoId = crypto.randomUUID();
+            const novo = { 
+                id: novoId, 
+                userId: currentUid, 
+                timestamp: new Date().toISOString(), 
+                estado: "on", 
+                tipo: "caixatexto", 
+                conteudo: "" 
+            };
 
-        quadrosNaRam.push(novo);
+            quadrosNaRam.push(novo);
+            await updateDoc(currentDocRef, { "Puzzle.quadros": quadrosNaRam });
 
-        // Gravamos no Firebase
-        await updateDoc(currentDocRef, { "Puzzle.quadros": quadrosNaRam });
+            setTimeout(() => {
+                const ta = currentContainer.querySelector(`textarea[data-id="${novoId}"]`);
+                if (ta) {
+                    ta.focus();
+                    ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+                travaDuploClique = false;
+                estaAEscrever = false;
+            }, 250);
 
-        // Libertamos as trancas um pouco mais rápido (250ms em vez de 400ms)
-        setTimeout(() => {
-            const ta = currentContainer.querySelector(`textarea[data-id="${novoId}"]`);
-            if (ta) {
-                ta.focus();
-                ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-            travaDuploClique = false;
-            estaAEscrever = false;
-        }, 250);
+        } else if (escolha === 'conectora') {
+            // === OPÇÃO 2: CAIXA CONECTORA (CRIA LOGO UM CONTENTOR) ===
+            const caixasAtuaisDoc = Array.isArray(cacheValido.caixas) ? [...cacheValido.caixas] : [];
+            const agora = new Date().toISOString();
+            const novoId = crypto.randomUUID();
+            const novaOrdem = caixasAtuaisDoc.length + 1;
+
+            const novaCaixaConectora = {
+                conteudo: "",
+                estado: "on",
+                foco: "original",
+                id: novoId,
+                ordem: novaOrdem,
+                protecao: "fechado",
+                timedelete: null,
+                timestamp: agora,
+                tipo: "contentor",
+                titulo: ""
+            };
+
+            caixasAtuaisDoc.push(novaCaixaConectora);
+
+            let caixasPuzzle = Array.isArray(cacheValido.Puzzle?.caixas) ? [...cacheValido.Puzzle.caixas] : [];
+            caixasPuzzle.push({ id: novoId, timestamp: agora, ordem: novaOrdem });
+
+            await updateDoc(currentDocRef, { 
+                "caixas": caixasAtuaisDoc,
+                "Puzzle.caixas": caixasPuzzle
+            });
+
+            setTimeout(() => {
+                travaDuploClique = false;
+                estaAEscrever = false;
+            }, 250);
+        }
 
     } catch (e) {
         console.error(e);
@@ -161,11 +200,15 @@ function reconstruirPuzzleUI(container, docRef, db, auth) {
     const ferramentas = caixas.map(conf => {
         const id = typeof conf === 'object' ? conf.id : conf;
         const vivo = mapaFerramentasVivas[id];
-        return vivo ? { ...vivo, timestamp: conf.timestamp || vivo.timestamp, _tipo: 'ferramenta' } : null;
+        if (vivo) return { ...vivo, timestamp: conf.timestamp || vivo.timestamp, _tipo: 'ferramenta' };
+        if (typeof conf === 'object' && conf.tipo && conf.tipo !== 'caixatexto' && conf.estado === 'on') {
+            return { ...conf, timestamp: conf.timestamp || new Date().toISOString(), _tipo: 'caixaConectora' };
+        }
+        return null;
     }).filter(f => f !== null);
 
     const listaFinal = [...quadros.map(q => ({ ...q, _tipo: 'quadro' })), ...ferramentas].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-    const assinatura = JSON.stringify(listaFinal.map(i => ({id: i.id, txt: i.conteudo})));
+    const assinatura = JSON.stringify(listaFinal.map(i => ({id: i.id, txt: i.conteudo, tit: i.titulo})));
     if (assinatura === ultimoJsonRenderizado) return;
     ultimoJsonRenderizado = assinatura;
 
@@ -177,6 +220,8 @@ function reconstruirPuzzleUI(container, docRef, db, auth) {
                 moverItem: (idx, dir) => moverItemGenerico(idx, dir, listaFinal, docRef),
                 apagarItem: (id) => apagarQuadroGenerico(id, docRef)
             }));
+        } else if (item._tipo === 'caixaConectora') {
+            container.appendChild(renderCaixaConectoraDirecta(item, index, listaFinal, docRef));
         } else {
             container.appendChild(renderFerramentaEspelho(item, index, listaFinal, docRef, db, auth));
         }
@@ -933,10 +978,116 @@ async function apagarQuadroGenerico(id, ref) {
 
 function renderFerramentaEspelho(c, index, todos, docRef, db, auth) {
     const config = IDENTIDADE_FERRAMENTAS[c.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
+    const mapaFocos = { subnota: FOCOS_SUBNOTA, questao: FOCOS_QUESTAO, raciocinio: FOCOS_RACIOCINIO };
+    const corFoco = (mapaFocos[c.tipo] || FOCOS_BASE)[c.foco || "original"]?.corForte || config.cor;
+
     const div = document.createElement('div');
-    div.style.cssText = `border-left: 4px solid ${config.cor}; background: rgba(255,255,255,0.02); margin-bottom: 12px; border-radius: 8px; padding:12px; cursor:pointer;`;
-    div.innerHTML = `<div style="display:flex; justify-content:space-between; margin-bottom:8px;"><span style="font-size:9px; font-weight:800; color:${config.cor}; text-transform:uppercase;">${c.tipo}</span><i class="fa-solid fa-arrow-up-right-from-square" style="opacity:0.3; font-size:11px;"></i></div><div style="font-size:13px; color:white; line-height:1.4;">${c.titulo?`<b style="display:block; margin-bottom:4px;">${c.titulo}</b>`:''}<div style="opacity:0.8; white-space: pre-wrap;">${c.conteudo}</div></div><div style="font-size:8px; opacity:0.3; text-align:right; margin-top:8px; font-weight:800; text-transform:uppercase;"><i class="fa-solid fa-file-lines"></i> ${c.notaDados.nome}</div>`;
-    div.onclick = () => abrirNotaNoEditor(c.notaDocId, c.notaDados, db, auth, c.id);
+    div.style.cssText = `border-left: 4px solid ${corFoco}; background: rgba(255,255,255,0.02); margin-bottom: 12px; border-radius: 4px; overflow: hidden;`;
+    div.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background: ${corFoco}15;">
+            <div style="font-size:10px; font-weight:800; color:${corFoco}; text-transform:uppercase; display:flex; align-items:center; gap:6px;">
+                <i class="${config.icon}"></i> ${c.tipo}
+            </div>
+            <div style="display:flex; gap:14px; color:rgba(255,255,255,0.35); font-size:11px; align-items:center;">
+                <i class="fa-solid fa-chevron-up btn-up" style="cursor:pointer;" title="Subir"></i>
+                <i class="fa-solid fa-chevron-down btn-down" style="cursor:pointer;" title="Descer"></i>
+                <i class="fa-solid fa-arrow-up-right-from-square btn-viajar" style="cursor:pointer; color:#818cf8;" title="Abrir Nota"></i>
+                <i class="fa-solid fa-trash-can btn-remove" style="color:#f87171; cursor:pointer;" title="Remover Vínculo"></i>
+            </div>
+        </div>
+        <div style="padding:12px; font-size:13px; color:white; line-height:1.4;">
+            ${c.titulo ? `<div style="font-weight:700; margin-bottom:4px; color:${corFoco};">${c.titulo}</div>` : ''}
+            <div style="opacity:0.9; white-space: pre-wrap;">${c.conteudo || ''}</div>
+            ${c.notaDados?.nome ? `<div style="font-size:8px; opacity:0.3; text-align:right; margin-top:8px; font-weight:800; text-transform:uppercase;"><i class="fa-solid fa-file-lines"></i> ${c.notaDados.nome}</div>` : ''}
+        </div>`;
+
+    div.querySelector('.btn-up').onclick = (e) => { e.stopPropagation(); moverItemGenerico(index, -1, todos, docRef); };
+    div.querySelector('.btn-down').onclick = (e) => { e.stopPropagation(); moverItemGenerico(index, 1, todos, docRef); };
+    div.querySelector('.btn-viajar').onclick = (e) => { e.stopPropagation(); abrirNotaNoEditor(c.notaDocId, c.notaDados, db, auth, c.id); };
+    div.querySelector('.btn-remove').onclick = async (e) => {
+        e.stopPropagation();
+        if (await SharedPuzzleUI.confirmarAcao("Remover Vínculo?", "Tens a certeza que desejas retirar este bloco do Puzzle?")) {
+            const snap = await getDoc(docRef);
+            const caixasVinc = (snap.data().caixas || snap.data().Puzzle?.caixas || []).filter(item => (typeof item === 'object' ? item.id : item) !== c.id);
+            await updateDoc(docRef, { "Puzzle.caixas": caixasVinc });
+        }
+    };
+
+    return div;
+}
+
+function renderCaixaConectoraDirecta(c, index, todos, docRef) {
+    const config = IDENTIDADE_FERRAMENTAS[c.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
+    const mapaFocos = { subnota: FOCOS_SUBNOTA, questao: FOCOS_QUESTAO, raciocinio: FOCOS_RACIOCINIO };
+    const corFoco = (mapaFocos[c.tipo] || FOCOS_BASE)[c.foco || "original"]?.corForte || config.cor;
+
+    const temTitulo = c.tipo !== 'contentor';
+
+    const div = document.createElement('div');
+    div.style.cssText = `border-left: 4px solid ${corFoco}; background: rgba(255,255,255,0.02); margin-bottom: 12px; border-radius: 4px; overflow: hidden;`;
+    div.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background: ${corFoco}15;">
+            <div style="font-size:10px; font-weight:800; color:${corFoco}; text-transform:uppercase; display:flex; align-items:center; gap:6px;">
+                <i class="${config.icon}"></i> ${c.tipo}
+            </div>
+            <div style="display:flex; gap:14px; color:rgba(255,255,255,0.35); font-size:11px; align-items:center;">
+                <i class="fa-solid fa-chevron-up btn-up" style="cursor:pointer;" title="Subir"></i>
+                <i class="fa-solid fa-chevron-down btn-down" style="cursor:pointer;" title="Descer"></i>
+                <i class="fa-solid fa-trash-can btn-remove" style="color:#f87171; cursor:pointer;" title="Apagar"></i>
+            </div>
+        </div>
+        <div style="padding:12px; font-size:13px; color:white; line-height:1.4;">
+            ${temTitulo ? `<input type="text" class="input-tit-conectora" value="${c.titulo || ''}" placeholder="Título (opcional)..." style="background:transparent; border:none; border-bottom:1px solid rgba(255,255,255,0.08); color:${corFoco}; font-weight:700; font-size:13px; outline:none; width:100%; margin-bottom:6px;">` : ''}
+            <textarea class="txt-conectora" placeholder="Escreve o conteúdo da anotação..." style="background:transparent; border:none; color:white; font-size:13px; line-height:1.4; outline:none; resize:vertical; width:100%; min-height:50px;">${c.conteudo || ''}</textarea>
+        </div>`;
+
+    const inputTit = div.querySelector('.input-tit-conectora');
+    const txtArea = div.querySelector('.txt-conectora');
+
+    const agendarSalvar = () => {
+        estaAEscrever = true;
+        if (window._puzzleTimers.has(c.id)) clearTimeout(window._puzzleTimers.get(c.id));
+        const timer = setTimeout(async () => {
+            try {
+                const snap = await getDoc(docRef);
+                const caixasDoc = (snap.data().caixas || []).map(item => {
+                    if (typeof item === 'object' && item.id === c.id) {
+                        return { 
+                            ...item, 
+                            ...(inputTit ? { titulo: inputTit.value } : {}), 
+                            conteudo: txtArea ? txtArea.value : item.conteudo 
+                        };
+                    }
+                    return item;
+                });
+                await updateDoc(docRef, { caixas: caixasDoc });
+                estaAEscrever = false;
+            } catch (err) { console.error(err); }
+        }, 1000);
+        window._puzzleTimers.set(c.id, timer);
+    };
+
+    if (inputTit) inputTit.oninput = agendarSalvar;
+    if (txtArea) txtArea.oninput = agendarSalvar;
+
+    div.querySelector('.btn-remove').onclick = async () => {
+        const confirmou = await SharedPuzzleUI.confirmarAcao("Apagar Caixa Conectora?", "Tens a certeza que desejas remover esta ferramenta?");
+        if (confirmou) {
+            const snap = await getDoc(docRef);
+            const caixasDoc = (snap.data().caixas || []).map(item => {
+                if (typeof item === 'object' && item.id === c.id) {
+                    return { ...item, estado: "off", timedelete: new Date().toISOString() };
+                }
+                return item;
+            });
+            const puzzleCaixasDoc = (snap.data().Puzzle?.caixas || []).filter(item => (typeof item === 'object' ? item.id : item) !== c.id);
+            await updateDoc(docRef, { caixas: caixasDoc, "Puzzle.caixas": puzzleCaixasDoc });
+        }
+    };
+
+    div.querySelector('.btn-up').onclick = () => moverItemGenerico(index, -1, todos, docRef);
+    div.querySelector('.btn-down').onclick = () => moverItemGenerico(index, 1, todos, docRef);
+
     return div;
 }
 
