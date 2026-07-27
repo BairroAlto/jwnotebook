@@ -169,6 +169,7 @@ function assinaturaCaixas(caixas) {
         pastapai: caixa.pastapai || [],
         ligaçãoBairro: caixa.ligaçãoBairro || [],
         estado: caixa.estado || "on",
+        glosas: caixa.glosas || [],
         ref: caixa.referenciacodex || null,
         timestamp: caixa.timestamp || ""
     })));
