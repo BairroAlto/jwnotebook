@@ -1,4 +1,4 @@
-// components/editor/modulos/event-manager.js
+﻿// components/editor/modulos/event-manager.js
 import { doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { moverCaixa, prepararInsercao } from './editor-actions.js';
 import { abrirPaleta } from './paleta-cores.js';
@@ -39,21 +39,22 @@ function iniciarScrollHorizontalDosTitulos() {
 export const EventManager = {
     /**
      * INICIALIZADOR DE EVENTOS
-     * @param {Object} ctx - Objeto de estado vivo vindo do editor.js (contém dbRef, authRef, caixasAtuais, etc.)
+     * @param {Object} ctx - Objeto de estado vivo vindo do editor.js (contÃ©m dbRef, authRef, caixasAtuais, etc.)
      */
     init: (ctx) => {
-        console.log(`🎯 [EVENT-MANAGER] Maestro ativo for: ${ctx.notaAbertaId}`);
+        console.log(`ðŸŽ¯ [EVENT-MANAGER] Maestro ativo for: ${ctx.notaAbertaId}`);
         try {
             MobileBibleBar.iniciar();
         } catch (erro) {
-            console.error('[MOBILE-BIBLE-BAR] Não foi possível iniciar a barra:', erro);
+            console.error('[MOBILE-BIBLE-BAR] NÃ£o foi possÃ­vel iniciar a barra:', erro);
         }
         iniciarScrollHorizontalDosTitulos();
 
         // ========================================================
-        // 1. NAVEGAÇÃO DE PAINÉIS (EYE / BRAIN / X-SAT)
+        // 1. NAVEGAÃ‡ÃƒO DE PAINÃ‰IS (EYE / BRAIN / X-SAT)
         // ========================================================
         window.switchPanel = (p) => {
+        
             document.querySelectorAll('.tab-content').forEach(c => {
                 c.classList.remove('active');
                 c.style.display = 'none';
@@ -70,7 +71,7 @@ export const EventManager = {
                 if (!canalA || canalA.dataset.num === "6") {
                     const b6 = document.querySelector('.xsat-num[data-num="6"]');
                     if (b6) b6.classList.add('active');
-                    // Força a IA a ler os dados da nota atual respeitando o modo
+                    // ForÃ§a a IA a ler os dados da nota atual respeitando o modo
                     import('../../direita/ai-controller.js').then(m => {
                         m.AIController.renderizarLista(null, ctx.dadosNotaOriginal);
                         });
@@ -85,7 +86,7 @@ export const EventManager = {
         };
 
         // ========================================================
-        // 2. NAVEGAÇÃO INTERNA DO "EYE" (COM FILTRO DE EXCLUSIVIDADE)
+        // 2. NAVEGAÃ‡ÃƒO INTERNA DO "EYE" (COM FILTRO DE EXCLUSIVIDADE)
         // ========================================================
         window.switchEyeTab = (t) => {
             const ids = ['indice-nota-container', 'textos-container', 'ancora-nota-container', 'fontes-nota-container', 'caixas-associadas-container'];
@@ -95,7 +96,7 @@ export const EventManager = {
             const modos = Array.isArray(ctx.dadosNotaOriginal.modo) ? ctx.dadosNotaOriginal.modo : [ctx.dadosNotaOriginal.modo || 'normal'];
             const isSentinela = modos.includes('sentinela');
             
-            // 🚀 FILTRO RIGOROSO: A direita só vê o que o modo permite
+            // ðŸš€ FILTRO RIGOROSO: A direita sÃ³ vÃª o que o modo permite
             const flt = ctx.caixasAtuais.filter(c => {
                 if (c.estado !== 'on') return false;
                 return isSentinela ? !!c.referenciacodex : !c.referenciacodex;
@@ -113,16 +114,16 @@ export const EventManager = {
         };
 
         // ========================================================
-        // 3. LABORATÓRIO (MODOS E FERRAMENTAS)
+        // 3. LABORATÃ“RIO (MODOS E FERRAMENTAS)
         // ========================================================
         window.alterarModoNota = async (m) => {
             if (ctx.dadosNotaOriginal.onde === "share" && m === "sentinela") {
-                console.warn("🚫 [SISTEMA] Notas partilhadas não suportam o Modo Sentinela.");
+                console.warn("ðŸš« [SISTEMA] Notas partilhadas nÃ£o suportam o Modo Sentinela.");
                 return; 
             }
             if (!ctx.notaAbertaId || !ctx.dbRef) return;
 
-            // A) TRATAMENTO DA PESQUISA GLOBAL (FERRAMENTA ÚNICA)
+            // A) TRATAMENTO DA PESQUISA GLOBAL (FERRAMENTA ÃšNICA)
             if (m === 'global') {
                 const caixasVivas = ctx.caixasAtuais.filter(c => c.estado === 'on');
                 const textoFull = caixasVivas.map(c => `${c.titulo || ""} ${c.conteudo || ""}`).join(" [BLOCK] ");
@@ -139,7 +140,7 @@ export const EventManager = {
                 return;
             }
 
-            // B) LÓGICA DE EXCLUSIVIDADE DE MODOS
+            // B) LÃ“GICA DE EXCLUSIVIDADE DE MODOS
             let atual = Array.isArray(ctx.dadosNotaOriginal.modo) ? [...ctx.dadosNotaOriginal.modo] : [ctx.dadosNotaOriginal.modo || 'normal'];
             let novos = [];
 
@@ -161,7 +162,7 @@ export const EventManager = {
             const nexoSec = document.getElementById('lab-nexo-section');
             if (nexoSec) nexoSec.style.display = novos.includes('sentinela') ? 'none' : 'block';
 
-            // C) Lógica Modo Sentinela (Browser + Duplicados)
+            // C) LÃ³gica Modo Sentinela (Browser + Duplicados)
             if (m === 'sentinela' && !ctx.caixasAtuais.some(c => c.referenciacodex)) {
                 import('./sentinela-browser.js').then(sb => sb.SentinelaBrowser.abrir(async (json, idx) => {
                     const artigo = json.artigos[idx];
@@ -172,7 +173,7 @@ export const EventManager = {
 
                     if (notaDuplicadaId) {
                         const { mostrarAviso } = await import('./tags/tags-utils.js');
-                        mostrarAviso(`Já existe uma nota para este estudo! Verifica a tua lista ou a reciclagem.`);
+                        mostrarAviso(`JÃ¡ existe uma nota para este estudo! Verifica a tua lista ou a reciclagem.`);
                         // Reset para normal
                         ctx.dadosNotaOriginal.modo = ['normal'];
                         await updateDoc(doc(ctx.dbRef, "Local", ctx.notaAbertaId), { modo: ['normal'] });
@@ -243,12 +244,12 @@ export const EventManager = {
         };
 
         // ========================================================
-        // 🚀 PONTES PARA FERRAMENTAS ESPECIAIS (LUPAS)
+        // ðŸš€ PONTES PARA FERRAMENTAS ESPECIAIS (LUPAS)
         // ========================================================
 
-        // 1. CITAÇÃO BÍBLICA
+        // 1. CITAÃ‡ÃƒO BÃBLICA
         window.abrirSeletorBibliaGlobal = (caixa) => {
-            console.log("📖 [EVENT] Abrindo seletor bíblico para a caixa.");
+            console.log("ðŸ“– [EVENT] Abrindo seletor bÃ­blico para a caixa.");
             import('./biblia-selector.js').then(m => {
                 m.abrirSelector(caixa);
             });
@@ -256,7 +257,7 @@ export const EventManager = {
 
         // 2. WEBCARD (LINKS VISUAIS)
         window.abrirWebCardConfigGlobal = (caixa) => {
-            console.log("🌍 [EVENT] Abrindo configurador de WebCards.");
+            console.log("ðŸŒ [EVENT] Abrindo configurador de WebCards.");
             import('./webcard-service.js').then(async m => {
                 const urls = await m.WebCardService.abrirConfigurador(caixa);
                 if (urls) {
@@ -272,7 +273,7 @@ export const EventManager = {
 
         // 3. IMAGENS (GALERIA ROSA)
         window.abrirImagensConfigGlobal = (caixa) => {
-            console.log("📸 [EVENT] Abrindo configurador de Galeria.");
+            console.log("ðŸ“¸ [EVENT] Abrindo configurador de Galeria.");
             import('./imagens-service.js').then(async m => {
                 const dados = await m.ImagensService.abrirConfigurador(caixa);
                 if (dados) {
@@ -312,10 +313,10 @@ export const EventManager = {
 
         const tit = document.getElementById('editor-titulo');
         if (tit) {
-            // 1. Gravação ao digitar
+            // 1. GravaÃ§Ã£o ao digitar
             tit.oninput = () => ctx.acionarGravacao();
 
-            // 🚀 2. LÓGICA DE COLAGEM LIMPA (PLAIN TEXT)
+            // ðŸš€ 2. LÃ“GICA DE COLAGEM LIMPA (PLAIN TEXT)
             tit.onpaste = (e) => {
                 e.preventDefault();
                 const text = (e.originalEvent || e).clipboardData.getData('text/plain');
@@ -338,7 +339,7 @@ export const EventManager = {
             popup.innerHTML = `
                 <div class="popup-content" style="max-width:460px; width:94%;">
                     <div class="popup-header">
-                        <h3>Definições desta Nota</h3>
+                        <h3>DefiniÃ§Ãµes desta Nota</h3>
                         <button data-close-note-settings><i class="fa-solid fa-xmark"></i></button>
                     </div>
                     <div style="padding:18px; display:flex; flex-direction:column; gap:16px; background:var(--bg-body);">
@@ -346,8 +347,8 @@ export const EventManager = {
                             <span style="font-size:12px; color:#e2e8f0; font-weight:700;">Tamanho do Texto (coluna do centro)</span>
                             <input id="note-text-size-input" type="range" min="12" max="30" value="${config.textSize || 15}">
                         </label>
-                        <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do Título (ferramentas)</span><input id="note-collapse-tools" type="checkbox" ${config.collapseToolTitles ? 'checked' : ''}></label>
-                        <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do Título (título nota)</span><input id="note-collapse-title" type="checkbox" ${config.collapseNoteTitle ? 'checked' : ''}></label>
+                        <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do TÃ­tulo (ferramentas)</span><input id="note-collapse-tools" type="checkbox" ${config.collapseToolTitles ? 'checked' : ''}></label>
+                        <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do TÃ­tulo (tÃ­tulo nota)</span><input id="note-collapse-title" type="checkbox" ${config.collapseNoteTitle ? 'checked' : ''}></label>
                         <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Linhas de caderno</span><input id="note-diario-lines" type="checkbox" ${config.diarioLines ? 'checked' : ''}></label>
                         <div style="display:flex; flex-direction:column; gap:10px;">
                             <div style="font-size:12px; color:#e2e8f0; font-weight:700;">Mudar Foco (Nascimento)</div>
@@ -356,9 +357,9 @@ export const EventManager = {
                                     <span style="font-size:11px; color:var(--text-muted); text-transform:capitalize;">${tipo}</span>
                                     <select data-foco-tipo="${tipo}" style="background:#0f172a; color:white; border:1px solid rgba(255,255,255,0.1); padding:6px 8px; border-radius:8px;">
                                         <option value="original" ${config.defaultFocos?.[tipo] === 'original' ? 'selected' : ''}>Original</option>
-                                        <option value="comentario" ${config.defaultFocos?.[tipo] === 'comentario' ? 'selected' : ''}>Comentário</option>
-                                        <option value="revisao" ${config.defaultFocos?.[tipo] === 'revisao' ? 'selected' : ''}>Revisão</option>
-                                        <option value="camaleao" ${config.defaultFocos?.[tipo] === 'camaleao' ? 'selected' : ''}>Camaleão</option>
+                                        <option value="comentario" ${config.defaultFocos?.[tipo] === 'comentario' ? 'selected' : ''}>ComentÃ¡rio</option>
+                                        <option value="revisao" ${config.defaultFocos?.[tipo] === 'revisao' ? 'selected' : ''}>RevisÃ£o</option>
+                                        <option value="camaleao" ${config.defaultFocos?.[tipo] === 'camaleao' ? 'selected' : ''}>CamaleÃ£o</option>
                                     </select>
                                 </label>
                             `).join('')}
@@ -434,27 +435,27 @@ export const EventManager = {
             popup.innerHTML = `
                 <div class="popup-content" style="max-width:540px; width:94%; border-radius:20px; overflow:hidden;">
                     <div class="popup-header" style="padding:18px 22px; background:linear-gradient(135deg, rgba(99,102,241,0.18), rgba(15,23,42,0.95)); border-bottom:1px solid rgba(255,255,255,0.08);">
-                        <h3>Definições desta Nota</h3>
+                        <h3>DefiniÃ§Ãµes desta Nota</h3>
                         <button data-close-note-settings><i class="fa-solid fa-xmark"></i></button>
                     </div>
                     <div style="padding:20px; display:flex; flex-direction:column; gap:18px; background:linear-gradient(180deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98)); max-height:75vh; overflow:auto;">
                         <div style="padding:16px; border:1px solid rgba(255,255,255,0.08); border-radius:16px; background:rgba(255,255,255,0.03); display:flex; flex-direction:column; gap:14px;">
                             <div>
                                 <div style="font-size:11px; color:#cbd5e1; font-weight:800; text-transform:uppercase; letter-spacing:1px;">Leitura</div>
-                                <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">As alterações são guardadas automaticamente.</div>
+                                <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">As alteraÃ§Ãµes sÃ£o guardadas automaticamente.</div>
                             </div>
                             <label style="display:flex; flex-direction:column; gap:8px;">
                                 <span style="font-size:12px; color:#e2e8f0; font-weight:700;">Tamanho do Texto</span>
                                 <input id="note-text-size-input" type="range" min="12" max="30" value="${config.textSize || 15}">
                             </label>
-                            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do Título (ferramentas)</span><input id="note-collapse-tools" type="checkbox" ${config.collapseToolTitles ? 'checked' : ''}></label>
-                            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do Título (nota)</span><input id="note-collapse-title" type="checkbox" ${config.collapseNoteTitle ? 'checked' : ''}></label>
+                            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do TÃ­tulo (ferramentas)</span><input id="note-collapse-tools" type="checkbox" ${config.collapseToolTitles ? 'checked' : ''}></label>
+                            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Colapso do TÃ­tulo (nota)</span><input id="note-collapse-title" type="checkbox" ${config.collapseNoteTitle ? 'checked' : ''}></label>
                         </div>
                         ${mostrarLinhasDiario ? `
                         <div style="padding:16px; border:1px solid rgba(96,165,250,0.18); border-radius:16px; background:rgba(59,130,246,0.08); display:flex; flex-direction:column; gap:12px;">
                             <div>
-                                <div style="font-size:11px; color:#bfdbfe; font-weight:800; text-transform:uppercase; letter-spacing:1px;">Modo Diário</div>
-                                <div style="font-size:11px; color:#93c5fd; margin-top:4px;">Esta opção só aparece quando o Modo Diário está ativo.</div>
+                                <div style="font-size:11px; color:#bfdbfe; font-weight:800; text-transform:uppercase; letter-spacing:1px;">Modo DiÃ¡rio</div>
+                                <div style="font-size:11px; color:#93c5fd; margin-top:4px;">Esta opÃ§Ã£o sÃ³ aparece quando o Modo DiÃ¡rio estÃ¡ ativo.</div>
                             </div>
                             <label style="display:flex; align-items:center; justify-content:space-between; gap:12px;"><span style="font-size:12px; color:#e2e8f0; font-weight:700;">Linhas de caderno</span><input id="note-diario-lines" type="checkbox" ${config.diarioLines ? 'checked' : ''}></label>
                         </div>` : ``}
@@ -556,7 +557,7 @@ export const EventManager = {
                 const caixasVivas = ctx.caixasAtuais || [];
                 const jaTemEstudo = caixasVivas.some(c => c.referenciacodex && c.estado === 'on');
                 if (!jaTemEstudo) {
-                    console.log("📚 [SENTINELA] Sem caixas vinculadas. Abrindo Explorador Codex...");
+                    console.log("ðŸ“š [SENTINELA] Sem caixas vinculadas. Abrindo Explorador Codex...");
                     Promise.all([
                         import('./sentinela-browser.js'),
                         import('./sentinela-manager.js')
@@ -573,3 +574,5 @@ export const EventManager = {
         LabModelos.init(ctx);
     }
 };
+
+
