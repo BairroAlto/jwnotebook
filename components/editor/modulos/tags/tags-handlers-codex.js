@@ -51,7 +51,7 @@ export function renderizarCards(ctx) {
         return;
     }
 
- container.innerHTML = cardsAtivos.map(card => {
+    container.innerHTML = cardsAtivos.map(card => {
         const strSeqs = Array.isArray(card.sequencia) ? card.sequencia.join(', ') : card.sequencia;
         const strPags = Array.isArray(card.paginas) ? card.paginas.join(', ') : (card.paginas || "");
         
@@ -66,10 +66,9 @@ export function renderizarCards(ctx) {
         // 2. Definições para a Coluna Central (Páginas vs Tempo)
         const labelCentro = isVideo ? 'Tempo' : 'Página(s)';
         const valorCentro = isVideo ? (card.tempo || "") : strPags;
-        const campoCentro = isVideo ? 'tempo' : 'paginas';
         const placeholderCentro = isVideo ? '00:00:00' : 'Ex: 8-13';
-        // Se for tempo, grava como texto direto; se for páginas, expande o array
         const handlerCentro = isVideo ? 'updateCodexFieldManual' : 'updateCodexListaManual';
+        const onInputCentro = isVideo ? `window.formatarInputTempo(this); window.updateCodexFieldManual('${card.id}', 'tempo', this.value)` : `window.updateCodexListaManual('${card.id}', 'paginas', this.value)`;
 
         return `
         <div class="codex-card-completo" id="card-${card.id}" style="border-left: 3px solid var(--primary); margin-bottom:15px; position:relative;">
@@ -104,14 +103,13 @@ export function renderizarCards(ctx) {
                 </div>
 
                 <!-- COLUNA 2: PÁGINAS OU TEMPO (DINÂMICO) -->
-             <div class="field-column">
-    <label>${labelCentro}</label>
-    <input type="text" 
-       value="${valorCentro}" 
-       placeholder="00:00:00"
-       maxlength="8"
-       oninput="window.formatarInputTempo(this); window.updateCodexFieldManual('${card.id}', 'tempo', this.value)">
-</div>
+                <div class="field-column">
+                    <label>${labelCentro}</label>
+                    <input type="text" 
+                       value="${valorCentro}" 
+                       placeholder="${placeholderCentro}"
+                       oninput="${onInputCentro}">
+                </div>
 
                 <!-- COLUNA 3: MÊS/ID E ANO -->
                 <div class="field-column">
@@ -133,21 +131,17 @@ export function renderizarCards(ctx) {
  * 3. SINCRONIZAÇÃO BIBLIOTECA
  */
 export async function executarSincronizacaoForcada(subDoc, ctx) {
-    const { dbRef, authRef, notaMaeId, caixaAlvo } = ctx; // Pegamos o caixaAlvo do contexto
+    const { dbRef, authRef, notaMaeId, caixaAlvo } = ctx;
     if (!authRef.currentUser) return;
     
     const uid = authRef.currentUser.uid;
-    const blockId = caixaAlvo.id; // Este é o ID da ferramenta (ex: Contentor) que queremos em 'Apto'
-    
-    // Tratamos a sequência como um array para processar um a um (ex: 1, 2)
+    const blockId = caixaAlvo.id;
     const seqs = Array.isArray(subDoc.sequencia) ? subDoc.sequencia : [subDoc.sequencia];
 
     console.group(`📡 [BIBLIA-SYNC] ${subDoc.referencia}`);
 
     for (const s of seqs) {
-        const numLimpo = String(s).replace(/[^0-9]/g, '');
         const numSeq = parseInt(String(s).replace(/[^0-9]/g, ''));
-        
         if (isNaN(numSeq)) continue;
 
         const q = query(
@@ -162,7 +156,6 @@ export async function executarSincronizacaoForcada(subDoc, ctx) {
             const snap = await getDocs(q);
             const vinculo = { caixaId: subDoc.id, notaId: notaMaeId };
 
-            // Dados base
             const dadosParaGravar = {
                 userId: uid,
                 referencia: subDoc.referencia || "",
@@ -183,28 +176,47 @@ export async function executarSincronizacaoForcada(subDoc, ctx) {
             };
 
             if (!snap.empty) {
-                // --- CENÁRIO A: ATUALIZAR EXISTENTE ---
                 const docRef = doc(dbRef, "Biblioteca", snap.docs[0].id);
+                const data = snap.docs[0].data();
+
+                let caixasPuzzle = Array.isArray(data.Puzzle?.caixas) ? [...data.Puzzle.caixas] : [];
+                const idxP = caixasPuzzle.findIndex(c => (typeof c === 'object' ? c.id : c) === blockId);
+                const itemExistente = idxP >= 0 ? caixasPuzzle[idxP] : null;
+                const ordemVal = caixaAlvo.ordem !== undefined ? caixaAlvo.ordem : (itemExistente?.ordem !== undefined ? itemExistente.ordem : (caixasPuzzle.length + 1));
+
+                const novoItemP = { 
+                    id: blockId, 
+                    timestamp: caixaAlvo.timestamp || new Date().toISOString(),
+                    ordem: ordemVal
+                };
+                if (idxP >= 0) caixasPuzzle[idxP] = novoItemP;
+                else caixasPuzzle.push(novoItemP);
+
                 await updateDoc(docRef, {
                     ...dadosParaGravar,
                     caixas: arrayUnion(vinculo),
-                    // ADICIONADO: Garante que o bloco está apto para o Dossiê
-                    "Dossie.Apto": arrayUnion(blockId) 
+                    "Dossie.Apto": arrayUnion(blockId),
+                    "Puzzle.caixas": caixasPuzzle
                 });
-                console.log(`✅ Índice e Dossiê atualizados: §${numSeq}`);
+                console.log(`✅ Índice, Dossiê e Puzzle.caixas atualizados: §${numSeq}`);
             } else {
-                // --- CENÁRIO B: CRIAR NOVO REGISTO ---
                 await addDoc(collection(dbRef, "Biblioteca"), {
                     ...dadosParaGravar,
                     caixas: [vinculo],
-                    // ADICIONADO: Inicializa o Dossie com o bloco Apto
                     Dossie: {
                         Apto: [blockId],
                         mica: {}
                     },
+                    Puzzle: {
+                        caixas: [{ 
+                            id: blockId, 
+                            timestamp: caixaAlvo.timestamp || new Date().toISOString(),
+                            ordem: caixaAlvo.ordem !== undefined ? caixaAlvo.ordem : 1
+                        }]
+                    },
                     timestamp: serverTimestamp()
                 });
-                console.log(`🌟 Novo índice e Dossiê criados: §${numSeq}`);
+                console.log(`🌟 Novo índice, Dossiê e Puzzle criados: §${numSeq}`);
             }
         } catch (e) {
             console.error(`❌ Erro ao sincronizar §${numSeq}:`, e);
@@ -219,19 +231,11 @@ export async function executarSincronizacaoForcada(subDoc, ctx) {
 export function adicionarNovoCardCodex(ctx) { if (typeof window.triggerCodexBrowser === 'function') window.triggerCodexBrowser("NEW"); }
 export function updateCodexField(cardId, campo, valor, ctx) {
     const { caixaAlvo, persistir } = ctx;
-    
-    // Procura o sub-item no array
     const subDoc = (caixaAlvo.codex || []).flat().find(c => c.id === cardId);
-    
     if (subDoc) {
         subDoc[campo] = valor;
-        
-        // 1. Grava na Nota
         persistir('codex', caixaAlvo.codex); 
-        
-        // 2. Grava na Biblioteca (Dispara o update com o novo tempo)
         executarSincronizacaoForcada(subDoc, ctx);
-
         dispararUpdateEyeFontes();
     }
 }
@@ -250,14 +254,13 @@ export function updateCodexLista(cardId, campo, valor, ctx) {
     const finalArray = [...new Set(nums)].sort((a, b) => a - b);
     caixaAlvo.codex.flat().forEach(c => { if (c.id === cardId) { c[campo] = finalArray; persistir('codex', caixaAlvo.codex); dispararUpdateEyeFontes(); } });
 }
+
 export async function removerVinculoBibliotecaGlobal(card, ctx) {
     const { dbRef, authRef, caixaAlvo } = ctx;
     if (!authRef.currentUser) return;
 
     const uid = authRef.currentUser.uid;
-    const caixaIdParaLimpar = caixaAlvo.id; // O ID da ferramenta que está a ser desvinculada
-
-    // Processamos cada parágrafo (sequência) mapeado no card
+    const caixaIdParaLimpar = caixaAlvo.id;
     const seqs = Array.isArray(card.sequencia) ? card.sequencia : [card.sequencia];
 
     console.group(`🗑️ [BIBLIOTECA-CLEAN] Removendo vínculos de: ${card.referencia}`);
@@ -266,7 +269,6 @@ export async function removerVinculoBibliotecaGlobal(card, ctx) {
         const numSeq = parseInt(String(s).replace(/[^0-9]/g, ''));
         if (isNaN(numSeq)) continue;
 
-        // Procurar o documento mestre na Biblioteca
         const q = query(
             collection(dbRef, "Biblioteca"),
             where("userId", "==", uid),
@@ -282,38 +284,33 @@ export async function removerVinculoBibliotecaGlobal(card, ctx) {
                 const data = docSnap.data();
                 const docRef = docSnap.ref;
 
-                // 1. Limpar array principal de vínculos (campo 'caixas')
                 const novasCaixasVinc = (data.caixas || []).filter(v => (v.caixaId || v) !== caixaIdParaLimpar);
-
-                // 2. Limpar Dossie.Apto (Remove da lista de 'disponíveis' para o Dossiê)
                 const novosAptos = (data.Dossie?.Apto || []).filter(id => id !== caixaIdParaLimpar);
+                const caixasPuzzle = (data.Puzzle?.caixas || []).filter(c => (typeof c === 'object' ? c.id : c) !== caixaIdParaLimpar);
 
-                // 3. Limpar dentro de cada MICA (Dossie.mica.ID_MICA.caixas)
                 let micasAlteradas = false;
                 const micas = data.Dossie?.mica || {};
                 
                 for (const mId in micas) {
                     if (micas[mId].caixas && micas[mId].caixas.includes(caixaIdParaLimpar)) {
-                        console.log(`   - Removendo da Mica: ${micas[mId].titulo}`);
                         micas[mId].caixas = micas[mId].caixas.filter(id => id !== caixaIdParaLimpar);
                         micasAlteradas = true;
                     }
                 }
 
-                // 4. Montar o objeto de atualização
                 const updatePayload = {
                     caixas: novasCaixasVinc,
                     "Dossie.Apto": novosAptos,
+                    "Puzzle.caixas": caixasPuzzle,
                     timestampUpdate: serverTimestamp()
                 };
 
-                // Só atualizamos o objeto mica se houve realmente uma remoção lá dentro
                 if (micasAlteradas) {
                     updatePayload["Dossie.mica"] = micas;
                 }
 
                 await updateDoc(docRef, updatePayload);
-                console.log(`✅ [CLEAN] §${numSeq} limpo com sucesso.`);
+                console.log(`✅ [CLEAN] §${numSeq} limpo com sucesso do Puzzle.`);
             }
         } catch (e) {
             console.error(`❌ Erro ao limpar §${numSeq}:`, e);

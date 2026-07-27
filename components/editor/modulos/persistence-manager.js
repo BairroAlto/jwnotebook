@@ -41,19 +41,16 @@ export const PersistenceManager = {
             state.notaComAlteracoes = false;
             
             // ========================================================
-            // 🚀 SINCRONIZAÇÃO PARA O BRAIN (BIBLIOTECA)
+            // 🚀 SINCRONIZAÇÃO PARA O BRAIN / BIBLIOTECA (CODEX & PUZZLE)
             // ========================================================
-            const modos = Array.isArray(dadosNotaOriginal.modo) ? dadosNotaOriginal.modo : [dadosNotaOriginal.modo || 'normal'];
-            
-            // Se mudámos algo numa caixa que tem vínculo com a Biblioteca
-           if (modos.includes('sentinela') && caixaEditadaId) {
-    const caixaAlvo = caixasAtuais.find(c => c.id === caixaEditadaId);
-    if (caixaAlvo && caixaAlvo.referenciacodex && caixaAlvo.estado === "on") {
-        console.log("🎯 [EDITOR->BIBLIOTECA] Sincronizando mudança...");
-        const { SentinelaManager } = await import('./sentinela-manager.js');
-        await SentinelaManager.sincronizarParaBiblioteca(caixaAlvo, dbRef, authRef.currentUser.uid);
-    }
-}
+            if (caixaEditadaId) {
+                const caixaAlvo = caixasAtuais.find(c => c.id === caixaEditadaId);
+                if (caixaAlvo && caixaAlvo.referenciacodex && caixaAlvo.estado === "on") {
+                    console.log("🎯 [EDITOR->BIBLIOTECA] Sincronizando caixa vinculada a Codex...");
+                    const { SentinelaManager } = await import('./sentinela-manager.js');
+                    await SentinelaManager.sincronizarParaBiblioteca(caixaAlvo, dbRef, authRef.currentUser.uid);
+                }
+            }
 
             const info = document.getElementById('editor-info-text');
             if (info) info.innerText = "Sincronizado";

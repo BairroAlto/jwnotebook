@@ -23,6 +23,7 @@ import { abrirPesquisaCodex } from '../codex-browser.js';
 import { perguntarRemocaoHub } from './tags-utils.js';
 import { removerLigacaoBairroDoAlvo } from '../bairro-ligacoes.js';
 import { configurarToggleArranqueDaNota } from '../../../settings/startup.js';
+import * as GlosaController from '../glosa/glosa-controller.js';
 
 let dbRef, authRef, caixaAlvo, notaMaeId;
 let topicoPaiSelecionado = null; // Estado para o filtro de subtÃƒÆ’Ã‚Â³picos
@@ -61,10 +62,15 @@ function resetInputsPesquisaTags() {
 export function iniciarSistemaTags(db, auth) {
     dbRef = db; authRef = auth;
     configurarRemocoesTags();
+    GlosaController.iniciar(() => getCtx());
 
     // 1. GestÃƒÆ’Ã‚Â£o de Abas
     document.querySelectorAll('.tab-tags').forEach(tab => {
         tab.onclick = () => {
+            const abaAtiva = document.querySelector('.tab-tags.active')?.getAttribute('data-target');
+            if (abaAtiva === 'tags-glosa' && tab.getAttribute('data-target') !== 'tags-glosa') {
+                GlosaController.limparVazias(getCtx());
+            }
              resetInputsPesquisaTags(); 
              document.querySelectorAll('.tab-tags').forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
@@ -89,6 +95,8 @@ if(btnToggleTopico) {
     const btnFechar = document.getElementById('btn-fechar-tags');
     if(btnFechar) {
         btnFechar.onclick = () => {
+            const abaAtiva = document.querySelector('.tab-tags.active')?.getAttribute('data-target');
+            if (abaAtiva === 'tags-glosa') GlosaController.limparVazias(getCtx());
             // --- ADICIONADO: Reset ao fechar ---
             resetInputsPesquisaTags(); 
             document.getElementById('popup-tags-overlay').classList.remove('active');
@@ -192,6 +200,7 @@ export function abrirPopupTags(caixa, notaId, origemNota) {
     renderizarNeuroniosNoPopup(caixaAlvo);
     renderizarAssociados(caixaAlvo);
     renderizarVinculosTopicos(caixaAlvo);
+    GlosaController.renderizar(getCtx());
     prepararBuscaTopicosUnificada();
     
     // --- 8. CARREGAR CARDS DE CODEX E REFERÃƒÆ’Ã…Â NCIAS ---

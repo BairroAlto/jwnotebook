@@ -124,7 +124,7 @@ export const SentinelaManager = {
     },
 
     /**
-     * 3. SINCRONIZAÇÃO LIVE: EDITOR -> BIBLIOTECA
+     * 3. SINCRONIZAÇÃO LIVE: EDITOR -> BIBLIOTECA (incluindo Puzzle.caixas)
      */
     sincronizarParaBiblioteca: async (caixa, db, uid) => {
         if (!caixa.referenciacodex) return;
@@ -139,12 +139,38 @@ export const SentinelaManager = {
 
         const snap = await getDocs(q);
         if (!snap.empty) {
-            await updateDoc(snap.docs[0].ref, {
+            const docSnap = snap.docs[0];
+            const docRef = docSnap.ref;
+            const data = docSnap.data();
+
+            let caixasPuzzle = Array.isArray(data.Puzzle?.caixas) ? data.Puzzle.caixas : [];
+
+            if (caixa.estado === "off") {
+                caixasPuzzle = caixasPuzzle.filter(item => (typeof item === 'object' ? item.id : item) !== caixa.id);
+            } else {
+                const idx = caixasPuzzle.findIndex(item => (typeof item === 'object' ? item.id : item) === caixa.id);
+                const itemExistente = idx >= 0 ? caixasPuzzle[idx] : null;
+                const ordemVal = caixa.ordem !== undefined ? caixa.ordem : (itemExistente?.ordem !== undefined ? itemExistente.ordem : (caixasPuzzle.length + 1));
+                
+                const novoItem = { 
+                    id: caixa.id, 
+                    timestamp: caixa.timestamp || new Date().toISOString(),
+                    ordem: ordemVal
+                };
+                if (idx >= 0) {
+                    caixasPuzzle[idx] = novoItem;
+                } else {
+                    caixasPuzzle.push(novoItem);
+                }
+            }
+
+            await updateDoc(docRef, {
                 "anotacaoEspecial.conteudo": caixa.conteudo || "",
                 "anotacaoEspecial.titulo": caixa.titulo || "",
                 "anotacaoEspecial.foco": caixa.foco || "original",
                 "anotacaoEspecial.tipo": caixa.tipo || "questao",
                 "anotacaoEspecial.destaques": caixa.destaques || "",
+                "Puzzle.caixas": caixasPuzzle,
                 "timestampUpdate": serverTimestamp()
             });
         }
