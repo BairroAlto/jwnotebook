@@ -6,6 +6,7 @@ import { SyncManager } from './modulos/sync-manager.js';
 import { PersistenceManager } from './modulos/persistence-manager.js';
 import { BootManager } from './modulos/boot-manager.js';
 import { isEdicaoAtiva } from './modulos/share-controller.js';
+import { despacharInteligenciaEye } from './modulos/intelligence/dispatcher.js';
 
 let state = {
     notaAbertaId: null,
@@ -79,6 +80,14 @@ function acionarGravacao(caixa = null) {
         state.caixaEditadaId = null; // Gravação global (ex: título)
     }
 
+    // Actualiza o EYE em live sem redesenhar o editor.
+    // O dispatcher aplica o seu próprio debounce para não processar cada tecla.
+    despacharInteligenciaEye(
+        state.caixasAtuais,
+        state.dadosNotaOriginal,
+        state.dbRef,
+        state.authRef
+    );
     const isLocal = (state.dadosNotaOriginal.onde !== "share");
     const podeGravar = (state.dadosNotaOriginal.onde === "share" && isEdicaoAtiva());
 
