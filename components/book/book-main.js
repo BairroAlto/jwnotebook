@@ -1,4 +1,4 @@
-import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+﻿import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
 import { getFirestore } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { firebaseConfig } from '../../firebase-config.js';
@@ -9,6 +9,7 @@ import { inicializarLists } from '../lists/ler-lists.js';
 import { inicializarLeituraPins } from '../esquerda/ler-pins.js';
 import { iniciarControladorEsquerda } from '../esquerda/esquerda-controller.js';
 import { MobileBottomSheet } from '../ui/mobile-bottom-sheet.js';
+import { MobilePanelManager } from '../ui/mobile-panel-manager.js';
 import { MobileBibleBar } from "../editor/modulos/mobile-bible-bar.js";
 import { iniciarXSat } from '../direita/xsat-controller.js';
 import { iniciarBookSettings } from './book-settings.js';
@@ -50,6 +51,7 @@ await Promise.all([
 ativarMenuBook();
 document.getElementById('area-direita')?.classList.add('book-readonly-panel');
 MobileBottomSheet.iniciar();
+MobilePanelManager.iniciar();
 iniciarControladorEsquerda();
 iniciarXSat();
 iniciarControloColunaEsquerda();
@@ -115,23 +117,19 @@ function bindGlobalUi() {
     });
     document.addEventListener('click', event => {
         if (event.target.id === 'mobile-overlay') {
-            document.getElementById('area-esquerda')?.classList.add('closed');
+            MobilePanelManager.fechar('left');
             if (!document.getElementById('area-direita')?.classList.contains('active')) {
                 document.getElementById('mobile-overlay')?.classList.remove('active');
             }
         }
     });
-    document.getElementById('btn-mobile-esquerda')?.addEventListener('click', () => {
-        const esq = document.getElementById('area-esquerda');
-        const overlay = document.getElementById('mobile-overlay');
-        const closed = esq.classList.toggle('closed');
-        overlay.classList.toggle('active', !closed);
-    });
-    document.getElementById('btn-mobile-direita')?.addEventListener('click', () => MobileBottomSheet.abrir());
+    document.getElementById('btn-mobile-esquerda')?.addEventListener('click', () => MobilePanelManager.abrir('left'));
+    document.getElementById('btn-mobile-direita')?.addEventListener('click', () => MobilePanelManager.abrir('right'));
 }
 
 function bindRightPanelNavigation() {
     window.switchPanel = (panel) => {
+
         const right = document.getElementById('area-direita');
         right?.classList.add('active');
         document.querySelectorAll('#area-direita .tab-content').forEach(content => {
@@ -147,7 +145,7 @@ function bindRightPanelNavigation() {
         }
         if (btn) btn.classList.add('active');
         if (window.innerWidth <= 768) {
-            MobileBottomSheet.abrir();
+            MobilePanelManager.abrir('right');
         }
     };
 
@@ -184,3 +182,5 @@ function bindRightPanelNavigation() {
         if (tab === 'ancora') import('../direita/eye-ancora.js').then(m => m.iniciarAbaAncora(window.itemSelecionadoId, window.db, window.auth));
     };
 }
+
+
