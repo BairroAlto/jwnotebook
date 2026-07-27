@@ -1,6 +1,7 @@
 // components/direita/xsat-controller.js
 import { processarPesquisaSat } from './xsat-engine.js';
 import { AIController } from './ai-controller.js';
+import { MobileBottomSheet } from '../ui/mobile-bottom-sheet.js';
 
 
 const estadosCanais = {
@@ -274,6 +275,21 @@ window.limparCanalX = (id) => {
     if (btn) btn.click();
 };
 
+function prepararDestinoListsNoMobile() {
+    if (window.innerWidth <= 768 && typeof window.abrirFonteXSatMobile === 'function') {
+        return window.abrirFonteXSatMobile();
+    }
+
+    if (window.innerWidth > 768) return false;
+
+    const colunaEsquerda = document.getElementById('area-esquerda');
+    if (!colunaEsquerda) return false;
+
+    MobileBottomSheet.fechar();
+    colunaEsquerda.classList.remove('closed');
+    document.getElementById('mobile-overlay')?.classList.add('active');
+    return true;
+}
 window.saltarParaFonteSat = (index, canalId) => {
     if (jumpInProgress) return;
     const canal = estadosCanais[canalId];
@@ -294,7 +310,10 @@ window.saltarParaFonteSat = (index, canalId) => {
     jumpInProgress = true;
     const btnLists = Array.from(document.querySelectorAll('#left-buttons button')).find(b => b.innerText.trim().toUpperCase() === 'LISTS');
     const officeListsTab = document.querySelector('.office-tab[data-tab="lists"]');
-    if (btnLists) btnLists.click();
+    if (window.innerWidth <= 768 && typeof window.abrirFonteXSatMobile === 'function') {
+        prepararDestinoListsNoMobile();
+    }
+    else if (btnLists) btnLists.click();
     else if (officeListsTab) officeListsTab.click();
     setTimeout(() => {
         import('../lists/bridge-main.js').then(m => {
