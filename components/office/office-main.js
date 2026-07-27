@@ -49,6 +49,7 @@ onAuthStateChanged(auth, async (user) => {
 
     window.NotaBookUserPrefs = await carregarPreferenciasUtilizador(db, user.uid);
     await carregarMenuSuperior();
+    await carregarPopupsBrain();
     vincularEventos();
     iniciarSettings();
     await renderizarCardsSemana();
@@ -838,6 +839,13 @@ async function carregarComponente(idElemento, caminhoFicheiro) {
     if (!response.ok) return;
     el.innerHTML = await response.text();
     el.dataset.loaded = caminhoFicheiro;
+}
+
+async function carregarPopupsBrain() {
+    await Promise.all([
+        carregarComponente('office-popup-cores-area', 'components/popup/popup-cores.html'),
+        carregarComponente('office-popup-partilhar-area', 'components/popup/popup-partilhar.html')
+    ]);
 }
 
 async function executarPesquisa() {
