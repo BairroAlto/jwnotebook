@@ -23,7 +23,8 @@ export function despacharInteligenciaEye(caixas, nota, db, auth) {
         const isModoPost = modos.includes('post');
 
         // 2. FILTRAGEM RIGOROSA DE BLOCOS (REGRAS DE EXCLUSIVIDADE)
-        const caixasFiltradas = caixas.filter(c => {
+        const caixasFonte = Array.isArray(window.caixasAtuais) ? window.caixasAtuais : caixas;
+        const caixasFiltradas = caixasFonte.filter(c => {
             // Apenas blocos que não foram movidos para a lixeira
             if (c.estado !== 'on') return false;
 

@@ -1,4 +1,5 @@
-// components/editor/modulos/paleta-cores.js
+// components/editor/modulos/paleta-cores.js
+import { isMobileViewport } from '../../ui/mobile-device.js';
 import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { MutationManager } from './mutation-manager.js'; // ðŸš€ NOVO MÃ“DULO
 import { transmitirParaBrainVivo } from '../../biblioteca-brain/biblio-transmitter.js';
@@ -247,7 +248,7 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
                     transmitirParaBrainVivo(caixaParaColorir);
                 }
                 
-                if (window.innerWidth <= 768) overlay.classList.remove('active');
+                if (isMobileViewport()) overlay.classList.remove('active');
                 else abrirPaleta(caixaParaColorir, "tab-destaques", callbackTemporario);
             };
             listaDest.appendChild(div);
@@ -284,7 +285,7 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
                     transmitirParaBrainVivo(caixaParaColorir);
                 }
                 
-                if (window.innerWidth <= 768) overlay.classList.remove('active');
+                if (isMobileViewport()) overlay.classList.remove('active');
                 else abrirPaleta(caixaParaColorir, "tab-focos", callbackTemporario);
             };
             listaFoco.appendChild(row);

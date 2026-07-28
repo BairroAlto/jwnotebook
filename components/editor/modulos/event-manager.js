@@ -5,11 +5,12 @@ import { abrirPaleta } from './paleta-cores.js';
 import { abrirPopupPartilhar } from './partilhar.js';
 import { abrirPopupTags } from './tags/tags-controller.js';
 import { MobileBibleBar } from "./mobile-bible-bar.js";
+import { isMobileViewport } from "../../ui/mobile-device.js";
 import { abrirPopupImportarTexto } from './importar-texto.js';
 import { LabModelos } from './lab-modelos.js';
 
 function reposicionarTituloMobile(campo) {
-    if (window.innerWidth > 768 || !campo) return;
+    if (!isMobileViewport() || !campo) return;
 
     const estilo = window.getComputedStyle(campo);
     const permiteScrollHorizontal = estilo.whiteSpace === 'nowrap' &&
@@ -80,7 +81,7 @@ export const EventManager = {
             if (p === 'brain' && !document.querySelector('.cosmos-brain-wrapper')) {
                 if (typeof window.mostrarBrainIdle === 'function') window.mostrarBrainIdle();
             }
-            if (window.innerWidth <= 768) {
+            if (isMobileViewport()) {
                 import('../../ui/mobile-bottom-sheet.js').then(m => m.MobileBottomSheet.abrir());
             }
         };
@@ -88,10 +89,16 @@ export const EventManager = {
         // ========================================================
         // 2. NAVEGAÃ‡ÃƒO INTERNA DO "EYE" (COM FILTRO DE EXCLUSIVIDADE)
         // ========================================================
-        window.__atualizarGlosasEye = () => {
+        window.__atualizarGlosasEye = (caixaAtual = null) => {
             const modosLive = Array.isArray(ctx.dadosNotaOriginal.modo) ? ctx.dadosNotaOriginal.modo : [ctx.dadosNotaOriginal.modo || 'normal'];
             const sentinelaLive = modosLive.includes('sentinela');
-            const caixasLive = (window.caixasAtuais || ctx.caixasAtuais).filter(caixa => {
+            const caixasBase = [...(window.caixasAtuais || ctx.caixasAtuais || [])];
+            if (caixaAtual?.id) {
+                const indiceAtual = caixasBase.findIndex(caixa => caixa.id === caixaAtual.id);
+                if (indiceAtual === -1) caixasBase.push(caixaAtual);
+                else caixasBase[indiceAtual] = caixaAtual;
+            }
+            const caixasLive = caixasBase.filter(caixa => {
                 if (caixa.estado !== 'on') return false;
                 return sentinelaLive ? !!caixa.referenciacodex : !caixa.referenciacodex;
             });

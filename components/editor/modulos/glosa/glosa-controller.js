@@ -14,19 +14,45 @@ function obterGlosas(caixa) {
     return caixa.glosas;
 }
 
-function sincronizarMemoria(ctx) {
-    const caixas = window.caixasAtuais || [];
-    const indice = caixas.findIndex(caixa => caixa.id === ctx.caixaAlvo.id);
-    if (indice !== -1) caixas[indice].glosas = ctx.caixaAlvo.glosas;
+function obterCaixasDaNota(ctx) {
+    const caixas = ctx?.caixasAtuais || window.caixasAtuais || [];
+    if (ctx?.caixasAtuais && window.caixasAtuais !== ctx.caixasAtuais) {
+        window.caixasAtuais = ctx.caixasAtuais;
+    }
+    return caixas;
 }
 
-function atualizarEye() {
-    if (typeof window.__atualizarGlosasEye === 'function') {
-        window.__atualizarGlosasEye();
-        return;
+function sincronizarMemoria(ctx) {
+    const caixas = obterCaixasDaNota(ctx);
+    const indice = caixas.findIndex(caixa => caixa.id === ctx.caixaAlvo.id);
+    if (indice !== -1) caixas[indice].glosas = ctx.caixaAlvo.glosas;
+    else caixas.push(ctx.caixaAlvo);
+}
+
+function obterCaixasParaEye(ctx) {
+    const caixas = [...obterCaixasDaNota(ctx)];
+    const caixaAtual = ctx?.caixaAlvo;
+    if (caixaAtual?.id) {
+        const indiceAtual = caixas.findIndex(caixa => caixa.id === caixaAtual.id);
+        if (indiceAtual === -1) caixas.push(caixaAtual);
+        else caixas[indiceAtual] = caixaAtual;
     }
+
+    const dadosNota = window.notaAtualContext?.dadosNota || {};
+    const modos = Array.isArray(dadosNota.modo) ? dadosNota.modo : [dadosNota.modo || 'normal'];
+    const sentinela = modos.includes('sentinela');
+    return caixas.filter(caixa => {
+        if (caixa.estado !== 'on') return false;
+        return sentinela ? !!caixa.referenciacodex : !caixa.referenciacodex;
+    });
+}
+
+function atualizarEye(ctx) {
+    const caixasParaEye = obterCaixasParaEye(ctx);
     import('../../../direita/eye-glosas.js').then(modulo => {
-        modulo.carregarGlosasDaNota(window.caixasAtuais || []);
+        modulo.carregarGlosasDaNota(caixasParaEye);
+    }).catch(erro => {
+        console.error('[GLOSA] NÃ£o foi possÃ­vel carregar o EYE:', erro);
     });
 }
 
@@ -96,7 +122,7 @@ export async function limparVazias(ctx) {
 
     ctx.caixaAlvo.glosas = validas;
     sincronizarMemoria(ctx);
-    atualizarEye();
+    atualizarEye(ctx);
     atualizarEstadoDoLimite(validas.length);
     await persistir(ctx);
     return true;
@@ -129,7 +155,7 @@ export function renderizar(ctx) {
             onUpdate: novoConteudo => {
                 glosa.conteudo = novoConteudo;
                 sincronizarMemoria(ctx);
-                atualizarEye();
+                atualizarEye(ctx);
                 agendarPersistencia(ctx, glosa);
             },
             onMove: (indice, direcao) => mover(ctx, indice, direcao),
@@ -138,6 +164,7 @@ export function renderizar(ctx) {
         elemento.classList.add('glosa-box-item');
         container.appendChild(elemento);
     });
+    atualizarEye(ctx);
 }
 
 async function adicionar(ctx) {
@@ -157,7 +184,7 @@ async function adicionar(ctx) {
     });
     sincronizarMemoria(ctx);
     renderizar(ctx);
-    atualizarEye();
+    atualizarEye(ctx);
     await persistir(ctx);
 
     setTimeout(() => {
@@ -174,7 +201,7 @@ async function mover(ctx, indice, direcao) {
     [glosas[indice], glosas[destino]] = [glosas[destino], glosas[indice]];
     sincronizarMemoria(ctx);
     renderizar(ctx);
-    atualizarEye();
+    atualizarEye(ctx);
     await persistir(ctx);
 }
 
@@ -188,6 +215,6 @@ async function remover(ctx, id) {
     ctx.caixaAlvo.glosas = obterGlosas(ctx.caixaAlvo).filter(glosa => glosa.id !== id);
     sincronizarMemoria(ctx);
     renderizar(ctx);
-    atualizarEye();
+    atualizarEye(ctx);
     await persistir(ctx);
 }
