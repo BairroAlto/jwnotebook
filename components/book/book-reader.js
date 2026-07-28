@@ -1,4 +1,5 @@
-﻿import { BookState } from './book-state.js';
+import { isMobileViewport } from '../ui/mobile-device.js';
+import { BookState } from './book-state.js';
 import { getVisibleBookBoxes } from './book-renderer.js';
 import { textoDaNota, textoDaCaixa, textoParaFala, escapeHtml } from './book-utils.js';
 import { guardarPreferenciasUtilizador } from '../settings/preferences.js';
@@ -373,7 +374,7 @@ function formatSlideContent(caixa) {
 }
 
 function chunkPresentationText(texto) {
-    const maxChars = window.innerWidth <= 768 ? 320 : (window.innerWidth <= 1200 ? 520 : 650);
+    const maxChars = isMobileViewport() ? 320 : (window.innerWidth <= 1200 ? 520 : 650);
     const paragraphs = String(texto || '').split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
     const chunks = [];
     let current = '';

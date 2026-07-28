@@ -1,4 +1,5 @@
 import { guardarPreferenciasUtilizador } from '../settings/preferences.js';
+import { isMobileViewport } from '../ui/mobile-device.js';
 
 export const BibleSettings = {
     state: {
@@ -83,7 +84,7 @@ export const BibleSettings = {
     aplicarTamanhoVersiculos: () => {
         const desktop = Number(BibleSettings.state.verseSizeDesktop || BibleSettings.state.verseSize || 16);
         const mobile = Number(BibleSettings.state.verseSizeMobile || desktop);
-        BibleSettings.state.verseSize = window.innerWidth <= 768 ? mobile : desktop;
+        BibleSettings.state.verseSize = isMobileViewport() ? mobile : desktop;
         document.documentElement.style.setProperty('--bible-verse-size', `${BibleSettings.state.verseSize}px`);
     },
 

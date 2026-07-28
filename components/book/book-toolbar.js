@@ -1,3 +1,4 @@
+import { isMobileViewport } from '../ui/mobile-device.js';
 import { BookState } from './book-state.js';
 import { getVisibleBookBoxes } from './book-renderer.js';
 import { textoDaNota, detectarReferenciasBiblicas } from './book-utils.js';
@@ -54,7 +55,7 @@ async function pesquisarReferencias() {
     await ensureBookRightPanel({ reveal: true });
     document.getElementById('area-direita')?.classList.add('active');
     iniciarXSat();
-    if (window.innerWidth <= 768) MobileBottomSheet.abrir();
+    if (isMobileViewport()) MobileBottomSheet.abrir();
     if (window.switchPanel) window.switchPanel('xsat');
     if (!refs.length) {
         document.querySelector('.xsat-num[data-num="1"]')?.click();

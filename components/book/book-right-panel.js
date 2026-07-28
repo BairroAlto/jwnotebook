@@ -1,3 +1,4 @@
+import { isMobileViewport } from '../ui/mobile-device.js';
 import { BookState } from './book-state.js';
 
 export async function ensureBookRightPanel(options = {}) {
@@ -10,7 +11,7 @@ export async function ensureBookRightPanel(options = {}) {
     }
     col.classList.add('book-readonly-panel');
     if (reveal) col.classList.add('active');
-    if (window.innerWidth <= 768 && reveal) {
+    if (isMobileViewport() && reveal) {
         document.getElementById('mobile-overlay')?.classList.add('active');
     }
 }

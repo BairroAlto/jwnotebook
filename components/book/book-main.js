@@ -1,4 +1,5 @@
-﻿import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+import { isMobileViewport } from '../ui/mobile-device.js';
+import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
 import { getFirestore } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { firebaseConfig } from '../../firebase-config.js';
@@ -144,7 +145,7 @@ function bindRightPanelNavigation() {
             target.style.display = 'flex';
         }
         if (btn) btn.classList.add('active');
-        if (window.innerWidth <= 768) {
+        if (isMobileViewport()) {
             MobilePanelManager.abrir('right');
         }
     };

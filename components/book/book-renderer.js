@@ -1,4 +1,5 @@
-﻿import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
+import { isMobileViewport } from '../ui/mobile-device.js';
+import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
 import { urlElevadorSegura } from '../constants/elevador.js';
 import { FOCOS_BASE, FOCOS_SUBNOTA, FOCOS_QUESTAO, FOCOS_RACIOCINIO } from '../editor/modulos/paleta-cores.js';
 import { BookState } from './book-state.js';
@@ -29,7 +30,7 @@ export function renderBookFeed() {
 
     const desktopSize = Number(BookState.settings.fontSizeDesktop || BookState.settings.fontSize || 17);
     const mobileSize = Number(BookState.settings.fontSizeMobile || desktopSize);
-    const currentSize = window.innerWidth <= 768 ? mobileSize : desktopSize;
+    const currentSize = isMobileViewport() ? mobileSize : desktopSize;
     BookState.settings.fontSize = currentSize;
     document.documentElement.style.setProperty('--book-text-size', `${currentSize}px`);
     document.body.classList.toggle('book-sequence-mode', BookState.settings.viewMode === 'sequence' && BookState.activeTab === 'feed');

@@ -1,3 +1,4 @@
+import { isMobileViewport } from '../ui/mobile-device.js';
 // components/bible-portal/bible-ui-controller.js
 
 export const BibleUI = {
@@ -199,7 +200,7 @@ function instalarBibleMobileSheet(col) {
 }
 
 function isBibleTouchMobile() {
-    return window.matchMedia('(max-width: 768px)').matches;
+    return isMobileViewport();
 }
 
 function setBibleRightPanelState(col, isOpen) {

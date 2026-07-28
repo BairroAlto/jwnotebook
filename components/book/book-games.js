@@ -1,3 +1,4 @@
+import { isMobileViewport } from '../ui/mobile-device.js';
 import { doc, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { NexoEngine } from '../direita/ai-engine.js';
 import { renderizarPaginaLeitura } from '../lists/reader/reader-view.js';
@@ -466,7 +467,7 @@ function renderSentinelHome(body) {
         sentinelMode = sentinelMode === "sentinel-read" ? null : "sentinel-read";
         renderGameTab("sentinel");
         if (!sentinelMode) return;
-        if (window.innerWidth <= 768) {
+        if (isMobileViewport()) {
             document.getElementById('book-popup-games')?.classList.remove('active');
             renderSentinelYears();
         } else {
@@ -504,7 +505,7 @@ function renderSentinelYears() {
 
 function renderSentinelMonths(year) {
     const target = getSentinelTarget();
-    const inlineBack = window.innerWidth <= 768 ? "" : `<button id="sentinel-back-years" class="book-sentinel-back"><i class="fa-solid fa-chevron-left"></i> Sentinela</button>`;
+    const inlineBack = isMobileViewport() ? "" : `<button id="sentinel-back-years" class="book-sentinel-back"><i class="fa-solid fa-chevron-left"></i> Sentinela</button>`;
     setSentinelHeader({
         label: "Sentinela",
         onBack: renderSentinelYears
@@ -526,7 +527,7 @@ function renderSentinelMonths(year) {
 
 async function renderSentinelArticles(year, month) {
     const target = getSentinelTarget();
-    const inlineBack = window.innerWidth <= 768 ? "" : `<button id="sentinel-back-months" class="book-sentinel-back"><i class="fa-solid fa-chevron-left"></i> ${year}</button>`;
+    const inlineBack = isMobileViewport() ? "" : `<button id="sentinel-back-months" class="book-sentinel-back"><i class="fa-solid fa-chevron-left"></i> ${year}</button>`;
     setSentinelHeader({
         label: String(year),
         onBack: () => renderSentinelMonths(year)
@@ -568,7 +569,7 @@ async function abrirArtigoSentinela(path, index, year, month) {
     const data = await fetch(path).then(r => r.json());
     const artigos = Array.isArray(data.artigos) ? data.artigos : Object.values(data).find(Array.isArray) || [];
     const artigo = artigos[index] || {};
-    if (window.innerWidth <= 768) {
+    if (isMobileViewport()) {
         openSentinelInPopup(artigo, data, year, month);
     } else {
         openSentinelInLeftColumn(artigo, data, year, month);
@@ -599,7 +600,7 @@ function activateListsTab() {
     const button = Array.from(document.querySelectorAll('#left-buttons button')).find(btn => btn.textContent.trim().toLowerCase() === 'lists');
     button?.click();
     const left = document.getElementById('area-esquerda');
-    if (window.innerWidth <= 768) {
+    if (isMobileViewport()) {
         left?.classList.remove('closed');
         document.getElementById('mobile-overlay')?.classList.add('active');
     }
@@ -700,7 +701,7 @@ function renderSentinelMonthsInLeftColumn(year) {
 
 
 function getSentinelTarget() {
-    if (window.innerWidth <= 768) {
+    if (isMobileViewport()) {
         showSentinelSheetOnMobile();
         return document.getElementById('book-sentinel-content') || document.getElementById('book-sentinel-browser');
     }
@@ -708,7 +709,7 @@ function getSentinelTarget() {
 }
 
 function showSentinelSheetOnMobile() {
-    if (window.innerWidth > 768) return;
+    if (!isMobileViewport()) return;
     const fab = document.getElementById('book-sentinel-fab');
     const sheet = document.getElementById('book-sentinel-sheet');
     fab?.classList.remove('hidden');
@@ -716,7 +717,7 @@ function showSentinelSheetOnMobile() {
 }
 
 function toggleSentinelSheet() {
-    if (window.innerWidth > 768) return;
+    if (!isMobileViewport()) return;
     const sheet = document.getElementById('book-sentinel-sheet');
     const fab = document.getElementById('book-sentinel-fab');
     if (!sheet || !fab || fab.classList.contains('hidden')) return;
@@ -728,13 +729,13 @@ function toggleSentinelSheet() {
 }
 
 function minimizeSentinelSheet() {
-    if (window.innerWidth > 768) return;
+    if (!isMobileViewport()) return;
     document.getElementById('book-sentinel-sheet')?.classList.add('hidden');
     document.getElementById('book-sentinel-fab')?.classList.remove('hidden');
 }
 
 function closeSentinelSheet() {
-    if (window.innerWidth > 768) return;
+    if (!isMobileViewport()) return;
     document.getElementById('book-sentinel-sheet')?.classList.add('hidden');
     document.getElementById('book-sentinel-fab')?.classList.add('hidden');
     document.getElementById('book-sentinel-content')?.replaceChildren();

@@ -1,3 +1,4 @@
+import { isMobileViewport } from '../ui/mobile-device.js';
 import { NexoEngine } from '../direita/ai-engine.js';
 import { PROTOCOLOS } from '../direita/ai-view.js';
 import { BookState } from './book-state.js';
@@ -49,7 +50,7 @@ export function abrirBookAI() {
         toggleBookAIFloatingChat(true);
         return;
     }
-    if (window.innerWidth <= 768) {
+    if (isMobileViewport()) {
         MobileBottomSheet.fechar();
     }
     document.getElementById('book-popup-ai')?.classList.add('active');

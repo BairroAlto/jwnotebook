@@ -1,3 +1,4 @@
+import { isMobileViewport } from '../ui/mobile-device.js';
 import { doc, getDoc, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { MobileUI } from '../ui/mobile-manager.js';
 import { BookState, setBookState } from './book-state.js';
@@ -36,7 +37,7 @@ export async function abrirNotaNoBook(notaId, dadosNota, db, auth, idCaixaFoco =
     renderBookFeed();
     atualizarBookAIFloatingUI();
     window.renderBookRespondiHands?.();
-    await refreshBookIntelligence({ revealPanel: window.innerWidth > 768 });
+    await refreshBookIntelligence({ revealPanel: !isMobileViewport() });
 
     if (container) container.style.display = 'block';
     if (loading) loading.style.display = 'none';
@@ -53,7 +54,7 @@ export async function abrirNotaNoBook(notaId, dadosNota, db, auth, idCaixaFoco =
 export function refreshNotaAtual() {
     renderBookFeed();
     atualizarBookAIFloatingUI();
-    refreshBookIntelligence({ revealPanel: window.innerWidth > 768 });
+    refreshBookIntelligence({ revealPanel: !isMobileViewport() });
 }
 
 export async function marcarRespondido(caixaId, value) {
@@ -79,7 +80,7 @@ async function iniciarSnapshotNota() {
         atualizarBookAIFloatingUI();
         window.atualizarBookGameBadge?.();
         window.renderBookRespondiHands?.();
-        refreshBookIntelligence({ revealPanel: window.innerWidth > 768 });
+        refreshBookIntelligence({ revealPanel: !isMobileViewport() });
     });
 }
 

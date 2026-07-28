@@ -1,3 +1,4 @@
+import { isMobileViewport } from '../ui/mobile-device.js';
 import { BookState } from './book-state.js';
 import { renderBookFeed } from './book-renderer.js';
 import { atualizarBookAIFloatingUI } from './book-ai.js';
@@ -103,7 +104,7 @@ function aplicarUI() {
 function aplicarTamanhoResponsivoBook() {
     const desktopSize = Number(BookState.settings.fontSizeDesktop || BookState.settings.fontSize || 17);
     const mobileSize = Number(BookState.settings.fontSizeMobile || desktopSize);
-    const current = window.innerWidth <= 768 ? mobileSize : desktopSize;
+    const current = isMobileViewport() ? mobileSize : desktopSize;
     BookState.settings.fontSize = current;
     document.documentElement.style.setProperty('--book-text-size', `${current}px`);
 }
