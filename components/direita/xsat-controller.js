@@ -2,6 +2,7 @@
 import { processarPesquisaSat } from './xsat-engine.js';
 import { AIController } from './ai-controller.js';
 import { MobileBottomSheet } from '../ui/mobile-bottom-sheet.js';
+import { isMobileViewport } from '../ui/mobile-device.js';
 
 
 const estadosCanais = {
@@ -276,11 +277,11 @@ window.limparCanalX = (id) => {
 };
 
 function prepararDestinoListsNoMobile() {
-    if (window.innerWidth <= 768 && typeof window.abrirFonteXSatMobile === 'function') {
+    if (isMobileViewport() && typeof window.abrirFonteXSatMobile === 'function') {
         return window.abrirFonteXSatMobile();
     }
 
-    if (window.innerWidth > 768) return false;
+    if (!isMobileViewport()) return false;
 
     const colunaEsquerda = document.getElementById('area-esquerda');
     if (!colunaEsquerda) return false;
@@ -310,7 +311,7 @@ window.saltarParaFonteSat = (index, canalId) => {
     jumpInProgress = true;
     const btnLists = Array.from(document.querySelectorAll('#left-buttons button')).find(b => b.innerText.trim().toUpperCase() === 'LISTS');
     const officeListsTab = document.querySelector('.office-tab[data-tab="lists"]');
-    if (window.innerWidth <= 768 && typeof window.abrirFonteXSatMobile === 'function') {
+    if (isMobileViewport() && typeof window.abrirFonteXSatMobile === 'function') {
         prepararDestinoListsNoMobile();
     }
     else if (btnLists) btnLists.click();

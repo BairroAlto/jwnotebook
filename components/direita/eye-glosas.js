@@ -53,10 +53,17 @@ export function carregarGlosasDaNota(caixasFiltradas = []) {
         .map(caixa => ({ caixa, glosas: obterGlosasComConteudo(caixa) }))
         .filter(grupo => grupo.glosas.length > 0);
 
-    botao.style.display = grupos.length ? 'inline-flex' : 'none';
+    const existemGlosasAtivas = caixasFiltradas.some(caixa =>
+        Array.isArray(caixa.glosas) && caixa.glosas.some(glosa => glosa?.estado !== 'inativo')
+    );
+
+    // Mantem o separador acessivel enquanto existir uma glosa activa.
+    botao.style.display = (grupos.length || existemGlosasAtivas) ? 'inline-flex' : 'none';
     if (!grupos.length) {
-        container.innerHTML = '<div class="eye-glosa-empty">Nenhuma glosa com conteúdo nesta nota.</div>';
-        if (botao.classList.contains('active')) window.switchEyeTab?.('indice');
+        container.innerHTML = existemGlosasAtivas
+            ? '<div class="eye-glosa-empty">A glosa existe, mas o conte&uacute;do ainda est&aacute; a sincronizar.</div>'
+            : '<div class="eye-glosa-empty">Nenhuma glosa com conte&uacute;do nesta nota.</div>';
+        if (!existemGlosasAtivas && botao.classList.contains('active')) window.switchEyeTab?.('indice');
         return;
     }
 
