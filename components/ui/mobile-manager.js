@@ -1,11 +1,12 @@
 // components/ui/mobile-manager.js
+import { isMobileViewport } from './mobile-device.js';
 
 export const MobileUI = {
     /**
      * Fecha a coluna da esquerda e remove o efeito baço (overlay)
      */
     fecharColunaEsquerda: () => {
-        if (window.innerWidth <= 768) {
+        if (isMobileViewport()) {
             const colunaEsquerda = document.getElementById('area-esquerda');
             const overlay = document.getElementById('mobile-overlay');
             

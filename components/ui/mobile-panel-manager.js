@@ -1,11 +1,13 @@
-﻿const estado = {
+import { isMobileViewport } from './mobile-device.js';
+
+const estado = {
     left: 'closed',
     right: 'closed',
     listaOriginal: null
 };
 
 function mobileActivo() {
-    return window.innerWidth <= 768;
+    return isMobileViewport();
 }
 
 function obterPainel(tipo) {

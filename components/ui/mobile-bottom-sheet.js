@@ -1,4 +1,5 @@
-﻿/**
+import { isMobileViewport } from './mobile-device.js';
+/**
  * GESTOR DE BOTTOM SHEET MOBILE
  * Movimento fluido entre 10% e 98%, com fecho exclusivo via X.
  */
@@ -6,7 +7,7 @@ export const MobileBottomSheet = {
 
     iniciar: () => {
         const rightCol = document.getElementById('area-direita');
-        if (!rightCol || window.innerWidth > 768) return;
+        if (!rightCol || !isMobileViewport()) return;
 
         if (!document.getElementById('mobile-drag-handle')) {
             const handle = document.createElement('div');
@@ -79,7 +80,7 @@ export const MobileBottomSheet = {
     },
 
     abrir: () => {
-        if (window.innerWidth > 768) return;
+        if (!isMobileViewport()) return;
         MobileBottomSheet.iniciar();
 
         const rightCol = document.getElementById('area-direita');

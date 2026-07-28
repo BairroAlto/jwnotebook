@@ -1,4 +1,5 @@
 import { collection, query, where, getDocs, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { isMobileViewport } from '../ui/mobile-device.js';
 import {
     atualizarEntradaArranque,
     guardarPreferenciasUtilizador,
@@ -48,7 +49,7 @@ const estado = {
 };
 
 function obterDispositivoAtual() {
-    return window.innerWidth <= 768 ? "mobile" : "pcTablet";
+    return isMobileViewport() ? "mobile" : "pcTablet";
 }
 
 function obterEntrada(dispositivo) {
@@ -347,7 +348,7 @@ async function aguardarNotaArranquePintada() {
         await esperar(40);
     }
 
-    if (window.innerWidth <= 768) {
+    if (isMobileViewport()) {
         await esperar(340);
     }
 

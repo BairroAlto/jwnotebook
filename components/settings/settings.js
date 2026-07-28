@@ -1,4 +1,5 @@
-import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { isMobileViewport } from '../ui/mobile-device.js';
 import { signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { inicializarAmigos } from './amigos.js';
 import {
@@ -13,6 +14,7 @@ import {
 } from './preferences.js';
 import { aplicarPreferenciaBotaoColapsoColunaEsquerda, iniciarControloColunaEsquerda } from '../ui/left-column-collapse.js';
 import { inicializarArranque } from './startup.js';
+import { inicializarManual } from '../manual/manual.js';
 
 const FUSEIS_META = [
     { key: "topicos", label: "Tópicos", desc: "Taxonomia e vínculos de tópico" },
@@ -59,6 +61,7 @@ export async function inicializarSettings(db, auth) {
     ativarFiltroDispositivo();
     inicializarArranque(db, auth, userPrefs);
     ativarVisibilidadeBarraSuperior();
+    inicializarManual();
     return userPrefs;
 }
 
@@ -106,7 +109,7 @@ function ativarFiltroDispositivo() {
 }
 
 function ativarTabs(db, uid) {
-    const tabs = document.querySelectorAll('.tab-settings');
+    const tabs = document.querySelectorAll('.tab-settings:not(#btn-abrir-manual)');
     tabs.forEach(tab => {
         tab.onclick = () => {
             tabs.forEach(t => t.classList.remove('active'));
@@ -326,7 +329,7 @@ function aplicarFontesResponsivas(values = {}) {
     document.documentElement.style.setProperty('--fs-biblia-versiculos-mobile', `${bibleVersesMobile}px`);
     document.documentElement.style.setProperty('--fs-left-items-mobile', `${leftItemsMobile}px`);
     document.documentElement.style.setProperty('--fs-right-results-mobile', `${rightResultsMobile}px`);
-    document.documentElement.style.setProperty('--fs-editor-texto', `${window.innerWidth <= 768 ? mobile : desktop}px`);
+    document.documentElement.style.setProperty('--fs-editor-texto', `${isMobileViewport() ? mobile : desktop}px`);
 }
 
 window.addEventListener('resize', () => {

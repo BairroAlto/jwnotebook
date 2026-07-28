@@ -1,7 +1,9 @@
+import { isMobileViewport } from './mobile-device.js';
+
 let initialized = false;
 
 function isDesktopWidth() {
-    return window.innerWidth > 768;
+    return !isMobileViewport();
 }
 
 function ensureButton() {
