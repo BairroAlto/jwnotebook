@@ -1,4 +1,5 @@
-// components/local/criar-nota.js
+// components/local/criar-nota.js
+import { isMobileViewport } from '../ui/mobile-device.js';
 import { collection, addDoc, getDoc, getDocs, query, where, serverTimestamp, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { abrirNotaNoEditor, forcarGravacaoImediata } from '../editor/editor.js';
 
@@ -88,7 +89,7 @@ export function inicializarCriacaoNota(db, auth) {
 
                 await abrirNotaNoEditor(docRef.id, dadosNotaCriada, db, auth);
 
-                if (window.innerWidth <= 768) {
+                if (isMobileViewport()) {
     document.getElementById('area-esquerda').classList.add('closed');
     document.getElementById('mobile-overlay').classList.remove('active');
 }

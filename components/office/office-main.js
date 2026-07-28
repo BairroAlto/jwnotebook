@@ -2,6 +2,7 @@ import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.8.
 import { getFirestore } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { firebaseConfig } from '../../firebase-config.js';
+import { isMobileViewport } from '../ui/mobile-device.js';
 
 import { iniciarAutenticacao } from '../auth/auth.js';
 import { SIGLAS_LIVROS } from '../lists/siglas-data.js';
@@ -656,7 +657,7 @@ function parseReferenciaBiblica(raw) {
 }
 
 function officeIsTouchMobile() {
-    return window.matchMedia('(max-width: 680px)').matches;
+    return isMobileViewport();
 }
 
 function tornarPopupArrastavel() {
@@ -732,7 +733,7 @@ function iniciarSettings() {
 function aplicarFontes() {
     const mainDesktop = $('office-main-font-desktop').value;
     const mainMobile = $('office-main-font-mobile').value;
-    const main = window.innerWidth <= 768 ? mainMobile : mainDesktop;
+    const main = isMobileViewport() ? mainMobile : mainDesktop;
     const pop = $('office-popup-font').value;
     document.documentElement.style.setProperty('--office-main-font', `${main}px`);
     document.documentElement.style.setProperty('--office-popup-font', `${pop}px`);
