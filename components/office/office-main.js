@@ -604,7 +604,11 @@ async function abrirTextoBiblicoNoBrain(raw, capOverride = null, verOverride = n
 
         const modulo = await import('../direita/biblia-brain.js');
         modulo.abrirVersiculoNoBrain(parsed.livro, cap, ver, texto, db, auth);
-    } catch (error) {\n        console.error('Não foi possível abrir o versículo no Brain.', error);\n    }\n}\nasync function renderizarPopupTextoBiblico(raw) {
+    } catch (error) {
+        console.error('Não foi possível abrir o versículo no Brain.', error);
+    }
+}
+async function renderizarPopupTextoBiblico(raw) {
     const parsed = parseReferenciaBiblica(raw);
     $('office-scripture-title').textContent = raw;
     const body = $('office-scripture-body');
