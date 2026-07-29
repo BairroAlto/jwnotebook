@@ -32,6 +32,8 @@ import { filtrarIndice, filtrosAtivos } from './office-search.js';
 import { iniciarIndicadoresAnotacoes, pararIndicadoresAnotacoes, definirContextoAnotacoes } from './office-annotations.js';
 import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
 
+window.NotaBookMode = 'office';
+
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
@@ -120,12 +122,19 @@ function vincularEventos() {
             return;
         }
 
-        if (event.target.closest('#office-scripture-brain')) {
+        const scriptureVerse = event.target.closest('.office-scripture-verse-ref');
+        if (scriptureVerse) {
             event.preventDefault();
             event.stopPropagation();
-            abrirTextoBiblicoNoBrain(state.scriptureRef);
+            abrirTextoBiblicoNoBrain(
+                state.scriptureRef,
+                Number(scriptureVerse.dataset.cap),
+                Number(scriptureVerse.dataset.ver)
+            );
             return;
-        }        const scriptureTab = event.target.closest('.office-scripture-tabs button');
+        }
+
+        const scriptureTab = event.target.closest('.office-scripture-tabs button');
         if (scriptureTab) {
             event.preventDefault();
             event.stopPropagation();
@@ -573,14 +582,12 @@ async function abrirTextoBiblico(raw) {
     await renderizarPopupTextoBiblico(raw);
 }
 
-async function abrirTextoBiblicoNoBrain(raw) {
+async function abrirTextoBiblicoNoBrain(raw, capOverride = null, verOverride = null) {
     const parsed = parseReferenciaBiblica(raw);
     const cite = parsed?.citacoes?.[0];
-    const ver = cite?.versiculos?.[0];
-    if (!parsed || !cite || !ver) return;
-
-    const button = $('office-scripture-brain');
-    button?.classList.add('active');
+    const cap = capOverride || cite?.cap;
+    const ver = verOverride || cite?.versiculos?.[0];
+    if (!parsed || !cite || !cap || !ver) return;
 
     try {
         if (typeof window.ensureOfficeRightPanel === 'function') {
@@ -590,18 +597,14 @@ async function abrirTextoBiblicoNoBrain(raw) {
         let texto = 'Texto não encontrado no JSON local.';
         try {
             const data = await fetch(`data/biblia/${slugLivro(parsed.livro)}.json`).then(res => res.json());
-            texto = data[parsed.livro]?.[cite.cap]?.[ver] || texto;
+            texto = data[parsed.livro]?.[cap]?.[ver] || texto;
         } catch (error) {
             console.warn('Não foi possível carregar o texto para o Brain.', error);
         }
 
         const modulo = await import('../direita/biblia-brain.js');
-        modulo.abrirVersiculoNoBrain(parsed.livro, cite.cap, ver, texto, db, auth);
-    } finally {
-        button?.classList.remove('active');
-    }
-}
-async function renderizarPopupTextoBiblico(raw) {
+        modulo.abrirVersiculoNoBrain(parsed.livro, cap, ver, texto, db, auth);
+    } catch (error) {\n        console.error('Não foi possível abrir o versículo no Brain.', error);\n    }\n}\nasync function renderizarPopupTextoBiblico(raw) {
     const parsed = parseReferenciaBiblica(raw);
     $('office-scripture-title').textContent = raw;
     const body = $('office-scripture-body');
@@ -622,7 +625,7 @@ async function renderizarPopupTextoBiblico(raw) {
         parsed.citacoes.forEach(cite => {
             const cap = data[parsed.livro]?.[cite.cap];
             cite.versiculos.forEach(ver => {
-                if (cap?.[ver]) linhas.push(`<div class="office-scripture-verse"><b>${cite.cap}:${ver}</b>${escapeHtml(cap[ver])}</div>`);
+                if (cap?.[ver]) linhas.push(`<div class="office-scripture-verse"><b class="office-scripture-verse-ref" data-cap="${cite.cap}" data-ver="${ver}" title="Abrir no Brain">${cite.cap}:${ver}</b>${escapeHtml(cap[ver])}</div>`);
             });
         });
         body.innerHTML = linhas.join('') || "Texto nao encontrado no JSON local.";
@@ -641,7 +644,7 @@ async function carregarVersaoAlternativa(parsed, body) {
             parsed.citacoes.forEach(cite => {
                 const cap = data[parsed.livro]?.[cite.cap] || data[cite.cap];
                 cite.versiculos.forEach(ver => {
-                    if (cap?.[ver]) linhas.push(`<div class="office-scripture-verse"><b>${base} ${cite.cap}:${ver}</b>${escapeHtml(cap[ver])}</div>`);
+                    if (cap?.[ver]) linhas.push(`<div class="office-scripture-verse"><b class="office-scripture-verse-ref" data-cap="${cite.cap}" data-ver="${ver}" title="Abrir no Brain">${base} ${cite.cap}:${ver}</b>${escapeHtml(cap[ver])}</div>`);
                 });
             });
             if (linhas.length) body.insertAdjacentHTML('beforeend', linhas.join(''));
