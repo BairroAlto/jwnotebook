@@ -381,3 +381,25 @@ export async function abrirNotaDeArranque(db, auth, userPrefs, preCarga = null) 
         console.error("[ARRANQUE] Não foi possível abrir a nota definida:", erro);
     }
 }
+
+export async function abrirNotaDaUrl(db, auth) {
+    const params = new URLSearchParams(window.location.search);
+    const notaId = params.get('nota');
+    const caixaId = params.get('caixa') || null;
+    if (!notaId) return false;
+
+    try {
+        const notaSnap = await getDoc(doc(db, 'Local', notaId));
+        if (!notaSnap.exists()) return false;
+
+        const dados = notaSnap.data();
+        if (dados.userId !== auth.currentUser?.uid || dados.estado !== 'on' || dados.tipo === 'pasta') return false;
+
+        const { abrirNotaNoEditor } = await import('../editor/editor.js');
+        await abrirNotaNoEditor(notaSnap.id, { ...dados, onde: 'local' }, db, auth, caixaId);
+        return true;
+    } catch (erro) {
+        console.error('[URL-NOTA] Não foi possível abrir a nota:', erro);
+        return false;
+    }
+}
