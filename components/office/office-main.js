@@ -120,7 +120,12 @@ function vincularEventos() {
             return;
         }
 
-        const scriptureTab = event.target.closest('.office-scripture-tabs button');
+        if (event.target.closest('#office-scripture-brain')) {
+            event.preventDefault();
+            event.stopPropagation();
+            abrirTextoBiblicoNoBrain(state.scriptureRef);
+            return;
+        }        const scriptureTab = event.target.closest('.office-scripture-tabs button');
         if (scriptureTab) {
             event.preventDefault();
             event.stopPropagation();
@@ -568,6 +573,34 @@ async function abrirTextoBiblico(raw) {
     await renderizarPopupTextoBiblico(raw);
 }
 
+async function abrirTextoBiblicoNoBrain(raw) {
+    const parsed = parseReferenciaBiblica(raw);
+    const cite = parsed?.citacoes?.[0];
+    const ver = cite?.versiculos?.[0];
+    if (!parsed || !cite || !ver) return;
+
+    const button = $('office-scripture-brain');
+    button?.classList.add('active');
+
+    try {
+        if (typeof window.ensureOfficeRightPanel === 'function') {
+            await window.ensureOfficeRightPanel();
+        }
+
+        let texto = 'Texto não encontrado no JSON local.';
+        try {
+            const data = await fetch(`data/biblia/${slugLivro(parsed.livro)}.json`).then(res => res.json());
+            texto = data[parsed.livro]?.[cite.cap]?.[ver] || texto;
+        } catch (error) {
+            console.warn('Não foi possível carregar o texto para o Brain.', error);
+        }
+
+        const modulo = await import('../direita/biblia-brain.js');
+        modulo.abrirVersiculoNoBrain(parsed.livro, cite.cap, ver, texto, db, auth);
+    } finally {
+        button?.classList.remove('active');
+    }
+}
 async function renderizarPopupTextoBiblico(raw) {
     const parsed = parseReferenciaBiblica(raw);
     $('office-scripture-title').textContent = raw;
