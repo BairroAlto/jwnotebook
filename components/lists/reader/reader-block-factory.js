@@ -16,10 +16,10 @@ export const ReaderBlockFactory = {
 
         // Construir Conteúdo Interno
         if (bloco.tipo === "pergunta") {
-            p.innerHTML = `<small style="display:block; opacity:0.6; margin-bottom:5px; font-weight:800; font-style:normal; text-transform:uppercase;">Pergunta ${bloco.numero_ref || ''}</small>${bloco.texto}`;
+            p.innerHTML = `<small style="display:block; opacity:0.6; margin-bottom:5px; font-weight:800; font-style:normal; text-transform:uppercase;">Pergunta ${bloco.numero_ref || ''}</small><span style="user-select:text; cursor:text;">${bloco.texto}</span>`;
             p.onclick = onClick;
         } else if (bloco.tipo === "subtema" || bloco.tipo === "discurso") {
-            p.innerText = bloco.texto;
+            p.innerHTML = `<span style="user-select:text; cursor:text;">${bloco.texto}</span>`;
             p.onclick = onClick;
         } else {
             // Parágrafo: O número é um botão clicável para abrir a direita; o texto fica livre para selecionar e copiar
