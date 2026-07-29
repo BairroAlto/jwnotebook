@@ -1003,7 +1003,17 @@ function renderFerramentaEspelho(c, index, todos, docRef, db, auth) {
 
     div.querySelector('.btn-up').onclick = (e) => { e.stopPropagation(); moverItemGenerico(index, -1, todos, docRef); };
     div.querySelector('.btn-down').onclick = (e) => { e.stopPropagation(); moverItemGenerico(index, 1, todos, docRef); };
-    div.querySelector('.btn-viajar').onclick = (e) => { e.stopPropagation(); abrirNotaNoEditor(c.notaDocId, c.notaDados, db, auth, c.id); };
+    div.querySelector('.btn-viajar').onclick = (e) => {
+        e.stopPropagation();
+        if (window.NotaBookMode === 'office') {
+            const destino = new URL('index.html', window.location.href);
+            destino.searchParams.set('nota', c.notaDocId);
+            if (c.id) destino.searchParams.set('caixa', c.id);
+            window.open(destino.href, '_blank', 'noopener');
+            return;
+        }
+        abrirNotaNoEditor(c.notaDocId, c.notaDados, db, auth, c.id);
+    };
     div.querySelector('.btn-remove').onclick = async (e) => {
         e.stopPropagation();
         if (await SharedPuzzleUI.confirmarAcao("Remover Vínculo?", "Tens a certeza que desejas retirar este bloco do Puzzle?")) {
