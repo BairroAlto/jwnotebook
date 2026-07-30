@@ -75,7 +75,8 @@ function carregarPasta(idPasta) {
 
         const executarRender = () => {
             if (carregamentoId !== carregamentoLocalAtual) return;
-            const fragmento = document.createDocumentFragment();
+            try {
+                const fragmento = document.createDocumentFragment();
 
             if (snapshot.empty) {
                 const aviso = document.createElement("div");
@@ -110,17 +111,18 @@ function carregarPasta(idPasta) {
                         item.style.borderRight = "3px solid #fbbf24";
                     }
 
-                    let nomeIcone = (d.tipo === "pasta") ? (d.icon || "folder") : "note-sticky";
+                    let nomeIcone = (d.tipo === "pasta" && typeof d.icon === "string") ? (d.icon || "folder") : "note-sticky";
                     if (!nomeIcone.startsWith('fa-')) nomeIcone = `fa-${nomeIcone}`;
                     let corIcone = (d.tipo === "pasta") ? "#eab308" : "#6366f1";
 
-                    const nomeEscapado = d.nome.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                    const nome = typeof d.nome === "string" && d.nome.trim() ? d.nome : "Sem nome";
+                    const nomeEscapado = nome.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
                     item.innerHTML = `
                         <i class="fa-solid ${nomeIcone}" style="color: ${corIcone};"></i>
                         <div style="flex: 1; display: flex; align-items: center; overflow: hidden;">
                             <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-left-items); font-weight: ${isTop ? '700' : '500'};">
-                                ${d.nome}
+                                ${nome}
                             </span>
                         </div>
                         <i class="fa-solid fa-gear btn-edit-item-local" 
@@ -150,8 +152,12 @@ function carregarPasta(idPasta) {
                 });
             }
 
-            listaLocal.innerHTML = "";
-            listaLocal.appendChild(fragmento);
+                listaLocal.innerHTML = "";
+                listaLocal.appendChild(fragmento);
+            } catch (error) {
+                console.error("[LOCAL] Erro ao desenhar a pasta:", error);
+                mostrarErroListaLocal(idPasta, "Não foi possível mostrar esta pasta.");
+            }
         };
 
         // Gestão inteligente do cache-flash:
@@ -161,7 +167,7 @@ function carregarPasta(idPasta) {
         } else {
             if (timeoutCache) clearTimeout(timeoutCache);
             // Aguarda até 450ms pelo sinal do servidor. Se demorar mais, mostra a cache.
-            timeoutCache = setTimeout(executarRender, 450);
+            executarRender();
         }
 
     }, (error) => {
