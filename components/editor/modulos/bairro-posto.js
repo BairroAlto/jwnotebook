@@ -39,6 +39,8 @@ function selecionarSubAbaCasa(alvo) {
     if (!overlay) return;
     const disponivel = overlay.querySelector(`[data-bairro-casa-tab="${alvo}"]`);
     if (!disponivel || disponivel.hidden) alvo = 'geral';
+    const botaoAdicionarActa = overlay.querySelector('#btn-bairro-acta-add');
+    if (botaoAdicionarActa) botaoAdicionarActa.hidden = alvo !== 'actas';
     overlay.querySelectorAll('[data-bairro-casa-tab]').forEach(tab => {
         const ativa = tab.dataset.bairroCasaTab === alvo;
         tab.classList.toggle('active', ativa);

@@ -67,11 +67,13 @@ function criarEditorActa({ acta, rascunho = false, guardar, aoTerminar, apagar }
     data.textContent = rascunho ? 'Nova acta' : formatarData(obterTimestamp(acta));
     const acoes = document.createElement('div');
     acoes.className = 'bairro-posto-acta-acoes';
-    if (!rascunho) {
+    const mostrarBotaoApagar = () => {
+        if (acoes.querySelector('.bairro-posto-acta-apagar')) return;
         const botaoApagar = criarBotaoApagar();
         botaoApagar.addEventListener('click', () => apagar?.(acta));
         acoes.appendChild(botaoApagar);
-    }
+    };
+    if (!rascunho) mostrarBotaoApagar();
     cabecalho.append(data, acoes);
 
     const texto = document.createElement('textarea');
@@ -81,17 +83,19 @@ function criarEditorActa({ acta, rascunho = false, guardar, aoTerminar, apagar }
     texto.value = acta.texto || '';
 
     texto.addEventListener('input', () => {
+        acta.texto = texto.value;
         if (acta._rascunho && texto.value.trim()) {
             acta.id = criarIdActa();
             acta.criadaEm = Date.now();
             acta.atualizadaEm = acta.criadaEm;
             acta._rascunho = false;
+            mostrarBotaoApagar();
             guardar(acta, true);
             item.classList.remove('bairro-posto-acta--rascunho');
             data.textContent = formatarData(obterTimestamp(acta));
         }
         acta.texto = texto.value;
-        if (!rascunho || texto.value.trim()) {
+        if (!acta._rascunho || texto.value.trim()) {
             acta.atualizadaEm = Date.now();
             guardar(acta, false);
         }
