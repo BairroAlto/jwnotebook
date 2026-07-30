@@ -1,4 +1,4 @@
-import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { isMobileViewport } from '../ui/mobile-device.js';
 import { signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { inicializarAmigos } from './amigos.js';
@@ -43,7 +43,6 @@ export async function inicializarSettings(db, auth) {
         const refineContainer = document.getElementById('refine-search-container');
         if (refineContainer) refineContainer.style.display = 'none';
     };
-
     userPrefs = await carregarPreferenciasUtilizador(db, user.uid);
     window.NotaBookUserPrefs = userPrefs;
 
