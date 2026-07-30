@@ -18,6 +18,8 @@ let state = {
     aCriarCaixa: false,
     notaComAlteracoes: false,
     caixaEditadaId: null,
+    caixasEditadas: {},
+    revisaoAlteracoes: 0,
     timerGravacao: null
 };
 
@@ -68,16 +70,20 @@ export async function atualizarFeedEGravar(disparar = true) {
 window.atualizarFeedEGravarGlobal = atualizarFeedEGravar;
 
 // 4. ACIONAR GRAVAÇÃO
-function acionarGravacao(caixa = null) {
+function acionarGravacao(caixa = null, evento = null) {
     if (!state.dadosNotaOriginal) return;
     state.notaComAlteracoes = true;
+    state.revisaoAlteracoes += 1;
     
     // Se a gravação veio de uma caixa específica, guardamos o ID dela
     if (caixa && typeof caixa === 'object') {
         caixa.timestamp = new Date().toISOString();
         state.caixaEditadaId = caixa.id; // 🎯 Marca o alvo
-    } else {
-        state.caixaEditadaId = null; // Gravação global (ex: título)
+        const alteracaoAnterior = state.caixasEditadas[caixa.id];
+        state.caixasEditadas[caixa.id] = {
+            tipo: evento?.tipo || alteracaoAnterior?.tipo || "editado",
+            timestamp: caixa.timestamp
+        };
     }
 
     // Actualiza o EYE em live sem redesenhar o editor.

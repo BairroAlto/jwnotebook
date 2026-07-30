@@ -1,4 +1,5 @@
 import { TIPO_CHECK_BAIRRO } from '../../constants/bairro.js';
+import { criarGestorActas, garantirActas, temActas } from './bairro-actas.js';
 import { IDENTIDADE_FERRAMENTAS } from '../../constants/ferramentas.js';
 import { carregarExploradorAssociar, pesquisarExploradorAssociar } from './tags/tags-associar-explorer.js';
 import {
@@ -33,6 +34,46 @@ function selecionarAba(alvo) {
     });
 }
 
+function selecionarSubAbaCasa(alvo) {
+    const overlay = document.getElementById('popup-bairro-posto-overlay');
+    if (!overlay) return;
+    const disponivel = overlay.querySelector(`[data-bairro-casa-tab="${alvo}"]`);
+    if (!disponivel || disponivel.hidden) alvo = 'geral';
+    overlay.querySelectorAll('[data-bairro-casa-tab]').forEach(tab => {
+        const ativa = tab.dataset.bairroCasaTab === alvo;
+        tab.classList.toggle('active', ativa);
+        tab.setAttribute('aria-selected', String(ativa));
+    });
+    overlay.querySelectorAll('[data-bairro-casa-panel]').forEach(panel => {
+        panel.hidden = panel.dataset.bairroCasaPanel !== alvo;
+    });
+    if (alvo === 'historico-actas') estadoAtual?.gestorActas?.renderizarHistorico();
+}
+
+function configurarActas(subAba = 'geral') {
+    const overlay = document.getElementById('popup-bairro-posto-overlay');
+    const filho = estadoAtual?.filho;
+    if (!overlay || !filho) return;
+    garantirActas(filho);
+    const tabHistorico = overlay.querySelector('[data-bairro-casa-tab="historico-actas"]');
+    const existemActas = temActas(filho);
+    if (tabHistorico) tabHistorico.hidden = !existemActas && subAba !== 'historico-actas';
+    overlay.querySelectorAll('[data-bairro-casa-tab]').forEach(tab => {
+        tab.onclick = () => selecionarSubAbaCasa(tab.dataset.bairroCasaTab);
+    });
+    estadoAtual.gestorActas = criarGestorActas({
+        filho,
+        lista: document.getElementById('bairro-posto-actas-lista'),
+        listaHistorico: document.getElementById('bairro-posto-historico-actas-lista'),
+        botaoAdicionar: document.getElementById('btn-bairro-acta-add'),
+        guardar: () => {
+            estadoAtual.onTextoAlterado(estadoAtual.bairro);
+            estadoAtual.renderizar?.();
+        },
+        aoAbrirHistorico: () => selecionarSubAbaCasa('historico-actas')
+    });
+    selecionarSubAbaCasa(subAba);
+}
 function criarOpcaoCheck(opcao, valor, aoSelecionar) {
     const botao = document.createElement('button');
     botao.type = 'button';
@@ -54,14 +95,25 @@ function renderizarLigacaoAtual() {
     if (!container) return;
     container.replaceChildren();
     const ligacao = estadoAtual?.filho?.['ligaçãoBairro']?.[0];
-    if (!ligacao) {
-        const vazio = document.createElement('p');
-        vazio.className = 'bairro-posto-vazio';
-        vazio.textContent = 'Nenhuma pasta, nota ou caixa ligada.';
-        container.appendChild(vazio);
+if (!ligacao) {
+        const card = document.createElement('div');
+        card.className = 'bairro-posto-ligacao-card bairro-posto-ligacao-card--vazio';
+        const estado = document.createElement('div');
+        estado.className = 'bairro-posto-ligacao-estado';
+        const icone = document.createElement('span');
+        icone.className = 'bairro-posto-ligacao-icone';
+        icone.innerHTML = '<i class="fa-solid fa-link" aria-hidden="true"></i>';
+        const texto = document.createElement('span');
+        texto.textContent = 'Nenhuma pasta, nota ou caixa ligada.';
+        estado.append(icone, texto);
+        const botao = document.createElement('button');
+        botao.type = 'button';
+        botao.id = 'btn-bairro-mostrar-explorador';
+        botao.innerHTML = '<i class="fa-regular fa-folder-open" aria-hidden="true"></i><span>Mostrar Explorador</span>';
+        card.append(estado, botao);
+        container.appendChild(card);
         return;
     }
-
     const card = document.createElement('div');
     card.className = 'bairro-posto-ligacao-card';
     const texto = document.createElement('div');
@@ -90,6 +142,7 @@ function renderizarLigacaoAtual() {
             onAtualizar: () => estadoAtual.onTextoAlterado(estadoAtual.bairro)
         });
         renderizarLigacaoAtual();
+        configurarExplorador();
         estadoAtual.renderizar?.();
     });
     acoes.append(ir, remover);
@@ -154,7 +207,8 @@ async function pesquisarLigacoesDoUtilizador(termo) {
                 if (botao) botao.textContent = 'Mostrar Explorador';
                 pesquisa.parentElement.style.display = 'none';
                 renderizarLigacaoAtual();
-                estadoAtual.renderizar?.();
+        configurarExplorador();
+        estadoAtual.renderizar?.();
             },
             IDENTIDADE_FERRAMENTAS,
             'bairro-arvore-associar-content'
@@ -225,7 +279,8 @@ async function configurarExploradorCarregamento(forcar = false) {
                     pesquisa.value = '';
                 }
                 renderizarLigacaoAtual();
-                estadoAtual.renderizar?.();
+        configurarExplorador();
+        estadoAtual.renderizar?.();
             },
             IDENTIDADE_FERRAMENTAS,
             'bairro-arvore-associar-content'
@@ -428,7 +483,7 @@ function configurarDirecaoCriacao() {
     });
 }
 
-export function abrirBairroPosto(bairro, pai, filho, onTextoAlterado, renderizar) {
+export function abrirBairroPosto(bairro, pai, filho, onTextoAlterado, renderizar, subAba = 'geral') {
     const overlay = document.getElementById('popup-bairro-posto-overlay');
     if (!overlay) return;
     estadoAtual = { bairro, pai, filho, onTextoAlterado, renderizar };
@@ -447,14 +502,15 @@ export function abrirBairroPosto(bairro, pai, filho, onTextoAlterado, renderizar
     document.getElementById('btn-fechar-bairro-posto').onclick = () => overlay.classList.remove('active');
 
     configurarTitulo();
+    configurarActas(subAba);
     configurarChecks();
     configurarDirecaoCriacao();
     configurarOcultarChecados();
     configurarRemoverBairro();
     configurarToggleHistorico();
-    configurarExplorador();
     configurarPesquisaLigacao();
     renderizarLigacaoAtual();
+    configurarExplorador();
     selecionarAba(temCasa ? 'casa' : 'bairro');
     overlay.classList.add('active');
 }

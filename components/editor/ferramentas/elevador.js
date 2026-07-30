@@ -27,7 +27,7 @@ function criarCabecalhoElevador(caixa, callbacks) {
         onClick: () => {
             caixa.pastapai.push({ id: criarIdElevador(), nome: '', oculto: false, links: [], pastafilho: [] });
             callbacks.renderizarEstrutura();
-            callbacks.onTextoAlterado(caixa);
+            callbacks.onTextoAlterado(caixa, { tipo: 'linha_adicionada' });
         }
     }));
 

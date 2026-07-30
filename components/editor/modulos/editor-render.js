@@ -1,3 +1,5 @@
+import { marcarFerramentaShareComoVista } from '../../share/share-notification-state.js';
+
 function formatarMesDiario(date) {
     return new Intl.DateTimeFormat('pt-PT', { month: 'long', year: 'numeric' }).format(date);
 }
@@ -293,17 +295,13 @@ function aplicarMarcadorNovidade(el, caixa, dadosNota, notaId, db, auth) {
         el.removeEventListener('touchstart', limparNovidade);
 
         if (!db || !notaId) return;
-        const updated = {
-            ...(dadosNota.shareNovidades || {})
-        };
-        updated[caixa.id] = {
-            ...novidade,
-            viewedBy: [...new Set([...(novidade.viewedBy || []), uid])]
-        };
-        dadosNota.shareNovidades = updated;
-        await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js").then(async mod => {
-            await mod.updateDoc(mod.doc(db, "Share", notaId), { shareNovidades: updated });
-        }).catch(err => console.error("Erro ao atualizar viewedBy da caixa:", err));
+        await marcarFerramentaShareComoVista({
+            db,
+            notaId,
+            caixaId: caixa.id,
+            dadosNota,
+            uid
+        }).catch(err => console.error("Erro ao atualizar viewedBy da ferramenta:", err));
     };
 
     // ðŸ–±ï¸ / ðŸ“± Ao passar com o rato ou tocar no ecrÃ£ (mobile), limpa o vermelho!

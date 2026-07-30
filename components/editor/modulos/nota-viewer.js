@@ -1,6 +1,7 @@
-import { doc, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
 import { MobileUI } from '../../ui/mobile-manager.js';
 import { aplicarPreferenciasDeNota, obterConfigNota } from '../../settings/preferences.js';
+import { marcarNovidadesShareDaNotaComoVistas } from '../../share/share-notification-state.js';
 
 export function ajustarAlturasCampos() {
     const campos = document.querySelectorAll('.tool-title-input, #editor-feed textarea');
@@ -77,12 +78,24 @@ export async function processarAberturaNota(ctx) {
         if (dadosNota.onde === "share") {
             const uid = auth.currentUser.uid;
             window.sessaoUltimaLeitura = dadosNota[uid]?.ultimaLeitura || 0;
+            console.info('[SHARE-NOTIF][nota][abrir]', {
+                notaId,
+                uid,
+                temNovidadeGeral: Boolean(dadosNota.shareNotaNovidade),
+                totalNovidadesFerramentas: Object.keys(dadosNota.shareNovidades || {}).length,
+                vistoPor: dadosNota.vistoPor || []
+            });
             try {
-                await updateDoc(doc(db, "Share", notaId), {
-                    vistoPor: arrayUnion(uid),
-                    [uid + ".ultimaLeitura"]: new Date().toISOString()
+                await marcarNovidadesShareDaNotaComoVistas({
+                    db,
+                    notaId,
+                    dadosNota,
+                    uid
                 });
-            } catch (_) {}
+                console.info('[SHARE-NOTIF][nota][vista]', { notaId, uid });
+            } catch (erro) {
+                console.error("[SHARE] Não foi possível marcar a nota como vista:", erro);
+            }
         }
 
         await comTempoLimite(

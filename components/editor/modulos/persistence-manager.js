@@ -5,8 +5,15 @@ export const PersistenceManager = {
     guardar: async (state) => {
         const { notaAbertaId, dbRef, authRef, caixasAtuais, dadosNotaOriginal, notaComAlteracoes, caixaEditadaId } = state;
         
-        if (!notaAbertaId || !dbRef || !notaComAlteracoes) return;
+        if (!notaAbertaId || !dbRef || !notaComAlteracoes) {
+            console.debug('[SHARE-NOTIF][gravar][ignorado]', {
+                notaId: notaAbertaId,
+                motivo: 'sem-alteracoes-ou-contexto'
+            });
+            return;
+        }
 
+        const revisaoGuardada = state.revisaoAlteracoes || 0;
         const isShare = (dadosNotaOriginal.onde === "share");
         const notaRef = doc(dbRef, isShare ? "Share" : "Local", notaAbertaId);
 
@@ -21,24 +28,58 @@ export const PersistenceManager = {
             };
             if (isShare) payload.vistoPor = [authRef.currentUser.uid];
 
-            if (isShare && caixaEditadaId) {
+            const alteracoesPendentes = { ...(state.caixasEditadas || {}) };
+            if (isShare && caixaEditadaId && !alteracoesPendentes[caixaEditadaId]) {
+                alteracoesPendentes[caixaEditadaId] = { tipo: "editado" };
+            }
+
+            if (isShare && Object.keys(alteracoesPendentes).length) {
                 const uid = authRef.currentUser.uid;
                 const userName = authRef.currentUser.displayName || authRef.currentUser.email || "Utilizador";
-                payload.shareNovidades = {
-                    ...(dadosNotaOriginal.shareNovidades || {}),
-                    [caixaEditadaId]: {
-                        tipo: payload.shareNovidades?.[caixaEditadaId]?.tipo === "criado" ? "criado" : "editado",
+                payload.shareNovidades = { ...(dadosNotaOriginal.shareNovidades || {}) };
+                Object.entries(alteracoesPendentes).forEach(([caixaId, alteracao]) => {
+                    const tipoAnterior = payload.shareNovidades?.[caixaId]?.tipo;
+                    payload.shareNovidades[caixaId] = {
+                        tipo: tipoAnterior === "criado" ? "criado" : (alteracao.tipo || "editado"),
                         by: uid,
                         byName: userName,
                         viewedBy: [uid],
                         timestamp: new Date().toISOString()
-                    }
-                };
+                    };
+                });
                 dadosNotaOriginal.shareNovidades = payload.shareNovidades;
+            } else if (isShare) {
+                const uid = authRef.currentUser.uid;
+                payload.shareNotaNovidade = {
+                    by: uid,
+                    byName: authRef.currentUser.displayName || authRef.currentUser.email || "Utilizador",
+                    viewedBy: [uid],
+                    timestamp: new Date().toISOString()
+                };
+                dadosNotaOriginal.shareNotaNovidade = payload.shareNotaNovidade;
             }
 
+            console.info('[SHARE-NOTIF][gravar][inicio]', {
+                notaId: notaAbertaId,
+                partilhada: isShare,
+                caixas: Object.entries(alteracoesPendentes).map(([id, alteracao]) => ({
+                    id,
+                    tipo: alteracao.tipo || 'editado'
+                })),
+                geral: isShare && Object.keys(alteracoesPendentes).length === 0
+            });
             await updateDoc(notaRef, payload);
-            state.notaComAlteracoes = false;
+            console.info('[SHARE-NOTIF][gravar][sucesso]', {
+                notaId: notaAbertaId,
+                partilhada: isShare
+            });
+            state.notaComAlteracoes = (state.revisaoAlteracoes || 0) !== revisaoGuardada;
+            Object.entries(alteracoesPendentes).forEach(([caixaId, alteracao]) => {
+                if (state.caixasEditadas?.[caixaId]?.timestamp === alteracao.timestamp) {
+                    delete state.caixasEditadas[caixaId];
+                }
+            });
+            state.caixaEditadaId = null;
             
             // ========================================================
             // 🚀 SINCRONIZAÇÃO PARA O BRAIN / BIBLIOTECA (CODEX & PUZZLE)
@@ -55,6 +96,13 @@ export const PersistenceManager = {
             const info = document.getElementById('editor-info-text');
             if (info) info.innerText = "Sincronizado";
 
-        } catch (e) { console.error("Erro ao guardar:", e); }
+        } catch (e) {
+            console.error('[SHARE-NOTIF][gravar][erro]', {
+                notaId: notaAbertaId,
+                partilhada: isShare,
+                erro: e
+            });
+            console.error("Erro ao guardar:", e);
+        }
     }
 };

@@ -31,7 +31,7 @@ export function criarBairro(caixa, onTextoAlterado, onApagar, onPaleta, onMover,
         className: 'bairro-control--add',
         onClick: () => {
             caixa.pastapai.push(criarPaiBairro());
-            onTextoAlterado(caixa);
+            onTextoAlterado(caixa, { tipo: 'linha_adicionada' });
             renderizar();
         }
     }));

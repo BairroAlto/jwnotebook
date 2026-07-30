@@ -1,5 +1,6 @@
 import { criarFilhoBairro, moverItemBairro, TIPO_CHECK_BAIRRO } from '../../constants/bairro.js';
 import { criarBotaoBairro, criarCampoBairro, criarGrupoBairro } from './bairro-controls.js';
+import { temActas } from '../modulos/bairro-actas.js';
 
 function alterar(caixa, onTextoAlterado, renderizar) {
     onTextoAlterado(caixa);
@@ -14,7 +15,8 @@ function alterarEstadoFilho({ caixa, pai, filho, linha, onTextoAlterado, renderi
         filho.oculto = false;
         filho.timestamp = Date.now();
         linha.classList.remove('bairro-filho--concluido', 'bairro-filho--a-ocultar');
-        alterar(caixa, onTextoAlterado, renderizar);
+        onTextoAlterado(caixa, { tipo: 'tarefa_reaberta' });
+        renderizar();
         return;
     }
 
@@ -22,7 +24,7 @@ function alterarEstadoFilho({ caixa, pai, filho, linha, onTextoAlterado, renderi
     filho.timestamp = Date.now();
 
     if (filho.concluido && pai.ocultarJaChecados) {
-        onTextoAlterado(caixa);
+        onTextoAlterado(caixa, { tipo: 'tarefa_concluida' });
         linha.classList.add('bairro-filho--concluido');
         if (filho.__ocultarTimer) clearTimeout(filho.__ocultarTimer);
         const timer = setTimeout(() => {
@@ -36,7 +38,8 @@ function alterarEstadoFilho({ caixa, pai, filho, linha, onTextoAlterado, renderi
         return;
     }
 
-    alterar(caixa, onTextoAlterado, renderizar);
+    onTextoAlterado(caixa, { tipo: filho.concluido ? 'tarefa_concluida' : 'tarefa_reaberta' });
+    renderizar();
 }
 
 function abrirPostoBairro(...argumentos) {
@@ -70,6 +73,15 @@ function criarLigacaoButton(ligacao) {
     });
 }
 
+function criarActasButton({ caixa, pai, filho, onTextoAlterado, renderizar }) {
+    if (!temActas(filho)) return null;
+    return criarBotaoBairro({
+        icon: 'fa-solid fa-file-lines',
+        label: 'Abrir Histórico de Actas',
+        className: 'bairro-control--acta',
+        onClick: () => abrirPostoBairro(caixa, pai, filho, onTextoAlterado, renderizar, 'historico-actas')
+    });
+}
 function editarTituloFilhoInline({ caixa, filho, elemento, onTextoAlterado, renderizar }) {
     const input = criarCampoBairro({
         value: filho.nome,
@@ -146,6 +158,8 @@ function renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar }) {
     }
 
     const acoes = criarGrupoBairro();
+    const actas = criarActasButton({ caixa, pai, filho, onTextoAlterado, renderizar });
+    if (actas) acoes.appendChild(actas);
     const ligacao = filho['ligaçãoBairro']?.[0];
     if (ligacao) acoes.appendChild(criarLigacaoButton(ligacao));
     acoes.appendChild(criarBotaoBairro({
@@ -185,7 +199,8 @@ function renderizarPai({ caixa, pai, onTextoAlterado, renderizar }) {
             } else {
                 pai.pastafilho.push(filho);
             }
-            alterar(caixa, onTextoAlterado, renderizar);
+            onTextoAlterado(caixa, { tipo: 'linha_adicionada' });
+            renderizar();
             setTimeout(() => secao.querySelector(`[data-bairro-casa-id="${filho.id}"] input`)?.focus(), 0);
         }
     }));

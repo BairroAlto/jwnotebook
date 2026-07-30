@@ -1,4 +1,4 @@
-﻿import { criarIdElevador, garantirEstruturaElevador, moverItem } from '../../constants/elevador.js';
+import { criarIdElevador, garantirEstruturaElevador, moverItem } from '../../constants/elevador.js';
 import { criarBotaoElevador, criarCampoElevador, criarGrupoControlosElevador } from './elevador-controls.js';
 import { tornarElevadorArrastavel } from './elevador-drag.js';
 
@@ -106,7 +106,8 @@ function renderizarFilho({ filho, filhos, index, caixa, onTextoAlterado, renderi
         onClick: () => {
             links.push({ id: criarIdElevador(), url: '' });
             sincronizarUrlLegada();
-            alterarEstrutura(caixa, onTextoAlterado, renderizar);
+            onTextoAlterado(caixa, { tipo: 'linha_adicionada' });
+            renderizar();
         }
     }));
     controlos.appendChild(criarBotaoElevador({
@@ -185,7 +186,8 @@ function renderizarPai({ pai, pais, index, caixa, corpo, onTextoAlterado, render
         className: 'elevador-control--muted',
         onClick: () => {
             pai.links.push({ id: criarIdElevador(), url: '' });
-            alterarEstrutura(caixa, onTextoAlterado, renderizar);
+            onTextoAlterado(caixa, { tipo: 'linha_adicionada' });
+            renderizar();
         }
     }));
     controlos.appendChild(criarBotaoElevador({
@@ -194,7 +196,8 @@ function renderizarPai({ pai, pais, index, caixa, corpo, onTextoAlterado, render
         className: 'elevador-control--muted',
         onClick: () => {
             pai.pastafilho.push({ id: criarIdElevador(), nome: '', url: '', oculto: false });
-            alterarEstrutura(caixa, onTextoAlterado, renderizar);
+            onTextoAlterado(caixa, { tipo: 'linha_adicionada' });
+            renderizar();
         }
     }));
     controlos.appendChild(criarBotaoElevador({
