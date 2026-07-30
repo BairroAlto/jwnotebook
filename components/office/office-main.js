@@ -30,6 +30,7 @@ import { carregarMenuSuperior, finalizarLoading, mostrarLogin } from './office-u
 import { extrairTextoConteudo, normalizarItensPublicacao } from './office-content.js';
 import { filtrarIndice, filtrosAtivos } from './office-search.js';
 import { iniciarIndicadoresAnotacoes, pararIndicadoresAnotacoes, definirContextoAnotacoes } from './office-annotations.js';
+import { iniciarPainelComentarios, definirContextoComentarios, renderizarComentarios } from './office-comments.js';
 import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
 
 window.NotaBookMode = 'office';
@@ -53,13 +54,18 @@ onAuthStateChanged(auth, async (user) => {
     }
 
     iniciarIndicadoresAnotacoes(db, auth);
+    iniciarPainelComentarios(db, auth);
     window.NotaBookUserPrefs = await carregarPreferenciasUtilizador(db, user.uid);
     await carregarMenuSuperior();
     await carregarPopupsBrain();
     vincularEventos();
     iniciarSettings();
-    await renderizarCardsSemana();
     renderizarAtrilRaiz();
+    try {
+        await renderizarCardsSemana();
+    } catch (erro) {
+        console.error("[OFFICE] Falha ao carregar os conteúdos iniciais:", erro);
+    }
     window.ensureOfficeRightPanel = () => abrirPainelDireito('brain');
     finalizarLoading();
 });
@@ -110,8 +116,8 @@ function vincularEventos() {
     $('office-ai-input').addEventListener('keydown', (event) => {
         if (event.key === "Enter") responderBokkai();
     });
-
     $('office-btn-settings').onclick = () => abrirPopup('office-popup-settings');
+    $('office-btn-comments').onclick = alternarPainelComentarios;
     $('office-settings-close').onclick = () => fecharPopup('office-popup-settings');
 
     document.addEventListener('click', (event) => {
@@ -405,7 +411,13 @@ function obterReferenciaOffice(item, parent) {
 }
 
 function prepararConteudoCentral() {
-    definirContextoAnotacoes({ referencia: obterReferenciaOffice(state.currentData, state.currentParent) });
+    const referencia = obterReferenciaOffice(state.currentData, state.currentParent);
+    definirContextoAnotacoes({ referencia });
+    definirContextoComentarios(referencia);
+
+    if (localStorage.getItem("notabook:office:commentsAutoOpen") === "true") {
+        abrirPainelDireito('comments');
+    }
 
     document.querySelectorAll('#office-reader [data-p]').forEach(bloco => {
         bloco.addEventListener('click', () => abrirPainelDireito('brain'));
@@ -445,6 +457,8 @@ async function abrirPainelDireito(panel = "brain") {
         const brainBtn = col.querySelector('#btn-brain');
         if (brainBtn) brainBtn.classList.add('active');
         iniciarXSat();
+        col.querySelector('#office-comments-close')?.addEventListener('click', fecharPainelDireito);
+        renderizarComentarios();
     }
 
     if (window.switchPanel) window.switchPanel(panel);
@@ -463,7 +477,32 @@ window.switchPanel = (panel) => {
         target.style.display = 'flex';
     }
     if (btn) btn.classList.add('active');
+    $("office-btn-comments")?.classList.toggle("active", panel === "comments");
 };
+
+function alternarPainelComentarios() {
+    const col = $("office-right-col");
+    const painelAberto = col.classList.contains("active") && col.querySelector("#panel-comments.active");
+    if (painelAberto) {
+        fecharPainelDireito();
+        return;
+    }
+    abrirPainelDireito('comments');
+}
+
+function fecharPainelDireito() {
+    const col = $("office-right-col");
+    col.classList.remove("active");
+    col.classList.add("closed");
+    $("office-btn-comments")?.classList.remove("active");
+    col.style.removeProperty("height");
+    col.style.removeProperty("bottom");
+    col.style.removeProperty("width");
+    col.style.removeProperty("min-width");
+    col.style.removeProperty("display");
+}
+
+window.fecharPainelDireito = fecharPainelDireito;
 
 function atualizarTituloContexto(item) {
     const label = item?.capitulo ? `CAP. ${item.capitulo}` : item?.titulo || "CONTEUDO";
@@ -732,6 +771,7 @@ function iniciarSettings() {
     const pop = $('office-popup-font');
     const net = $('office-response-net');
     const floating = $('office-ai-floating');
+    const commentsAutoOpen = $('office-comments-auto-open');
     const savedMainDesktop = localStorage.getItem("notabook:office:mainFontDesktop") || localStorage.getItem("notabook:office:mainFont") || "16";
     const savedMainMobile = localStorage.getItem("notabook:office:mainFontMobile") || localStorage.getItem("notabook:office:mainFont") || savedMainDesktop;
     const savedPop = localStorage.getItem("notabook:office:popupFont") || "15";
@@ -767,6 +807,11 @@ function iniciarSettings() {
         atualizarOfficeBookAiFloating();
     };
     atualizarOfficeBookAiFloating();
+    commentsAutoOpen.checked = localStorage.getItem("notabook:office:commentsAutoOpen") === "true";
+    commentsAutoOpen.onchange = () => {
+        localStorage.setItem("notabook:office:commentsAutoOpen", commentsAutoOpen.checked ? "true" : "false");
+    };
+
     window.addEventListener('resize', aplicarFontes);
 }
 
