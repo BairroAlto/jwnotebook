@@ -4,6 +4,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { abrirNotaNoEditor } from '../editor/editor.js';
 import { ICONS } from '../constants/icons.js';
+import { temNovidadesShareNaoVistas } from './share-notification-state.js';
 
 // --- ESTADO DE NAVEGAÇÃO E INTERFACE ---
 window.pastaShareAtual = "home"; 
@@ -143,11 +144,7 @@ function carregarDadosShare() {
                 }
 
                 // Lógica de Novidades não lidas (no documento ou em caixas internas)
-                const novidadesCaixas = d.shareNovidades || {};
-                const temCaixaNaoVista = Object.values(novidadesCaixas).some(
-                    nov => nov && nov.by !== uid && !(nov.viewedBy || []).includes(uid)
-                );
-                const naoViAinda = d.tipo === "nota" && ((d.vistoPor && !d.vistoPor.includes(uid)) || temCaixaNaoVista);
+                const naoViAinda = d.tipo === "nota" && temNovidadesShareNaoVistas(d, uid);
 
                 if (naoViAinda) {
                     idsComNovidades.add(id);
@@ -158,6 +155,13 @@ function carregarDadosShare() {
                         paiId = pastaDoc ? pastaDoc.data()[uid]?.pastapai : null;
                     }
                 }
+            });
+
+            console.info('[SHARE-NOTIF][coluna]', {
+                uid,
+                documentosComNovidades: [...idsComNovidades],
+                pastasComNovidades: [...pastasComNovidades],
+                convites: convitesPendentes.map(item => item.id)
             });
 
             // RENDERIZAR CARDS DE CONVITE
@@ -312,13 +316,14 @@ export function vigiarConvitesPendentes(db, auth) {
         let temNovidade = false;
         snapshot.forEach(docSnap => {
             const d = docSnap.data();
-            if ((d.convidado && d.convidado.includes(uid)) || (d.vistoPor && !d.vistoPor.includes(uid))) {
+            if ((d.convidado && d.convidado.includes(uid)) || temNovidadesShareNaoVistas(d, uid)) {
                 temNovidade = true;
             }
         });
 
         btnShare.style.color = temNovidade ? "#ef4444" : "";
         btnShare.style.fontWeight = temNovidade ? "900" : "";
+        console.info('[SHARE-NOTIF][botao-share]', { uid, temNovidade });
     }, (error) => {
         console.error("Erro na vigilância de convites:", error);
     });
