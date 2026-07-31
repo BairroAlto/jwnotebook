@@ -8,6 +8,11 @@ let listaIdsAnteriores = [];
  * @param {Array} caixasParaVarrer - Lista de caixas filtrada pelo Dispatcher
  */
 export async function detectarEExibirTextosBiblicos(caixasParaVarrer) {
+    const db = window.notaAtualContext?.db;
+    const auth = window.notaAtualContext?.auth;
+    if (db && auth) {
+        iniciarPrecarregamentoSegundoPlano(db, auth);
+    }
     const container = document.getElementById('textos-container');
     if (!container) return;
 
@@ -34,36 +39,65 @@ export async function detectarEExibirTextosBiblicos(caixasParaVarrer) {
     let idParaScroll = idsAtuais.find(id => !listaIdsAnteriores.includes(id)) || "";
     listaIdsAnteriores = idsAtuais;
 
-    // 5. RENDERIZAR ESTRUTURA BASE
+    // 5. RENDERIZAR ESTRUTURA BASE (INCREMENTAL E SEM RECARREGAR CARDS EXISTENTES)
     if (citacoesEncontradas.length === 0) {
         container.innerHTML = `<div style="text-align:center; padding:40px; color:var(--text-muted); font-size:11px; opacity:0.5;">Escreve uma referência (ex: João 3:16) para ler aqui.</div>`;
         return;
     }
 
-    container.innerHTML = `
-        <div style="padding: 10px; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05);">
-            <p style="font-size: 10px; color: var(--primary); font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin: 0;">
-                <i class="fa-solid fa-book-bible"></i> Escrituras Detetadas (${citacoesEncontradas.length})
-            </p>
-        </div>
-        <div id="lista-escrituras-nota" style="padding: 0 10px 20px 10px; display: flex; flex-direction: column; gap:12px;"></div>
-    `;
-    
-    const listaArea = document.getElementById('lista-escrituras-nota');
+    let listaArea = document.getElementById('lista-escrituras-nota');
+    let headerCont = container.querySelector('.escrituras-header-count');
 
-    // 6. INJETAR PLACEHOLDERS E CARREGAR TEXTOS EM PARALELO
-    citacoesEncontradas.forEach(ref => {
-        const div = document.createElement('div');
-        div.id = `bib-card-${ref.idUnico}`;
-        div.style.cssText = "background: rgba(255,255,255,0.02); border-radius: 8px; padding: 12px; border: 1px solid transparent; transition: border 0.5s;";
-        div.innerHTML = `<p style="font-size:9px; color:var(--text-muted); opacity:0.5;">Sincronizando ${ref.livro}...</p>`;
-        listaArea.appendChild(div);
+    if (!listaArea) {
+        container.innerHTML = `
+            <div style="padding: 10px; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <p style="font-size: 10px; color: var(--primary); font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin: 0;">
+                    <i class="fa-solid fa-book-bible"></i> Escrituras Detetadas (<span class="escrituras-header-count">${citacoesEncontradas.length}</span>)
+                </p>
+            </div>
+            <div id="lista-escrituras-nota" style="padding: 0 10px 20px 10px; display: flex; flex-direction: column; gap:12px;"></div>
+        `;
+        listaArea = document.getElementById('lista-escrituras-nota');
+    } else if (headerCont) {
+        headerCont.textContent = citacoesEncontradas.length;
+    }
+
+    // 6. REMOVER CARDS QUE DEIXARAM DE EXISTIR
+    const cardsExistentes = listaArea.querySelectorAll('[id^="bib-card-"]');
+    cardsExistentes.forEach(cardEl => {
+        const idCard = cardEl.id.replace('bib-card-', '');
+        if (!idsAtuais.includes(idCard)) {
+            cardEl.remove();
+        }
     });
 
-    // Dispara a busca nos ficheiros JSON locais
-    await Promise.all(citacoesEncontradas.map(ref => preencherTextoNoCard(ref)));
+    // 7. INJETAR E REORDENAR NA POSIÇÃO EXATA DA NOTA
+    const novasRefsParaCarregar = [];
+    citacoesEncontradas.forEach((ref, index) => {
+        const idCard = `bib-card-${ref.idUnico}`;
+        let div = document.getElementById(idCard);
+        const ehNovo = !div;
 
-    // 7. UX: SCROLL PARA O NOVO TEXTO DETETADO
+        if (ehNovo) {
+            div = document.createElement('div');
+            div.id = idCard;
+            div.style.cssText = "background: rgba(255,255,255,0.02); border-radius: 8px; padding: 12px; border: 1px solid transparent; transition: border 0.5s;";
+            div.innerHTML = `<p style="font-size:9px; color:var(--text-muted); opacity:0.5;">Sincronizando ${ref.livro}...</p>`;
+            novasRefsParaCarregar.push(ref);
+        }
+
+        const filhoNaPosicao = listaArea.children[index];
+        if (filhoNaPosicao !== div) {
+            listaArea.insertBefore(div, filhoNaPosicao || null);
+        }
+    });
+
+    // Carrega apenas os novos cartões
+    if (novasRefsParaCarregar.length > 0) {
+        await Promise.all(novasRefsParaCarregar.map(ref => preencherTextoNoCard(ref)));
+    }
+
+    // 8. UX: SCROLL PARA O NOVO TEXTO DETETADO
     if (idParaScroll) {
         setTimeout(() => {
             const elAlvo = document.getElementById(`bib-card-${idParaScroll}`);
@@ -77,27 +111,35 @@ export async function detectarEExibirTextosBiblicos(caixasParaVarrer) {
 }
 
 import { abrirVersiculoNoBrain } from './biblia-brain.js';
-import { collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { collection, query, where, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
-async function verificarTemConteudoVersiculo(nomeVersiculo, db, auth) {
-    if (!db || !auth?.currentUser?.uid) return false;
-    const uid = auth.currentUser.uid;
-    try {
-        // 1. Verificar em TextosBiblia
-        const qTB = query(
-            collection(db, "TextosBiblia"),
-            where("userId", "==", uid),
-            where("nome", "==", nomeVersiculo)
-        );
-        const snapTB = await getDocs(qTB);
-        if (!snapTB.empty) {
-            const data = snapTB.docs[0].data();
+let cacheVersiculosComConteudo = new Set();
+let unsubPreloadTB = null;
+let unsubPreloadLocal = null;
+let precarregadoUid = null;
+
+export function iniciarPrecarregamentoSegundoPlano(db, auth) {
+    const uid = auth?.currentUser?.uid;
+    if (!db || !uid || precarregadoUid === uid) return;
+
+    if (unsubPreloadTB) unsubPreloadTB();
+    if (unsubPreloadLocal) unsubPreloadLocal();
+
+    precarregadoUid = uid;
+    console.log("⚡ [EYE-BIBLE] Inicializando pré-carregamento em segundo plano...");
+
+    const qTB = query(collection(db, "TextosBiblia"), where("userId", "==", uid));
+    unsubPreloadTB = onSnapshot(qTB, (snapTB) => {
+        snapTB.forEach(docSnap => {
+            const data = docSnap.data();
+            const nome = data.nome;
+            if (!nome) return;
 
             const temPuzzle = Boolean(
-                data.Puzzle && (
+                (data.Puzzle && (
                     (Array.isArray(data.Puzzle.quadros) && data.Puzzle.quadros.length > 0) ||
                     (Array.isArray(data.Puzzle.blocos) && data.Puzzle.blocos.length > 0)
-                ) ||
+                )) ||
                 (Array.isArray(data.Blocos) && data.Blocos.length > 0) ||
                 (Array.isArray(data.textos) && data.textos.length > 0)
             );
@@ -117,33 +159,34 @@ async function verificarTemConteudoVersiculo(nomeVersiculo, db, auth) {
 
             const eMarcador = data.marcador === 'sim';
 
-            if (temPuzzle || temFontes || temDossie || eMarcador) return true;
-        }
+            if (temPuzzle || temFontes || temDossie || eMarcador) {
+                cacheVersiculosComConteudo.add(nome);
+            } else {
+                cacheVersiculosComConteudo.delete(nome);
+            }
+        });
+    });
 
-        // 2. Verificar em notas locais (neuroniosBiba)
-        const qLocal = query(
-            collection(db, "Local"),
-            where("userId", "==", uid)
-        );
-        const snapLocal = await getDocs(qLocal);
-        let temLocal = false;
+    const qLocal = query(collection(db, "Local"), where("userId", "==", uid));
+    unsubPreloadLocal = onSnapshot(qLocal, (snapLocal) => {
         snapLocal.forEach(docN => {
-            if (temLocal) return;
             const nData = docN.data();
             if (nData.estado === "on" && Array.isArray(nData.caixas)) {
                 nData.caixas.forEach(c => {
-                    if (c.estado === "on" && Array.isArray(c.neuroniosBiba) && c.neuroniosBiba.includes(nomeVersiculo)) {
-                        temLocal = true;
+                    if (c.estado === "on" && Array.isArray(c.neuroniosBiba)) {
+                        c.neuroniosBiba.forEach(ref => cacheVersiculosComConteudo.add(ref));
                     }
                 });
             }
         });
+    });
+}
 
-        return temLocal;
-    } catch (e) {
-        console.error('Erro ao verificar conteúdo do versículo:', e);
-        return false;
+function verificarTemConteudoVersiculo(nomeVersiculo, db, auth) {
+    if (db && auth) {
+        iniciarPrecarregamentoSegundoPlano(db, auth);
     }
+    return cacheVersiculosComConteudo.has(nomeVersiculo);
 }
 
 /**
