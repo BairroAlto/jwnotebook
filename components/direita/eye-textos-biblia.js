@@ -214,3 +214,49 @@ function processarCoordenadas(livro, str) {
     });
     return resultado.citacoes.length > 0 ? resultado : null;
 }
+
+/**
+ * FERRAMENTA DE DIAGNÓSTICO BÍBLICO ONLINE
+ * Executa uma verificação rápida aos 66 ficheiros da Bíblia no servidor online.
+ * Para usar no browser: escreve `diagnosticarTextosBiblicos()` na consola.
+ */
+window.diagnosticarTextosBiblicos = async function() {
+    console.log("%c🔍 [DIAGNÓSTICO BÍBLICO] Testando a presença dos 66 ficheiros JSON no servidor...", "color: #3b82f6; font-weight: bold;");
+    
+    const ficheiros = [
+        "1_corintios", "1_cronicas", "1_joao", "1_pedro", "1_reis", "1_samuel", "1_tessalonicenses", "1_timoteo",
+        "2_corintios", "2_cronicas", "2_joao", "2_pedro", "2_reis", "2_samuel", "2_tessalonicenses", "2_timoteo",
+        "3_joao", "ageu", "amos", "apocalipse", "atos", "cantico_de_salomao", "colossenses", "daniel", "deuteronomio",
+        "eclesiastes", "efesios", "esdras", "ester", "exodo", "ezequiel", "filemon", "filipenses", "galatas", "genesis",
+        "habacuque", "hebreus", "isaias", "jeremias", "jo", "joao", "joel", "jonas", "josue", "judas", "juizes",
+        "lamentacoes", "levitico", "lucas", "malaquias", "marcos", "mateus", "miqueias", "naum", "neemias", "numeros",
+        "obadias", "oseias", "proverbios", "romanos", "rute", "salmos", "sofonias", "tiago", "tito", "zacarias"
+    ];
+
+    let okCount = 0;
+    let emFalta = [];
+
+    await Promise.all(ficheiros.map(async (slug) => {
+        try {
+            const res = await fetch(`./data/biblia/${slug}.json`, { method: 'HEAD' });
+            if (res.ok) {
+                okCount++;
+            } else {
+                emFalta.push(`${slug}.json (HTTP ${res.status})`);
+            }
+        } catch (e) {
+            emFalta.push(`${slug}.json (Erro de ligação)`);
+        }
+    }));
+
+    console.log(`%c📊 [RESULTADO DIAGNÓSTICO]: ${okCount}/66 Ficheiros disponíveis no servidor.`, okCount === 66 ? "color: #22c55e; font-weight: bold;" : "color: #ef4444; font-weight: bold;");
+    
+    if (emFalta.length > 0) {
+        console.warn("⚠️ FICHEIROS EM FALTA NO SERVIDOR ONLINE:", emFalta);
+        console.warn("👉 Dica: Certifica-te de que a pasta 'data/biblia/' foi publicada no teu servidor de alojamento.");
+    } else {
+        console.log("🎉 Excelente! Todos os 66 ficheiros da Bíblia estão presentes e funcionais no servidor.");
+    }
+
+    return { disponiveis: okCount, total: 66, emFalta };
+};
