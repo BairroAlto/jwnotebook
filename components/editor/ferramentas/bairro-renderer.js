@@ -82,7 +82,48 @@ function criarActasButton({ caixa, pai, filho, onTextoAlterado, renderizar }) {
         onClick: () => abrirPostoBairro(caixa, pai, filho, onTextoAlterado, renderizar, 'historico-actas')
     });
 }
-function editarTituloFilhoInline({ caixa, filho, elemento, onTextoAlterado, renderizar }) {
+function adicionarNovaLinhaNoPai({ caixa, pai, filhoAtual, onTextoAlterado, renderizar }) {
+    if (!pai) return;
+    const novoFilho = criarFilhoBairro();
+    novoFilho.check = pai.check || TIPO_CHECK_BAIRRO.NENHUM;
+    novoFilho.criadaEm = Date.now();
+
+    const indexAtual = (pai.pastafilho || []).indexOf(filhoAtual);
+    if (indexAtual !== -1) {
+        pai.pastafilho.splice(indexAtual + 1, 0, novoFilho);
+    } else {
+        if (caixa?.direcaoCriacao === 'cima') {
+            pai.pastafilho.unshift(novoFilho);
+        } else {
+            pai.pastafilho.push(novoFilho);
+        }
+    }
+    onTextoAlterado(caixa, { tipo: 'linha_adicionada' });
+    renderizar();
+    setTimeout(() => {
+        const novoEl = document.querySelector(`[data-bairro-casa-id="${novoFilho.id}"] input, [data-bairro-casa-id="${novoFilho.id}"] .bairro-filho-nome`);
+        if (novoEl) {
+            if (novoEl.matches('input')) {
+                novoEl.focus();
+            } else {
+                novoEl.click();
+            }
+        }
+    }, 60);
+}
+
+function confirmarERemoverFilho({ caixa, filho, onTextoAlterado, renderizar }) {
+    import('../modulos/bairro-posto.js').then(modulo => {
+        modulo.abrirPopupConfirmarRemoverTarefa(filho.nome, () => {
+            filho.oculto = true;
+            filho.timestamp = Date.now();
+            onTextoAlterado(caixa);
+            renderizar();
+        });
+    });
+}
+
+function editarTituloFilhoInline({ caixa, pai, filho, elemento, onTextoAlterado, renderizar }) {
     const input = criarCampoBairro({
         value: filho.nome,
         placeholder: 'Nome da tarefa...',
@@ -94,7 +135,15 @@ function editarTituloFilhoInline({ caixa, filho, elemento, onTextoAlterado, rend
     });
     input.addEventListener('click', event => event.stopPropagation());
     input.addEventListener('keydown', event => {
-        if (event.key === 'Enter') input.blur();
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            input.blur();
+            adicionarNovaLinhaNoPai({ caixa, pai, filhoAtual: filho, onTextoAlterado, renderizar });
+        } else if ((event.key === 'Backspace' || event.key === 'Delete') && !event.target.value.trim()) {
+            event.preventDefault();
+            input.blur();
+            confirmarERemoverFilho({ caixa, filho, onTextoAlterado, renderizar });
+        }
     });
     input.addEventListener('blur', () => {
         setTimeout(() => { if (filho.nome.trim()) renderizar(); }, 150);
@@ -103,7 +152,42 @@ function editarTituloFilhoInline({ caixa, filho, elemento, onTextoAlterado, rend
     input.focus();
     input.select();
 }
+function formatarDataCurta(timestamp) {
+    if (!timestamp) return '';
+    const d = new Date(timestamp);
+    const dia = String(d.getDate()).padStart(2, '0');
+    const mes = d.toLocaleString('pt-PT', { month: 'short' }).replace('.', '');
+    const ano = String(d.getFullYear()).slice(-2);
+    return `${dia} ${mes} ${ano}`;
+}
+
+function obterChaveData(timestamp, modo = 'dia') {
+    if (!timestamp) return 'Sem Data';
+    const d = new Date(timestamp);
+    if (modo === 'mes') {
+        const mes = d.toLocaleString('pt-PT', { month: 'long' });
+        return `${mes.charAt(0).toUpperCase() + mes.slice(1)} ${d.getFullYear()}`;
+    }
+    if (modo === 'semana') {
+        const temp = new Date(d.valueOf());
+        const dayNum = (d.getDay() + 6) % 7;
+        temp.setDate(temp.getDate() - dayNum + 3);
+        const firstThursday = temp.valueOf();
+        temp.setMonth(0, 1);
+        if (temp.getDay() !== 4) {
+            temp.setMonth(0, 1 + ((4 - temp.getDay() + 7) % 7));
+        }
+        const numSemana = 1 + Math.round((firstThursday - temp.valueOf()) / 604800000);
+        return `Semana ${numSemana} (${d.toLocaleString('pt-PT', { month: 'short' })} ${d.getFullYear()})`;
+    }
+    const dia = d.getDate();
+    const mes = d.toLocaleString('pt-PT', { month: 'long' });
+    const ano = String(d.getFullYear()).slice(-2);
+    return `${dia} ${mes.charAt(0).toUpperCase() + mes.slice(1)} ${ano}`;
+}
+
 function renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar }) {
+    if (!filho.criadaEm) filho.criadaEm = filho.timestamp || Date.now();
     const linha = document.createElement('div');
     linha.className = `bairro-filho${filho.concluido ? ' bairro-filho--concluido' : ''}`;
     linha.dataset.bairroCasaId = filho.id;
@@ -143,7 +227,7 @@ function renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar }) {
                 alterarEstadoFilho({ caixa, pai, filho, linha, onTextoAlterado, renderizar });
                 return;
             }
-            editarTituloFilhoInline({ caixa, filho, elemento: nome, onTextoAlterado, renderizar });
+            editarTituloFilhoInline({ caixa, pai, filho, elemento: nome, onTextoAlterado, renderizar });
         });
     } else {
         nome = criarCampoBairro({ value: filho.nome, placeholder: 'Nome da tarefa...', className: 'bairro-filho-nome' });
@@ -152,6 +236,17 @@ function renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar }) {
             onTextoAlterado(caixa);
         });
         nome.addEventListener('click', event => event.stopPropagation());
+        nome.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                nome.blur();
+                adicionarNovaLinhaNoPai({ caixa, pai, filhoAtual: filho, onTextoAlterado, renderizar });
+            } else if ((event.key === 'Backspace' || event.key === 'Delete') && !event.target.value.trim()) {
+                event.preventDefault();
+                nome.blur();
+                confirmarERemoverFilho({ caixa, filho, onTextoAlterado, renderizar });
+            }
+        });
         nome.addEventListener('blur', () => {
             setTimeout(() => { if (filho.nome.trim()) renderizar(); }, 150);
         });
@@ -160,6 +255,16 @@ function renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar }) {
     const acoes = criarGrupoBairro();
     const actas = criarActasButton({ caixa, pai, filho, onTextoAlterado, renderizar });
     if (actas) acoes.appendChild(actas);
+
+    if (caixa?.mostrarDataTarefa) {
+        const spanData = document.createElement('span');
+        spanData.className = 'bairro-filho-data';
+        const ts = filho.criadaEm || filho.timestamp;
+        spanData.innerHTML = `<i class="fa-regular fa-calendar" aria-hidden="true"></i> ${formatarDataCurta(ts)}`;
+        spanData.title = `Criado em: ${ts ? new Date(ts).toLocaleString('pt-PT') : 'Sem data'}`;
+        acoes.appendChild(spanData);
+    }
+
     const ligacao = filho['ligaçãoBairro']?.[0];
     if (ligacao) acoes.appendChild(criarLigacaoButton(ligacao));
     acoes.appendChild(criarBotaoBairro({
@@ -194,6 +299,7 @@ function renderizarPai({ caixa, pai, onTextoAlterado, renderizar }) {
         onClick: () => {
             const filho = criarFilhoBairro();
             filho.check = pai.check || TIPO_CHECK_BAIRRO.NENHUM;
+            filho.criadaEm = Date.now();
             if (caixa.direcaoCriacao === 'cima') {
                 pai.pastafilho.unshift(filho);
             } else {
@@ -214,9 +320,35 @@ function renderizarPai({ caixa, pai, onTextoAlterado, renderizar }) {
     cabecalho.append(titulo, acoes);
     const filhos = document.createElement('div');
     filhos.className = 'bairro-filhos';
-    pai.pastafilho.filter(filho => !filho.oculto && !(pai.ocultarJaChecados && filho.concluido)).forEach(filho => {
-        filhos.appendChild(renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar }));
+    const validos = pai.pastafilho.filter(filho => !filho.oculto && !(pai.ocultarJaChecados && filho.concluido));
+    validos.forEach(filho => {
+        if (!filho.criadaEm) filho.criadaEm = filho.timestamp || Date.now();
     });
+
+    if (caixa?.organizarPorData) {
+        const modo = caixa.agruparDataModo || 'dia';
+        const grupos = new Map();
+        validos.forEach(filho => {
+            const chave = obterChaveData(filho.criadaEm || filho.timestamp, modo);
+            if (!grupos.has(chave)) grupos.set(chave, []);
+            grupos.get(chave).push(filho);
+        });
+
+        grupos.forEach((listaFilhos, chave) => {
+            const headerGrupo = document.createElement('div');
+            headerGrupo.className = 'bairro-grupo-data-header';
+            headerGrupo.innerHTML = `<i class="fa-regular fa-calendar-days" aria-hidden="true"></i> ${chave}`;
+            filhos.appendChild(headerGrupo);
+
+            listaFilhos.forEach(filho => {
+                filhos.appendChild(renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar }));
+            });
+        });
+    } else {
+        validos.forEach(filho => {
+            filhos.appendChild(renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar }));
+        });
+    }
     secao.append(cabecalho, filhos);
     return secao;
 }

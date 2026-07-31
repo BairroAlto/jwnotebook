@@ -381,6 +381,46 @@ function renderizarHistorico() {
     });
 }
 
+export function abrirPopupConfirmarRemoverTarefa(nomeTarefa, aoConfirmar) {
+    const overlay = document.getElementById('popup-confirmar-remover-overlay');
+    const titulo = document.getElementById('titulo-confirmar-remover');
+    const msg = document.getElementById('msg-confirmar-remover');
+    const btnCancelar = document.getElementById('btn-cancelar-remover');
+    const btnConfirmar = document.getElementById('btn-confirmar-remover-final');
+
+    if (!overlay || !btnCancelar || !btnConfirmar) {
+        if (confirm(`Pretende apagar a tarefa "${nomeTarefa || 'tarefa'}"?`)) {
+            aoConfirmar();
+        }
+        return;
+    }
+
+    if (titulo) titulo.textContent = 'Remover Tarefa?';
+    if (msg) msg.textContent = `Tem a certeza que pretende remover a tarefa "${nomeTarefa || 'esta tarefa'}"? Ela será ocultada da lista.`;
+
+    const fechar = () => overlay.classList.remove('active');
+    btnCancelar.onclick = fechar;
+    btnConfirmar.onclick = () => {
+        fechar();
+        aoConfirmar();
+    };
+    overlay.classList.add('active');
+}
+
+function configurarRemoverCasa() {
+    const botao = document.getElementById('bairro-posto-remover-casa');
+    if (!botao || !estadoAtual?.filho) return;
+    botao.onclick = () => {
+        abrirPopupConfirmarRemoverTarefa(estadoAtual.filho.nome, () => {
+            estadoAtual.filho.oculto = true;
+            estadoAtual.filho.timestamp = Date.now();
+            estadoAtual.onTextoAlterado(estadoAtual.bairro);
+            document.getElementById('popup-bairro-posto-overlay')?.classList.remove('active');
+            estadoAtual.renderizar?.();
+        });
+    };
+}
+
 function configurarRemoverBairro() {
     const botao = document.getElementById('bairro-posto-remover-bairro');
     if (!botao || !estadoAtual?.bairro) return;
@@ -484,6 +524,69 @@ function configurarDirecaoCriacao() {
         };
     });
 }
+function selecionarSubAbaBairro(alvo = 'geral') {
+    const overlay = document.getElementById('popup-bairro-posto-overlay');
+    if (!overlay) return;
+    overlay.querySelectorAll('[data-bairro-bairro-tab]').forEach(tab => {
+        const ativa = tab.dataset.bairroBairroTab === alvo;
+        tab.classList.toggle('active', ativa);
+        tab.setAttribute('aria-selected', String(ativa));
+    });
+    overlay.querySelectorAll('[data-bairro-bairro-panel]').forEach(panel => {
+        panel.hidden = panel.dataset.bairroBairroPanel !== alvo;
+    });
+}
+
+function configurarAgendaBairro() {
+    const overlay = document.getElementById('popup-bairro-posto-overlay');
+    const bairro = estadoAtual?.bairro;
+    if (!overlay || !bairro) return;
+
+    overlay.querySelectorAll('[data-bairro-bairro-tab]').forEach(tab => {
+        tab.onclick = () => selecionarSubAbaBairro(tab.dataset.bairroBairroTab);
+    });
+
+    const toggleData = document.getElementById('bairro-posto-mostrar-data');
+    if (toggleData) {
+        toggleData.checked = Boolean(bairro.mostrarDataTarefa);
+        toggleData.onchange = () => {
+            bairro.mostrarDataTarefa = toggleData.checked;
+            estadoAtual.onTextoAlterado(bairro);
+            estadoAtual.renderizar?.();
+        };
+    }
+
+    const toggleOrganizar = document.getElementById('bairro-posto-organizar-data');
+    const containerAgrupar = document.getElementById('bairro-posto-agrupar-container');
+    if (toggleOrganizar) {
+        toggleOrganizar.checked = Boolean(bairro.organizarPorData);
+        if (containerAgrupar) containerAgrupar.style.display = bairro.organizarPorData ? 'block' : 'none';
+
+        toggleOrganizar.onchange = () => {
+            bairro.organizarPorData = toggleOrganizar.checked;
+            if (containerAgrupar) containerAgrupar.style.display = bairro.organizarPorData ? 'block' : 'none';
+            estadoAtual.onTextoAlterado(bairro);
+            estadoAtual.renderizar?.();
+        };
+    }
+
+    const containerModo = document.getElementById('bairro-posto-agrupar-modo-options');
+    if (containerModo) {
+        const modoAtual = bairro.agruparDataModo || 'dia';
+        containerModo.querySelectorAll('button[data-bairro-agrupar]').forEach(btn => {
+            const modo = btn.dataset.bairroAgrupar;
+            const ativo = modo === modoAtual;
+            btn.classList.toggle('active', ativo);
+            btn.setAttribute('aria-pressed', String(ativo));
+            btn.onclick = () => {
+                bairro.agruparDataModo = modo;
+                estadoAtual.onTextoAlterado(bairro);
+                configurarAgendaBairro();
+                estadoAtual.renderizar?.();
+            };
+        });
+    }
+}
 
 export function abrirBairroPosto(bairro, pai, filho, onTextoAlterado, renderizar, subAba = 'geral') {
     const overlay = document.getElementById('popup-bairro-posto-overlay');
@@ -508,6 +611,9 @@ export function abrirBairroPosto(bairro, pai, filho, onTextoAlterado, renderizar
     configurarChecks();
     configurarDirecaoCriacao();
     configurarOcultarChecados();
+    configurarAgendaBairro();
+    selecionarSubAbaBairro('geral');
+    configurarRemoverCasa();
     configurarRemoverBairro();
     configurarToggleHistorico();
     configurarPesquisaLigacao();
