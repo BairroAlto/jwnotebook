@@ -84,11 +84,30 @@ async function preencherTextoNoCard(ref) {
     const slug = ref.livro.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '_');
     const card = document.getElementById(`bib-card-${ref.idUnico}`);
     if (!card) return;
+
+    const caminhoFicheiro = `./data/biblia/${slug}.json`;
+    console.log(`🔍 [EYE-BIBLE] Carregando: ${caminhoFicheiro} (${ref.livro})`);
     
     try {
-        const response = await fetch(`./data/biblia/${slug}.json`);
+        const response = await fetch(caminhoFicheiro);
+        if (!response.ok) {
+            console.error(`❌ [EYE-BIBLE 404] Ficheiro não encontrado no servidor: ${caminhoFicheiro} (Status: ${response.status})`);
+            console.warn(`💡 [DICA DEPLOY] Certifica-te de que o ficheiro '${slug}.json' foi adicionado ao Git e publicado no servidor.`);
+            card.innerHTML = `
+                <p style="color:#ef4444; font-size:10px; font-weight:700; margin-bottom:4px;">⚠️ ${ref.livro} (404 Not Found)</p>
+                <p style="color:var(--text-muted); font-size:9px;">Ficheiro <code>data/biblia/${slug}.json</code> em falta no servidor online.</p>
+            `;
+            return;
+        }
+
         const data = await response.json();
         const livroData = data[ref.livro];
+
+        if (!livroData) {
+            console.error(`❌ [EYE-BIBLE] Chave '${ref.livro}' não encontrada dentro de ${caminhoFicheiro}`);
+            card.innerHTML = `<p style="color:#ef4444; font-size:9px;">Chave do livro '${ref.livro}' inválida no JSON.</p>`;
+            return;
+        }
 
         let html = `<p style="color:var(--primary); font-size:10px; font-weight:800; margin-bottom:8px; text-transform:uppercase;">${ref.livro}</p>`;
         
@@ -107,8 +126,10 @@ async function preencherTextoNoCard(ref) {
             }
         });
         card.innerHTML = html;
+        console.log(`✅ [EYE-BIBLE] Sucesso ao carregar ${ref.livro}`);
     } catch (e) {
-        card.innerHTML = `<p style="color:#ef4444; font-size:9px;">Texto não encontrado no repositório.</p>`;
+        console.error(`❌ [EYE-BIBLE ERRO] Falha ao ler ${caminhoFicheiro}:`, e);
+        card.innerHTML = `<p style="color:#ef4444; font-size:9px;">Erro ao ler o texto bíblico no repositório.</p>`;
     }
 }
 
