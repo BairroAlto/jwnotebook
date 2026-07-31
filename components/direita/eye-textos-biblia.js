@@ -86,7 +86,7 @@ async function preencherTextoNoCard(ref) {
     if (!card) return;
     
     try {
-        const response = await fetch(`data/biblia/${slug}.json`);
+        const response = await fetch(`./data/biblia/${slug}.json`);
         const data = await response.json();
         const livroData = data[ref.livro];
 
