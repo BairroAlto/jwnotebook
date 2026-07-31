@@ -6,7 +6,7 @@ export const BIBLE_ABBREVIATIONS = {
     "Números": "Números", "Núm": "Números", "Nm": "Números",
     "Deuteronómio": "Deuteronómio", "Deuteronômio": "Deuteronómio", "Deut": "Deuteronómio", "Dt": "Deuteronómio",
     "Josué": "Josué", "Jos": "Josué", "Js": "Josué",
-    "Juízes": "Juízes", "Jz": "Juízes",
+    "Juízes": "Juízes", "Juí": "Juízes", "Juí.": "Juízes", "Jui": "Juízes", "Jui.": "Juízes", "Jz": "Juízes",
     "Rute": "Rute", "Rt": "Rute",
     "1 Samuel": "1 Samuel", "1 Sam": "1 Samuel", "1Sm": "1 Samuel",
     "2 Samuel": "2 Samuel", "2 Sam": "2 Samuel", "2Sm": "2 Samuel",
