@@ -1,3 +1,6 @@
+import { FERRAMENTAS_MANUAL } from './manual-data.js';
+import { configurarDuplicacaoManual } from './manual-duplicate.js';
+
 const timers = (items) => {
     const ids = [];
     const later = (fn, delay) => ids.push(setTimeout(fn, delay));
@@ -78,11 +81,19 @@ function criarControlo(item) {
 
     const controlo = node('button', 'demo-control' + (item.extra ? ' demo-control--' + item.extra : ''));
     controlo.type = 'button';
-    controlo.tabIndex = -1;
+    controlo.tabIndex = item.extra === 'add' ? 0 : -1;
     controlo.innerHTML = '<i class="fa-solid ' + item.icon + '" aria-hidden="true"></i>';
     controlo.title = item.label;
     controlo.setAttribute('aria-label', item.label);
-    controlo.setAttribute('aria-disabled', 'true');
+    if (item.extra === 'add') {
+        controlo.dataset.demoAction = 'duplicate';
+        controlo.classList.add('demo-control--interactive');
+        controlo.title = 'Abrir ferramentas e duplicar esta ferramenta';
+        controlo.setAttribute('aria-label', 'Abrir ferramentas e duplicar esta ferramenta');
+        controlo.setAttribute('aria-disabled', 'false');
+    } else {
+        controlo.setAttribute('aria-disabled', 'true');
+    }
     return controlo;
 }
 
@@ -468,8 +479,15 @@ export function renderManualDemo(container, tipo) {
     const controls = timers();
     const result = BUILDERS[tipo]?.() || buildContentor();
     const frame = result.frame || result;
+    const ferramenta = FERRAMENTAS_MANUAL.find(item => item.id === tipo) || FERRAMENTAS_MANUAL[0];
+    const stage = node('div', 'demo-duplicate-stage');
     frame.classList.add('is-playing');
-    container.replaceChildren(frame);
+    stage.appendChild(frame);
+    container.replaceChildren(stage);
     result.animate?.(controls);
-    return () => controls.clear();
+    const limparDuplicacao = configurarDuplicacaoManual({ stage, frame, ferramenta, controls });
+    return () => {
+        controls.clear();
+        limparDuplicacao();
+    };
 }
