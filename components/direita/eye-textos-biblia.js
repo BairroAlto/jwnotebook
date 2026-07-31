@@ -76,6 +76,76 @@ export async function detectarEExibirTextosBiblicos(caixasParaVarrer) {
     }
 }
 
+import { abrirVersiculoNoBrain } from './biblia-brain.js';
+import { collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+async function verificarTemConteudoVersiculo(nomeVersiculo, db, auth) {
+    if (!db || !auth?.currentUser?.uid) return false;
+    const uid = auth.currentUser.uid;
+    try {
+        // 1. Verificar em TextosBiblia
+        const qTB = query(
+            collection(db, "TextosBiblia"),
+            where("userId", "==", uid),
+            where("nome", "==", nomeVersiculo)
+        );
+        const snapTB = await getDocs(qTB);
+        if (!snapTB.empty) {
+            const data = snapTB.docs[0].data();
+
+            const temPuzzle = Boolean(
+                data.Puzzle && (
+                    (Array.isArray(data.Puzzle.quadros) && data.Puzzle.quadros.length > 0) ||
+                    (Array.isArray(data.Puzzle.blocos) && data.Puzzle.blocos.length > 0)
+                ) ||
+                (Array.isArray(data.Blocos) && data.Blocos.length > 0) ||
+                (Array.isArray(data.textos) && data.textos.length > 0)
+            );
+
+            const temFontes = Boolean(
+                data.Fontes && (
+                    (Array.isArray(data.Fontes.Links) && data.Fontes.Links.length > 0) ||
+                    (Array.isArray(data.Fontes.codex) && data.Fontes.codex.length > 0) ||
+                    (Array.isArray(data.Fontes) && data.Fontes.length > 0)
+                )
+            );
+
+            const temDossie = Boolean(
+                (Array.isArray(data.Micas) && data.Micas.length > 0) ||
+                (Array.isArray(data.Dossies) && data.Dossies.length > 0)
+            );
+
+            const eMarcador = data.marcador === 'sim';
+
+            if (temPuzzle || temFontes || temDossie || eMarcador) return true;
+        }
+
+        // 2. Verificar em notas locais (neuroniosBiba)
+        const qLocal = query(
+            collection(db, "Local"),
+            where("userId", "==", uid)
+        );
+        const snapLocal = await getDocs(qLocal);
+        let temLocal = false;
+        snapLocal.forEach(docN => {
+            if (temLocal) return;
+            const nData = docN.data();
+            if (nData.estado === "on" && Array.isArray(nData.caixas)) {
+                nData.caixas.forEach(c => {
+                    if (c.estado === "on" && Array.isArray(c.neuroniosBiba) && c.neuroniosBiba.includes(nomeVersiculo)) {
+                        temLocal = true;
+                    }
+                });
+            }
+        });
+
+        return temLocal;
+    } catch (e) {
+        console.error('Erro ao verificar conteúdo do versículo:', e);
+        return false;
+    }
+}
+
 /**
  * FUNÇÕES AUXILIARES DE PROCESSAMENTO (MANTIDAS DO MOTOR ORIGINAL)
  */
@@ -109,23 +179,49 @@ async function preencherTextoNoCard(ref) {
             return;
         }
 
+        const db = window.notaAtualContext?.db;
+        const auth = window.notaAtualContext?.auth;
+
         let html = `<p style="color:var(--primary); font-size:10px; font-weight:800; margin-bottom:8px; text-transform:uppercase;">${ref.livro}</p>`;
         
-        ref.citacoes.forEach(cite => {
+        for (const cite of ref.citacoes) {
             const capData = livroData[cite.cap];
-            if (capData) {
-                cite.versiculos.forEach(vNum => {
-                    if (capData[vNum]) {
-                        html += `
-                        <div style="margin-bottom:6px; line-height:1.4;">
-                            <b style="color:var(--primary); font-size:9px; margin-right:5px;">${cite.cap}:${vNum}</b>
-                            <span style="font-size: var(--fs-biblia-coluna-inteligente); color:#f1f5f9;">${capData[vNum]}</span>
-                        </div>`;
-                    }
-                });
+            if (!capData) continue;
+
+            for (const vNum of cite.versiculos) {
+                if (!capData[vNum]) continue;
+
+                const nomeVersiculo = `${ref.livro} ${cite.cap}:${vNum}`;
+                const temConteudo = await verificarTemConteudoVersiculo(nomeVersiculo, db, auth);
+
+                const corB = temConteudo ? '#ec4899' : 'var(--primary)';
+                const estiloB = `color:${corB}; font-size:9px; margin-right:5px; cursor:pointer;${temConteudo ? ' font-weight:800;' : ''}`;
+                const textoLimpo = String(capData[vNum]).replace(/"/g, '&quot;');
+
+                html += `
+                <div style="margin-bottom:6px; line-height:1.4;">
+                    <b class="biblia-ver-ref${temConteudo ? ' is-pink' : ''}" 
+                       data-livro="${ref.livro}" 
+                       data-cap="${cite.cap}" 
+                       data-ver="${vNum}" 
+                       data-texto="${textoLimpo}"
+                       style="${estiloB}">${cite.cap}:${vNum}</b>
+                    <span style="font-size: var(--fs-biblia-coluna-inteligente); color:#f1f5f9;">${capData[vNum]}</span>
+                </div>`;
             }
-        });
+        }
         card.innerHTML = html;
+
+        card.querySelectorAll('.biblia-ver-ref').forEach(b => {
+            b.addEventListener('click', () => {
+                const db = window.notaAtualContext?.db;
+                const auth = window.notaAtualContext?.auth;
+                if (db && auth) {
+                    abrirVersiculoNoBrain(b.dataset.livro, b.dataset.cap, b.dataset.ver, b.dataset.texto, db, auth);
+                }
+            });
+        });
+
         console.log(`✅ [EYE-BIBLE] Sucesso ao carregar ${ref.livro}`);
     } catch (e) {
         console.error(`❌ [EYE-BIBLE ERRO] Falha ao ler ${caminhoFicheiro}:`, e);
