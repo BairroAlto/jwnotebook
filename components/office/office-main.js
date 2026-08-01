@@ -251,14 +251,30 @@ function instalarDelegacaoListsOffice() {
 
 async function renderizarCardsSemana() {
     const host = $('office-week-cards');
+    if (!host) return;
     const hoje = new Date();
-    const ano = hoje.getFullYear();
-    const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+
+    const carregarUltimaEdicaoDisponivel = async (tipo) => {
+        let a = hoje.getFullYear();
+        let m = hoje.getMonth() + 1;
+        for (let i = 0; i < 24; i++) {
+            const mesStr = String(m).padStart(2, '0');
+            const path = `data/publicacoes/${tipo}/${a}/${mesStr}.json`;
+            const data = await carregarJsonSilencioso(path);
+            if (data) return { data, path };
+            m--;
+            if (m < 1) {
+                m = 12;
+                a--;
+            }
+        }
+        return { data: null, path: "" };
+    };
+
+    const { data: wt, path: wtPath } = await carregarUltimaEdicaoDisponivel('w');
+    const { data: mwb, path: mwbPath } = await carregarUltimaEdicaoDisponivel('mwb');
+
     const semana = Math.max(0, Math.min(4, Math.floor((hoje.getDate() - 1) / 7)));
-
-    const wt = await carregarJsonSilencioso(`data/publicacoes/w/${ano}/${mes}.json`);
-    const mwb = await carregarJsonSilencioso(`data/publicacoes/mwb/${ano}/${mes}.json`);
-
     const artigoWt = wt?.artigos?.[semana] || wt?.artigos?.[0] || null;
     const artigoMwb = encontrarMwbDaSemana(mwb?.artigos || [], hoje) || mwb?.artigos?.[0] || null;
 
@@ -273,8 +289,8 @@ async function renderizarCardsSemana() {
         </button>
     `;
 
-    $('office-card-wt').onclick = () => artigoWt && abrirConteudo(artigoWt, wt, wt.artigos, wt.artigos.indexOf(artigoWt), `data/publicacoes/w/${ano}/${mes}.json`, 'sentinelas');
-    $('office-card-mwb').onclick = () => artigoMwb && abrirConteudo(artigoMwb, mwb, mwb.artigos, mwb.artigos.indexOf(artigoMwb), `data/publicacoes/mwb/${ano}/${mes}.json`, 'mwb');
+    $('office-card-wt').onclick = () => artigoWt && abrirConteudo(artigoWt, wt, wt.artigos, wt.artigos.indexOf(artigoWt), wtPath, 'sentinelas');
+    $('office-card-mwb').onclick = () => artigoMwb && abrirConteudo(artigoMwb, mwb, mwb.artigos, mwb.artigos.indexOf(artigoMwb), mwbPath, 'mwb');
 }
 
 function encontrarMwbDaSemana(artigos, data) {
