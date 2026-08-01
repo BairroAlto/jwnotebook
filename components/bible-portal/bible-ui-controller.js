@@ -196,6 +196,7 @@ function instalarBibleMobileSheet(col) {
         target.addEventListener('pointermove', moverDrag);
         target.addEventListener('pointerup', terminarDrag);
         target.addEventListener('pointercancel', terminarDrag);
+        target.addEventListener('lostpointercapture', terminarDrag);
     });
 }
 
