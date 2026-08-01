@@ -45,7 +45,7 @@ export const BibleNav = {
             </div>
 
             <div class="recent-bible-block">
-                <div class="recent-bible-title">Ultimos textos acessados</div>
+                <div class="recent-bible-title"><i class="fa-solid fa-clock-rotate-left"></i> Últimos textos acedidos</div>
                 <div class="recent-bible-piccards">
                     ${recentes.length ? recentes.map(item => `
                         <button class="recent-bible-item" onclick="window.carregarCapituloNoPortal('${escapar(item.livro)}', ${Number(item.cap)}); window.fecharPainelNavBiblia();">
