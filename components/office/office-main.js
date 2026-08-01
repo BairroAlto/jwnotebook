@@ -69,7 +69,6 @@ onAuthStateChanged(auth, async (user) => {
     window.ensureOfficeRightPanel = () => abrirPainelDireito('brain');
     finalizarLoading();
 });
-
 function vincularEventos() {
     instalarMobileToggleEsquerda();
 
@@ -77,10 +76,15 @@ function vincularEventos() {
         btn.onclick = () => trocarTab(btn.dataset.tab);
     });
 
-    $('office-btn-search').onclick = () => abrirPopup('office-popup-search');
-    $('office-search-close').onclick = () => fecharPopup('office-popup-search');
-    $('office-search-submit').onclick = executarPesquisa;
-    $('office-search-input').addEventListener('keydown', (event) => {
+    const bind = (id, fn) => {
+        const el = $(id);
+        if (el) el.onclick = fn;
+    };
+
+    bind('office-btn-search', () => abrirPopup('office-popup-search'));
+    bind('office-search-close', () => fecharPopup('office-popup-search'));
+    bind('office-search-submit', executarPesquisa);
+    $('office-search-input')?.addEventListener('keydown', (event) => {
         if (event.key === "Enter") executarPesquisa();
     });
     document.querySelectorAll('#office-search-filters .piccard').forEach(card => {
@@ -97,34 +101,34 @@ function vincularEventos() {
         };
     });
 
-    $('office-prev').onclick = () => navegarItem(-1);
-    $('office-next').onclick = () => navegarItem(1);
-    $('office-context-title').onclick = abrirPainelNav;
-    $('office-nav-close').onclick = () => $('office-nav-panel').classList.add('hidden');
+    bind('office-prev', () => navegarItem(-1));
+    bind('office-next', () => navegarItem(1));
+    bind('office-context-title', abrirPainelNav);
+    bind('office-nav-close', () => $('office-nav-panel')?.classList.add('hidden'));
 
-    $('office-btn-xsat').onclick = async () => {
+    bind('office-btn-xsat', async () => {
         if (!state.currentData) return;
         await abrirPainelDireito('xsat');
         iniciarXSat();
         dispararPesquisaParabolica(extrairTextoConteudo(state.currentData));
-    };
+    });
 
-    $('office-btn-ai').onclick = () => abrirPopup('office-popup-ai');
-    $('office-btn-bookai-float').onclick = () => abrirPopup('office-popup-ai');
-    $('office-ai-close').onclick = () => fecharPopup('office-popup-ai');
-    $('office-ai-send').onclick = responderBokkai;
-    $('office-ai-input').addEventListener('keydown', (event) => {
+    bind('office-btn-ai', () => abrirPopup('office-popup-ai'));
+    bind('office-btn-bookai-float', () => abrirPopup('office-popup-ai'));
+    bind('office-ai-close', () => fecharPopup('office-popup-ai'));
+    bind('office-ai-send', responderBokkai);
+    $('office-ai-input')?.addEventListener('keydown', (event) => {
         if (event.key === "Enter") responderBokkai();
     });
-    $('office-btn-settings').onclick = () => abrirPopup('office-popup-settings');
-    $('office-btn-comments').onclick = alternarPainelComentarios;
-    $('office-settings-close').onclick = () => fecharPopup('office-popup-settings');
+    bind('office-btn-settings', () => abrirPopup('office-popup-settings'));
+    bind('office-btn-comments', alternarPainelComentarios);
+    bind('office-settings-close', () => fecharPopup('office-popup-settings'));
 
     document.addEventListener('click', (event) => {
         if (event.target.closest('#office-scripture-close')) {
             event.preventDefault();
             event.stopPropagation();
-            $('office-popup-scripture').classList.add('hidden');
+            $('office-popup-scripture')?.classList.add('hidden');
             return;
         }
 
@@ -1008,9 +1012,15 @@ async function obterSearchIndex() {
         });
     }
 
+    const agora = new Date();
+    const anoAtual = agora.getFullYear();
+    const mesAtual = agora.getMonth() + 1;
+
     const anos = [2026, 2025, 2024, 2023, 2022];
     for (const ano of anos) {
-        for (const mes of ["01","02","03","04","05","06","07","08","09","10","11","12"]) {
+        for (let m = 1; m <= 12; m++) {
+            if (ano >= anoAtual && m > mesAtual) continue;
+            const mes = String(m).padStart(2, '0');
             for (const cfg of [
                 { path: `data/publicacoes/w/${ano}/${mes}.json`, filter: "sentinelas", kind: "sentinelas", label: `Sentinela ${mes}/${ano}` },
                 { path: `data/publicacoes/mwb/${ano}/${mes}.json`, filter: "publicacoes", kind: "mwb", label: `Manual ${mes}/${ano}` },
