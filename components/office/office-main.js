@@ -622,7 +622,7 @@ function criarAliasesBiblicos() {
         "Romanos": ["Rom", "Ro"],
         "1 Coríntios": ["1 Cor", "1Co"],
         "2 Coríntios": ["2 Cor", "2Co"],
-        "Apocalipse": ["Apo", "Ap"]
+        "Apocalipse": ["Apo", "Ap", "Rev", "Re"]
     };
     const list = [];
     BIBLIA_METADATA.forEach(book => {
