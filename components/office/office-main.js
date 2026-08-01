@@ -742,27 +742,51 @@ function officeIsTouchMobile() {
 function tornarPopupArrastavel() {
     const popup = $('office-popup-scripture');
     const drag = $('office-scripture-drag');
+    if (!popup || !drag) return;
+
     let active = false;
     let sx = 0;
     let sy = 0;
     let ox = 0;
     let oy = 0;
 
-    drag.addEventListener('pointerdown', (event) => {
-        if (officeIsTouchMobile() || event.target.closest('button')) return;
+    const iniciarDrag = (event) => {
+        if (event.target.closest('button')) return;
         active = true;
         sx = event.clientX;
         sy = event.clientY;
         ox = popup.offsetLeft;
         oy = popup.offsetTop;
-        drag.setPointerCapture(event.pointerId);
-    });
-    drag.addEventListener('pointermove', (event) => {
+        popup.classList.add('dragging');
+        drag.setPointerCapture?.(event.pointerId);
+    };
+
+    const moverDrag = (event) => {
         if (!active) return;
-        popup.style.left = `${Math.max(8, ox + event.clientX - sx)}px`;
-        popup.style.top = `${Math.max(8, oy + event.clientY - sy)}px`;
-    });
-    drag.addEventListener('pointerup', () => active = false);
+        event.preventDefault();
+        const deltaX = event.clientX - sx;
+        const deltaY = event.clientY - sy;
+
+        const newLeft = Math.max(4, Math.min(window.innerWidth - popup.offsetWidth - 4, ox + deltaX));
+        const newTop = Math.max(4, Math.min(window.innerHeight - popup.offsetHeight - 4, oy + deltaY));
+
+        popup.style.setProperty('left', `${newLeft}px`, 'important');
+        popup.style.setProperty('top', `${newTop}px`, 'important');
+        popup.style.setProperty('bottom', 'auto', 'important');
+        popup.style.setProperty('transform', 'none', 'important');
+    };
+
+    const terminarDrag = () => {
+        if (!active) return;
+        active = false;
+        popup.classList.remove('dragging');
+    };
+
+    drag.addEventListener('pointerdown', iniciarDrag);
+    drag.addEventListener('pointermove', moverDrag);
+    drag.addEventListener('pointerup', terminarDrag);
+    drag.addEventListener('pointercancel', terminarDrag);
+    drag.addEventListener('lostpointercapture', terminarDrag);
 }
 
 function iniciarSettings() {
