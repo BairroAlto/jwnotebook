@@ -115,15 +115,19 @@ import { collection, query, where, getDocs, onSnapshot } from "https://www.gstat
 
 let cacheVersiculosComConteudo = new Set();
 let unsubPreloadTB = null;
-let unsubPreloadLocal = null;
+let cacheCaixasPorVersiculo = new Map();
 let precarregadoUid = null;
 
 export function iniciarPrecarregamentoSegundoPlano(db, auth) {
     const uid = auth?.currentUser?.uid;
     if (!db || !uid || precarregadoUid === uid) return;
 
+    if (precarregadoUid && precarregadoUid !== uid) {
+        cacheVersiculosComConteudo.clear();
+        cacheCaixasPorVersiculo.clear();
+    }
     if (unsubPreloadTB) unsubPreloadTB();
-    if (unsubPreloadLocal) unsubPreloadLocal();
+
 
     precarregadoUid = uid;
     console.log("⚡ [EYE-BIBLE] Inicializando pré-carregamento em segundo plano...");
@@ -167,26 +171,32 @@ export function iniciarPrecarregamentoSegundoPlano(db, auth) {
         });
     });
 
-    const qLocal = query(collection(db, "Local"), where("userId", "==", uid));
-    unsubPreloadLocal = onSnapshot(qLocal, (snapLocal) => {
-        snapLocal.forEach(docN => {
-            const nData = docN.data();
-            if (nData.estado === "on" && Array.isArray(nData.caixas)) {
-                nData.caixas.forEach(c => {
-                    if (c.estado === "on" && Array.isArray(c.neuroniosBiba)) {
-                        c.neuroniosBiba.forEach(ref => cacheVersiculosComConteudo.add(ref));
-                    }
-                });
-            }
-        });
-    });
+
 }
 
-function verificarTemConteudoVersiculo(nomeVersiculo, db, auth) {
-    if (db && auth) {
-        iniciarPrecarregamentoSegundoPlano(db, auth);
+async function verificarTemConteudoVersiculo(nomeVersiculo, db, auth) {
+    const uid = auth?.currentUser?.uid;
+    if (!db || !uid || !nomeVersiculo) return false;
+    if (cacheCaixasPorVersiculo.has(nomeVersiculo)) {
+        return cacheCaixasPorVersiculo.get(nomeVersiculo);
     }
-    return cacheVersiculosComConteudo.has(nomeVersiculo);
+
+    const consultas = [
+        query(collection(db, 'LocalCaixas'), where('userId', '==', uid), where('neuroniosBiba', 'array-contains', nomeVersiculo)),
+        query(collection(db, 'ShareCaixas'), where('userId', '==', uid), where('neuroniosBiba', 'array-contains', nomeVersiculo))
+    ];
+    const resultados = await Promise.all(consultas.map(async consulta => {
+        try {
+            const snapshot = await getDocs(consulta);
+            return !snapshot.empty;
+        } catch (erro) {
+            console.warn('[EYE-BIBLE] Não foi possível verificar caixas do versículo:', erro);
+            return false;
+        }
+    }));
+    const temConteudo = resultados.some(Boolean) || cacheVersiculosComConteudo.has(nomeVersiculo);
+    cacheCaixasPorVersiculo.set(nomeVersiculo, temConteudo);
+    return temConteudo;
 }
 
 /**

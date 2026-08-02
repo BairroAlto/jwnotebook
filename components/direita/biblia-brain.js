@@ -10,7 +10,8 @@ let versiculoAtivoMemoria = null;
 let abaAtivaBiblia = 'puzzle'; 
 let unsubStatusMarcador = null;
 
-export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth) {
+export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth, tStart = performance.now()) {
+    console.log(`⏱️ [BRAIN-PERF] abrirVersiculoNoBrain chamado aos ${(performance.now() - tStart).toFixed(1)}ms`);
     if (typeof window.switchPanel === 'function') window.switchPanel('brain');
 
     const container = document.getElementById('brain-resultado-pesquisa');
@@ -19,7 +20,7 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth) {
     const globalTabs = document.getElementById('sub-tabs-brain');
     if (globalTabs) globalTabs.style.display = 'none';
 
- versiculoAtivoMemoria = { livro, cap, ver, texto };
+    versiculoAtivoMemoria = { livro, cap, ver, texto, _tStart: tStart };
 
     container.innerHTML = "";
     container.className = "cosmos-brain-wrapper"; 
@@ -36,23 +37,17 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth) {
             </div>
 
             <div style="display:flex; align-items:center; gap:15px; flex-shrink: 0;">
-                
-                <!-- 🚀 NOVO: PARABÓLICA (Lado esquerdo do BookAI) -->
                 <i class="fa-solid fa-satellite-dish" id="btn-sat-biblia-brain"
                    style="color: #64748b; cursor:pointer; font-size: 16px;" title="Pesquisar no X-SAT"></i>
-
-                <!-- ÍCONE BOOKAI (MAILCHIMP) -->
                 <i class="fa-brands fa-mailchimp" id="btn-ai-biblia-brain"
                    style="color: #64748b; cursor:pointer; font-size: 18px;" title="Analisar com BookAI"></i>
-                
                 <i class="fa-regular fa-bookmark" id="icon-marcador-biblia" style="color: #64748b; cursor:pointer; font-size: 16px;" title="Marcadores"></i>
-                
                 <div id="header-action-biblia" style="display: flex; align-items: center;"></div>
             </div>
         </div>
 
- <div class="cosmos-nav-icons" style="display: flex; justify-content: space-around; align-items: center; padding: 10px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); background: var(--bg-panel);">
-             <i class="fa-solid fa-puzzle-piece" data-aba="puzzle" title="Anotações"></i>
+        <div class="cosmos-nav-icons" style="display: flex; justify-content: space-around; align-items: center; padding: 10px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); background: var(--bg-panel);">
+            <i class="fa-solid fa-puzzle-piece" data-aba="puzzle" title="Anotações"></i>
             <i class="fa-solid fa-link" data-aba="links" title="Links"></i>
             <i class="fa-regular fa-folder-open" data-aba="dossie" title="Dossiê"></i>
             <i class="fa-solid fa-quote-left" data-aba="cita" title="Versões"></i>
@@ -67,114 +62,89 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth) {
     container.appendChild(stickyHeader);
     container.appendChild(contentArea);
 
-
-     // --- 📡 LÓGICA DA PARABÓLICA (SALTO PARA X-SAT) ---
     const btnSat = stickyHeader.querySelector('#btn-sat-biblia-brain');
     if (btnSat) {
         btnSat.onclick = () => {
-            btnSat.classList.add('fa-spin'); // Efeito visual de rotação
-            
+            btnSat.classList.add('fa-spin');
             const referencia = `${versiculoAtivoMemoria.livro} ${versiculoAtivoMemoria.cap}:${versiculoAtivoMemoria.ver}`;
-            console.log(`%c📡 [BRAIN-SAT] Disparando pesquisa para: ${referencia}`, "color: #fbbf24; font-weight: bold;");
-
-            // Importamos o controlador do satélite e disparamos a pesquisa
             import('./xsat-controller.js').then(m => {
-                // false = pesquisa individual (não global)
                 m.dispararPesquisaParabolica(referencia, false);
-                
-                // Remove a rotação após o salto
                 setTimeout(() => btnSat.classList.remove('fa-spin'), 1000);
             });
         };
     }
-    
-     // --- 🚀 LÓGICA DE SALTO PARA IA ---
-const btnAI = stickyHeader.querySelector('#btn-ai-biblia-brain');
+
+    const btnAI = stickyHeader.querySelector('#btn-ai-biblia-brain');
     if (btnAI) {
         btnAI.onclick = () => {
             btnAI.classList.add('fa-bounce');
             const referencia = `${versiculoAtivoMemoria.livro} ${versiculoAtivoMemoria.cap}:${versiculoAtivoMemoria.ver}`;
-            
             import('./ai-bridge-external.js').then(m => {
                 m.AIBridge.iniciarAnaliseFonteExterna(versiculoAtivoMemoria.texto, referencia);
             });
-            
             setTimeout(() => btnAI.classList.remove('fa-bounce'), 1000);
         };
     }
 
-    /**
-     * ATUALIZAR BOTÃO DE AÇÃO (AGORA COM SÍMBOLOS)
-     */
-const atualizarBotaoAcao = (dentroDeMica = false) => {
-    const btnCont = document.getElementById('header-action-biblia');
-    if (!btnCont) return;
+    const atualizarBotaoAcao = (dentroDeMica = false) => {
+        const btnCont = document.getElementById('header-action-biblia');
+        if (!btnCont) return;
 
-    const btnStyle = `width: 28px; height: 28px; border-radius: 4px; border: none; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 12px; transition: 0.2s;`;
-    
-    if (abaAtivaBiblia === 'puzzle') {
-        // Sem onclick. O index.html deteta o ícone fa-plus.
-        btnCont.innerHTML = `<button style="${btnStyle} background:#818cf8;" title="Adicionar Texto"><i class="fa-solid fa-plus"></i></button>`;
-        btnCont.querySelector('button').onclick = () => {
-            window.dispatchEvent(new CustomEvent('bible:adicionarTexto'));
-        };
-    } 
-    else if (abaAtivaBiblia === 'links') {
-        btnCont.innerHTML = `<button style="${btnStyle} background:#34d399;" title="Adicionar Fontes"><i class="fa-solid fa-link"></i></button>`;
-        btnCont.querySelector('button').onclick = () => {
-            window.dispatchEvent(new CustomEvent('brain:abrirPopupFontes'));
-        };
-    } 
-    else if (abaAtivaBiblia === 'dossie') {
-        const cor = dentroDeMica ? "#10b981" : "#f59e0b";
-        const icon = dentroDeMica ? "fa-plus" : "fa-folder-plus";
-        btnCont.innerHTML = `<button style="${btnStyle} background:${cor};"><i class="fa-solid ${icon}"></i></button>`;
+        const btnStyle = `width: 28px; height: 28px; border-radius: 4px; border: none; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 12px; transition: 0.2s;`;
         
-        // Mantemos os onclicks que abrem popups simples, pois não conflituam com o Puzzle
-        btnCont.querySelector('button').onclick = () => {
-            if (dentroDeMica) abrirPopupRefApta(db);
-            else abrirPopupMica(db, auth);
-        };
-    }
-    else {
-        btnCont.innerHTML = "";
-    }
-};
-
-
-
-    /**
-     * VIGIAR STATUS DO MARCADOR
-     */
- const vigiarStatusMarcador = () => {
-    if(unsubStatusMarcador) unsubStatusMarcador();
-    
-    const uid = auth.currentUser.uid;
-    const nomeBusca = `${livro} ${cap}:${ver}`;
-    
-    const q = query(
-        collection(db, "TextosBiblia"), 
-        where("userId", "==", uid), 
-        where("nome", "==", nomeBusca)
-    );
-
-    unsubStatusMarcador = onSnapshot(q, (snapshot) => {
-        const icon = document.getElementById('icon-marcador-biblia');
-        if (!icon) return;
-
-        // Se o documento existe e o campo marcador é "sim"
-        const isMarcado = !snapshot.empty && snapshot.docs[0].data().marcador === "sim";
-
-        if (isMarcado) {
-            console.log("📌 Versículo marcado!");
-            icon.className = "fa-solid fa-bookmark"; // Ícone preenchido
-            icon.style.color = "#ef4444";           // Cor vermelha
-        } else {
-            icon.className = "fa-regular fa-bookmark"; // Ícone contorno
-            icon.style.color = "#64748b";             // Cor cinza original
+        if (abaAtivaBiblia === 'puzzle') {
+            btnCont.innerHTML = `<button style="${btnStyle} background:#818cf8;" title="Adicionar Texto"><i class="fa-solid fa-plus"></i></button>`;
+            btnCont.querySelector('button').onclick = () => {
+                window.dispatchEvent(new CustomEvent('bible:adicionarTexto'));
+            };
+        } 
+        else if (abaAtivaBiblia === 'links') {
+            btnCont.innerHTML = `<button style="${btnStyle} background:#34d399;" title="Adicionar Fontes"><i class="fa-solid fa-link"></i></button>`;
+            btnCont.querySelector('button').onclick = () => {
+                window.dispatchEvent(new CustomEvent('brain:abrirPopupFontes'));
+            };
+        } 
+        else if (abaAtivaBiblia === 'dossie') {
+            const cor = dentroDeMica ? "#10b981" : "#f59e0b";
+            const icon = dentroDeMica ? "fa-plus" : "fa-folder-plus";
+            btnCont.innerHTML = `<button style="${btnStyle} background:${cor};"><i class="fa-solid ${icon}"></i></button>`;
+            btnCont.querySelector('button').onclick = () => {
+                if (dentroDeMica) abrirPopupRefApta(db);
+                else abrirPopupMica(db, auth);
+            };
         }
-    });
-};
+        else {
+            btnCont.innerHTML = "";
+        }
+    };
+
+    const vigiarStatusMarcador = () => {
+        if(unsubStatusMarcador) unsubStatusMarcador();
+        
+        const uid = auth.currentUser.uid;
+        const nomeBusca = `${livro} ${cap}:${ver}`;
+        
+        const q = query(
+            collection(db, "TextosBiblia"), 
+            where("userId", "==", uid), 
+            where("nome", "==", nomeBusca)
+        );
+
+        unsubStatusMarcador = onSnapshot(q, (snapshot) => {
+            const icon = document.getElementById('icon-marcador-biblia');
+            if (!icon) return;
+
+            const isMarcado = !snapshot.empty && snapshot.docs[0].data().marcador === "sim";
+
+            if (isMarcado) {
+                icon.className = "fa-solid fa-bookmark";
+                icon.style.color = "#ef4444";
+            } else {
+                icon.className = "fa-regular fa-bookmark";
+                icon.style.color = "#64748b";
+            }
+        });
+    };
 
     document.getElementById('icon-marcador-biblia').onclick = () => abrirPopupMarcadores(versiculoAtivoMemoria, db, auth);
 
@@ -194,9 +164,6 @@ const atualizarBotaoAcao = (dentroDeMica = false) => {
     iconPadrao.click();
 }
 
-/**
- * RENDERIZADOR DE CONTEÚDO
- */
 async function renderizarConteudoGeral(container, db, auth, callbackBotao) {
     container.innerHTML = "";
     limparPuzzleBiblia();
@@ -220,9 +187,6 @@ async function renderizarConteudoGeral(container, db, auth, callbackBotao) {
     }
 }
 
-/**
- * VERSÕES BÍBLICAS
- */
 async function renderizarVersoesComparadas(container) {
     const { livro, cap, ver, texto } = versiculoAtivoMemoria;
     const slug = livro.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '_');
@@ -259,7 +223,7 @@ export function mostrarBrainIdle() {
     const container = document.getElementById('brain-resultado-pesquisa');
     const groupTabs = document.getElementById('sub-tabs-brain');
 
-    if (groupTabs) groupTabs.style.display = 'none'; // Esconde os botões cinzentos
+    if (groupTabs) groupTabs.style.display = 'none';
     
     container.innerHTML = `
         <div class="brain-idle-wrapper">

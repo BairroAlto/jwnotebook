@@ -7,82 +7,66 @@ import {
 import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
 import { FOCOS_BASE, FOCOS_SUBNOTA, FOCOS_QUESTAO, FOCOS_RACIOCINIO } from '../editor/modulos/paleta-cores.js';
 import { abrirNotaNoEditor } from '../editor/editor.js';
+import { isMobileViewport } from '../ui/mobile-device.js';
+import { subscreverCaixasPorIds } from './biblia-associadas-cache.js';
+import { mostrarCarregamentoCaixas, mostrarErroCarregamentoCaixas } from './biblia-carregamento-ui.js';
 
 // --- ESTADO LOCAL DO MÓDULO ---
 let unsubDossie = null;
-let unsubLocal = null; 
+let cancelLocalDossieSub = null; 
 let micaAbertaId = null; 
 let currentRef = null;
 let currentUid = null;
 let infoVersiculoAtual = null; 
-let cacheMicas = {}; 
-let ferramentasMapaVico = {}; // Cache de caixas: [UUID_INTERNO] -> Dados
-
-const CORES_MICA = {
-    "Branco": "#ffffff", "Amarelo": "#f59e0b", "Vermelho": "#ef4444", "Laranja": "#ea580c", 
-    "Castanho": "#78350f", "Verde": "#10b981", "Azul": "#3b82f6", "Rosa": "#ec4899", 
-    "Lilás": "#a855f7", "Cinzento": "#6b7280", "Preto": "#000000"
-};
-
-/**
- * LIMPEZA DE LISTENERS
- */
+let cacheMicas = {};
+let ferramentasMapaVico = {};
+let estruturaDossiePronta = false;
+let caixasAssociadasProntas = false;
+let dossieSemDocumento = false;
+let tInicioDossie = 0;
 export function limparDossieBiblia() {
     if (unsubDossie) unsubDossie();
-    if (unsubLocal) unsubLocal();
+    if (cancelLocalDossieSub) { cancelLocalDossieSub(); cancelLocalDossieSub = null; }
     micaAbertaId = null;
     cacheMicas = {};
     ferramentasMapaVico = {};
+    estruturaDossiePronta = false;
+    caixasAssociadasProntas = false;
+    dossieSemDocumento = false;
 }
 
-/**
- * INICIALIZAÇÃO E ESCUTAS LIVE
- */
 export async function renderizarDossieBiblia(info, container, db, auth, onNavegacaoMica) {
+    const tStart = performance.now();
+    tInicioDossie = tStart;
     infoVersiculoAtual = info;
     const nomeCompleto = `${info.livro} ${info.cap}:${info.ver}`;
     currentUid = auth.currentUser.uid;
     limparDossieBiblia();
 
-    // --- ESCUTA 1: NOTAS LOCAIS (FILTRAGEM POR USERID E ESTADO ATIVO) ---
-    const qLocal = query(
-        collection(db, "Local"), 
-        where("userId", "==", currentUid),
-        where("estado", "==", "on") // 🛡️ Apenas notas vivas do utilizador
-    );
+    mostrarCarregamentoCaixas(container, { area: "Dossiê", cor: "#f59e0b" });
 
-    unsubLocal = onSnapshot(qLocal, (snap) => {
-        ferramentasMapaVico = {};
-        snap.forEach(docN => {
-            const nData = docN.data();
-            if(nData.caixas) nData.caixas.forEach(c => {
-                // 🛡️ REGRA: A caixa também tem de estar ativa e usamos o ID (UUID) interno
-                if (c.estado === "on") {
-                    ferramentasMapaVico[c.id] = { ...c, notaDocId: docN.id, notaDadosCompletos: nData };
-                }
-            });
-        });
-        if (micaAbertaId) executarDesenhoDossie(container, db, auth, onNavegacaoMica);
-    });
-
-    // --- ESCUTA 2: ESTRUTURA DO DOSSIÊ NO VERSÍCULO ---
     const qDossie = query(collection(db, "TextosBiblia"), where("userId", "==", currentUid), where("nome", "==", nomeCompleto));
-    const snapDossie = await getDocs(qDossie);
     
-    if (snapDossie.empty) {
-        container.innerHTML = `<p style="color:gray; text-align:center; margin-top:30px; font-size:11px; opacity:0.5;">Cria anotações primeiro para ativar o Dossiê.</p>`;
-        return;
-    }
-
-    currentRef = doc(db, "TextosBiblia", snapDossie.docs[0].id);
-
-    unsubDossie = onSnapshot(currentRef, (docSnap) => {
-        if (!docSnap.exists()) return;
-        cacheMicas = docSnap.data().Dossie?.mica || {};
-        executarDesenhoDossie(container, db, auth, onNavegacaoMica);
+    unsubDossie = onSnapshot(qDossie, (snapDossie) => {
+        if (snapDossie.empty) {
+            dossieSemDocumento = true;
+            estruturaDossiePronta = true;
+            ferramentasMapaVico = {};
+            caixasAssociadasProntas = true;
+            tentarRenderizarDossie(container, db, auth, onNavegacaoMica);
+            return;
+        }
+        const docSnap = snapDossie.docs[0];
+        currentRef = docSnap.ref;
+        const dadosDossie = docSnap.data();
+        cacheMicas = dadosDossie.Dossie?.mica || {};
+        dossieSemDocumento = false;
+        estruturaDossiePronta = true;
+        ligarCaixasDoDossie(dadosDossie, container, db, auth, onNavegacaoMica, tStart);
+        console.log("[BIBLE-BOX-PERF] Dossie | TextosBiblia recebido em " + (performance.now() - tStart).toFixed(1) + "ms");
+        tentarRenderizarDossie(container, db, auth, onNavegacaoMica);
     });
 
-    // --- REGISTO DE EVENTOS DO CABEÇALHO ---
     window.removeEventListener('brain:abrirMicaPopup', abrirMicaHandler);
     window.addEventListener('brain:abrirMicaPopup', () => abrirPopupMica(db, auth));
     
@@ -90,12 +74,55 @@ export async function renderizarDossieBiblia(info, container, db, auth, onNavega
     window.addEventListener('brain:abrirReferenciaMica', () => abrirPopupRefApta(db));
 }
 
-function abrirMicaHandler() {} // Placeholders para os listeners
+function ligarCaixasDoDossie(dadosDossie, container, db, auth, onNavegacaoMica, tStart) {
+    const referencias = [
+        ...(dadosDossie.Dossie?.Apto || []),
+        ...Object.values(dadosDossie.Dossie?.mica || {}).flatMap(mica => mica.caixas || [])
+    ];
+    const ids = referencias.map(item => typeof item === "string" ? item : item?.id).filter(Boolean);
+
+    if (!ids.length) {
+        ferramentasMapaVico = {};
+        caixasAssociadasProntas = true;
+        return;
+    }
+
+    caixasAssociadasProntas = false;
+    mostrarCarregamentoCaixas(container, { area: "Dossie", cor: "#f59e0b", mensagem: "A carregar caixas associadas..." });
+    cancelLocalDossieSub?.();
+    cancelLocalDossieSub = subscreverCaixasPorIds(ids, db, currentUid, (mapa, meta) => {
+        if (meta?.erro) {
+            caixasAssociadasProntas = true;
+            mostrarErroCarregamentoCaixas(container, { area: "Dossie", cor: "#fb7185", mensagem: "Não foi possível carregar as caixas do Dossiê." });
+            return;
+        }
+        console.log("[BIBLE-BOX-PERF] Dossie | caixas por IDs recebidas em " + (performance.now() - tStart).toFixed(1) + "ms | caixas: " + Object.keys(mapa).length);
+        ferramentasMapaVico = mapa;
+        caixasAssociadasProntas = true;
+        tentarRenderizarDossie(container, db, auth, onNavegacaoMica);
+    });
+}
+function abrirMicaHandler() {}
 function abrirRefHandler() {}
 
-/**
- * ORQUESTRADOR DE DESENHO
- */
+function tentarRenderizarDossie(container, db, auth, onNavegacaoMica) {
+    if (!estruturaDossiePronta || !caixasAssociadasProntas) {
+        const mensagem = estruturaDossiePronta
+            ? "A carregar caixas associadas..."
+            : "A preparar o Dossiê...";
+        mostrarCarregamentoCaixas(container, { area: "Dossiê", cor: "#f59e0b", mensagem });
+        return;
+    }
+
+    if (dossieSemDocumento) {
+        container.innerHTML = '<p style="color:gray; text-align:center; margin-top:30px; font-size:11px; opacity:0.5;">Cria anotações primeiro para activar o Dossiê.</p>';
+        return;
+    }
+
+    executarDesenhoDossie(container, db, auth, onNavegacaoMica);
+    console.log("[BIBLE-BOX-PERF] Dossiê | conteúdo visível no DOM em " + (performance.now() - tInicioDossie).toFixed(1) + "ms");
+}
+
 function executarDesenhoDossie(container, db, auth, onNavegacaoMica) {
     if (!container) return;
     container.innerHTML = "";
@@ -108,9 +135,6 @@ function executarDesenhoDossie(container, db, auth, onNavegacaoMica) {
     }
 }
 
-/**
- * VISTA 1: LISTA DE MICAS
- */
 function renderizarListaMicas(micas, container, db, auth, onNavegacaoMica) {
     const lista = Object.values(micas).filter(m => m.estado === "on").sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
 
@@ -146,65 +170,91 @@ function renderizarListaMicas(micas, container, db, auth, onNavegacaoMica) {
     });
 }
 
-/**
- * VISTA 2: INTERIOR DA MICA (FILTRADO)
- */
 async function renderizarInteriorMica(mica, container, db, auth, onNavegacaoMica) {
     const btnVoltar = document.createElement('div');
-    btnVoltar.style.cssText = `padding:10px; color:var(--primary); cursor:pointer; font-size:11px; font-weight:800; border-bottom:1px solid rgba(255,255,255,0.05); margin-bottom:15px;`;
+    btnVoltar.style.cssText = `padding:10px; color:var(--primary); cursor:pointer; font-size:11px; font-weight:800; border-bottom:1px solid rgba(255,255,255,0.05); margin-bottom:15px; display:flex; align-items:center; gap:6px;`;
     btnVoltar.innerHTML = `<i class="fa-solid fa-arrow-left"></i> VOLTAR ÀS MICAS`;
     btnVoltar.onclick = () => { micaAbertaId = null; executarDesenhoDossie(container, db, auth, onNavegacaoMica); };
     container.appendChild(btnVoltar);
 
     const caixasMica = mica.caixas || [];
 
+    if (caixasMica.length === 0) {
+        const emptyMsg = document.createElement('p');
+        emptyMsg.style.cssText = `color:gray; text-align:center; margin-top:30px; font-size:11px; opacity:0.5;`;
+        emptyMsg.innerText = `Esta pasta está vazia. Usa o + verde para adicionar referências.`;
+        container.appendChild(emptyMsg);
+        return;
+    }
+
     caixasMica.forEach((refObj, index) => {
         const idAlvo = typeof refObj === 'object' ? refObj.id : refObj;
-        const c = ferramentasMapaVico[idAlvo]; // Aqui já está filtrado por estado e userId
-        if(!c) return;
+        const c = ferramentasMapaVico[idAlvo];
+        if (!c) return;
 
-        const config = IDENTIDADE_FERRAMENTAS[c.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
+        const config = IDENTIDADE_FERRAMENTAS[c.tipo] || IDENTIDADE_FERRAMENTAS.contentor || { icon: 'fa-solid fa-box', cor: '#ea580c', nome: 'Contentor' };
+        const mapaFocos = { subnota: FOCOS_SUBNOTA, questao: FOCOS_QUESTAO, raciocinio: FOCOS_RACIOCINIO };
+        const corFoco = c.corFocus || (mapaFocos[c.tipo] || FOCOS_BASE)[c.foco || "original"]?.corForte || config.cor || '#ea580c';
+        const nomeNota = c.notaDadosCompletos?.titulo || c.notaDadosCompletos?.nome || "Nota sem título";
+        const tipoNome = config.nome || c.tipo || "Ferramenta";
+
         const div = document.createElement('div');
-        div.style.cssText = `border-left: 3px solid ${config.cor}; background: rgba(255,255,255,0.02); margin-bottom: 8px; border-radius: 4px; padding: 10px;`;
+        div.style.cssText = `border-left: 4px solid ${corFoco}; background: rgba(255,255,255,0.03); margin-bottom: 12px; border-radius: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,0.06);`;
+
         div.innerHTML = `
-            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
-                <span style="font-size:9px; color:${config.cor}; font-weight:800; text-transform:uppercase;">${c.tipo}</span>
-                <i class="fa-solid fa-trash-can btn-rem" style="color:#f87171; cursor:pointer; font-size:10px; opacity:0.4;"></i>
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background: ${corFoco}18; border-bottom: 1px solid rgba(255,255,255,0.04);">
+                <div style="display:flex; align-items:center; gap:8px; overflow:hidden; max-width:75%;">
+                    <span style="font-size:10px; font-weight:800; color:${corFoco}; text-transform:uppercase; display:flex; align-items:center; gap:5px; flex-shrink:0;">
+                        <i class="${config.icon}"></i> ${tipoNome}
+                    </span>
+                    <span style="font-size:11px; font-weight:600; color:#94a3b8; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                        <i class="fa-regular fa-file-lines" style="margin-left:4px; margin-right:2px; opacity:0.6;"></i> ${nomeNota}
+                    </span>
+                </div>
+                <div style="display:flex; gap:12px; align-items:center; flex-shrink:0;">
+                    <button class="btn-viajar" title="Ir para a nota" style="background:none; border:none; color:#818cf8; cursor:pointer; font-size:12px; padding:2px;"><i class="fa-solid fa-arrow-up-right-from-square"></i></button>
+                    <button class="btn-rem" title="Desvincular da Mica" style="background:none; border:none; color:#f87171; cursor:pointer; font-size:12px; padding:2px;"><i class="fa-solid fa-trash"></i></button>
+                </div>
             </div>
-            <div style="font-size:12px; color:white; opacity:0.9; cursor:pointer;" class="txt-body">
-                ${c.titulo ? `<b>${c.titulo}</b><br>` : ''}${c.conteudo.substring(0,120)}...
-            </div>`;
-        
-        div.querySelector('.txt-body').onclick = () => {
-            if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
-                window.abrirNotaNoBook(c.notaDocId, { ...c.notaDadosCompletos, onde: "local" }, db, auth, c.id);
+            <div style="padding:12px; font-size:13px; color:#e2e8f0; line-height:1.5;" class="txt-body">
+                ${c.titulo ? `<div style="font-weight:700; margin-bottom:6px; color:${corFoco}; font-size:13px;">${c.titulo}</div>` : ''}
+                <p style="margin:0; white-space: pre-wrap; font-size:13.5px; color:#cbd5e1;">${c.conteudo || "Caixa vazia"}</p>
+            </div>
+        `;
+
+        div.querySelector('.btn-viajar').onclick = (e) => {
+            e.stopPropagation();
+            if (window.location.pathname.includes('biblia.html') && !isMobileViewport()) {
+                window.open(`index.html?nota=${c.notaDocId}&caixa=${c.id}${c.onde === "share" ? "&onde=share" : ""}`, '_blank');
+            } else if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+                window.abrirNotaNoBook(c.notaDocId, { ...c.notaDadosCompletos, onde: c.onde || "local" }, db, auth, c.id);
             } else {
-                abrirNotaNoEditor(c.notaDocId, c.notaDadosCompletos, db, auth, c.id);
+                abrirNotaNoEditor(c.notaDocId, { ...c.notaDadosCompletos, onde: c.onde || "local" }, db, auth, c.id);
             }
         };
+
         div.querySelector('.btn-rem').onclick = async (e) => {
             e.stopPropagation();
-            const novos = caixasMica.filter(x => (typeof x === 'object' ? x.id : x) !== idAlvo);
-            await updateDoc(currentRef, { [`Dossie.mica.${mica.id}.caixas`]: novos });
+            if (confirm("Remover esta caixa da pasta do Dossiê?")) {
+                const novos = caixasMica.filter(x => (typeof x === 'object' ? x.id : x) !== idAlvo);
+                await updateDoc(currentRef, { [`Dossie.mica.${mica.id}.caixas`]: novos });
+            }
         };
+
         container.appendChild(div);
     });
 }
 
-/**
- * POPUP: ADICIONAR À MICA (FILTRAGEM DE ABA BÍBLIA)
- */
 export async function abrirPopupRefApta(db) {
     const overlay = document.getElementById('popup-mica-ref-overlay');
     const container = document.getElementById('mica-ref-content');
     
     if (!overlay || !micaAbertaId) return;
 
-    // --- 🎯 REGRA: ESCONDER ABA BÍBLIA NESTE CONTEXTO ---
     const btnTabBiblia = overlay.querySelector('.tab-mica-ref[data-target="ref-biblia"]');
     const tabContainer = overlay.querySelector('.sub-tabs');
     if (btnTabBiblia) btnTabBiblia.style.display = 'none';
-    if (tabContainer) tabContainer.style.display = 'none'; // Esconde a barra toda se quiseres
+    if (tabContainer) tabContainer.style.display = 'none';
 
     overlay.classList.add('active');
     container.innerHTML = `<div style="text-align:center; padding:30px;"><i class="fa-solid fa-circle-notch fa-spin"></i></div>`;
@@ -213,7 +263,6 @@ export async function abrirPopupRefApta(db) {
     const aptos = snapB.data().Dossie?.Apto || [];
     const jaNaMica = (cacheMicas[micaAbertaId].caixas || []).map(x => typeof x === 'object' ? x.id : x);
 
-    // Cruzamento com Cache filtrado por User e Estado
     const caixasParaExibir = aptos
         .filter(uuid => !jaNaMica.includes(uuid))
         .map(uuid => ferramentasMapaVico[uuid])
@@ -258,40 +307,46 @@ export async function abrirPopupRefApta(db) {
     };
 }
 
-/**
- * POPUP: NOVA MICA (PASTA)
- */
-export function abrirPopupMica(db, auth) {
-    const overlay = document.getElementById('popup-mica-overlay');
-    const input = document.getElementById('mica-input-titulo');
-    const seletorCor = document.getElementById('mica-cor-selector');
-    
-    input.value = "";
-    let corSel = "#ffffff";
-
-    seletorCor.innerHTML = Object.entries(CORES_MICA).map(([n, h]) => `<div class="color-dot" data-hex="${h}" style="background:${h}; width:24px; height:24px; border-radius:50%; cursor:pointer; border:2px solid ${corSel === h ? 'white' : 'transparent'};"></div>`).join('');
-    seletorCor.querySelectorAll('.color-dot').forEach(dot => dot.onclick = () => { seletorCor.querySelectorAll('.color-dot').forEach(d => d.style.borderColor = "transparent"); dot.style.borderColor = "white"; corSel = dot.dataset.hex; });
+export async function abrirPopupMica(db, auth) {
+    const overlay = document.getElementById('popup-add-mica-overlay');
+    const inputT = document.getElementById('input-titulo-mica');
+    const inputC = document.getElementById('input-cor-mica');
+    if (!overlay || !inputT || !inputC) return;
 
     overlay.classList.add('active');
-    input.focus();
+    inputT.value = "";
 
-    document.getElementById('btn-cancelar-mica').onclick = () => overlay.classList.remove('active');
-    document.getElementById('btn-gravar-mica').onclick = async () => {
-        const tit = input.value.trim(); if(!tit) return;
-        const id = crypto.randomUUID();
-        const data = { id, titulo: tit, cor: corSel, timestamp: new Date().toISOString(), estado: "on", caixas: [] };
-        await updateDoc(currentRef, { [`Dossie.mica.${id}`]: data });
+    document.getElementById('btn-confirmar-criar-mica').onclick = async () => {
+        const titulo = inputT.value.trim();
+        const cor = inputC.value || "#3b82f6";
+        if (!titulo) return;
+
+        const idMica = crypto.randomUUID();
+        const novaMica = {
+            id: idMica,
+            titulo: titulo,
+            cor: cor,
+            estado: "on",
+            timestamp: new Date().toISOString(),
+            caixas: []
+        };
+
+        await updateDoc(currentRef, {
+            [`Dossie.mica.${idMica}`]: novaMica
+        });
+
         overlay.classList.remove('active');
     };
 }
 
 async function moverMica(index, direcao, lista) {
-    const novoIdx = index + direcao;
-    if (novoIdx < 0 || novoIdx >= lista.length) return;
-    const temp = lista[index].timestamp;
-    lista[index].timestamp = lista[novoIdx].timestamp;
-    lista[novoIdx].timestamp = temp;
-    const obj = {};
-    lista.forEach(m => obj[m.id] = m);
-    await updateDoc(currentRef, { "Dossie.mica": obj });
+    const targetIdx = index + direcao;
+    if (targetIdx < 0 || targetIdx >= lista.length) return;
+    const temp = lista[index];
+    lista[index] = lista[targetIdx];
+    lista[targetIdx] = temp;
+
+    const novasMicas = {};
+    lista.forEach(m => { novasMicas[m.id] = m; });
+    await updateDoc(currentRef, { "Dossie.mica": novasMicas });
 }

@@ -26,7 +26,7 @@ const CORES_TOPICO = [
     { nome: "Azul", hex: "#3b82f6" },
     { nome: "Azul Escuro", hex: "#1e40af" },
     { nome: "Roxo", hex: "#6b21a8" },
-    { nome: "Lilás", hex: "#a855f7" },
+    { nome: "LilÃ¡s", hex: "#a855f7" },
     { nome: "Rosa Choque", hex: "#db2777" },
     { nome: "Cinzento", hex: "#6b7280" },
     { nome: "Preto", hex: "#000000" },
@@ -39,7 +39,7 @@ export function iniciarTopicos(db, auth) {
 }
 
 /**
- * NAVEGAÇÃO LATERAL (LISTS)
+ * NAVEGAÃ‡ÃƒO LATERAL (LISTS)
  */
 export function renderizarNavegacaoTopicos() {
     const container = document.getElementById('lista-lists');
@@ -50,11 +50,11 @@ export function renderizarNavegacaoTopicos() {
         <div style="display: flex; flex-direction: column; border-bottom: 1px solid var(--border-color); background: var(--bg-panel); position: sticky; top: 0; z-index: 5;">
             <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px;">
                 <div id="btn-topicos-voltar" style="cursor: pointer; color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
-                    <i class="fa-solid fa-arrow-left" style="margin-right: 5px;"></i> ${topicoAtivoId ? 'Subtópicos' : 'Tópicos'}
+                    <i class="fa-solid fa-arrow-left" style="margin-right: 5px;"></i> ${topicoAtivoId ? 'SubtÃ³picos' : 'TÃ³picos'}
                 </div>
                 <div style="display: flex; gap: 6px;">
                     <button id="btn-search-topicos" title="Pesquisar" style="background:${modoPesquisa ? 'var(--primary)' : 'transparent'}; border:1px solid var(--border-color); color:white; width:28px; height:28px; border-radius:4px; cursor:pointer;"><i class="fa-solid fa-magnifying-glass" style="font-size:11px"></i></button>
-                    <button id="btn-edit-topicos" title="Modo Edição" style="background:${modoEdicao ? 'var(--primary)' : 'transparent'}; border:1px solid var(--border-color); color:white; width:28px; height:28px; border-radius:4px; cursor:pointer;"><i class="fa-solid fa-pen" style="font-size:11px"></i></button>
+                    <button id="btn-edit-topicos" title="Modo EdiÃ§Ã£o" style="background:${modoEdicao ? 'var(--primary)' : 'transparent'}; border:1px solid var(--border-color); color:white; width:28px; height:28px; border-radius:4px; cursor:pointer;"><i class="fa-solid fa-pen" style="font-size:11px"></i></button>
                     <button id="btn-add-topico" title="Novo" style="background:var(--primary); border:none; color:white; width:28px; height:28px; border-radius:4px; cursor:pointer;"><i class="fa-solid fa-plus"></i></button>
                 </div>
             </div>
@@ -86,6 +86,155 @@ export function renderizarNavegacaoTopicos() {
     escutarDados();
 }
 
+function activarAbaTopico(target) {
+    document.querySelectorAll('.tab-topico').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.target === target);
+    });
+    document.querySelectorAll('.topico-tab-content').forEach(content => {
+        content.style.display = content.id === target ? 'block' : 'none';
+    });
+}
+
+function renderizarCoresTopico(corAtual = '') {
+    const container = document.getElementById('topico-cor-selector');
+    if (!container) return;
+    container.innerHTML = CORES_TOPICO.map(cor => `
+        <button type="button" class="topico-cor-option" data-cor="${cor.hex}" title="${cor.nome}"
+                style="width:28px; height:28px; border-radius:50%; border:2px solid ${cor.hex === corAtual ? 'white' : 'transparent'}; background:${cor.hex}; cursor:pointer; box-shadow:0 0 0 1px rgba(255,255,255,.18);"></button>
+    `).join('');
+    container.querySelectorAll('.topico-cor-option').forEach(botao => {
+        botao.onclick = () => {
+            corSelecionada = botao.dataset.cor;
+            renderizarCoresTopico(corSelecionada);
+        };
+    });
+}
+
+async function carregarTopicosPai(seleccionados = []) {
+    const container = document.getElementById('container-dropdown-pais');
+    if (!container || !authRef?.currentUser) return;
+    const q = query(collection(dbRef, 'Topico'), where('userId', '==', authRef.currentUser.uid), where('tipo', '==', 'topico'), where('estado', '==', 'on'));
+    const snapshot = await getDocs(q);
+    container.innerHTML = snapshot.docs.map(itemDoc => {
+        const dados = itemDoc.data();
+        const marcado = seleccionados.includes(dados.id) || seleccionados.includes(itemDoc.id);
+        return `<label style="display:flex; align-items:center; gap:8px; padding:7px 4px; cursor:pointer; font-size:12px;"><input type="checkbox" class="topico-pai-check" value="${dados.id || itemDoc.id}" ${marcado ? 'checked' : ''}><span>${dados.nome || 'Sem nome'}</span></label>`;
+    }).join('') || '<span style="font-size:11px; color:var(--text-muted);">Ainda não existem tópicos.</span>';
+    container.querySelectorAll('.topico-pai-check').forEach(input => input.onchange = actualizarResumoPais);
+    actualizarResumoPais();
+}
+
+function actualizarResumoPais() {
+    const checks = [...document.querySelectorAll('.topico-pai-check:checked')];
+    const texto = document.getElementById('texto-selecionados');
+    const aviso = document.getElementById('aviso-espelho');
+    if (texto) texto.textContent = checks.length ? `${checks.length} tópico(s) seleccionado(s)` : 'Selecionar Tópicos...';
+    if (aviso) aviso.style.display = checks.length > 1 ? 'block' : 'none';
+}
+
+function configurarPopupTopicos() {
+    const overlay = document.getElementById('popup-topicos-overlay');
+    if (!overlay || overlay.dataset.configurado === 'true') return;
+    overlay.dataset.configurado = 'true';
+    document.querySelectorAll('.tab-topico').forEach(tab => tab.onclick = () => activarAbaTopico(tab.dataset.target));
+    document.getElementById('btn-fechar-topico')?.addEventListener('click', () => overlay.classList.remove('active'));
+    document.getElementById('topicos-pai-select-head')?.addEventListener('click', () => {
+        const lista = document.getElementById('container-dropdown-pais');
+        if (lista) lista.style.display = lista.style.display === 'none' ? 'block' : 'none';
+    });
+    document.getElementById('btn-gravar-topico')?.addEventListener('click', guardarTopico);
+    document.getElementById('btn-ocultar-topico')?.addEventListener('click', ocultarTopico);
+}
+
+function limparPopupTopico() {
+    document.getElementById('topico-nome').value = '';
+    document.getElementById('subtopico-nome').value = '';
+    document.getElementById('titulo-popup-topico').textContent = 'Novo Tópico / Subtópico';
+    document.getElementById('btn-gravar-topico').textContent = 'Gravar';
+    document.getElementById('btn-ocultar-topico').style.display = 'none';
+    itemSendoEditadoDocId = null;
+    corSelecionada = '';
+    activarAbaTopico('form-topico');
+    renderizarCoresTopico();
+    carregarTopicosPai();
+}
+
+function abrirPopupCriar() {
+    configurarPopupTopicos();
+    limparPopupTopico();
+    document.getElementById('popup-topicos-overlay')?.classList.add('active');
+}
+
+async function editarTopico(docId) {
+    try {
+        const snap = await getDoc(doc(dbRef, 'Topico', docId));
+        if (!snap.exists()) return;
+        const dados = snap.data();
+        configurarPopupTopicos();
+        itemSendoEditadoDocId = docId;
+        corSelecionada = dados.cor || '';
+        document.getElementById('titulo-popup-topico').textContent = 'Editar Tópico / Subtópico';
+        document.getElementById('btn-gravar-topico').textContent = 'Actualizar';
+        document.getElementById('btn-ocultar-topico').style.display = 'block';
+        if (dados.tipo === 'subtopico') {
+            activarAbaTopico('form-subtopico');
+            document.getElementById('subtopico-nome').value = dados.nome || '';
+            await carregarTopicosPai(dados.topicospai || []);
+        } else {
+            activarAbaTopico('form-topico');
+            document.getElementById('topico-nome').value = dados.nome || '';
+            renderizarCoresTopico(corSelecionada);
+        }
+        document.getElementById('popup-topicos-overlay')?.classList.add('active');
+    } catch (erro) {
+        console.error('[TOPICOS] Erro ao abrir edição:', erro);
+    }
+}
+
+async function guardarTopico() {
+    const botao = document.getElementById('btn-gravar-topico');
+    const aba = document.querySelector('.tab-topico.active')?.dataset.target || 'form-topico';
+    const isSubtopico = aba === 'form-subtopico';
+    const nome = document.getElementById(isSubtopico ? 'subtopico-nome' : 'topico-nome')?.value.trim();
+    if (!nome || !authRef?.currentUser) return;
+    const dados = isSubtopico
+        ? { nome, tipo: 'subtopico', topicospai: [...document.querySelectorAll('.topico-pai-check:checked')].map(input => input.value) }
+        : { nome, tipo: 'topico', cor: corSelecionada || null };
+    botao.disabled = true;
+    try {
+        if (itemSendoEditadoDocId) {
+            await updateDoc(doc(dbRef, 'Topico', itemSendoEditadoDocId), dados);
+        } else {
+            await addDoc(collection(dbRef, 'Topico'), { ...dados, id: crypto.randomUUID(), userId: authRef.currentUser.uid, estado: 'on', caixas: [], notas: [], timestamp: serverTimestamp() });
+        }
+        document.getElementById('popup-topicos-overlay')?.classList.remove('active');
+    } catch (erro) {
+        console.error('[TOPICOS] Erro ao guardar:', erro);
+    } finally {
+        botao.disabled = false;
+    }
+}
+
+async function ocultarTopico() {
+    if (!itemSendoEditadoDocId) return;
+    const overlay = document.getElementById('popup-confirmar-topico-overlay');
+    overlay?.classList.add('active');
+    const fechar = () => overlay?.classList.remove('active');
+    const cancelar = document.getElementById('btn-cancelar-ocultar-topico');
+    const confirmar = document.getElementById('btn-confirmar-ocultar-topico');
+    cancelar.onclick = fechar;
+    confirmar.onclick = async () => {
+        await updateDoc(doc(dbRef, 'Topico', itemSendoEditadoDocId), { estado: 'off', timedelete: new Date().toISOString() });
+        fechar();
+        document.getElementById('popup-topicos-overlay')?.classList.remove('active');
+    };
+}
+
+function exporFuncoesGlobais() {
+    configurarPopupTopicos();
+    window.editarTopicoGlobal = editarTopico;
+    window.abrirPopupCriarTopico = abrirPopupCriar;
+}
 function escutarDados() {
     if (!authRef.currentUser) return;
     const userId = authRef.currentUser.uid;
@@ -120,7 +269,7 @@ function escutarDados() {
 function criarElementoLista(item, tag = null) {
     const div = document.createElement('div');
     
-    // 1. Verificamos se este é o item selecionado
+    // 1. Verificamos se este Ã© o item selecionado
     const isAtivo = item.id === subtopicoSelecionadoId;
     
     div.className = `menu-item-list ${isAtivo ? 'active' : ''}`;
@@ -144,314 +293,18 @@ function criarElementoLista(item, tag = null) {
     `;
 
     if (!modoEdicao) {
-        div.onclick = () => {
+        div.onclick = async () => {
             if (item.tipo === 'topico') {
                 topicoAtivoId = item.id;
                 renderizarNavegacaoTopicos();
-            } else {
-                // 2. Guardamos o ID e re-renderizamos a lista lateral para mostrar o estado ativo
-                subtopicoSelecionadoId = item.id;
-                renderizarNavegacaoTopicos(); 
-                prepararSubtopicoNoBrain(item);
+                return;
             }
+
+            subtopicoSelecionadoId = item.id;
+            await prepararSubtopicoNoBrain(item);
+            await abrirSubtopicoNasFontes(item);
         };
     }
+
     return div;
-}
-
-/**
- * LÓGICA DO POPUP (CRIAÇÃO / EDIÇÃO)
- */
-
-async function abrirPopupCriar(dadosEdicao = null) {
-    itemSendoEditadoDocId = dadosEdicao ? dadosEdicao.docId : null;
-    document.getElementById('topico-nome').value = dadosEdicao ? dadosEdicao.nome : "";
-    document.getElementById('subtopico-nome').value = dadosEdicao ? dadosEdicao.nome : "";
-    corSelecionada = dadosEdicao ? (dadosEdicao.cor || "") : "";
-    
-    document.getElementById('titulo-popup-topico').innerText = dadosEdicao ? "Editar Item" : "Novo Tópico / Subtópico";
-    document.getElementById('btn-gravar-topico').innerText = dadosEdicao ? "Atualizar" : "Gravar";
-    document.getElementById('btn-ocultar-topico').style.display = dadosEdicao ? "block" : "none";
-    
-    const overlay = document.getElementById('popup-topicos-overlay');
-    overlay.classList.add('active');
-    
-    configurarEventosPopup();
-    renderizarCores();
-    await carregarDropdownPais(dadosEdicao ? dadosEdicao.topicospai : null);
-
-    const btnTabSub = document.querySelector('[data-target="form-subtopico"]');
-    const btnTabTop = document.querySelector('[data-target="form-topico"]');
-    const abasNavegacao = document.querySelector('#popup-topicos-overlay .sub-tabs');
-
-    if (dadosEdicao) {
-        abasNavegacao.style.display = "none";
-        if (dadosEdicao.tipo === 'subtopico') btnTabSub.click();
-        else btnTabTop.click();
-    } else {
-        abasNavegacao.style.display = "flex";
-        if (topicoAtivoId) {
-            btnTabSub.click();
-            const checks = document.querySelectorAll('.check-pai');
-            checks.forEach(c => { if(c.value === topicoAtivoId) c.checked = true; });
-            atualizarTextoDropdown();
-        } else {
-            btnTabTop.click();
-        }
-    }
-}
-
-async function carregarDropdownPais(paisSelecionados = null) {
-    const cont = document.getElementById('container-dropdown-pais');
-    const head = document.getElementById('topicos-pai-select-head');
-    
-    head.onclick = (e) => {
-        e.stopPropagation();
-        cont.style.display = cont.style.display === 'block' ? 'none' : 'block';
-    };
-
-    const clickFora = () => { cont.style.display = 'none'; document.removeEventListener('click', clickFora); };
-    document.addEventListener('click', clickFora);
-
-    const q = query(collection(dbRef, "Topico"), where("userId", "==", authRef.currentUser.uid), where("tipo", "==", "topico"), where("estado", "==", "on"));
-    const snap = await getDocs(q);
-    
-    let html = "";
-    snap.forEach(d => {
-        const data = d.data();
-        const isChecked = paisSelecionados && paisSelecionados.includes(data.id) ? "checked" : "";
-        html += `
-        <label style="display:flex; align-items:center; gap:10px; margin-bottom:8px; font-size:12px; cursor:pointer; color:white; padding:5px; border-radius:4px;" class="item-select-pai">
-            <input type="checkbox" class="check-pai" ${isChecked} value="${data.id}" data-docid="${d.id}" data-nome="${data.nome}"> ${data.nome}
-        </label>`;
-    });
-    cont.innerHTML = html || '<span style="font-size:11px; color:gray; padding:10px; display:block;">Crie primeiro um tópico.</span>';
-
-    cont.querySelectorAll('.check-pai').forEach(check => {
-        check.onchange = () => atualizarTextoDropdown();
-    });
-    atualizarTextoDropdown(); 
-}
-
-function atualizarTextoDropdown() {
-    const cont = document.getElementById('container-dropdown-pais');
-    if(!cont) return;
-    const checks = Array.from(cont.querySelectorAll('.check-pai:checked'));
-    const txt = document.getElementById('texto-selecionados');
-    const aviso = document.getElementById('aviso-espelho');
-
-    if (checks.length === 0) {
-        txt.innerText = "Selecionar Tópicos...";
-        txt.style.color = "var(--text-muted)";
-        aviso.style.display = 'none';
-    } else {
-        txt.innerText = checks.map(c => c.dataset.nome).join(', ');
-        txt.style.color = "white";
-        aviso.style.display = checks.length > 1 ? 'block' : 'none';
-    }
-}
-
-function configurarEventosPopup() {
-    document.getElementById('btn-fechar-topico').onclick = () => document.getElementById('popup-topicos-overlay').classList.remove('active');
-    
-    const tabs = document.querySelectorAll('.tab-topico');
-    tabs.forEach(t => {
-        t.onclick = () => {
-            tabs.forEach(x => x.classList.remove('active'));
-            t.classList.add('active');
-            document.querySelectorAll('.topico-tab-content').forEach(c => c.style.display = 'none');
-            document.getElementById(t.dataset.target).style.display = 'block';
-        };
-    });
-
- document.getElementById('btn-ocultar-topico').onclick = async () => {
-    // 1. Pedir confirmação visual ao utilizador
-    const confirmou = await confirmarOcultarPopup();
-    
-    if (confirmou) {
-        console.log("🗑️ [TÓPICOS] Iniciando processo de ocultação...");
-        
-        try {
-            // 2. Gravação de Soft Delete com carimbo de tempo
-            await updateDoc(doc(dbRef, "Topico", itemSendoEditadoDocId), { 
-                estado: 'off',
-                timedelete: new Date().toISOString() // O campo que faltava para a reciclagem
-            });
-
-            console.log("✅ [TÓPICOS] Item marcado para reciclagem.");
-
-            // 3. Fechar o popup
-            document.getElementById('popup-topicos-overlay').classList.remove('active');
-            
-        } catch (error) {
-            console.error("❌ Erro ao ocultar tópico:", error);
-            alert("Erro de permissão. Verifica a tua ligação.");
-        }
-    }
-};
-
-  document.getElementById('btn-gravar-topico').onclick = async () => {
-    const btn = document.getElementById('btn-gravar-topico');
-    const abaAtiva = document.querySelector('.tab-topico.active').dataset.target;
-    const userId = authRef.currentUser.uid;
-    
-    btn.innerText = "A processar...";
-    btn.disabled = true;
-
-    try {
-        if (abaAtiva === 'form-topico') {
-            const nome = document.getElementById('topico-nome').value.trim();
-            if(!nome) throw new Error("Nome obrigatório");
-            
-            if (itemSendoEditadoDocId) {
-                // --- CASCATA PARA TÓPICO PAI ---
-                const snap = await getDoc(doc(dbRef, "Topico", itemSendoEditadoDocId));
-                const uuid = snap.data().id;
-                
-                await updateDoc(doc(dbRef, "Topico", itemSendoEditadoDocId), { nome, cor: corSelecionada });
-                sincronizarNomeTopicoEmCascata(uuid, nome); // Disparar cascata
-            } else {
-                // Criação (mantém igual)
-                await addDoc(collection(dbRef, "Topico"), {
-                    id: crypto.randomUUID(), nome, cor: corSelecionada, estado: 'on', tipo: 'topico', userId, timestamp: serverTimestamp(), subtopicos: []
-                });
-            }
-        } else {
-            // LÓGICA PARA SUBTÓPICO
-            const nome = document.getElementById('subtopico-nome').value.trim();
-            const checks = Array.from(document.querySelectorAll('.check-pai:checked'));
-            if(!nome || (itemSendoEditadoDocId === null && checks.length === 0)) throw new Error("Nome e pelo menos um Pai obrigatórios");
-            
-            if (itemSendoEditadoDocId) {
-                // --- CASCATA PARA SUBTÓPICO ---
-                const snap = await getDoc(doc(dbRef, "Topico", itemSendoEditadoDocId));
-                const uuid = snap.data().id;
-
-                const idsPaisInternos = checks.map(c => c.value);
-                await updateDoc(doc(dbRef, "Topico", itemSendoEditadoDocId), { nome, topicospai: idsPaisInternos });
-                
-                sincronizarNomeTopicoEmCascata(uuid, nome); // Disparar cascata
-            } else {
-                // Criação (mantém igual)
-                const idSub = crypto.randomUUID();
-                const docIdsFirebase = checks.map(c => c.dataset.docid);
-                const idsPaisInternos = checks.map(c => c.value);
-
-                await addDoc(collection(dbRef, "Topico"), {
-                    id: idSub, nome, topicospai: idsPaisInternos, estado: 'on', tipo: 'subtopico', userId, timestamp: serverTimestamp()
-                });
-                const updates = docIdsFirebase.map(docId => updateDoc(doc(dbRef, "Topico", docId), { subtopicos: arrayUnion(idSub) }));
-                await Promise.all(updates);
-            }
-        }
-        document.getElementById('popup-topicos-overlay').classList.remove('active');
-    } catch (err) {
-        alert(err.message);
-    } finally {
-        btn.innerText = "Gravar";
-        btn.disabled = false;
-    }
-};
-}
-
-function renderizarCores() {
-    const cont = document.getElementById('topico-cor-selector');
-    if(!cont) return;
-    cont.innerHTML = CORES_TOPICO.map(c => `
-        <div onclick="window.setCorTopico('${c.hex}')" style="width:25px; height:25px; border-radius:50%; background:${c.hex}; cursor:pointer; border: ${corSelecionada === c.hex ? '3px solid white' : '1px solid rgba(0,0,0,0.2)'}"></div>
-    `).join('');
-}
-
-function exporFuncoesGlobais() {
-    window.setCorTopico = (hex) => { corSelecionada = hex; renderizarCores(); };
-    window.editarTopicoGlobal = async (docId) => {
-        const snap = await getDoc(doc(dbRef, "Topico", docId));
-        if (snap.exists()) {
-            const dados = snap.data();
-            abrirPopupCriar({ docId: snap.id, ...dados });
-        }
-    };
-}
-
-function confirmarOcultarPopup() {
-    return new Promise((resolve) => {
-        const overlay = document.getElementById('popup-confirmar-topico-overlay');
-        const btnSim = document.getElementById('btn-confirmar-ocultar-topico');
-        const btnNao = document.getElementById('btn-cancelar-ocultar-topico');
-
-        overlay.classList.add('active');
-
-        const fechar = (resposta) => {
-            overlay.classList.remove('active');
-            btnSim.onclick = null;
-            btnNao.onclick = null;
-            resolve(resposta);
-        };
-
-        btnSim.onclick = () => fechar(true);
-        btnNao.onclick = () => fechar(false);
-    });
-}
-
-/**
- * Procura em todas as notas do utilizador por vínculos a este Tópico/Subtópico
- * e atualiza o nome exibido nas pills (tanto em caixas como na própria nota).
- */
-async function sincronizarNomeTopicoEmCascata(uuidInterno, novoNome) {
-    console.log(`🔄 [TÓPICO-CASCATA] Iniciando atualização global para: ${novoNome}`);
-    const uid = authRef.currentUser.uid;
-    const colecoes = ["Local", "Share"];
-
-    for (const col of colecoes) {
-        try {
-            const q = query(collection(dbRef, col), where("userId", "==", uid));
-            const snap = await getDocs(q);
-
-            for (const docNota of snap.docs) {
-                const dadosNota = docNota.data();
-                let houveAlteracao = false;
-                let updatePayload = {};
-
-                // 1. Verificar vínculos na RAIZ DA NOTA (Tags da nota)
-                if (dadosNota.vincTopicos) {
-                    const novosVincNota = dadosNota.vincTopicos.map(v => {
-                        if (v.id === uuidInterno && v.nome !== novoNome) {
-                            houveAlteracao = true;
-                            return { ...v, nome: novoNome };
-                        }
-                        return v;
-                    });
-                    if (houveAlteracao) updatePayload.vincTopicos = novosVincNota;
-                }
-
-                // 2. Verificar vínculos dentro das CAIXAS (Blocos)
-                if (dadosNota.caixas) {
-                    let caixasMudaram = false;
-                    const novasCaixas = dadosNota.caixas.map(caixa => {
-                        if (caixa.vincTopicos) {
-                            caixa.vincTopicos = caixa.vincTopicos.map(v => {
-                                if (v.id === uuidInterno && v.nome !== novoNome) {
-                                    houveAlteracao = true;
-                                    caixasMudaram = true;
-                                    return { ...v, nome: novoNome };
-                                }
-                                return v;
-                            });
-                        }
-                        return caixa;
-                    });
-                    if (caixasMudaram) updatePayload.caixas = novasCaixas;
-                }
-
-                // Gravar se houver mudanças
-                if (houveAlteracao) {
-                    console.log(`✅ [TÓPICO-CASCATA] Nome atualizado na nota: ${dadosNota.nome}`);
-                    await updateDoc(doc(dbRef, col, docNota.id), updatePayload);
-                }
-            }
-        } catch (e) {
-            console.error(`❌ [TÓPICO-CASCATA] Erro na coleção ${col}:`, e);
-        }
-    }
-    console.log("🏁 [TÓPICO-CASCATA] Sincronização concluída.");
 }

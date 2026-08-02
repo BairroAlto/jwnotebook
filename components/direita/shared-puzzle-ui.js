@@ -9,7 +9,7 @@ export const SharedPuzzleUI = {
      * RENDERIZA O QUADRO MANUAL USANDO A FÁBRICA PADRONIZADA
      */
     renderQuadroManual: (q, index, listaCompleta, refDoc, callbacks) => {
-        const { setEstaAEscrever, moverItem, apagarItem } = callbacks;
+        const { setEstaAEscrever, moverItem, apagarItem, enviarItem } = callbacks;
 
         return BrainBoxFactory.criar(q, index, {
             onUpdate: (novoTexto) => {
@@ -32,6 +32,7 @@ export const SharedPuzzleUI = {
                 window._puzzleTimers.set(q.id, timer);
             },
             onMove: moverItem,
+            onSend: (data) => { if (enviarItem) enviarItem(data); },
             onDelete: async (id) => {
                 const confirmou = await SharedPuzzleUI.confirmarAcao(
                     "Apagar Anotação?", 

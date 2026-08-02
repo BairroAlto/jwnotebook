@@ -1,9 +1,13 @@
 // components/direita/cosmos-puzzle.js
 import { doc, updateDoc, onSnapshot, arrayUnion, collection, query, where, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { obterNotasPorCaixas, actualizarCaixaLocal } from '../local/caixas-repository.js';
 import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
 import { FOCOS_BASE, FOCOS_SUBNOTA, FOCOS_QUESTAO, FOCOS_RACIOCINIO } from '../editor/modulos/paleta-cores.js';
 import { abrirNotaNoEditor } from '../editor/editor.js';
 import { SharedPuzzleUI } from './shared-puzzle-ui.js';
+import { abrirPopupPartilhar } from '../editor/modulos/partilhar.js';
+import { actualizarCaixaShare, obterNotasSharePorCaixas } from '../share/share-caixas-repository.js';
+import { escutarCaixasNormalizadas } from '../caixas/caixas-live-repository.js';
 
 // --- ESTADO LOCAL DO MÓDULO ---
 let unsubTema = null;
@@ -46,21 +50,47 @@ export async function renderizarPuzzle(tema, container, db, auth) {
         window.removeEventListener('cosmos:adicionarTexto', logicHandlerAtivo);
     }
 
-    // --- 2. ESCUTA: NOTAS LOCAIS (CONTEÚDO VIVO / FERRAMENTAS) ---
-    if (unsubLocal) unsubLocal();
-    unsubLocal = onSnapshot(query(collection(db, "Local"), where("userId", "==", uid)), (notasSnap) => {
-        mapaFerramentasInterno = {};
-        notasSnap.forEach(docNota => {
-            const d = docNota.data();
-            if (d.estado !== "on") return;
-            if (d.caixas) d.caixas.forEach(c => {
-                if (c.estado === "on" && c.neuroniosCosmos?.some(n => n.id === tema.id)) {
-                    mapaFerramentasInterno[c.id] = { ...c, notaDocId: docNota.id, notaDadosCompletos: d };
-                }
-            });
+    const atualizarEscutaCaixas = () => {
+        if (unsubLocal) unsubLocal();
+        const ids = [...new Set((dadosEstruturaTema?.Puzzle?.caixas || [])
+            .map(caixa => typeof caixa === "object" ? caixa.id : caixa)
+            .filter(Boolean).map(String))];
+
+        if (!ids.length) {
+            mapaFerramentasInterno = {};
+            reconstruirInterface(container, temaDocRef, db, auth, tema);
+            return;
+        }
+
+        unsubLocal = escutarCaixasNormalizadas({
+            db,
+            userId: uid,
+            ids,
+            onChange: async caixas => {
+                mapaFerramentasInterno = {};
+                const caixasLocais = caixas.filter(caixa => caixa.onde === "local");
+                const caixasShare = caixas.filter(caixa => caixa.onde === "share");
+                const [notasLocais, notasShare] = await Promise.all([
+                    obterNotasPorCaixas(db, caixasLocais),
+                    obterNotasSharePorCaixas(db, caixasShare)
+                ]);
+
+                caixas.forEach(caixa => {
+                    const notaId = caixa.onde === "share" ? caixa.shareId : caixa.localDocId;
+                    const nota = (caixa.onde === "share" ? notasShare : notasLocais).get(notaId);
+                    if (!nota || nota.estado !== "on") return;
+                    if (caixa.neuroniosCosmos?.some(n => n.id === tema.id)) {
+                        mapaFerramentasInterno[caixa.id] = {
+                            ...caixa,
+                            notaDocId: notaId,
+                            notaDadosCompletos: { ...nota, onde: caixa.onde }
+                        };
+                    }
+                });
+                reconstruirInterface(container, temaDocRef, db, auth, tema);
+            }
         });
-        reconstruirInterface(container, temaDocRef, db, auth, tema);
-    });
+    };
 
     // --- 3. ESCUTA: DOCUMENTO DO TEMA (ESTRUTURA / CAIXAS MANUAIS) ---
     if (unsubTema) unsubTema();
@@ -84,7 +114,7 @@ export async function renderizarPuzzle(tema, container, db, auth) {
         }
 
         dadosEstruturaTema = dadosServidor;
-        reconstruirInterface(container, temaDocRef, db, auth, tema);
+        atualizarEscutaCaixas();
     });
 
     // --- 4. LÓGICA ATÓMICA DO BOTÃO + ---
@@ -175,7 +205,7 @@ function reconstruirInterface(container, temaRef, db, auth, temaOriginal) {
             const el = SharedPuzzleUI.renderQuadroManual(item, index, listaFinal, temaRef, {
                 setEstaAEscrever: (val) => { estaAEscrever = val; },
                 moverItem: (idx, dir) => moverItemPuzzle(idx, dir, listaFinal, temaRef),
-                apagarItem: (id) => executarApagarManual(id, temaRef)
+                apagarItem: (id) => executarApagarManual(id, temaRef),                 enviarItem: (item) => abrirPopupPartilhar(item, "__COSMOS__", () => {})
             });
             container.appendChild(el);
         } else {
@@ -201,6 +231,7 @@ function renderFerramentaVinculada(c, index, todos, ref, db, auth, temaOriginal)
             <div style="display:flex; gap:14px; color:rgba(255,255,255,0.25); font-size:11px; align-items:center;">
                 <i class="fa-solid fa-chevron-up btn-up" style="cursor:pointer;"></i>
                 <i class="fa-solid fa-chevron-down btn-down" style="cursor:pointer;"></i>
+                <i class="fa-solid fa-paper-plane btn-enviar" title="Enviar para uma nota" style="cursor:pointer; color:#a5b4fc;"></i>
                 <i class="fa-solid fa-arrow-up-right-from-square btn-viajar" style="cursor:pointer; color:#818cf8;"></i>
                 <i class="fa-solid fa-trash-can btn-remove" style="color:#f87171; cursor:pointer;"></i>
             </div>
@@ -219,24 +250,13 @@ function renderFerramentaVinculada(c, index, todos, ref, db, auth, temaOriginal)
             await updateDoc(ref, { "Puzzle.caixas": novasCaixas, "Dossie.Apto": novasDossie });
 
             // 2. LIMPAR NA NOTA (SINCRONIZAÇÃO IN LIVE)
-            const colecao = (c.notaDadosCompletos && c.notaDadosCompletos.onde === "share") ? "Share" : "Local";
-            const notaRef = doc(db, colecao, c.notaDocId);
-            const snapNota = await getDoc(notaRef);
-            
-            if(snapNota.exists()){
-                const caixasNota = snapNota.data().caixas.map(cx => {
-                    if(cx.id === c.id) {
-                        cx.neuroniosCosmos = (cx.neuroniosCosmos || []).filter(n => n.id !== temaOriginal.id);
-                        
-                        // Atualizar popup de tags se estiver aberto
-                        const overlayTags = document.getElementById('popup-tags-overlay');
-                        if (overlayTags && overlayTags.classList.contains('active')) {
-                             import('../editor/modulos/tags/tags-ui.js').then(m => m.renderizarNeuroniosNoPopup(cx));
-                        }
-                    }
-                    return cx;
-                });
-                await updateDoc(notaRef, { caixas: caixasNota });
+            const caixaSnap = await getDoc(doc(db, c.onde === "share" ? "ShareCaixas" : "LocalCaixas", c.id));
+            if (caixaSnap.exists()) {
+                const caixaActual = caixaSnap.data();
+                const neuroniosCosmos = (caixaActual.neuroniosCosmos || [])
+                    .filter(n => n.id !== temaOriginal.id);
+                if (c.onde === "share") await actualizarCaixaShare(db, c.shareId, c.id, { neuroniosCosmos });
+                else await actualizarCaixaLocal(db, uid, c.id, { neuroniosCosmos });
             }
             ultimoJsonRenderizado = ""; 
         }
@@ -244,11 +264,15 @@ function renderFerramentaVinculada(c, index, todos, ref, db, auth, temaOriginal)
 
     div.querySelector('.btn-up').onclick = () => moverItemPuzzle(index, -1, todos, ref);
     div.querySelector('.btn-down').onclick = () => moverItemPuzzle(index, 1, todos, ref);
+    div.querySelector('.btn-enviar').onclick = (e) => {
+        e.stopPropagation();
+        abrirPopupPartilhar(c, "__COSMOS__", () => {});
+    };
     div.querySelector('.btn-viajar').onclick = () => {
         if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
-            window.abrirNotaNoBook(c.notaDocId, { ...c.notaDadosCompletos, onde: "local" }, db, auth, c.id);
+            window.abrirNotaNoBook(c.notaDocId, { ...c.notaDadosCompletos, onde: c.onde || "local" }, db, auth, c.id);
         } else {
-            abrirNotaNoEditor(c.notaDocId, c.notaDadosCompletos, db, auth, c.id);
+            abrirNotaNoEditor(c.notaDocId, { ...c.notaDadosCompletos, onde: c.onde || "local" }, db, auth, c.id);
         }
     };
 

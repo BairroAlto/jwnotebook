@@ -1,8 +1,11 @@
 // components/direita/cosmos-dossie.js
 import { doc, updateDoc, onSnapshot, getDoc, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { obterNotasPorCaixas } from '../local/caixas-repository.js';
 import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
 import { abrirNotaNoEditor } from '../editor/editor.js';
 import { moverItemNaMica, removerItemDaMica } from './dossie-actions.js';
+import { obterNotasSharePorCaixas } from '../share/share-caixas-repository.js';
+import { escutarCaixasNormalizadas } from '../caixas/caixas-live-repository.js';
 
 // --- ESTADO LOCAL DO MÓDULO ---
 let unsubDossie = null;
@@ -43,27 +46,53 @@ export function renderizarDossie(tema, container, db, auth, onMicaChange) {
     window.removeEventListener('cosmos:abrirRefPopup', abrirRefHandler);
     window.addEventListener('cosmos:abrirRefPopup', abrirRefHandler);
 
-    // Escuta Notas Locais
-    if (unsubLocal) unsubLocal();
-    unsubLocal = onSnapshot(query(collection(db, "Local"), where("userId", "==", uid)), (snap) => {
-        ferramentasMapaVico = {};
-        snap.forEach(docN => {
-            const d = docN.data();
-            if (d.estado !== "on") return;
-            if(d.caixas) d.caixas.forEach(c => {
-                if (c.estado !== "on") return;
-                ferramentasMapaVico[c.id] = { ...c, notaDocId: docN.id, notaDadosCompletos: d };
-            });
+    const atualizarEscutaCaixas = () => {
+        if (unsubLocal) unsubLocal();
+        const ids = [...new Set([
+            ...(cacheDadosTema?.Dossie?.Apto || []),
+            ...Object.values(cacheDadosTema?.Dossie?.mica || {}).flatMap(mica => mica?.caixas || [])
+        ].map(caixa => typeof caixa === "object" ? caixa.id : caixa).filter(Boolean).map(String))];
+
+        if (!ids.length) {
+            ferramentasMapaVico = {};
+            executarRenderizacaoLogica();
+            return;
+        }
+
+        unsubLocal = escutarCaixasNormalizadas({
+            db,
+            userId: uid,
+            ids,
+            onChange: async caixas => {
+                ferramentasMapaVico = {};
+                const caixasLocais = caixas.filter(caixa => caixa.onde === "local");
+                const caixasShare = caixas.filter(caixa => caixa.onde === "share");
+                const [notasLocais, notasShare] = await Promise.all([
+                    obterNotasPorCaixas(db, caixasLocais),
+                    obterNotasSharePorCaixas(db, caixasShare)
+                ]);
+
+                caixas.forEach(caixa => {
+                    const notaId = caixa.onde === "share" ? caixa.shareId : caixa.localDocId;
+                    const nota = (caixa.onde === "share" ? notasShare : notasLocais).get(notaId);
+                    if (!nota || nota.estado !== "on") return;
+                    ferramentasMapaVico[caixa.id] = {
+                        ...caixa,
+                        notaDocId: notaId,
+                        notaDadosCompletos: { ...nota, onde: caixa.onde }
+                    };
+                });
+                executarRenderizacaoLogica();
+            }
         });
-        executarRenderizacaoLogica();
-    });
+    };
 
     // Escuta Estrutura do Dossiê
     if(unsubDossie) unsubDossie();
     unsubDossie = onSnapshot(currentTemaRef, (docSnap) => {
         if (!docSnap.exists()) return;
         cacheDadosTema = docSnap.data();
-        executarRenderizacaoLogica();
+        atualizarEscutaCaixas();
     });
 }
 
@@ -130,9 +159,9 @@ async function renderizarVistaInterior(mica) {
             div.onclick = (e) => {
                 if (e.target.classList.contains('fa-solid')) return; // Ignora se clicou nos ícones
                 if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
-                    window.abrirNotaNoBook(c.notaDocId, { ...c.notaDadosCompletos, onde: "local" }, currentDb, currentAuth, c.id);
+                    window.abrirNotaNoBook(c.notaDocId, { ...c.notaDadosCompletos, onde: c.onde || "local" }, currentDb, currentAuth, c.id);
                 } else {
-                    abrirNotaNoEditor(c.notaDocId, c.notaDadosCompletos, currentDb, currentAuth, c.id);
+                    abrirNotaNoEditor(c.notaDocId, { ...c.notaDadosCompletos, onde: c.onde || "local" }, currentDb, currentAuth, c.id);
                 }
             };
         } else {

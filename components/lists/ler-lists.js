@@ -1,5 +1,8 @@
 // components/lists/ler-lists.js
 import { collection, doc, getDoc, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { obterNotasPorCaixas } from '../local/caixas-repository.js';
+import { obterNotasSharePorCaixas } from '../share/share-caixas-repository.js';
+import { escutarCaixasNormalizadas } from '../caixas/caixas-live-repository.js';
 import { iniciarNavegacaoBiblia } from './biblia.js';
 import { iniciarNavegacaoLivros } from './livros.js';
 import { iniciarCosmos, renderizarNavegacaoCosmos } from './cosmos.js'; 
@@ -170,71 +173,57 @@ async function pesquisarDestaquesNoBrain(corHex, corNome) {
 
     if (escutaPesquisaAtual) escutaPesquisaAtual();
 
-    const q = query(collection(dbRef, "Local"), where("userId", "==", authRef.currentUser.uid));
-    
-    escutaPesquisaAtual = onSnapshot(q, (snapshot) => {
-        divResultados.innerHTML = "";
-        let encontrados = 0;
+    escutaPesquisaAtual = escutarCaixasNormalizadas({
+        db: dbRef,
+        userId: authRef.currentUser.uid,
+        restricoes: [{ campo: "destaques", operador: "==", valor: corHex }],
+        onChange: async caixasNormalizadas => {
+            divResultados.innerHTML = "";
+            let encontrados = 0;
+            const caixas = caixasNormalizadas.filter(caixa => caixa.destaques === corHex);
+            const caixasLocais = caixas.filter(caixa => caixa.onde === "local");
+            const caixasShare = caixas.filter(caixa => caixa.onde === "share");
+            const [notasLocais, notasShare] = await Promise.all([
+                obterNotasPorCaixas(dbRef, caixasLocais),
+                obterNotasSharePorCaixas(dbRef, caixasShare)
+            ]);
 
-        snapshot.forEach(docSnap => {
-            const nota = docSnap.data();
-            if (nota.estado !== "on") return;
+            caixas.forEach(caixa => {
+                const notaId = caixa.onde === "share" ? caixa.shareId : caixa.localDocId;
+                const nota = (caixa.onde === "share" ? notasShare : notasLocais).get(notaId);
+                if (!nota || nota.estado !== "on") return;
 
-            if (nota.caixas) {
-                const caixasAlvo = nota.caixas.filter(c => 
-                    c.estado === "on" && 
-                    c.destaques === corHex
-                );
-                
-                caixasAlvo.forEach(caixa => {
-                    encontrados++;
-                    const card = document.createElement('div');
-                    
-                    // Ajuste de largura do card para ocupar 100%
-                    card.style.cssText = `
-                        width: 100%;
-                        background: rgba(255,255,255,0.03); 
-                        border-left: 4px solid ${corHex};
-                        padding: 15px; 
-                        border-radius: 8px; 
-                        cursor: pointer;
-                        transition: 0.2s;
-                        border: 1px solid rgba(255,255,255,0.05);
-                        border-left: 4px solid ${corHex};
-                    `;
-                    
-                    // Efeito Hover
-                    card.onmouseenter = () => card.style.background = "rgba(255,255,255,0.06)";
-                    card.onmouseleave = () => card.style.background = "rgba(255,255,255,0.03)";
+                encontrados++;
+                const card = document.createElement('div');
+                card.style.cssText = "width:100%; background:rgba(255,255,255,0.03); border-left:4px solid " + corHex + "; padding:15px; border-radius:8px; cursor:pointer; transition:0.2s; border:1px solid rgba(255,255,255,0.05);";
+                card.onmouseenter = () => card.style.background = "rgba(255,255,255,0.06)";
+                card.onmouseleave = () => card.style.background = "rgba(255,255,255,0.03)";
 
-                    let resumo = (caixa.titulo || caixa.conteudo || "").substring(0, 120);
-                    if (resumo.length >= 120) resumo += "...";
+                let resumo = (caixa.titulo || caixa.conteudo || "").substring(0, 120);
+                if (resumo.length >= 120) resumo += "...";
 
-                    card.innerHTML = `
-                        <div style="font-size:9px; color:var(--primary); margin-bottom:8px; text-transform:uppercase; font-weight:800; display:flex; align-items:center; gap:6px;">
-                            <i class="fa-solid fa-file-lines"></i> ${nota.nome}
-                        </div>
-                        <div style="font-size:13px; color:#f1f5f9; line-height:1.5; font-weight:500;">${resumo}</div>
-                    `;
+                card.innerHTML =
+                    '<div style="font-size:9px; color:var(--primary); margin-bottom:8px; text-transform:uppercase; font-weight:800; display:flex; align-items:center; gap:6px;">' +
+                    '<i class="fa-solid fa-file-lines"></i> ' + nota.nome + '</div>' +
+                    '<div style="font-size:13px; color:#f1f5f9; line-height:1.5; font-weight:500;">' + resumo + '</div>';
 
-                    card.onclick = () => {
-                        if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
-                            window.abrirNotaNoBook(docSnap.id, { ...nota, onde: "local" }, dbRef, authRef, caixa.id);
-                        } else {
-                            abrirNotaNoEditor(docSnap.id, nota, dbRef, authRef, caixa.id);
-                        }
-                    };
-                    divResultados.appendChild(card);
-                });
+                card.onclick = () => {
+                    const dadosNota = { ...nota, onde: caixa.onde };
+                    if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
+                        window.abrirNotaNoBook(notaId, dadosNota, dbRef, authRef, caixa.id);
+                    } else {
+                        abrirNotaNoEditor(notaId, dadosNota, dbRef, authRef, caixa.id);
+                    }
+                };
+                divResultados.appendChild(card);
+            });
+
+            if (encontrados === 0) {
+                divResultados.innerHTML =
+                    '<div style="text-align:center; padding:60px 20px; color:var(--text-muted); opacity:0.5;">' +
+                    '<i class="fa-solid fa-ghost" style="font-size:30px; margin-bottom:15px;"></i>' +
+                    '<p style="font-size:12px;">Nenhum destaque visível com a cor ' + corNome + '.</p></div>';
             }
-        });
-
-        if (encontrados === 0) {
-            divResultados.innerHTML = `
-                <div style="text-align:center; padding:60px 20px; color:var(--text-muted); opacity:0.5;">
-                    <i class="fa-solid fa-ghost" style="font-size:30px; margin-bottom:15px;"></i>
-                    <p style="font-size:12px;">Nenhum destaque visível com a cor ${corNome}.</p>
-                </div>`;
         }
     });
 }

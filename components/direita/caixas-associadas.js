@@ -1,4 +1,5 @@
-import { collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { obterCaixasPorIds, obterNotasPorCaixas } from "../local/caixas-repository.js";
+import { obterCaixasShareAcessiveisPorIds, obterNotasSharePorCaixas } from "../share/share-caixas-repository.js";
 import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
 
 export async function carregarCaixasAssociadas(caixasAtuais, db, userId) {
@@ -30,19 +31,24 @@ export async function carregarCaixasAssociadas(caixasAtuais, db, userId) {
             f.associados.forEach(a => { if(a.tipo !== 'nota') todosIds.add(a.id); });
         });
 
-        const q = query(collection(db, "Local"), where("userId", "==", userId));
-        const snap = await getDocs(q);
+        const idsNormalizados = [...todosIds].map(String);
+        const caixasLocaisMap = await obterCaixasPorIds(db, userId, idsNormalizados);
+        const idsShare = idsNormalizados.filter(id => !caixasLocaisMap.has(id));
+        const caixasShareMap = await obterCaixasShareAcessiveisPorIds(db, idsShare);
+        const [notasLocais, notasShare] = await Promise.all([
+            obterNotasPorCaixas(db, [...caixasLocaisMap.values()]),
+            obterNotasSharePorCaixas(db, [...caixasShareMap.values()])
+        ]);
         const dataMap = {};
-
-        snap.forEach(docSnap => {
-            const nota = docSnap.data();
-            if (nota.caixas) {
-                nota.caixas.forEach(c => {
-                    if (todosIds.has(c.id)) {
-                        dataMap[c.id] = { ...c, notaOrigem: nota.nome, notaDocId: docSnap.id, notaDados: nota };
-                    }
-                });
-            }
+        [...caixasLocaisMap.values(), ...caixasShareMap.values()].forEach(caixa => {
+            const notaId = caixa.onde === "share" ? caixa.shareId : caixa.localDocId;
+            const nota = (caixa.onde === "share" ? notasShare : notasLocais).get(notaId) || {};
+            dataMap[caixa.id] = {
+                ...caixa,
+                notaOrigem: nota.nome || (caixa.onde === "share" ? "Nota Share" : "Nota Local"),
+                notaDocId: notaId,
+                notaDados: { ...nota, onde: caixa.onde }
+            };
         });
 
         container.innerHTML = `<div style="padding:10px; border-bottom:1px solid rgba(255,255,255,0.05); font-size:10px; font-weight:800; color:var(--primary);">CAIXAS ASSOCIADAS</div>`;
@@ -66,10 +72,10 @@ export async function carregarCaixasAssociadas(caixasAtuais, db, userId) {
                 `;
                 card.onclick = () => {
                     if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
-                        window.abrirNotaNoBook(b.notaDocId, { ...b.notaDados, onde: "local" }, db, {currentUser: {uid: userId}}, b.id);
+                        window.abrirNotaNoBook(b.notaDocId, { ...b.notaDados, onde: b.onde || "local" }, db, {currentUser: {uid: userId}}, b.id);
                     } else {
                         import('../editor/editor.js').then(m => {
-                            m.abrirNotaNoEditor(b.notaDocId, b.notaDados, db, {currentUser: {uid: userId}}, b.id);
+                            m.abrirNotaNoEditor(b.notaDocId, { ...b.notaDados, onde: b.onde || "local" }, db, {currentUser: {uid: userId}}, b.id);
                         });
                     }
                 };

@@ -4,6 +4,8 @@ import {
     onSnapshot, serverTimestamp, getDocs 
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { abrirTemaNoBrain } from '../direita/cosmos-brain.js';
+import { obterCaixasPorIds, obterIdsCaixas, actualizarCaixaLocal, guardarCaixasDaNota } from '../local/caixas-repository.js';
+import { obterCaixasSharePorIds, obterIdsCaixasShare, actualizarCaixaShare, guardarCaixasShareDaNota } from '../share/share-caixas-repository.js';
 
 let dbRef, authRef;
 let simboloSelecionado = "dragon";
@@ -384,6 +386,61 @@ async function sincronizarNomeCosmosEmCascata(temaIdInterno, novoNome) {
                 const dadosNota = docNota.data();
                 let houveAlteracao = false;
 
+                if (col === "Local" &&
+                    (dadosNota.caixasMigradas || Array.isArray(dadosNota.caixaIds))) {
+                    const caixasMap = await obterCaixasPorIds(dbRef, uid, obterIdsCaixas(dadosNota));
+                    const updates = [];
+                    caixasMap.forEach(caixa => {
+                        let mudou = false;
+                        const novaCaixa = {
+                            ...caixa,
+                            neuroniosCosmos: (caixa.neuroniosCosmos || []).map(vinc => {
+                                if (vinc.id === temaIdInterno && vinc.nome !== novoNome) {
+                                    mudou = true;
+                                    houveAlteracao = true;
+                                    return { ...vinc, nome: novoNome };
+                                }
+                                return vinc;
+                            })
+                        };
+                        if (mudou) updates.push(actualizarCaixaLocal(dbRef, uid, caixa.id, novaCaixa));
+                    });
+                    await Promise.all(updates);
+                    if (houveAlteracao) {
+                        console.log("[CASCATA] Nome actualizado em LocalCaixas:", dadosNota.nome);
+                    }
+                    continue;
+                }
+
+                if (col === "Share" &&
+                    (dadosNota.caixasMigradas || Array.isArray(dadosNota.caixaIds))) {
+                    const caixasMap = await obterCaixasSharePorIds(
+                        dbRef,
+                        docNota.id,
+                        obterIdsCaixasShare(dadosNota)
+                    );
+                    const updates = [];
+                    caixasMap.forEach(caixa => {
+                        let mudou = false;
+                        const neuroniosCosmos = (caixa.neuroniosCosmos || []).map(vinc => {
+                            if (vinc.id === temaIdInterno && vinc.nome !== novoNome) {
+                                mudou = true;
+                                houveAlteracao = true;
+                                return { ...vinc, nome: novoNome };
+                            }
+                            return vinc;
+                        });
+                        if (mudou) {
+                            updates.push(actualizarCaixaShare(dbRef, docNota.id, caixa.id, { neuroniosCosmos }));
+                        }
+                    });
+                    await Promise.all(updates);
+                    if (houveAlteracao) {
+                        console.log("[CASCATA] Nome actualizado em ShareCaixas:", dadosNota.nome);
+                    }
+                    continue;
+                }
+
                 if (dadosNota.caixas) {
                     // Percorrer todas as caixas da nota
                     const novasCaixas = dadosNota.caixas.map(caixa => {
@@ -405,7 +462,23 @@ async function sincronizarNomeCosmosEmCascata(temaIdInterno, novoNome) {
 
                     // Se mudámos algo, gravamos a nota no Firebase
                     if (houveAlteracao) {
-                        await updateDoc(doc(dbRef, col, docNota.id), { caixas: novasCaixas });
+                        if (col === "Local") {
+                            await guardarCaixasDaNota({
+                                db: dbRef,
+                                userId: uid,
+                                notaId: docNota.id,
+                                caixas: novasCaixas,
+                                removerLegacy: true
+                            });
+                        } else if (col === "Share") {
+                            await guardarCaixasShareDaNota({
+                                db: dbRef,
+                                ownerId: uid,
+                                notaId: docNota.id,
+                                caixas: novasCaixas,
+                                removerLegacy: true
+                            });
+                        }
                     }
                 }
             }
