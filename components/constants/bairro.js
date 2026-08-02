@@ -19,6 +19,7 @@ export function criarFilhoBairro(nome = '') {
         check: TIPO_CHECK_BAIRRO.NENHUM,
         concluido: false,
         'ligaçãoBairro': [],
+        actas: [],
         timestamp: Date.now()
     };
 }
@@ -54,6 +55,13 @@ export function garantirEstruturaBairro(caixa) {
             if (!filho.check) filho.check = TIPO_CHECK_BAIRRO.NENHUM;
             if (typeof filho.concluido !== 'boolean') filho.concluido = false;
             if (!Array.isArray(filho['ligaçãoBairro'])) filho['ligaçãoBairro'] = [];
+            if (!Array.isArray(filho.actas)) filho.actas = [];
+            filho.actas = filho.actas.filter(acta => acta && typeof acta.texto === 'string');
+            filho.actas.forEach(acta => {
+                if (!acta.id) acta.id = criarIdBairro('acta');
+                if (!acta.criadaEm) acta.criadaEm = Date.now();
+                if (!acta.atualizadaEm) acta.atualizadaEm = acta.criadaEm;
+            });
         });
     });
     if (!Array.isArray(caixa['ligaçãoBairro'])) caixa['ligaçãoBairro'] = [];

@@ -1,5 +1,8 @@
 // components/brain-core/brain-engine.js
-import { getFirestore, collection, query, where, getDocs, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { getFirestore, collection, query, where, getDocs, addDoc, serverTimestamp, doc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { obterNotasPorCaixas } from '../local/caixas-repository.js';
+import { obterNotasSharePorCaixas } from '../share/share-caixas-repository.js';
+import { escutarCaixasNormalizadas } from '../caixas/caixas-live-repository.js';
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { abrirEstudoNoBrain } from './biblio-brain-ui.js';
 
@@ -131,22 +134,33 @@ export async function iniciarPuzzle(colecao, item, container, db, auth) {
     console.log(`%c📡 [ENGINE] Iniciando sessão para: ${colecao}`, "color: #8b5cf6; font-weight: bold;");
 
     // 1. ESCUTA: NOTAS LOCAIS (Espelhamento de Ferramentas)
-    unsubLocal = onSnapshot(query(collection(db, "Local"), where("userId", "==", currentUid)), (snapshot) => {
-        mapaFerramentasVivas = {};
-        snapshot.forEach(docNota => {
-            const d = docNota.data();
-            if (d.estado !== "on") return;
-            (d.caixas || []).forEach(c => {
-                // Vínculos Possíveis: Cosmos ou Biblioteca (Ficha)
-                const isCosmos = c.neuroniosCosmos?.some(n => n.id === item.id);
-                const isBiblioteca = (c.idBiblioteca === item.id);
-
-                if (c.estado === "on" && (isCosmos || isBiblioteca)) {
-                    mapaFerramentasVivas[c.id] = { ...c, notaDocId: docNota.id, notaDados: d };
+    unsubLocal = escutarCaixasNormalizadas({
+        db,
+        userId: currentUid,
+        onChange: async caixas => {
+            const caixasLocais = caixas.filter(caixa => caixa.onde === "local");
+            const caixasShare = caixas.filter(caixa => caixa.onde === "share");
+            const [notasLocais, notasShare] = await Promise.all([
+                obterNotasPorCaixas(db, caixasLocais),
+                obterNotasSharePorCaixas(db, caixasShare)
+            ]);
+            mapaFerramentasVivas = {};
+            caixas.forEach(caixa => {
+                const notaId = caixa.onde === "share" ? caixa.shareId : caixa.localDocId;
+                const nota = (caixa.onde === "share" ? notasShare : notasLocais).get(notaId);
+                if (!nota || nota.estado !== "on") return;
+                const isCosmos = caixa.neuroniosCosmos?.some(n => n.id === item.id);
+                const isBiblioteca = caixa.idBiblioteca === item.id;
+                if (isCosmos || isBiblioteca) {
+                    mapaFerramentasVivas[caixa.id] = {
+                        ...caixa,
+                        notaDocId: notaId,
+                        notaDados: { ...nota, onde: caixa.onde }
+                    };
                 }
             });
-        });
-        reconstruirPuzzleUI(currentContainer, currentDocRef, db, auth);
+            reconstruirPuzzleUI(currentContainer, currentDocRef, db, auth);
+        }
     });
 
     // 2. ESCUTA: DOCUMENTO PAI (Snapshot com Blindagem)
@@ -325,9 +339,9 @@ function renderFerramentaEspelho(c, index, todos, docRef, db, auth) {
         </div>`;
     div.onclick = () => {
         if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
-            window.abrirNotaNoBook(c.notaDocId, { ...c.notaDados, onde: "local" }, db, auth, c.id);
+            window.abrirNotaNoBook(c.notaDocId, { ...c.notaDados, onde: c.onde || "local" }, db, auth, c.id);
         } else {
-            abrirNotaNoEditor(c.notaDocId, c.notaDados, db, auth, c.id);
+            abrirNotaNoEditor(c.notaDocId, { ...c.notaDados, onde: c.onde || "local" }, db, auth, c.id);
         }
     };
     return div;

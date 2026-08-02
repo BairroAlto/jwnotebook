@@ -104,7 +104,7 @@ export const BibleEngine = {
             const modoAtual = (BibleSettings.state && BibleSettings.state.viewMode) ? BibleSettings.state.viewMode : "grid";
             
             const feed = document.getElementById('bible-feed');
-            feed.className = (modoAtual === 'sequence') ? "view-sequence" : "view-grid";
+            feed.className = modoAtual === 'sequence' ? "view-sequence" : (modoAtual === 'grid-broken' ? "view-grid-broken" : "view-grid");
             
             // Renderização dos versículos com gatilho para o Brain no número
             feed.innerHTML = Object.entries(versiculos).map(([num, texto]) => `

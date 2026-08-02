@@ -1,3 +1,5 @@
+import { hidratarNotaComCaixas, actualizarCaixaLocal } from '../local/caixas-repository.js';
+import { hidratarNotaShareComCaixas, actualizarCaixaShare } from '../share/share-caixas-repository.js';
 import { isMobileViewport } from '../ui/mobile-device.js';
 import { doc, getDoc, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { MobileUI } from '../ui/mobile-manager.js';
@@ -7,6 +9,9 @@ import { ensureBookRightPanel, refreshBookIntelligence } from './book-right-pane
 import { atualizarBookAIFloatingUI, resetBookAIConversation } from './book-ai.js';
 
 export async function abrirNotaNoBook(notaId, dadosNota, db, auth, idCaixaFoco = null) {
+    dadosNota = dadosNota.onde === "share"
+        ? await hidratarNotaShareComCaixas(dadosNota, db, notaId)
+        : await hidratarNotaComCaixas(dadosNota, db, auth, notaId);
     if (BookState.unsubscribe) {
         BookState.unsubscribe();
         BookState.unsubscribe = null;
@@ -62,19 +67,25 @@ export async function marcarRespondido(caixaId, value) {
     const nextCaixas = (BookState.caixas || []).map(caixa => caixa.id === caixaId ? { ...caixa, respondi: Boolean(value) } : caixa);
     setBookState({ caixas: nextCaixas, dadosNota: { ...BookState.dadosNota, caixas: nextCaixas } });
     renderBookFeed();
-    const collectionName = BookState.dadosNota.onde === "share" ? "Share" : "Local";
-    await updateDoc(doc(BookState.db, collectionName, BookState.notaId), { caixas: nextCaixas });
+    if (BookState.dadosNota.onde === "share") {
+        await actualizarCaixaShare(BookState.db, BookState.notaId, caixaId, { respondi: Boolean(value) });
+    } else {
+        await actualizarCaixaLocal(BookState.db, BookState.auth.currentUser.uid, caixaId, { respondi: Boolean(value) });
+    }
 }
 
 async function iniciarSnapshotNota() {
     if (!BookState.db || !BookState.notaId || !BookState.dadosNota) return;
     const collectionName = BookState.dadosNota.onde === "share" ? "Share" : "Local";
-    BookState.unsubscribe = onSnapshot(doc(BookState.db, collectionName, BookState.notaId), snap => {
+    BookState.unsubscribe = onSnapshot(doc(BookState.db, collectionName, BookState.notaId), async snap => {
         if (!snap.exists() || snap.metadata.hasPendingWrites) return;
         const remote = snap.data();
+        const notaAtualizada = BookState.dadosNota.onde === "share"
+            ? await hidratarNotaShareComCaixas({ ...BookState.dadosNota, ...remote }, BookState.db, BookState.notaId)
+            : await hidratarNotaComCaixas({ ...BookState.dadosNota, ...remote }, BookState.db, BookState.auth, BookState.notaId);
         setBookState({
-            dadosNota: { ...BookState.dadosNota, ...remote },
-            caixas: remote.caixas || []
+            dadosNota: notaAtualizada,
+            caixas: notaAtualizada.caixas || []
         });
         renderBookFeed();
         atualizarBookAIFloatingUI();

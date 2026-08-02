@@ -17,6 +17,7 @@ import { BibleSatellite } from './bible-satellite.js';
 import { BibleHighlights } from './bible-highlights.js';
 import { iniciarXSat } from '../direita/xsat-controller.js';
 import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
+import { aquecerCaixasAssociadas } from '../direita/biblia-associadas-cache.js';
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -31,6 +32,48 @@ window.textoCapituloAtual = "";
 
 let bootDone = false;
 let versiculosAtuais = null;
+let moduloBrainPromise = null;
+let preloadMenuDireitaPromise = null;
+
+function carregarModuloBrain() {
+    if (!moduloBrainPromise) {
+        moduloBrainPromise = import("../direita/biblia-brain.js")
+            .catch(error => {
+                moduloBrainPromise = null;
+                throw error;
+            });
+    }
+    return moduloBrainPromise;
+}
+
+function prepararInfraBrain() {
+    carregarModuloBrain().catch(error => console.warn("[BIBLE] Preload do Brain falhou.", error));
+
+    if (!preloadMenuDireitaPromise) {
+        preloadMenuDireitaPromise = fetch("components/direita/menu.html")
+            .catch(error => {
+                preloadMenuDireitaPromise = null;
+                console.warn("[BIBLE] Preload do menu lateral falhou.", error);
+            });
+    }
+}
+
+function agendarPreloadBrain() {
+    const preparar = () => prepararInfraBrain();
+    if ("requestIdleCallback" in window) {
+        window.requestIdleCallback(preparar, { timeout: 1000 });
+    } else {
+        setTimeout(preparar, 0);
+    }
+}
+
+function prepararBrainBiblia(ver) {
+    if (!auth.currentUser || !window.livroAtivo || !window.capAtivo || !ver) return;
+
+    const nomeVersiculo = String(window.livroAtivo) + " " + String(window.capAtivo) + ":" + String(ver);
+    aquecerCaixasAssociadas(nomeVersiculo, db, auth.currentUser.uid);
+    prepararInfraBrain();
+}
 
 await Promise.all([
     carregarComponente('area-popup-cosmos', 'components/popup/popup-cosmos.html'),
@@ -205,6 +248,7 @@ async function carregarCapituloNoPortal(livroNome, cap, verAlvo = null) {
         guardarTextoRecente(livro.nome, cap);
         BibleUI.ativarModoLeitura(true, `${livro.nome.toUpperCase()} ${cap}`);
         atualizarBookAiFloating();
+        agendarPreloadBrain();
 
         if (verAlvo) {
             setTimeout(() => BibleUI.scrollParaVersiculo(verAlvo), 250);
@@ -225,10 +269,10 @@ function renderizarVersiculosNoFeed({ preserveScroll = false, resetScroll = fals
     const scrollTop = reader.scrollTop;
     const modo = BibleSettings.state.viewMode || "grid";
 
-    feed.className = modo === "sequence" ? "view-sequence" : "view-grid";
+    feed.className = modo === "sequence" ? "view-sequence" : (modo === "grid-broken" ? "view-grid-broken" : "view-grid");
     feed.innerHTML = Object.entries(versiculosAtuais).map(([num, texto]) => `
         <div class="bible-verse-row" data-v="${num}">
-            <button class="v-num" onclick="window.ativarBrainBiblia('${num}', '${escaparAtributo(texto)}')" aria-label="Abrir estudo de ${window.livroAtivo} ${window.capAtivo}:${num}">${num}</button>
+            <button class="v-num" onpointerenter="window.prepararBrainBiblia(this.closest('.bible-verse-row')?.dataset.v)" onfocus="window.prepararBrainBiblia(this.closest('.bible-verse-row')?.dataset.v)" ontouchstart="window.prepararBrainBiblia(this.closest('.bible-verse-row')?.dataset.v)" onclick="window.ativarBrainBiblia('${num}', '${escaparAtributo(texto)}')" aria-label="Abrir estudo de ${window.livroAtivo} ${window.capAtivo}:${num}">${num}</button>
             <span class="v-text" data-verse="${num}">${BibleHighlights.renderizarTextoVersiculo(num, texto)}</span>
         </div>
     `).join('');
@@ -375,12 +419,22 @@ window.mostrarCapitulosDoLivro = mostrarCapitulosDoLivro;
 window.renderizarMosaicoPrincipal = renderizarMosaicoInicial;
 window.carregarCapituloNoPortal = carregarCapituloNoPortal;
 window.fecharPopup = (id) => BibleUI.togglePopup(id, false);
+window.prepararBrainBiblia = prepararBrainBiblia;
 
 window.ativarBrainBiblia = async (ver, texto) => {
-    await BibleUI.abrirPainelLateral();
+    const t0 = performance.now();
+    console.log(`%c⏱️ [BRAIN-PERF] Início do clique no versículo ${ver}`, "color: #38bdf8; font-weight: bold;");
+    prepararBrainBiblia(ver);
+
+    const aberturaPainel = BibleUI.abrirPainelLateral();
+    const tImport = performance.now();
+    const moduloPromise = carregarModuloBrain();
+    const resultado = await Promise.all([aberturaPainel, moduloPromise]);
+    const modulo = resultado[1];
+    console.log("[BRAIN-PERF] Painel lateral aberto em " + (performance.now() - t0).toFixed(1) + "ms");
     iniciarXSat();
-    const modulo = await import('../direita/biblia-brain.js');
-    modulo.abrirVersiculoNoBrain(window.livroAtivo, window.capAtivo, ver, texto, db, auth);
+    console.log(`⏱️ [BRAIN-PERF] Import biblia-brain.js efetuado em ${(performance.now() - tImport).toFixed(1)}ms`);
+    modulo.abrirVersiculoNoBrain(window.livroAtivo, window.capAtivo, ver, texto, db, auth, t0);
     setTimeout(() => {
         document.getElementById('btn-eye')?.remove();
         if (window.switchPanel) window.switchPanel('brain');

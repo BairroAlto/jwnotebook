@@ -1,3 +1,6 @@
+import { obterNotasPorCaixas } from '../local/caixas-repository.js';
+import { obterNotasSharePorCaixas } from '../share/share-caixas-repository.js';
+import { escutarCaixasNormalizadas } from '../caixas/caixas-live-repository.js';
 // components/brain-core/brain-engine.js
 import { doc, updateDoc, onSnapshot, getDoc, collection, query, where, arrayUnion } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
@@ -5,6 +8,7 @@ import { abrirNotaNoEditor } from '../editor/editor.js';
 import { SharedPuzzleUI } from '../direita/shared-puzzle-ui.js';
 import { SharedUI } from '../editor/modulos/shared/shared-ui.js';
 import { FOCOS_BASE, FOCOS_SUBNOTA, FOCOS_QUESTAO, FOCOS_RACIOCINIO } from '../editor/modulos/paleta-cores.js';
+import { isMobileViewport } from '../ui/mobile-device.js';
 
 // --- ESTADO GLOBAL DO MÓDULO ---
 let unsubDoc = null;
@@ -173,18 +177,28 @@ export async function iniciarPuzzle(colecao, item, container, db, auth) {
         reconstruirPuzzleUI(currentContainer, currentDocRef, db, auth);
     });
 
-    unsubLocal = onSnapshot(query(collection(db, "Local"), where("userId", "==", currentUid)), (snapshot) => {
-        mapaFerramentasVivas = {};
-        snapshot.forEach(docNota => {
-            const d = docNota.data();
-            if (d.estado !== "on") return;
-            (d.caixas || []).forEach(c => {
-                if (c.estado === "on" && (c.neuroniosCosmos?.some(n => n.id === item.id) || c.idBiblioteca === item.id)) {
-                    mapaFerramentasVivas[c.id] = { ...c, notaDocId: docNota.id, notaDados: d };
+    unsubLocal = escutarCaixasNormalizadas({
+        db,
+        userId: currentUid,
+        onChange: async caixas => {
+            const caixasLocais = caixas.filter(caixa => caixa.onde === "local");
+            const caixasShare = caixas.filter(caixa => caixa.onde === "share");
+            const [notasLocais, notasShare] = await Promise.all([
+                obterNotasPorCaixas(db, caixasLocais),
+                obterNotasSharePorCaixas(db, caixasShare)
+            ]);
+            mapaFerramentasVivas = {};
+            caixas.forEach(c => {
+                const notaId = c.onde === "share" ? c.shareId : c.localDocId;
+                const notas = c.onde === "share" ? notasShare : notasLocais;
+                const nota = notas.get(notaId);
+                if (!nota || nota.estado !== "on") return;
+                if (c.neuroniosCosmos?.some(n => n.id === item.id) || c.idBiblioteca === item.id) {
+                    mapaFerramentasVivas[c.id] = { ...c, notaDocId: notaId, notaDados: { ...nota, onde: c.onde }, notaDadosCompletos: { ...nota, onde: c.onde } };
                 }
             });
-        });
-        reconstruirPuzzleUI(currentContainer, currentDocRef, db, auth);
+            reconstruirPuzzleUI(currentContainer, currentDocRef, db, auth);
+        }
     });
 
     globalHandlerAddRef = handlePlusClick;
@@ -352,22 +366,26 @@ export async function iniciarDossie(colecao, item, container, db, auth) {
     console.log(`%c📂 [ENGINE] Dossiê Ativo: ${colecao} | ID: ${item.id}`, "color: #f59e0b; font-weight: bold;");
 
     // 2. ESCUTA 1: NOTAS LOCAIS (Alimenta o conteúdo visual do popup)
-    unsubLocal = onSnapshot(query(collection(db, "Local"), where("userId", "==", currentUid)), (snapshot) => {
-        mapaFerramentasVivas = {}; 
-        snapshot.forEach(docNota => {
-            const d = docNota.data();
-            if (d.estado !== "on") return;
-            (d.caixas || []).forEach(c => {
-                if (c.estado === "on") {
-                    mapaFerramentasVivas[c.id] = { 
-                        ...c, 
-                        notaDocId: docNota.id, 
-                        notaDadosCompletos: d 
-                    };
-                }
+    unsubLocal = escutarCaixasNormalizadas({
+        db,
+        userId: currentUid,
+        onChange: async caixas => {
+            const caixasLocais = caixas.filter(caixa => caixa.onde === "local");
+            const caixasShare = caixas.filter(caixa => caixa.onde === "share");
+            const [notasLocais, notasShare] = await Promise.all([
+                obterNotasPorCaixas(db, caixasLocais),
+                obterNotasSharePorCaixas(db, caixasShare)
+            ]);
+            mapaFerramentasVivas = {};
+            caixas.forEach(c => {
+                const notaId = c.onde === "share" ? c.shareId : c.localDocId;
+                const notas = c.onde === "share" ? notasShare : notasLocais;
+                const nota = notas.get(notaId);
+                if (!nota || nota.estado !== "on") return;
+                mapaFerramentasVivas[c.id] = { ...c, notaDocId: notaId, notaDadosCompletos: { ...nota, onde: c.onde } };
             });
-        });
-        if (dadosSincronizados) redesenharDossieUI(dadosSincronizados);
+            if (dadosSincronizados) redesenharDossieUI(dadosSincronizados);
+        }
     });
 
     // 3. ESCUTA 2: DOCUMENTO MESTRE (Ficha na Biblioteca ou Tema no Cosmos)
@@ -1005,7 +1023,7 @@ function renderFerramentaEspelho(c, index, todos, docRef, db, auth) {
     div.querySelector('.btn-down').onclick = (e) => { e.stopPropagation(); moverItemGenerico(index, 1, todos, docRef); };
     div.querySelector('.btn-viajar').onclick = (e) => {
         e.stopPropagation();
-        if (window.NotaBookMode === 'office') {
+        if (window.NotaBookMode === 'office' || (window.location.pathname.includes('biblia.html') && !isMobileViewport())) {
             const destino = new URL('index.html', window.location.href);
             destino.searchParams.set('nota', c.notaDocId);
             if (c.id) destino.searchParams.set('caixa', c.id);

@@ -6,17 +6,30 @@ export const BibleSettings = {
         verseSize: 16,
         verseSizeDesktop: 16,
         verseSizeMobile: 16,
-        titleSize: 22,
+        gridBookSizeDesktop: 65,
+        gridBookSizeMobile: 55,
+        rightFontSizeDesktop: 14,
+        rightFontSizeMobile: 14,
+        titleSize: 65,
         viewMode: 'grid',
         aiFloating: false
     },
 
     iniciar: () => {
         BibleSettings.carregarPreferencias();
+        BibleSettings.vincularAbas();
         BibleSettings.vincularSliders();
         BibleSettings.vincularModoVisao();
         BibleSettings.vincularFloatingAI();
         BibleSettings.aplicarTamanhoVersiculos();
+        BibleSettings.aplicarTamanhoGrelha();
+        BibleSettings.aplicarTamanhoColunaDireita();
+
+        window.addEventListener('resize', () => {
+            BibleSettings.aplicarTamanhoVersiculos();
+            BibleSettings.aplicarTamanhoGrelha();
+            BibleSettings.aplicarTamanhoColunaDireita();
+        });
     },
 
     carregarPreferencias: () => {
@@ -26,7 +39,10 @@ export const BibleSettings = {
             ...prefs,
             verseSizeDesktop: Number(prefs.verseSizeDesktop ?? BibleSettings.state.verseSizeDesktop),
             verseSizeMobile: Number(prefs.verseSizeMobile ?? BibleSettings.state.verseSizeMobile),
-            titleSize: Number(prefs.titleSize ?? BibleSettings.state.titleSize),
+            gridBookSizeDesktop: Number(prefs.gridBookSizeDesktop ?? prefs.titleSize ?? BibleSettings.state.gridBookSizeDesktop),
+            gridBookSizeMobile: Number(prefs.gridBookSizeMobile ?? prefs.titleSize ?? BibleSettings.state.gridBookSizeMobile),
+            rightFontSizeDesktop: Number(prefs.rightFontSizeDesktop ?? BibleSettings.state.rightFontSizeDesktop),
+            rightFontSizeMobile: Number(prefs.rightFontSizeMobile ?? BibleSettings.state.rightFontSizeMobile),
             aiFloating: Boolean(prefs.aiFloating),
             viewMode: prefs.viewMode || BibleSettings.state.viewMode
         };
@@ -42,43 +58,64 @@ export const BibleSettings = {
         });
     },
 
+    vincularAbas: () => {
+        const tabs = document.querySelectorAll('.settings-tab');
+        tabs.forEach(tab => {
+            tab.onclick = () => {
+                tabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                const targetId = tab.dataset.target;
+                document.querySelectorAll('#popup-settings-bible .ai-content-view').forEach(view => {
+                    view.classList.toggle('active', view.id === targetId);
+                });
+            };
+        });
+    },
+
     vincularSliders: () => {
         const rangeVDesktop = document.getElementById('range-bible-font-verses-desktop');
         const rangeVMobile = document.getElementById('range-bible-font-verses-mobile');
-        const rangeT = document.getElementById('range-bible-font-books');
+        const rangeGDesktop = document.getElementById('range-bible-grid-desktop');
+        const rangeGMobile = document.getElementById('range-bible-grid-mobile');
+        const rangeRDesktop = document.getElementById('range-bible-right-font-desktop');
+        const rangeRMobile = document.getElementById('range-bible-right-font-mobile');
 
         if (rangeVDesktop) rangeVDesktop.value = String(BibleSettings.state.verseSizeDesktop);
         if (rangeVMobile) rangeVMobile.value = String(BibleSettings.state.verseSizeMobile);
-        if (rangeT) rangeT.value = String(BibleSettings.state.titleSize);
+        if (rangeGDesktop) rangeGDesktop.value = String(BibleSettings.state.gridBookSizeDesktop);
+        if (rangeGMobile) rangeGMobile.value = String(BibleSettings.state.gridBookSizeMobile);
+        if (rangeRDesktop) rangeRDesktop.value = String(BibleSettings.state.rightFontSizeDesktop);
+        if (rangeRMobile) rangeRMobile.value = String(BibleSettings.state.rightFontSizeMobile);
+
         document.getElementById('val-font-verses-desktop')?.replaceChildren(document.createTextNode(`${BibleSettings.state.verseSizeDesktop}px`));
         document.getElementById('val-font-verses-mobile')?.replaceChildren(document.createTextNode(`${BibleSettings.state.verseSizeMobile}px`));
-        document.getElementById('val-font-books')?.replaceChildren(document.createTextNode(`${BibleSettings.state.titleSize}px`));
-        document.documentElement.style.setProperty('--bible-title-size', `${BibleSettings.state.titleSize}px`);
+        document.getElementById('val-grid-desktop')?.replaceChildren(document.createTextNode(`${BibleSettings.state.gridBookSizeDesktop}px`));
+        document.getElementById('val-grid-mobile')?.replaceChildren(document.createTextNode(`${BibleSettings.state.gridBookSizeMobile}px`));
+        document.getElementById('val-right-font-desktop')?.replaceChildren(document.createTextNode(`${BibleSettings.state.rightFontSizeDesktop}px`));
+        document.getElementById('val-right-font-mobile')?.replaceChildren(document.createTextNode(`${BibleSettings.state.rightFontSizeMobile}px`));
 
-        const bindVerseRange = (input, key, labelId) => {
+        BibleSettings.aplicarTamanhoVersiculos();
+        BibleSettings.aplicarTamanhoGrelha();
+        BibleSettings.aplicarTamanhoColunaDireita();
+
+        const bindRange = (input, key, labelId, onApply) => {
             if (!input) return;
             input.oninput = e => {
                 const val = Number(e.target.value);
                 BibleSettings.state[key] = val;
-                BibleSettings.aplicarTamanhoVersiculos();
+                if (onApply) onApply();
                 const label = document.getElementById(labelId);
                 if (label) label.innerText = `${val}px`;
                 void BibleSettings.persistir();
             };
         };
-        bindVerseRange(rangeVDesktop, 'verseSizeDesktop', 'val-font-verses-desktop');
-        bindVerseRange(rangeVMobile, 'verseSizeMobile', 'val-font-verses-mobile');
 
-        if (rangeT) {
-            rangeT.oninput = e => {
-                const val = e.target.value;
-                document.documentElement.style.setProperty('--bible-title-size', `${val}px`);
-                const label = document.getElementById('val-font-books');
-                if (label) label.innerText = `${val}px`;
-                BibleSettings.state.titleSize = Number(val);
-                void BibleSettings.persistir();
-            };
-        }
+        bindRange(rangeVDesktop, 'verseSizeDesktop', 'val-font-verses-desktop', BibleSettings.aplicarTamanhoVersiculos);
+        bindRange(rangeVMobile, 'verseSizeMobile', 'val-font-verses-mobile', BibleSettings.aplicarTamanhoVersiculos);
+        bindRange(rangeGDesktop, 'gridBookSizeDesktop', 'val-grid-desktop', BibleSettings.aplicarTamanhoGrelha);
+        bindRange(rangeGMobile, 'gridBookSizeMobile', 'val-grid-mobile', BibleSettings.aplicarTamanhoGrelha);
+        bindRange(rangeRDesktop, 'rightFontSizeDesktop', 'val-right-font-desktop', BibleSettings.aplicarTamanhoColunaDireita);
+        bindRange(rangeRMobile, 'rightFontSizeMobile', 'val-right-font-mobile', BibleSettings.aplicarTamanhoColunaDireita);
     },
 
     aplicarTamanhoVersiculos: () => {
@@ -88,6 +125,21 @@ export const BibleSettings = {
         document.documentElement.style.setProperty('--bible-verse-size', `${BibleSettings.state.verseSize}px`);
     },
 
+    aplicarTamanhoGrelha: () => {
+        const desktop = Number(BibleSettings.state.gridBookSizeDesktop || 65);
+        const mobile = Number(BibleSettings.state.gridBookSizeMobile || 55);
+        const size = isMobileViewport() ? mobile : desktop;
+        document.documentElement.style.setProperty('--bible-grid-book-size', `${size}px`);
+        document.documentElement.style.setProperty('--bible-title-size', `${size}px`);
+    },
+
+    aplicarTamanhoColunaDireita: () => {
+        const desktop = Number(BibleSettings.state.rightFontSizeDesktop || 14);
+        const mobile = Number(BibleSettings.state.rightFontSizeMobile || desktop);
+        const size = isMobileViewport() ? mobile : desktop;
+        document.documentElement.style.setProperty('--bible-right-font-size', `${size}px`);
+    },
+
     vincularModoVisao: () => {
         const btns = document.querySelectorAll('.view-opt');
         const feed = document.getElementById('bible-feed');
@@ -95,8 +147,15 @@ export const BibleSettings = {
         btns.forEach(btn => {
             btn.classList.toggle('active', btn.dataset.mode === BibleSettings.state.viewMode);
         });
-        if (feed && !feed.classList.contains('bible-mosaico-view')) {
-            feed.className = BibleSettings.state.viewMode === 'sequence' ? 'view-sequence' : 'view-grid';
+
+        const obterClasseModo = (mode) => {
+            if (mode === 'sequence') return 'view-sequence';
+            if (mode === 'grid-broken') return 'view-grid-broken';
+            return 'view-grid';
+        };
+
+        if (feed && window.capAtivo) {
+            feed.className = obterClasseModo(BibleSettings.state.viewMode);
         }
 
         btns.forEach(btn => {
@@ -104,8 +163,11 @@ export const BibleSettings = {
                 const mode = btn.dataset.mode;
                 btns.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
-                if (feed) feed.className = mode === 'sequence' ? 'view-sequence' : 'view-grid';
                 BibleSettings.state.viewMode = mode;
+
+                if (feed && window.capAtivo) {
+                    feed.className = obterClasseModo(mode);
+                }
                 void BibleSettings.persistir();
             };
         });
@@ -114,6 +176,8 @@ export const BibleSettings = {
     vincularFloatingAI: () => {
         const check = document.getElementById('check-ai-floating');
         if (!check) return;
+
+        check.checked = Boolean(BibleSettings.state.aiFloating);
 
         check.onchange = e => {
             const isFloating = e.target.checked;
@@ -142,7 +206,10 @@ export const BibleSettings = {
             void BibleSettings.persistir();
         };
 
-        check.checked = Boolean(BibleSettings.state.aiFloating);
+        if (BibleSettings.state.aiFloating) {
+            check.checked = true;
+            check.dispatchEvent(new Event('change'));
+        }
 
         document.getElementById('btn-bookai-float')?.addEventListener('click', () => {
             window.BibleAI?.toggleFloatingChat();

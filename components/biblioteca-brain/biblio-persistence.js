@@ -1,5 +1,7 @@
 // components/biblioteca-brain/biblio-persistence.js
-import { doc, updateDoc, query, collection, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { doc, updateDoc, query, collection, where, getDocs, or } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { COLECAO_CAIXAS, guardarCaixasDaNota, actualizarCaixaLocal } from '../local/caixas-repository.js';
+import { hidratarNotaShareComCaixas, guardarCaixasShareDaNota } from '../share/share-caixas-repository.js';
 
 /**
  * 1. Gravar na Biblioteca (ficha mestre)
@@ -40,23 +42,59 @@ export async function replicarParaNotaSentinela(db, estudoMestre, novosCampos) {
     try {
         if (window.notaAbertaId && window.caixasAtuais) {
             const colecao = (window.dadosNotaOriginal?.onde === "share") ? "Share" : "Local";
-            const notaRef = doc(db, colecao, window.notaAbertaId);
             window.caixasAtuais = window.caixasAtuais.map(caixa => (
                 caixa.referenciacodex &&
                 limparRef(caixa.referenciacodex[0]) === ref &&
                 String(caixa.referenciacodex[1]) === seq
             ) ? aplicarNaCaixa(caixa) : caixa);
-            await updateDoc(notaRef, { caixas: window.caixasAtuais });
+            if (colecao === "Local") {
+                await guardarCaixasDaNota({
+                    db,
+                    userId: uid,
+                    notaId: window.notaAbertaId,
+                    caixas: window.caixasAtuais,
+                    removerLegacy: true
+                });
+            } else {
+                await guardarCaixasShareDaNota({
+                    db,
+                    ownerId: window.dadosNotaOriginal?.userId || uid,
+                    notaId: window.notaAbertaId,
+                    caixas: window.caixasAtuais,
+                    removerLegacy: true
+                });
+            }
         }
 
         const q = query(collection(db, "Local"), where("userId", "==", uid), where("estado", "==", "on"));
         const snap = await getDocs(q);
+        const qShare = query(collection(db, "Share"), where("estado", "==", "on"), or(
+            where("userId", "==", uid),
+            where("aprovado", "array-contains", uid),
+            where("convidado", "array-contains", uid)
+        ));
+        const snapShare = await getDocs(qShare);
+        const qCaixas = query(collection(db, COLECAO_CAIXAS), where("userId", "==", uid), where("estado", "==", "on"));
+        const snapCaixas = await getDocs(qCaixas);
         const updates = [];
+
+        snapCaixas.forEach(docSnap => {
+            const caixa = docSnap.data();
+            if (caixa.localDocId === window.notaAbertaId) return;
+            const match = caixa.referenciacodex &&
+                limparRef(caixa.referenciacodex[0]) === ref &&
+                String(caixa.referenciacodex[1]) === seq;
+            if (match) {
+                updates.push(actualizarCaixaLocal(db, uid, docSnap.id, aplicarNaCaixa(caixa)));
+            }
+        });
 
         snap.forEach(docSnap => {
             if (docSnap.id === window.notaAbertaId) return;
 
-            const caixas = docSnap.data().caixas || [];
+            const dadosNota = docSnap.data();
+            if (dadosNota.caixasMigradas || Array.isArray(dadosNota.caixaIds)) return;
+            const caixas = dadosNota.caixas || [];
             let mudou = false;
             const novasCaixas = caixas.map(caixa => {
                 const match = caixa.referenciacodex &&
@@ -68,7 +106,31 @@ export async function replicarParaNotaSentinela(db, estudoMestre, novosCampos) {
                 return aplicarNaCaixa(caixa);
             });
 
-            if (mudou) updates.push(updateDoc(doc(db, "Local", docSnap.id), { caixas: novasCaixas }));
+            if (mudou) {
+                updates.push(guardarCaixasDaNota({
+                    db,
+                    userId: uid,
+                    notaId: docSnap.id,
+                    caixas: novasCaixas,
+                    removerLegacy: true
+                }));
+            }
+        });
+
+        snapShare.forEach(docSnap => {
+            if (docSnap.id === window.notaAbertaId) return;
+            updates.push((async () => {
+                const dadosNota = docSnap.data();
+                const notaShare = await hidratarNotaShareComCaixas({ ...dadosNota, onde: "share" }, db, docSnap.id);
+                let mudou = false;
+                const novasCaixas = (notaShare.caixas || []).map(caixa => {
+                    const match = caixa.referenciacodex && limparRef(caixa.referenciacodex[0]) === ref && String(caixa.referenciacodex[1]) === seq;
+                    if (!match) return caixa;
+                    mudou = true;
+                    return aplicarNaCaixa(caixa);
+                });
+                if (mudou) await guardarCaixasShareDaNota({ db, ownerId: dadosNota.userId, notaId: docSnap.id, caixas: novasCaixas, removerLegacy: true });
+            })());
         });
 
         await Promise.all(updates);
