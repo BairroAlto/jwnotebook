@@ -1,3 +1,4 @@
+import { guardarCaixasDaNota } from './caixas-repository.js';
 // components/local/criar-nota.js
 import { isMobileViewport } from '../ui/mobile-device.js';
 import { collection, addDoc, getDoc, getDocs, query, where, serverTimestamp, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
@@ -69,9 +70,18 @@ export function inicializarCriacaoNota(db, auth) {
 };
 
                 // 2. Gravar no Firestore
+                const { caixas: caixasNovas, ...dadosNotaSemCaixas } = dadosNovaNota;
                 const docRef = await addDoc(localRef, {
-                    ...dadosNovaNota,
-                    timestamp: serverTimestamp() 
+                    ...dadosNotaSemCaixas,
+                    timestamp: serverTimestamp()
+                });
+
+                await guardarCaixasDaNota({
+                    db,
+                    userId,
+                    notaId: docRef.id,
+                    caixas: caixasNovas,
+                    removerLegacy: true
                 });
 
                 // 3. ABRIR NO EDITOR IMEDIATAMENTE

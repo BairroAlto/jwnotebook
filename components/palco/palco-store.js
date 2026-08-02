@@ -13,6 +13,7 @@ import {
     updateDoc,
     where
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { guardarCaixasPalcoDaNota } from './palco-caixas-repository.js';
 
 let dbRef = null;
 let authRef = null;
@@ -295,19 +296,24 @@ export async function savePalcoNote(item, tag, noteBox) {
             }
         }
     };
-    await updateDoc(doc(getDb(), "Palco", existing.id), {
+    await guardarCaixasPalcoDaNota({
+        db: getDb(),
+        userId: getUid(),
+        palcoId: existing.id,
         caixas: [mergedBox],
-        nome: item.title,
-        oque: normalizeKindLabel(item.kind),
-        imageurl: item.imageUrl || existing.imageurl || "",
-        releaseDate: item.releaseDate || existing.releaseDate || "",
-        ano: item.year || existing.ano || null,
-        mes: item.month || existing.mes || null,
-        codice: inferCodice(item) || existing.codice || "",
-        album: inferAlbumName(item) || existing.album || "",
-        artistasmusica: Array.isArray(item.people) && item.people.length ? item.people : (existing.artistasmusica || []),
-        numerofaixa: inferTrackNumber(item) || existing.numerofaixa || null,
-        timestamp: serverTimestamp()
+        camposPalco: {
+            nome: item.title,
+            oque: normalizeKindLabel(item.kind),
+            imageurl: item.imageUrl || existing.imageurl || "",
+            releaseDate: item.releaseDate || existing.releaseDate || "",
+            ano: item.year || existing.ano || null,
+            mes: item.month || existing.mes || null,
+            codice: inferCodice(item) || existing.codice || "",
+            album: inferAlbumName(item) || existing.album || "",
+            artistasmusica: Array.isArray(item.people) && item.people.length ? item.people : (existing.artistasmusica || []),
+            numerofaixa: inferTrackNumber(item) || existing.numerofaixa || null,
+            timestamp: serverTimestamp()
+        }
     });
     return existing.id;
 }

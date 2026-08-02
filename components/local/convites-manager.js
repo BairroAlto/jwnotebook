@@ -1,6 +1,7 @@
 // components/local/convites-manager.js
 import { collection, query, where, onSnapshot, doc, deleteDoc, addDoc, serverTimestamp, getDocs, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { pedirPastaDestino } from './local-tree-mover.js';
+import { guardarCaixasDaNota } from './caixas-repository.js';
 
 export function vigiarConvitesEntrada(db, auth) {
     if (!auth.currentUser) return;
@@ -44,6 +45,14 @@ async function processarFluxoAceitacao(idOut, data, db, auth) {
         console.log("📂 Destino escolhido:", idPastaDestino);
 
         // 2. Preparar objeto para Local (ID novo é gerado automaticamente pelo addDoc)
+        const caixasRecebidas = Array.isArray(data.caixas)
+            ? data.caixas.map(caixa => ({
+                ...caixa,
+                id: crypto.randomUUID(),
+                userId: auth.currentUser.uid
+            }))
+            : [];
+
         const novaNota = {
             ...data,
             userId: auth.currentUser.uid,
@@ -58,14 +67,25 @@ async function processarFluxoAceitacao(idOut, data, db, auth) {
         delete novaNota.userConvidado;
         delete novaNota.userConvidadoEmail;
         delete novaNota.userOriginal;
+        delete novaNota.userConvidadoEmail;
         delete novaNota.statusConvite;
+        delete novaNota.caixas;
+        delete novaNota.caixaIds;
+        delete novaNota.caixasMigradas;
 
-        // 3. Gravar no Firebase (Criação da cópia local)
+        // Gravar a nota e depois as caixas na colecção normalizada.
         const docRef = await addDoc(collection(db, "Local"), novaNota);
         const novoIdNota = docRef.id;
+        await guardarCaixasDaNota({
+            db,
+            userId: auth.currentUser.uid,
+            notaId: novoIdNota,
+            caixas: caixasRecebidas,
+            removerLegacy: true
+        });
 
-        // 4. Lógica de Integração de Textos Bíblicos (NeuroniosBiba)
-        for (const c of (novaNota.caixas || [])) {
+        // Integrar os vínculos bíblicos usando os novos IDs.
+        for (const c of caixasRecebidas) {
             if (c.neuroniosBiba && c.neuroniosBiba.length > 0) {
                 for (const nomeTexto of c.neuroniosBiba) {
                     await vincularAoBrainDoDestinatario(nomeTexto, novoIdNota, c.id, db, auth);
