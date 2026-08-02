@@ -1,4 +1,5 @@
 import { collection, orderBy, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { hidratarNotaComCaixas, obterCaixasLocais } from '../../../local/caixas-repository.js';
 
 function textoSeguro(valor, fallback = '') {
     const texto = String(valor ?? '').trim();
@@ -79,9 +80,15 @@ function criarAcaoAssociarNota(item, state) {
     return acao;
 }
 
-function renderizarCaixasNota(container, nota, nivel, state) {
+async function renderizarCaixasNota(container, nota, nivel, state) {
     container.replaceChildren();
-    const caixas = (nota.caixas || []).filter(caixa => caixa.estado === 'on');
+    const notaComCaixas = await hidratarNotaComCaixas(
+        { ...nota, onde: 'local' },
+        state.ctx.dbRef,
+        state.ctx.authRef,
+        nota.docIdFirebase
+    );
+    const caixas = (notaComCaixas.caixas || []).filter(caixa => caixa.estado === 'on');
     if (!caixas.length) {
         container.appendChild(criarMensagem('Esta nota não tem caixas activas.', nivel + 1));
         return;
@@ -227,26 +234,39 @@ export async function pesquisarExploradorAssociar(ctx, termo, onVincular, identi
     const pesquisa = textoNormalizado(termo).trim();
     if (!container || !userId || !pesquisa) return;
 
-    const snapshot = await getDocs(query(
-        collection(ctx.dbRef, 'Local'),
-        where('userId', '==', userId),
-        where('estado', '==', 'on')
-    ));
+    const { caixas: caixasLocais, notas } = await obterCaixasLocais(ctx.dbRef, userId);
     const state = { ctx, onVincular, identidade };
     const resultados = [];
-    snapshot.docs.forEach(docSnap => {
-        const item = { docIdFirebase: docSnap.id, ...docSnap.data() };
+
+    notas.forEach((dadosNota, notaId) => {
+        if (dadosNota.estado !== 'on') return;
+        const item = { docIdFirebase: notaId, ...dadosNota };
         const nome = textoSeguro(item.nome, item.tipo === 'pasta' ? 'Pasta sem nome' : 'Nota sem título');
         if (textoNormalizado(nome).includes(pesquisa)) {
-            resultados.push({ item, tipo: item.tipo === 'pasta' ? 'pasta' : 'nota', titulo: nome, detalhe: item.tipo === 'pasta' ? 'Pasta' : 'Nota', meta: { entidade: item.tipo === 'pasta' ? 'pasta' : 'nota' } });
-        }
-        if (item.tipo !== 'pasta') {
-            (item.caixas || []).filter(caixa => caixa.estado === 'on').forEach(caixa => {
-                const titulo = textoSeguro(caixa.titulo, textoSeguro(caixa.conteudo, 'Bloco vazio').slice(0, 45));
-                if (textoNormalizado(titulo).includes(pesquisa)) {
-                    resultados.push({ item: { ...item, id: caixa.id, docIdFirebase: caixa.id }, tipo: caixa.tipo, titulo, detalhe: nome, meta: { entidade: 'caixa', notaId: item.docIdFirebase } });
-                }
+            resultados.push({
+                item,
+                tipo: item.tipo === 'pasta' ? 'pasta' : 'nota',
+                titulo: nome,
+                detalhe: item.tipo === 'pasta' ? 'Pasta' : 'Nota',
+                meta: { entidade: item.tipo === 'pasta' ? 'pasta' : 'nota' }
             });
+        }
+
+        if (item.tipo !== 'pasta') {
+            caixasLocais
+                .filter(caixa => caixa.localDocId === notaId && caixa.estado === 'on')
+                .forEach(caixa => {
+                    const titulo = textoSeguro(caixa.titulo, textoSeguro(caixa.conteudo, 'Bloco vazio').slice(0, 45));
+                    if (textoNormalizado(titulo).includes(pesquisa)) {
+                        resultados.push({
+                            item: { ...item, id: caixa.id, docIdFirebase: caixa.id },
+                            tipo: caixa.tipo,
+                            titulo,
+                            detalhe: nome,
+                            meta: { entidade: 'caixa', notaId }
+                        });
+                    }
+                });
         }
     });
 

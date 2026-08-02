@@ -1,4 +1,6 @@
 import { doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { COLECAO_CAIXAS, actualizarCaixaLocal, hidratarNotaComCaixas, guardarCaixasDaNota } from '../../local/caixas-repository.js';
+import { hidratarNotaShareComCaixas, guardarCaixasShareDaNota } from '../../share/share-caixas-repository.js';
 
 export const SyncLogic = {
     /**
@@ -17,7 +19,60 @@ export const SyncLogic = {
             const snap = await getDoc(docRef);
             if (!snap.exists()) return;
 
-            const caixas = snap.data().caixas || [];
+            const dadosNota = snap.data();
+            if (colecao === "Local") {
+                const notaLocal = await hidratarNotaComCaixas(
+                    { ...dadosNota, onde: "local" },
+                    db,
+                    { currentUser: { uid: dadosNota.userId } },
+                    refLink.idnota
+                );
+                const caixasLocais = notaLocal.caixas || [];
+                const novasCaixasLocais = caixasLocais.map(caixa => {
+                    if (caixa.id !== refLink.idcaixa) return caixa;
+                    const listaLinks = caixa[campoAlvo] || [];
+                    return {
+                        ...caixa,
+                        [campoAlvo]: listaLinks.map(link => (
+                            link.idcaixa === idCaixaProcurada
+                                ? { ...link, estado: novoEstado }
+                                : link
+                        ))
+                    };
+                });
+                await guardarCaixasDaNota({
+                    db,
+                    userId: dadosNota.userId,
+                    notaId: refLink.idnota,
+                    caixas: novasCaixasLocais,
+                    removerLegacy: true
+                });
+                console.log("Sincronização remota actualizada em LocalCaixas:", refLink.idnota);
+                return;
+            }
+
+            if (colecao === "Share") {
+                const notaShare = await hidratarNotaShareComCaixas({ ...dadosNota, onde: "share" }, db, refLink.idnota);
+                const novasCaixasShare = (notaShare.caixas || []).map(caixa => {
+                    if (caixa.id !== refLink.idcaixa) return caixa;
+                    const listaLinks = caixa[campoAlvo] || [];
+                    return {
+                        ...caixa,
+                        [campoAlvo]: listaLinks.map(link => link.idcaixa === idCaixaProcurada ? { ...link, estado: novoEstado } : link)
+                    };
+                });
+                await guardarCaixasShareDaNota({
+                    db,
+                    ownerId: dadosNota.userId,
+                    notaId: refLink.idnota,
+                    caixas: novasCaixasShare,
+                    removerLegacy: true
+                });
+                console.log("Sincronização remota actualizada em ShareCaixas:", refLink.idnota);
+                return;
+            }
+
+            const caixas = dadosNota.caixas || [];
             const novasCaixas = caixas.map(c => {
                 if (c.id === refLink.idcaixa) {
                     const listaLinks = c[campoAlvo] || [];

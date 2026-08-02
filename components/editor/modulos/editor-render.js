@@ -1,4 +1,5 @@
 import { marcarFerramentaShareComoVista } from '../../share/share-notification-state.js';
+import { construirGruposFundidos, aplicarEstiloGrupoFundido } from './fundir-manager.js';
 
 function formatarMesDiario(date) {
     return new Intl.DateTimeFormat('pt-PT', { month: 'long', year: 'numeric' }).format(date);
@@ -39,44 +40,74 @@ export async function renderizarFeed(params) {
     let mesAtual = "";
     let diaAtual = "";
 
-    for (const caixa of caixasParaMostrar) {
-        if (isModoDiario) {
-            const dataBase = new Date(caixa.timestamp || Date.now());
-            const labelMes = formatarMesDiario(dataBase);
-            const labelDia = formatarDiaDiario(dataBase);
-            if (labelMes !== mesAtual) {
-                mesAtual = labelMes;
-                const mesEl = document.createElement('div');
-                mesEl.className = 'diario-grupo-mes';
-                mesEl.textContent = mesAtual;
-                feed.appendChild(mesEl);
-                diaAtual = "";
+    const segmentos = construirGruposFundidos(caixasParaMostrar).map(segmento => {
+        if (!isModoPost || segmento.caixas.length < 2) return segmento;
+        return {
+            ...segmento,
+            caixas: [...segmento.caixas].reverse()
+        };
+    });
+
+    for (const segmento of segmentos) {
+        const grupo = segmento.caixas;
+        const estaFundido = grupo.length >= 2;
+        const grupoEl = estaFundido ? document.createElement('div') : null;
+
+        if (grupoEl) {
+            grupoEl.className = 'fundir-group';
+            grupoEl.dataset.fundirIds = grupo.map(caixa => caixa.id).join('|');
+        }
+
+        for (let grupoIndex = 0; grupoIndex < grupo.length; grupoIndex += 1) {
+            const caixa = grupo[grupoIndex];
+
+            if (isModoDiario && grupoIndex === 0) {
+                const dataBase = new Date(caixa.timestamp || Date.now());
+                const labelMes = formatarMesDiario(dataBase);
+                const labelDia = formatarDiaDiario(dataBase);
+                if (labelMes !== mesAtual) {
+                    mesAtual = labelMes;
+                    const mesEl = document.createElement('div');
+                    mesEl.className = 'diario-grupo-mes';
+                    mesEl.textContent = mesAtual;
+                    feed.appendChild(mesEl);
+                    diaAtual = "";
+                }
+                if (labelDia !== diaAtual) {
+                    diaAtual = labelDia;
+                    const diaEl = document.createElement('div');
+                    diaEl.className = 'diario-grupo-dia';
+                    diaEl.textContent = diaAtual;
+                    feed.appendChild(diaEl);
+                }
             }
-            if (labelDia !== diaAtual) {
-                diaAtual = labelDia;
-                const diaEl = document.createElement('div');
-                diaEl.className = 'diario-grupo-dia';
-                diaEl.textContent = diaAtual;
-                feed.appendChild(diaEl);
+
+            let el;
+            try {
+                el = await renderizarCaixa(caixa, raciociniosVivos, {
+                    acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao
+                });
+            } catch (error) {
+                console.error('[EDITOR-RENDER] Falha ao carregar a caixa ' + caixa.id + ' (' + caixa.tipo + '):', error, error?.stack || '');
+                el = criarAvisoFalhaCaixa(caixa);
+            }
+            if (!el) continue;
+
+            el.id = 'bloco-' + caixa.id;
+            if (isModoSocial) {
+                adicionarReacoesAoBloco(el, caixa, dadosNota, notaAbertaId, dbRef, authRef);
+            }
+            aplicarMarcadorNovidade(el, caixa, dadosNota, notaAbertaId, dbRef, authRef);
+
+            if (estaFundido) {
+                aplicarEstiloGrupoFundido(el, grupoIndex, grupo.length);
+                grupoEl.appendChild(el);
+            } else {
+                feed.appendChild(el);
             }
         }
 
-        let el;
-        try {
-            el = await renderizarCaixa(caixa, raciociniosVivos, {
-                acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao
-            });
-        } catch (error) {
-            console.error(`[EDITOR-RENDER] Falha ao carregar a caixa ${caixa.id} (${caixa.tipo}):`, error, error?.stack || '');
-            el = criarAvisoFalhaCaixa(caixa);
-        }
-        if (!el) continue;
-        el.id = `bloco-${caixa.id}`;
-        if (isModoSocial) {
-            adicionarReacoesAoBloco(el, caixa, dadosNota, notaAbertaId, dbRef, authRef);
-        }
-        aplicarMarcadorNovidade(el, caixa, dadosNota, notaAbertaId, dbRef, authRef);
-        feed.appendChild(el);
+        if (grupoEl) feed.appendChild(grupoEl);
     }
 
     setTimeout(() => { feed.style.minHeight = ""; }, 200);

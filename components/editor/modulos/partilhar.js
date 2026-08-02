@@ -3,7 +3,9 @@ import {
     getFirestore, collection, getDocs, query, where, doc, getDoc, updateDoc, or, and 
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-import { dispararIndexacao } from './ai-search-indexer.js'; // 🚀 GATILHO GPS INTEGRADO
+import { dispararIndexacao } from './ai-search-indexer.js';
+import { hidratarNotaComCaixas, guardarCaixasDaNota, obterIdsCaixas } from '../../local/caixas-repository.js';
+import { hidratarNotaShareComCaixas, guardarCaixasShareDaNota } from '../../share/share-caixas-repository.js';
 
 let caixaAtual = null;
 let notaAtualId = null;
@@ -71,7 +73,19 @@ export async function abrirPopupPartilhar(caixa, notaId, callbackUpdate) {
     callbackGravar = callbackUpdate;
     abaPartilhaAtiva = "Local"; 
 
-    const overlay = document.getElementById('popup-partilhar-overlay');
+    let overlay = document.getElementById('popup-partilhar-overlay');
+    if (!overlay) {
+        const host = document.createElement('div');
+        host.id = 'area-popup-partilhar-dinamico';
+        document.body.appendChild(host);
+        try {
+            const resposta = await fetch('components/popup/popup-partilhar.html');
+            if (resposta.ok) host.innerHTML = await resposta.text();
+        } catch (erro) {
+            console.error('Não foi possível carregar o popup de envio.', erro);
+        }
+        overlay = document.getElementById('popup-partilhar-overlay');
+    }
     if (!overlay) return;
 
     const toggleInput = document.getElementById('toggle-protecao');
@@ -185,39 +199,63 @@ async function enviarCopiaParaNota(idDestino, nomeDestino, abaAlvo) {
         const snapDest = await getDoc(docDestRef);
 
         if (snapDest.exists()) {
-            const dataDest = snapDest.data();
+            const dataDestBruta = snapDest.data();
+            const dataDest = abaAlvo === "Local"
+                ? await hidratarNotaComCaixas({ ...dataDestBruta, onde: "local" }, db, auth, idDestino)
+                : abaAlvo === "Share"
+                    ? await hidratarNotaShareComCaixas({ ...dataDestBruta, onde: "share" }, db, idDestino)
+                    : dataDestBruta;
             let caixasDest = dataDest.caixas || [];
-            
-            // 1. CRIAR CLONE DA CAIXA
-            let novaCopia = JSON.parse(JSON.stringify(caixaAtual));
+
+            // Criar o clone com um novo ID e com a nota de destino como proprietária.
+            const novaCopia = JSON.parse(JSON.stringify(caixaAtual));
             novaCopia.id = crypto.randomUUID();
             novaCopia.estado = "on";
             novaCopia.origem = "copia";
             novaCopia.timestamp = new Date().toISOString();
-            
-            // ========================================================
-            // 🚀 CORREÇÃO: SEMPRE USAR PUSH
-            // Para ser a "mais recente", ela deve ir para o fim do array.
-            // O renderizador (Modo Post) colocará o número maior no topo.
-            // ========================================================
-            caixasDest.push(novaCopia); 
+            novaCopia.userId = auth.currentUser.uid;
+            novaCopia.localDocId = idDestino;
 
-            // 2. RE-INDEXAR ORDENS (Garante que a nova caixa tem o maior número)
-            caixasDest.forEach((c, i) => { 
-                c.ordem = i + 1; 
-            });
+            if (abaAlvo === "Local") {
+                caixasDest = [...caixasDest, novaCopia];
+                caixasDest.forEach((caixa, index) => {
+                    caixa.ordem = index + 1;
+                });
 
-            // 3. GRAVAR
-            await updateDoc(docDestRef, { caixas: caixasDest });
+                await guardarCaixasDaNota({
+                    db,
+                    userId: auth.currentUser.uid,
+                    notaId: idDestino,
+                    caixas: caixasDest,
+                    removerLegacy: true
+                });
 
-            // 4. ATUALIZAR GPS
-            dispararIndexacao(db, auth.currentUser.uid, idDestino, {
-                nome: dataDest.nome,
-                caixas: caixasDest,
-                vincTopicos: dataDest.vincTopicos || []
-            });
-
-            console.log(`✅ [SISTEMA] Bloco enviado. Ordem da nova caixa: ${caixasDest.length}`);
+                const idsAtualizados = obterIdsCaixas({ caixaIds: caixasDest.map(caixa => caixa.id) });
+                dispararIndexacao(db, auth.currentUser.uid, idDestino, {
+                    ...dataDest,
+                    caixasMigradas: true,
+                    caixaIds: idsAtualizados,
+                    caixas: caixasDest
+                });
+                console.log("[LOCALCAIXAS] Caixa enviada para:", idDestino);
+            } else {
+                caixasDest.push(novaCopia);
+                caixasDest.forEach((caixa, index) => {
+                    caixa.ordem = index + 1;
+                });
+                await guardarCaixasShareDaNota({
+                    db,
+                    ownerId: dataDest.userId || auth.currentUser.uid,
+                    notaId: idDestino,
+                    caixas: caixasDest,
+                    removerLegacy: true
+                });
+                dispararIndexacao(db, auth.currentUser.uid, idDestino, {
+                    nome: dataDest.nome,
+                    caixas: caixasDest,
+                    vincTopicos: dataDest.vincTopicos || []
+                });
+            }
             window.fecharPopupPartilhar();
         }
     } catch (e) {

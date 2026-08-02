@@ -174,7 +174,10 @@ export async function carregarAbasDaNota(maeId, dadosNota, notaAtivaId) {
     if (!container) return;
     container.innerHTML = `<div id="tab-spinner" style="display:flex; align-items:center; padding:0 15px; color:var(--primary);"><i class="fa-solid fa-circle-notch fa-spin" style="font-size:14px;"></i></div>`;
 
-    const resMae = await buscarNotaHibrida(maeId);
+    const resMae = (maeId === notaAtivaId && dadosNota) 
+        ? { dados: dadosNota, colecao: dadosNota.onde === 'share' ? 'Share' : 'Local' } 
+        : await buscarNotaHibrida(maeId);
+
     console.log("📂 [TABS-DEBUG] resMae carregada:", resMae);
     if (!resMae) {
         container.innerHTML = "";
@@ -279,11 +282,21 @@ async function fecharAba(idAlvo, ondeAba) {
 
 export async function buscarNotaHibrida(id) {
     const db = dbRef || window.db;
+    if (!db) return null;
     try {
-        const sLocal = await getDoc(doc(db, "Local", id));
-        if (sLocal.exists()) return { dados: { ...sLocal.data(), onde: "local" }, colecao: "Local" };
-        const sShare = await getDoc(doc(db, "Share", id));
-        if (sShare.exists()) return { dados: { ...sShare.data(), onde: "share" }, colecao: "Share" };
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Timeout ao buscar nota hibrida")), 5000)
+        );
+        
+        const buscar = async () => {
+            const sLocal = await getDoc(doc(db, "Local", id));
+            if (sLocal.exists()) return { dados: { ...sLocal.data(), onde: "local" }, colecao: "Local" };
+            const sShare = await getDoc(doc(db, "Share", id));
+            if (sShare.exists()) return { dados: { ...sShare.data(), onde: "share" }, colecao: "Share" };
+            return null;
+        };
+
+        return await Promise.race([buscar(), timeoutPromise]);
     } catch (e) {
         console.error("📂 [TABS-DEBUG] Erro em buscarNotaHibrida:", e);
     }

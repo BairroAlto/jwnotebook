@@ -3,6 +3,7 @@ import {
     collection, query, where, getDocs, doc, updateDoc, addDoc, serverTimestamp, getDoc 
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { SentinelaLoader } from '../../ui/loading-sentinela.js';
+import { COLECAO_CAIXAS, hidratarNotaComCaixas, guardarCaixasDaNota } from '../../local/caixas-repository.js';
 
 // Auxiliar para limpar espaços e garantir match exato de strings
 const limparRef = (txt) => String(txt).trim().replace(/\s+/g, ' ');
@@ -17,7 +18,8 @@ export const SentinelaManager = {
         const refLimpa = limparRef(referenciaArtigo);
         const q = query(collection(db, "Local"), where("userId", "==", uid), where("estado", "==", "on"));
         const snap = await getDocs(q);
-        
+        const qCaixas = query(collection(db, COLECAO_CAIXAS), where("userId", "==", uid), where("estado", "==", "on"));
+        const snapCaixas = await getDocs(qCaixas);
         let notaExistenteId = null;
         snap.forEach(docSnap => {
             const d = docSnap.data();
@@ -26,6 +28,13 @@ export const SentinelaManager = {
                     c.referenciacodex && c.referenciacodex[0] === refLimpa
                 );
                 if (temReferencia) notaExistenteId = docSnap.id;
+            }
+        });
+
+        snapCaixas.forEach(docSnap => {
+            const caixa = docSnap.data();
+            if (caixa.referenciacodex?.[0] === refLimpa && caixa.localDocId) {
+                notaExistenteId = caixa.localDocId;
             }
         });
         return notaExistenteId;
@@ -47,7 +56,10 @@ export const SentinelaManager = {
             // 🚀 PASSO A: LER CONTEÚDO ATUAL DA NOTA PARA PRESERVAR
             const notaRef = doc(db, "Local", notaId);
             const snapNota = await getDoc(notaRef);
-            const caixasAnteriores = snapNota.exists() ? (snapNota.data().caixas || []) : [];
+            const dadosNota = snapNota.exists()
+                ? await hidratarNotaComCaixas({ ...snapNota.data(), onde: "local" }, db, auth, notaId)
+                : {};
+            const caixasAnteriores = dadosNota.caixas || [];
 
             // B) Atualizar o nome da nota para o título do artigo
             await updateDoc(notaRef, { nome: artigo.titulo });
@@ -111,7 +123,13 @@ export const SentinelaManager = {
             const listaFinal = [...caixasAnteriores, ...novasCaixasEstudo];
 
             // G) Gravar a fusão final no Firestore
-            await updateDoc(notaRef, { caixas: listaFinal });
+            await guardarCaixasDaNota({
+                db,
+                userId: uid,
+                notaId,
+                caixas: listaFinal,
+                removerLegacy: true
+            });
             
             SentinelaLoader.hide();
             location.reload(); 

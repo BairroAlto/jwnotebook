@@ -1,6 +1,7 @@
 // components/editor/modulos/tool-manager.js
 
 import { obterConfigNota } from '../../settings/preferences.js';
+import { obterGrupoFundido, sincronizarGrupoFundido } from './fundir-manager.js';
 
 export const ToolManager = {
     /**
@@ -32,7 +33,8 @@ export const ToolManager = {
             conteudo: "", 
             estado: "on", 
             timestamp: new Date().toISOString(), 
-            protecao: "fechado"
+            protecao: "fechado",
+        fundir: []
         };
 
         // Configurações iniciais por tipo
@@ -54,23 +56,31 @@ export const ToolManager = {
         if (tipo !== "firmamento" && noteConfig.defaultFocos?.[tipo]) novaCaixa.foco = noteConfig.defaultFocos[tipo];
 
         // 4. Lógica de Posicionamento Inteligente
+        let grupoFundidoBase = [];
+        let grupoFundidoAntigo = [];
+
         if (window.idReferenciaInsercao) {
-            // --- INSERÇÃO VIA BOTÃO "+" ENTRE BLOCOS ---
+            // Quando o "+" vem de uma caixa fundida, a nova ferramenta
+            // entra automaticamente no fim da mesma fusão.
             const idxAlvo = caixasAtuais.findIndex(c => c.id === window.idReferenciaInsercao);
-            
-            /**
-             * EXPLICAÇÃO DA LÓGICA:
-             * No Modo Normal (1, 2, 3), o "+" abaixo de um bloco insere na posição seguinte (idx + 1).
-             * No Modo Post (3, 2, 1), para um bloco aparecer ACIMA do clicado, 
-             * ele também deve ser inserido na posição seguinte do array (idx + 1),
-             * pois assim ganhará uma 'ordem' maior e subirá no topo do ecrã.
-             */
-            caixasAtuais.splice(idxAlvo + 1, 0, novaCaixa);
-            
-            window.idReferenciaInsercao = null; // Limpa a referência
+            const caixaReferencia = idxAlvo >= 0 ? caixasAtuais[idxAlvo] : null;
+
+            if (caixaReferencia) {
+                const grupoDetectado = obterGrupoFundido(caixaReferencia, caixasAtuais);
+                if (grupoDetectado.length >= 2) {
+                    grupoFundidoAntigo = [...grupoDetectado];
+                    grupoFundidoBase = [...grupoDetectado];
+                    const posicaoNaFusao = grupoFundidoBase.findIndex(caixa => caixa.id === caixaReferencia.id);
+                    grupoFundidoBase.splice(Math.max(0, posicaoNaFusao + 1), 0, novaCaixa);
+                }
+                caixasAtuais.splice(idxAlvo + 1, 0, novaCaixa);
+            } else {
+                caixasAtuais.push(novaCaixa);
+            }
+
+            window.idReferenciaInsercao = null;
         } else {
-            // --- INSERÇÃO VIA BOTÃO GLOBAL (POPUP) ---
-            // Adiciona sempre ao fim do array para ser o mais recente
+            // --- INSERÇÃO VIA POPUP GLOBAL ---
             caixasAtuais.push(novaCaixa);
         }
 
@@ -78,6 +88,12 @@ export const ToolManager = {
         caixasAtuais.forEach((c, i) => { 
             c.ordem = i + 1; 
         });
+        if (grupoFundidoAntigo.length >= 2) {
+            sincronizarGrupoFundido(
+                grupoFundidoBase,
+                grupoFundidoAntigo
+            );
+        }
 
         // 6. Atualizar a Interface e Gravar
         atualizarFeedEGravar(true);

@@ -1,3 +1,5 @@
+import { obterCaixasPorIds, obterIdsCaixas } from '../../local/caixas-repository.js';
+import { obterCaixasSharePorIds, obterIdsCaixasShare } from '../../share/share-caixas-repository.js';
 // components/editor/modulos/ai-search-indexer.js
 import { doc, setDoc, updateDoc, deleteField } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
@@ -13,10 +15,17 @@ export async function dispararIndexacao(db, userId, notaId, dadosNota) {
         try { await updateDoc(indexRef, { [`n_${notaId}`]: deleteField() }); return; } catch (e) { return; }
     }
 
-    if (!dadosNota.caixas) return;
+    let caixas = dadosNota.caixas || [];
+    if (dadosNota.caixasMigradas || Array.isArray(dadosNota.caixaIds)) {
+        const mapa = dadosNota.onde === "share"
+            ? await obterCaixasSharePorIds(db, notaId, obterIdsCaixasShare(dadosNota))
+            : await obterCaixasPorIds(db, userId, obterIdsCaixas(dadosNota));
+        caixas = [...mapa.values()];
+    }
+    if (!caixas.length) return;
 
     // 🚀 INDEXAÇÃO PROFUNDA (Aumentada para Modelos Gratuitos)
-   const blocosProcessados = dadosNota.caixas
+   const blocosProcessados = caixas
     .filter(c => c.estado === 'on') 
     .map(c => {
         const titulo = c.titulo ? `[${c.titulo}] ` : "";

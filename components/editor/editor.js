@@ -7,6 +7,8 @@ import { PersistenceManager } from './modulos/persistence-manager.js';
 import { BootManager } from './modulos/boot-manager.js';
 import { isEdicaoAtiva } from './modulos/share-controller.js';
 import { despacharInteligenciaEye } from './modulos/intelligence/dispatcher.js';
+import { hidratarNotaComCaixas } from '../local/caixas-repository.js';
+import { hidratarNotaShareComCaixas } from '../share/share-caixas-repository.js';
 
 let state = {
     notaAbertaId: null,
@@ -142,7 +144,15 @@ function iniciarEscutaNotaAberta() {
         if (!snap.exists() || snap.metadata.hasPendingWrites) return;
         if (state.notaComAlteracoes || state.timerGravacao) return;
 
-        const dadosRemotos = snap.data();
+        const dadosRemotosBase = {
+            ...state.dadosNotaOriginal,
+            ...snap.data(),
+            onde: state.dadosNotaOriginal.onde || "local"
+        };
+        const dadosRemotos = colecao === "Local"
+            ? await hidratarNotaComCaixas(dadosRemotosBase, state.dbRef, state.authRef, state.notaAbertaId)
+            : await hidratarNotaShareComCaixas(dadosRemotosBase, state.dbRef, state.notaAbertaId);
+        if (state.notaAbertaId !== notaRef.id) return;
         const caixasRemotas = dadosRemotos.caixas || [];
         if (assinaturaCaixas(caixasRemotas) === assinaturaCaixas(state.caixasAtuais)) return;
 
@@ -177,6 +187,7 @@ function assinaturaCaixas(caixas) {
         estado: caixa.estado || "on",
         glosas: caixa.glosas || [],
         ref: caixa.referenciacodex || null,
-        timestamp: caixa.timestamp || ""
+        timestamp: caixa.timestamp || "",
+        fundir: caixa.fundir || []
     })));
 }

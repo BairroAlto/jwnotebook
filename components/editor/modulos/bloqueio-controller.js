@@ -1,6 +1,8 @@
 // components/editor/modulos/bloqueio-controller.js
 import { getFirestore, doc, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+import { actualizarCaixaLocal, hidratarNotaComCaixas, guardarCaixasDaNota } from '../../local/caixas-repository.js';
+import { hidratarNotaShareComCaixas, guardarCaixasShareDaNota } from '../../share/share-caixas-repository.js';
 
 /**
  * APLICA O ESCUDO VISUAL E LÓGICA DE TRANCA
@@ -63,19 +65,58 @@ window.definirBloqueioCaixa = async (caixaId, status) => {
     const notaRef = doc(db, colecao, notaId);
 
     try {
+        const bloqueioAtualizado = status ? {
+            userId: user.uid,
+            userName: user.email.split('@')[0],
+            timestamp: new Date().toISOString()
+        } : null;
+
         const snap = await getDoc(notaRef);
         if (!snap.exists()) return;
+
+        if (colecao === "Local") {
+            const notaLocal = await hidratarNotaComCaixas(
+                { ...snap.data(), onde: "local" },
+                db,
+                { currentUser: user },
+                notaId
+            );
+            const novasCaixasLocais = (notaLocal.caixas || []).map(caixa =>
+                caixa.id === caixaId
+                    ? { ...caixa, bloqueio: bloqueioAtualizado }
+                    : caixa
+            );
+            await guardarCaixasDaNota({
+                db,
+                userId: user.uid,
+                notaId,
+                caixas: novasCaixasLocais,
+                removerLegacy: true
+            });
+            return;
+        }
+
+        if (colecao === "Share") {
+            const notaShare = await hidratarNotaShareComCaixas({ ...snap.data(), onde: "share" }, db, notaId);
+            const novasCaixasShare = (notaShare.caixas || []).map(caixa => caixa.id === caixaId
+                ? { ...caixa, bloqueio: bloqueioAtualizado }
+                : caixa);
+            await guardarCaixasShareDaNota({
+                db,
+                ownerId: snap.data().userId || user.uid,
+                notaId,
+                caixas: novasCaixasShare,
+                removerLegacy: true
+            });
+            return;
+        }
 
         const caixas = snap.data().caixas || [];
         const novasCaixas = caixas.map(c => {
             if (c.id === caixaId) {
                 return {
                     ...c,
-                    bloqueio: status ? {
-                        userId: user.uid,
-                        userName: user.email.split('@')[0],
-                        timestamp: new Date().toISOString()
-                    } : null
+                    bloqueio: bloqueioAtualizado
                 };
             }
             return c;

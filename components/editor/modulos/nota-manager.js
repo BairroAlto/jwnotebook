@@ -1,3 +1,5 @@
+import { hidratarNotaComCaixas } from '../../local/caixas-repository.js';
+import { hidratarNotaShareComCaixas } from '../../share/share-caixas-repository.js';
 // components/editor/modulos/nota-manager.js
 import { processarAberturaNota, configurarBotaoShare } from './nota-viewer.js';
 import { gerirSessaoShare } from './share-controller.js';
@@ -16,8 +18,12 @@ export const NotaManager = {
         // 1. GARANTIR QUE O BROWSER CONHECE O DB E AUTH (Evita a roda infinita)
         iniciarSistemaBrowser(db, auth);
 
+        const dadosNotaComCaixas = dadosNota.onde === "share"
+            ? await hidratarNotaShareComCaixas(dadosNota, db, notaId)
+            : await hidratarNotaComCaixas(dadosNota, db, auth, notaId);
+
         await processarAberturaNota({
-            notaId, dadosNota, db, auth, idCaixaFoco, maeIdOverride,
+            notaId, dadosNota: dadosNotaComCaixas, db, auth, idCaixaFoco, maeIdOverride,
             stateManager: {
                 inicializarDadosNota: async (id, dados, maeId) => {
                     

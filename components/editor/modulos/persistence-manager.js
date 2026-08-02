@@ -1,3 +1,5 @@
+import { guardarCaixasDaNota } from '../../local/caixas-repository.js';
+import { guardarCaixasShareDaNota } from '../../share/share-caixas-repository.js';
 // components/editor/modulos/persistence-manager.js
 import { doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
@@ -68,6 +70,26 @@ export const PersistenceManager = {
                 })),
                 geral: isShare && Object.keys(alteracoesPendentes).length === 0
             });
+            if (!isShare) {
+                await guardarCaixasDaNota({
+                    db: dbRef,
+                    userId: authRef.currentUser.uid,
+                    notaId: notaAbertaId,
+                    caixas: caixasAtuais,
+                    removerLegacy: true
+                });
+                delete payload.caixas;
+            } else {
+                await guardarCaixasShareDaNota({
+                    db: dbRef,
+                    ownerId: dadosNotaOriginal.userId || authRef.currentUser.uid,
+                    notaId: notaAbertaId,
+                    caixas: caixasAtuais,
+                    removerLegacy: true
+                });
+                delete payload.caixas;
+            }
+
             await updateDoc(notaRef, payload);
             console.info('[SHARE-NOTIF][gravar][sucesso]', {
                 notaId: notaAbertaId,

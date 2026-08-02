@@ -2,6 +2,7 @@
 import { isMobileViewport } from '../../ui/mobile-device.js';
 import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { MutationManager } from './mutation-manager.js'; // ðŸš€ NOVO MÃ“DULO
+import { FundirManager } from './fundir-manager.js';
 import { transmitirParaBrainVivo } from '../../biblioteca-brain/biblio-transmitter.js';
 
 export const CORES_BASE = [
@@ -124,6 +125,7 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
     const btnFechar = document.getElementById('btn-fechar-cores');
     const listaDest = document.getElementById('lista-cores-destaque');
     const listaFoco = document.getElementById('lista-cores-foco');
+    const conteudoFundir = document.getElementById('fundir-conteudo');
 
     if (!overlay) {
         console.error("âŒ Erro: Contentor #popup-cores-overlay nÃ£o encontrado no DOM.");
@@ -174,6 +176,19 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
     // ========================================================
     // ðŸŽ¨ 3. RENDERIZAÃ‡ÃƒO DE DESTAQUES (CORES DE FUNDO)
     // ========================================================
+    const btnFundir = document.querySelector('.tab-cor[data-target="tab-fundir"]');
+    if (btnFundir) btnFundir.style.display = "inline-flex";
+    FundirManager.renderizar(
+        caixaParaColorir,
+        conteudoFundir,
+        window.caixasAtuais || [],
+        async () => {
+            if (funcUpdate) await funcUpdate();
+            else if (typeof window.atualizarFeedEGravarGlobal === 'function') {
+                await window.atualizarFeedEGravarGlobal(true);
+            }
+        }
+    );
     if (listaDest) {
         listaDest.innerHTML = "";
         CORES_BASE.forEach(corObj => {

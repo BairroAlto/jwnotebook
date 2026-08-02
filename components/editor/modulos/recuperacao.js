@@ -3,6 +3,7 @@ import { collection, addDoc, getDocs, query, orderBy, serverTimestamp, where } f
 import { IDENTIDADE_FERRAMENTAS } from '../../constants/ferramentas.js';
 import { perguntarRestauroBackup } from './tags/tags-utils.js';
 import { SyncLogic } from './sync-logic.js';
+import { guardarCaixasDaNota } from '../../local/caixas-repository.js';
 
 let arrayCaixas = [];
 let notaOrigemDados = null;
@@ -146,13 +147,14 @@ async function restaurarCopiaComoNovaNota(dadosBackup) {
             // Garantir que temos um pastapai válido
             const pastaPai = dadosBackup.pastapai || "root";
 
+            const caixasRestauradas = dadosBackup.caixas || [];
             const novaNota = {
                 userId: authRef.currentUser.uid,
                 tipo: "nota",
                 estado: "on",
                 nome: `${dadosBackup.nomeOriginal} (Restaurada ${dataSufixo})`,
                 pastapai: pastaPai,
-                caixas: dadosBackup.caixas,
+
                 timestamp: serverTimestamp(),
                 browser: [],
                 ordem: 99 // Coloca no fim da lista
@@ -162,6 +164,13 @@ async function restaurarCopiaComoNovaNota(dadosBackup) {
 
             // Gravar na coleção principal "Local" para que apareça na barra lateral
             const docRef = await addDoc(collection(dbRef, "Local"), novaNota);
+            await guardarCaixasDaNota({
+                db: dbRef,
+                userId: authRef.currentUser.uid,
+                notaId: docRef.id,
+                caixas: caixasRestauradas,
+                removerLegacy: true
+            });
             
             console.log("Nota restaurada com ID:", docRef.id);
             

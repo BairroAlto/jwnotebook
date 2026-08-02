@@ -1,4 +1,6 @@
 import { doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { hidratarNotaComCaixas, actualizarCaixaLocal, guardarCaixasDaNota } from '../../local/caixas-repository.js';
+import { hidratarNotaShareComCaixas, guardarCaixasShareDaNota } from '../../share/share-caixas-repository.js';
 
 export const CAMPO_LIGACAO_BAIRRO = 'ligaçãoBairro';
 
@@ -33,13 +35,41 @@ async function obterDocumento(db, colecao, id) {
 }
 
 async function atualizarNotaComCaixa(db, notaId, caixaId, alterar, colecao = 'Local') {
-    const nota = await obterDocumento(db, colecao, notaId);
-    if (!nota) return false;
+    const notaBruta = await obterDocumento(db, colecao, notaId);
+    if (!notaBruta) return false;
+
+    const nota = colecaoLocal(colecao) === 'Local'
+        ? await hidratarNotaComCaixas(
+            { ...notaBruta, onde: 'local' },
+            db,
+            { currentUser: { uid: notaBruta.userId } },
+            notaId
+        )
+        : await hidratarNotaShareComCaixas({ ...notaBruta, onde: "share" }, db, notaId);
+
     const caixas = listaSegura(nota.caixas).map(caixa => ({ ...caixa }));
     const index = caixas.findIndex(caixa => caixa.id === caixaId);
     if (index < 0) return false;
+
     alterar(caixas[index], caixas);
-    await updateDoc(doc(db, colecaoLocal(colecao), notaId), { caixas });
+    if (colecaoLocal(colecao) === 'Local') {
+        await guardarCaixasDaNota({
+            db,
+            userId: nota.userId,
+            notaId,
+            caixas,
+            removerLegacy: true
+        });
+    } else if (colecaoLocal(colecao) === "Share") {
+        await guardarCaixasShareDaNota({
+            db,
+            ownerId: nota.userId,
+            notaId,
+            caixas,
+            removerLegacy: true
+        });    } else {
+        await updateDoc(doc(db, colecaoLocal(colecao), notaId), { caixas });
+    }
     return true;
 }
 

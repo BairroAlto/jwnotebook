@@ -38,7 +38,7 @@ let origemAtual = "Local";
 const getCtx = () => ({
     dbRef, authRef, caixaAlvo, notaMaeId,
     // Passamos a origemAtual para a store
-    persistir: (f, v) => salvarCampoNaCaixa(dbRef, notaMaeId, caixaAlvo.id, f, v, origemAtual)
+    persistir: (f, v) => salvarCampoNaCaixa(dbRef, notaMaeId, caixaAlvo.id, f, v, origemAtual, authRef?.currentUser?.uid)
 });
 
 /**
