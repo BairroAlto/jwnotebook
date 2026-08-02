@@ -1,7 +1,10 @@
+import { COLECAO_CAIXAS, obterIdsCaixas, obterCaixasPorIds, apagarCaixaLocal } from '../local/caixas-repository.js';
+import { COLECAO_CAIXAS_SHARE, obterIdsCaixasShare, obterCaixasSharePorIds, apagarCaixaShare } from '../share/share-caixas-repository.js';
 // components/settings/recycle-ui.js
 import { getFirestore, doc, updateDoc, deleteDoc, getDoc, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { RecycleViewer } from './recycle-viewer.js';
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js"; // Garante este import no topo
+import { obterParCaixa, eliminarParCaixa, restaurarParCaixa } from './recycle-caixa-pair.js';
 
 let cacheItensNaLixeira = [];
 
@@ -16,18 +19,18 @@ export function renderizarItensReciclagem(lista, isAutoOpen) {
 
     cacheItensNaLixeira = lista;
 
-    // Mostrar ou esconder o botão no canto superior direito
+    // Mostrar ou esconder o botÃ£o no canto superior direito
     if (btnVazamento) {
         btnVazamento.style.display = (lista.length > 0) ? "flex" : "none";
         btnVazamento.style.alignItems = "center";
         btnVazamento.style.gap = "6px";
     }
 
-    // 🚀 LIMPEZA: O container agora só tem os cards, o título já está fixo no HTML
+    // ðŸš€ LIMPEZA: O container agora sÃ³ tem os cards, o tÃ­tulo jÃ¡ estÃ¡ fixo no HTML
     container.innerHTML = "";
 
     if (lista.length === 0) {
-        container.innerHTML = `<p style="color:gray; text-align:center; padding:40px; opacity:0.5; font-size:12px;">A lixeira está vazia.</p>`;
+        container.innerHTML = `<p style="color:gray; text-align:center; padding:40px; opacity:0.5; font-size:12px;">A lixeira estÃ¡ vazia.</p>`;
         return;
     }
 
@@ -55,22 +58,22 @@ function criarCardHTML(item) {
     let nome = item.dados.nome || item.dados.titulo || "Sem Nome";
     let icone = "fa-file-lines";
     if (item.tipoItem === 'caixa') { icone = "fa-box"; nome += ` (em ${item.nomePai})`; }
-    if (item.tipoItem === 'mica') { icone = "fa-folder-open"; nome += ` (Dossiê: ${item.nomePai})`; }
+    if (item.tipoItem === 'mica') { icone = "fa-folder-open"; nome += ` (DossiÃª: ${item.nomePai})`; }
     if (item.tipoItem === 'cosmos-tema') icone = "fa-meteor";
     if (item.tipoItem === 'topico') icone = "fa-hashtag";
 
-    // Codificação segura para evitar quebra de aspas no HTML
+    // CodificaÃ§Ã£o segura para evitar quebra de aspas no HTML
     const payload = btoa(unescape(encodeURIComponent(JSON.stringify(item))));
     const bordaColor = item.expirado ? "#ef4444" : "rgba(255,255,255,0.1)";
 
     return `
         <div class="menu-item-list" style="flex-direction: column; align-items: flex-start; gap: 10px; background: rgba(255,255,255,0.02); padding: 12px; border: 1px solid ${bordaColor}; border-radius: 10px; margin-bottom: 8px; position: relative;">
             
-            <!-- 👁️ BOTÃO VER (Usando Classe em vez de Onclick) -->
+            <!-- ðŸ‘ï¸ BOTÃƒO VER (Usando Classe em vez de Onclick) -->
             <i class="fa-solid fa-eye btn-ver-reciclagem" 
                data-payload="${payload}"
                style="position: absolute; top: 12px; right: 12px; cursor: pointer; color: var(--text-muted); opacity: 0.6;"
-               title="Ver Conteúdo"></i>
+               title="Ver ConteÃºdo"></i>
 
             <div style="width:100%; display:flex; justify-content:space-between; align-items:center; padding-right: 25px;">
                 <div style="display:flex; align-items:center; gap:10px;">
@@ -81,15 +84,15 @@ function criarCardHTML(item) {
             </div>
             
             <div style="display:flex; gap:5px; width:100%;">
-                <button onclick="window.execRecuperar('${item.id}', '${item.idSub || ''}', '${item.tipoItem}')" style="flex:1; background:#22c55e; color:black; border:none; padding:8px; border-radius:5px; font-size:10px; font-weight:800; cursor:pointer;">RECUPERAR</button>
-                <button onclick="window.execEliminar('${item.id}', '${item.idSub || ''}', '${item.tipoItem}')" style="flex:1; background:rgba(239, 68, 68, 0.1); color:#f87171; border:1px solid #ef4444; padding:8px; border-radius:5px; font-size:10px; font-weight:800; cursor:pointer;">ELIMINAR</button>
+                <button onclick="window.execRecuperar('${item.id}', '${item.idSub || ''}', '${item.tipoItem}', '${item.origem || ''}')" style="flex:1; background:#22c55e; color:black; border:none; padding:8px; border-radius:5px; font-size:10px; font-weight:800; cursor:pointer;">RECUPERAR</button>
+                <button onclick="window.execEliminar('${item.id}', '${item.idSub || ''}', '${item.tipoItem}', '${item.origem || ''}')" style="flex:1; background:rgba(239, 68, 68, 0.1); color:#f87171; border:1px solid #ef4444; padding:8px; border-radius:5px; font-size:10px; font-weight:800; cursor:pointer;">ELIMINAR</button>
             </div>
         </div>
     `;
 }
 
 // ==========================================================
-// 🚀 O SEGREDO: GESTOR DE CLIQUES CENTRALIZADO
+// ðŸš€ O SEGREDO: GESTOR DE CLIQUES CENTRALIZADO
 // ==========================================================
 document.addEventListener('click', (e) => {
     const btnVer = e.target.closest('.btn-ver-reciclagem');
@@ -106,19 +109,115 @@ document.addEventListener('click', (e) => {
 });
 
 /**
- * ACÇÕES DE RECUPERAÇÃO E ELIMINAÇÃO
+ * ACÃ‡Ã•ES DE RECUPERAÃ‡ÃƒO E ELIMINAÃ‡ÃƒO
  */
-window.execRecuperar = async (docId, subId, tipo) => {
-    const colecao = (tipo === 'cosmos-tema' || tipo === 'mica') ? "Cosmo" : (tipo === 'topico' ? "Topico" : "Local");
+async function actualizarReferenciaCaixaLocal(localDocId, caixaId, alteracoes = {}, caixaCompleta = null) {
+    if (!localDocId || !caixaId) return;
+    const notaRef = doc(db, "Local", localDocId);
+    const snap = await getDoc(notaRef);
+    if (!snap.exists()) return;
+    const dados = snap.data();
+    const caixas = Array.isArray(dados.caixas) ? [...dados.caixas] : [];
+    const indice = caixas.findIndex(caixa => String(caixa?.id) === String(caixaId));
+    const novaCaixa = { ...(caixaCompleta || {}), id: caixaId, ...alteracoes };
+    if (indice >= 0) caixas[indice] = { ...caixas[indice], ...alteracoes };
+    else caixas.push(novaCaixa);
+    const ids = [...new Set(caixas.map(caixa => caixa?.id).filter(Boolean).map(String))];
+    await updateDoc(notaRef, { caixas, CaixasOut: ids, caixaIds: ids, caixasMigradas: true });
+}
+
+async function actualizarReferenciaCaixaShare(shareId, caixaId, alteracoes = {}, caixaCompleta = null) {
+    if (!shareId || !caixaId) return;
+    const notaRef = doc(db, "Share", shareId);
+    const snap = await getDoc(notaRef);
+    if (!snap.exists()) return;
+    const dados = snap.data();
+    const caixas = Array.isArray(dados.caixas) ? [...dados.caixas] : [];
+    const indice = caixas.findIndex(caixa => String(caixa?.id) === String(caixaId));
+    const novaCaixa = { ...(caixaCompleta || {}), id: caixaId, ...alteracoes };
+    if (indice >= 0) caixas[indice] = { ...caixas[indice], ...alteracoes };
+    else caixas.push(novaCaixa);
+    const ids = [...new Set(caixas.map(caixa => caixa?.id).filter(Boolean).map(String))];
+    await updateDoc(notaRef, { caixas, CaixasOut: ids, caixaIds: ids, caixasMigradas: true });
+}
+
+async function removerReferenciaCaixaLocal(localDocId, caixaId) {
+    if (!localDocId || !caixaId) return;
+    const notaRef = doc(db, "Local", localDocId);
+    const snap = await getDoc(notaRef);
+    if (!snap.exists()) return;
+    const dados = snap.data();
+    const caixas = Array.isArray(dados.caixas) ? dados.caixas.filter(caixa => String(caixa?.id) !== String(caixaId)) : [];
+    const ids = [...new Set(caixas.map(caixa => caixa?.id).filter(Boolean).map(String))];
+    await updateDoc(notaRef, { caixas, CaixasOut: ids, caixaIds: ids, caixasMigradas: true });
+}
+
+async function removerReferenciaCaixaShare(shareId, caixaId) {
+    if (!shareId || !caixaId) return;
+    const notaRef = doc(db, "Share", shareId);
+    const snap = await getDoc(notaRef);
+    if (!snap.exists()) return;
+    const dados = snap.data();
+    const caixas = Array.isArray(dados.caixas) ? dados.caixas.filter(caixa => String(caixa?.id) !== String(caixaId)) : [];
+    const ids = [...new Set(caixas.map(caixa => caixa?.id).filter(Boolean).map(String))];
+    await updateDoc(notaRef, { caixas, CaixasOut: ids, caixaIds: ids, caixasMigradas: true });
+}
+
+window.execRecuperar = async (docId, subId, tipo, origem = "") => {
+    const colecao = (tipo === 'cosmos-tema' || tipo === 'mica') ? "Cosmo" : (tipo === 'topico' ? "Topico" : ((tipo === 'share-nota' || origem === "Share" || origem === COLECAO_CAIXAS_SHARE) ? "Share" : "Local"));
     const docRef = doc(db, colecao, docId);
     try {
+        if (tipo === "caixa" && obterParCaixa(origem)) {
+            const restaurada = await restaurarParCaixa({
+                db,
+                origem,
+                parentId: docId,
+                caixaId: subId,
+                userId: getAuth().currentUser?.uid
+            });
+            if (!restaurada) return;
+            location.reload();
+            return;
+        }
+        if (tipo === "caixa" && origem === COLECAO_CAIXAS_SHARE) {
+            const caixaRef = doc(db, COLECAO_CAIXAS_SHARE, subId);
+            const snapCaixa = await getDoc(caixaRef);
+            if (!snapCaixa.exists() || snapCaixa.data().userId !== getAuth().currentUser?.uid) return;
+            await updateDoc(caixaRef, { estado: "on", timedelete: null });
+            await actualizarReferenciaCaixaShare(snapCaixa.data().shareId, subId, { estado: "on", timedelete: null }, { ...snapCaixa.data(), id: subId });
+            location.reload();
+            return;
+        }
+        if (tipo === "caixa" && origem === COLECAO_CAIXAS_SHARE) {
+            const caixaRef = doc(db, COLECAO_CAIXAS_SHARE, subId);
+            const snapCaixa = await getDoc(caixaRef);
+            if (!snapCaixa.exists() || snapCaixa.data().userId !== getAuth().currentUser?.uid) return;
+            const dadosCaixa = { ...snapCaixa.data(), id: snapCaixa.id };
+            await addDoc(collection(db, "Blackbox"), { ...dadosCaixa, deletedAt: serverTimestamp(), originalId: snapCaixa.id, originalCollection: COLECAO_CAIXAS_SHARE, tipoItem: "caixa", userId: dadosCaixa.userId });
+            await deleteDoc(caixaRef);
+            await removerReferenciaCaixaShare(dadosCaixa.shareId, snapCaixa.id);
+            location.reload();
+            return;
+        }
+        if (tipo === "caixa" && origem === COLECAO_CAIXAS) {
+            const caixaRef = doc(db, COLECAO_CAIXAS, subId);
+            const snapCaixa = await getDoc(caixaRef);
+            if (!snapCaixa.exists() || snapCaixa.data().userId !== getAuth().currentUser?.uid) return;
+
+            await updateDoc(caixaRef, { estado: "on", timedelete: null });
+            const dadosCaixa = snapCaixa.data();
+            await actualizarReferenciaCaixaLocal(dadosCaixa.localDocId, subId, { estado: "on", timedelete: null }, { ...dadosCaixa, id: subId });
+            location.reload();
+            return;
+        }
         if (subId) {
             const snap = await getDoc(docRef);
             if (tipo === 'mica') {
                 await updateDoc(docRef, { [`Dossie.mica.${subId}.estado`]: "on", [`Dossie.mica.${subId}.timedelete`]: null });
             } else {
                 const novas = snap.data().caixas.map(c => c.id === subId ? {...c, estado:"on", timedelete: null} : c);
-                await updateDoc(docRef, { caixas: novas });
+                const idsOut = [...new Set(novas.map(caixa => caixa?.id).filter(Boolean).map(String))];
+                await updateDoc(docRef, { caixas: novas, CaixasOut: idsOut, caixaIds: idsOut, caixasMigradas: true });
             }
         } else {
             await updateDoc(docRef, { estado: (colecao === "Local" ? "on" : "on"), timedelete: null });
@@ -127,27 +226,74 @@ window.execRecuperar = async (docId, subId, tipo) => {
     } catch (e) { console.error(e); }
 };
 
-window.execEliminar = async (docId, subId, tipo) => {
-    // 1. CONFIRMAÇÃO VISUAL (Podes usar o teu popup-blackbox aqui se quiseres)
-    if (!confirm("Esta ação é irreversível. O item será eliminado. Continuar?")) return;
+window.execEliminar = async (docId, subId, tipo, origem = "") => {
+    // 1. CONFIRMAÃ‡ÃƒO VISUAL (Podes usar o teu popup-blackbox aqui se quiseres)
+    if (!confirm("Esta aÃ§Ã£o Ã© irreversÃ­vel. O item serÃ¡ eliminado. Continuar?")) return;
 
-    const colecaoOriginal = (tipo === 'cosmos-tema' || tipo === 'mica') ? "Cosmo" : (tipo === 'topico' ? "Topico" : "Local");
+    const colecaoOriginal = (tipo === 'cosmos-tema' || tipo === 'mica') ? "Cosmo" : (tipo === 'topico' ? "Topico" : ((tipo === 'share-nota' || origem === "Share" || origem === COLECAO_CAIXAS_SHARE) ? "Share" : "Local"));
     const docRef = doc(db, colecaoOriginal, docId);
 
     try {
+        if (tipo === "caixa" && obterParCaixa(origem)) {
+            const eliminada = await eliminarParCaixa({
+                db,
+                origem,
+                parentId: docId,
+                caixaId: subId,
+                userId: getAuth().currentUser?.uid
+            });
+            if (!eliminada) return;
+            location.reload();
+            return;
+        }
+        if (tipo === "caixa" && origem === COLECAO_CAIXAS) {
+            const caixaRef = doc(db, COLECAO_CAIXAS, subId);
+            const snapCaixa = await getDoc(caixaRef);
+            if (!snapCaixa.exists() || snapCaixa.data().userId !== getAuth().currentUser?.uid) return;
+
+            const dadosCaixa = { ...snapCaixa.data(), id: snapCaixa.id };
+
+            await addDoc(collection(db, "Blackbox"), {
+                ...dadosCaixa,
+                deletedAt: serverTimestamp(),
+                originalId: snapCaixa.id,
+                originalCollection: COLECAO_CAIXAS,
+                tipoItem: "caixa",
+                userId: dadosCaixa.userId
+            });
+
+            await deleteDoc(caixaRef);
+            await removerReferenciaCaixaLocal(dadosCaixa.localDocId, snapCaixa.id);
+            location.reload();
+            return;
+        }
         const snap = await getDoc(docRef);
         if (!snap.exists()) return;
 
         const dadosCompletos = snap.data();
         let dadosParaOArquivo = null;
+        let caixasLocaisDaNota = [];
+        if (colecaoOriginal === "Share" && (dadosCompletos.caixasMigradas || Array.isArray(dadosCompletos.caixaIds))) {
+            const caixasMap = await obterCaixasSharePorIds(db, docId, obterIdsCaixasShare(dadosCompletos));
+            caixasLocaisDaNota = [...caixasMap.values()];
+        }
+
+        if (colecaoOriginal === "Local" &&
+            (dadosCompletos.caixasMigradas || Array.isArray(dadosCompletos.caixaIds))) {
+            const caixasMap = await obterCaixasPorIds(
+                db,
+                dadosCompletos.userId,
+                obterIdsCaixas(dadosCompletos), { incluirOff: true });
+            caixasLocaisDaNota = [...caixasMap.values()];
+        }
 
         // 2. PREPARAR DADOS PARA A BLACKBOX
         if (subId) {
-            // Cenário: Eliminando uma Caixa ou uma Mica específica
+            // CenÃ¡rio: Eliminando uma Caixa ou uma Mica especÃ­fica
             if (tipo === 'mica') {
-                dadosParaOArquivo = { 
-                    ...dadosCompletos.Dossie.mica[subId], 
-                    _meta_origem: `Mica de ${dadosCompletos.nome || 'Tema'}` 
+                dadosParaOArquivo = {
+                    ...dadosCompletos.Dossie.mica[subId],
+                    _meta_origem: "Mica de " + (dadosCompletos.nome || "Tema")
                 };
             } else {
                 const caixaAlvo = dadosCompletos.caixas.find(c => c.id === subId);
@@ -157,14 +303,17 @@ window.execEliminar = async (docId, subId, tipo) => {
                 };
             }
         } else {
-            // Cenário: Eliminando a Nota ou Tema inteiro
-            dadosParaOArquivo = { 
-                ...dadosCompletos, 
-                _meta_origem: `Documento Integral (${colecaoOriginal})` 
+            // CenÃ¡rio: Eliminando a Nota ou Tema inteiro
+            dadosParaOArquivo = {
+                ...dadosCompletos,
+                ...(caixasLocaisDaNota.length ? { caixas: caixasLocaisDaNota } : {}),
+                caixasPrincipais: Array.isArray(dadosCompletos.caixas) ? dadosCompletos.caixas : [],
+                caixasExternas: caixasLocaisDaNota,
+                _meta_origem: "Documento Integral (" + colecaoOriginal + ")"
             };
         }
 
-        // 3. ENVIAR PARA A BLACKBOX (Backup de Segurança)
+        // 3. ENVIAR PARA A BLACKBOX (Backup de SeguranÃ§a)
         await addDoc(collection(db, "Blackbox"), {
             ...dadosParaOArquivo,
             deletedAt: serverTimestamp(),
@@ -174,9 +323,9 @@ window.execEliminar = async (docId, subId, tipo) => {
             userId: dadosCompletos.userId
         });
 
-        console.log("🚀 [BLACKBOX] Cópia de segurança criada com sucesso.");
+        console.log("ðŸš€ [BLACKBOX] CÃ³pia de seguranÃ§a criada com sucesso.");
 
-        // 4. ELIMINAÇÃO REAL (Limpando o sistema)
+        // 4. ELIMINAÃ‡ÃƒO REAL (Limpando o sistema)
         if (subId) {
             if (tipo === 'mica') {
                 const micas = { ...dadosCompletos.Dossie.mica };
@@ -184,23 +333,31 @@ window.execEliminar = async (docId, subId, tipo) => {
                 await updateDoc(docRef, { "Dossie.mica": micas });
             } else {
                 const novasCaixas = dadosCompletos.caixas.filter(c => c.id !== subId);
-                await updateDoc(docRef, { caixas: novasCaixas });
+                const idsOut = [...new Set(novasCaixas.map(caixa => caixa?.id).filter(Boolean).map(String))];
+                await updateDoc(docRef, { caixas: novasCaixas, CaixasOut: idsOut, caixaIds: idsOut, caixasMigradas: true });
             }
         } else {
             await deleteDoc(docRef);
+            if (colecaoOriginal === "Share" && caixasLocaisDaNota.length) {
+                await Promise.all(caixasLocaisDaNota.map(caixa => apagarCaixaShare(db, docId, caixa.id)));
+            } else if (caixasLocaisDaNota.length) {
+                await Promise.all(caixasLocaisDaNota.map(caixa =>
+                    apagarCaixaLocal(db, dadosCompletos.userId, caixa.id)
+                ));
+            }
         }
 
-        console.log("🗑️ [SISTEMA] Item removido da coleção ativa.");
+        console.log("ðŸ—‘ï¸ [SISTEMA] Item removido da coleÃ§Ã£o ativa.");
         location.reload(); 
 
     } catch (e) {
-        console.error("❌ Erro no processo de eliminação:", e);
-        alert("Erro ao processar eliminação. Verifica a tua ligação.");
+        console.error("âŒ Erro no processo de eliminaÃ§Ã£o:", e);
+        alert("Erro ao processar eliminaÃ§Ã£o. Verifica a tua ligaÃ§Ã£o.");
     }
 };
 
 /**
- * 🚀 MOTOR DE ELIMINAÇÃO EM MASSA (LIMPEZA TOTAL)
+ * ðŸš€ MOTOR DE ELIMINAÃ‡ÃƒO EM MASSA (LIMPEZA TOTAL)
  */
 window.execApagarTudo = async () => {
     if (cacheItensNaLixeira.length === 0) return;
@@ -208,7 +365,7 @@ window.execApagarTudo = async () => {
     const total = cacheItensNaLixeira.length;
     const confirmou = await confirmarAcaoGeral(
         "Vazar Lixeira?", 
-        `Desejas mover todos os ${total} itens para o arquivo morto (Blackbox)? Esta ação não pode ser desfeita.`
+        `Desejas mover todos os ${total} itens para o arquivo morto (Blackbox)? Esta aÃ§Ã£o nÃ£o pode ser desfeita.`
     );
 
     if (!confirmou) return;
@@ -217,15 +374,15 @@ window.execApagarTudo = async () => {
     btn.disabled = true;
     btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> A PROCESSAR...`;
 
-    console.group(`🗑️ [MASS-DELETE] Iniciando limpeza de ${total} itens`);
+    console.group(`ðŸ—‘ï¸ [MASS-DELETE] Iniciando limpeza de ${total} itens`);
 
     try {
-        // Processamos todos os itens em paralelo para ser instantâneo
+        // Processamos todos os itens em paralelo para ser instantÃ¢neo
         const promessas = cacheItensNaLixeira.map(item => processarEliminacaoSilenciosa(item));
         await Promise.all(promessas);
 
-        console.log("✅ [MASS-DELETE] Lixeira limpa e Blackbox alimentada.");
-        location.reload(); // Atualiza para limpar o ecrã e as listas
+        console.log("âœ… [MASS-DELETE] Lixeira limpa e Blackbox alimentada.");
+        location.reload(); // Atualiza para limpar o ecrÃ£ e as listas
 
     } catch (e) {
         console.error("Erro na limpeza em massa:", e);
@@ -237,18 +394,59 @@ window.execApagarTudo = async () => {
 };
 
 /**
- * AUXILIAR: Faz o backup e apaga sem dar refresh na página (para loops)
+ * AUXILIAR: Faz o backup e apaga sem dar refresh na pÃ¡gina (para loops)
  */
 async function processarEliminacaoSilenciosa(item) {
     const auth = getAuth();
     const meuUid = auth.currentUser ? auth.currentUser.uid : null;
 
     if (!meuUid) {
-        console.error("❌ [RECYCLE] Utilizador não autenticado para realizar limpeza.");
+        console.error("âŒ [RECYCLE] Utilizador nÃ£o autenticado para realizar limpeza.");
         return;
     }
 
-    const colecaoOriginal = (item.tipoItem === 'cosmos-tema' || item.tipoItem === 'mica') ? "Cosmo" : (item.tipoItem === 'topico' ? "Topico" : "Local");
+    if (item.tipoItem === "caixa" && obterParCaixa(item.origem)) {
+        await eliminarParCaixa({
+            db,
+            origem: item.origem,
+            parentId: item.id,
+            caixaId: item.idSub,
+            userId: meuUid
+        });
+        return;
+    }
+
+    if (item.tipoItem === "caixa" && item.origem === COLECAO_CAIXAS_SHARE) {
+        const caixaRef = doc(db, COLECAO_CAIXAS_SHARE, item.idSub);
+        const snapCaixa = await getDoc(caixaRef);
+        if (!snapCaixa.exists() || snapCaixa.data().userId !== meuUid) return;
+        const dadosCaixa = { ...snapCaixa.data(), id: snapCaixa.id };
+        await addDoc(collection(db, "Blackbox"), { ...dadosCaixa, deletedAt: serverTimestamp(), originalId: snapCaixa.id, originalCollection: COLECAO_CAIXAS_SHARE, tipoItem: "caixa", userId: meuUid });
+        await deleteDoc(caixaRef);
+        await removerReferenciaCaixaShare(dadosCaixa.shareId, snapCaixa.id);
+        return;
+    }
+    if (item.tipoItem === "caixa" && item.origem === COLECAO_CAIXAS) {
+        const caixaRef = doc(db, COLECAO_CAIXAS, item.idSub);
+        const snapCaixa = await getDoc(caixaRef);
+        if (!snapCaixa.exists() || snapCaixa.data().userId !== meuUid) return;
+
+        const dadosCaixa = { ...snapCaixa.data(), id: snapCaixa.id };
+
+        await addDoc(collection(db, "Blackbox"), {
+            ...dadosCaixa,
+            deletedAt: serverTimestamp(),
+            originalId: snapCaixa.id,
+            originalCollection: COLECAO_CAIXAS,
+            tipoItem: "caixa",
+            userId: meuUid
+        });
+
+        await deleteDoc(caixaRef);
+        await removerReferenciaCaixaLocal(dadosCaixa.localDocId, snapCaixa.id);
+        return;
+    }
+    const colecaoOriginal = (item.tipoItem === 'cosmos-tema' || item.tipoItem === 'mica') ? "Cosmo" : (item.tipoItem === 'topico' ? "Topico" : ((item.tipoItem === 'share-nota' || item.origem === "Share") ? "Share" : "Local"));
     const docRef = doc(db, colecaoOriginal, item.id);
 
     try {
@@ -256,12 +454,26 @@ async function processarEliminacaoSilenciosa(item) {
         const snap = await getDoc(docRef);
         if (!snap.exists()) return;
         const dadosDoc = snap.data();
+        let caixasLocaisDaNota = [];
+        if (colecaoOriginal === "Share" && !item.idSub && (dadosDoc.caixasMigradas || Array.isArray(dadosDoc.caixaIds))) {
+            const caixasMap = await obterCaixasSharePorIds(db, item.id, obterIdsCaixasShare(dadosDoc));
+            caixasLocaisDaNota = [...caixasMap.values()];
+        }
+        if (colecaoOriginal === "Local" &&
+            !item.idSub &&
+            (dadosDoc.caixasMigradas || Array.isArray(dadosDoc.caixaIds))) {
+            const caixasMap = await obterCaixasPorIds(
+                db,
+                dadosDoc.userId || meuUid,
+                obterIdsCaixas(dadosDoc), { incluirOff: true });
+            caixasLocaisDaNota = [...caixasMap.values()];
+        }
 
         let payloadBlackbox = null;
 
-        // 2. Extrair o conteúdo correto para o backup
+        // 2. Extrair o conteÃºdo correto para o backup
         if (item.idSub) {
-            // Cenário: Caixa de Nota ou Mica de Dossiê
+            // CenÃ¡rio: Caixa de Nota ou Mica de DossiÃª
             if (item.tipoItem === 'mica') {
                 payloadBlackbox = { ...(dadosDoc.Dossie?.mica[item.idSub] || {}), _meta_origem: "Mica" };
                 const micas = { ...dadosDoc.Dossie.mica }; 
@@ -271,16 +483,30 @@ async function processarEliminacaoSilenciosa(item) {
                 const caixaAlvo = (dadosDoc.caixas || []).find(c => c.id === item.idSub);
                 payloadBlackbox = { ...(caixaAlvo || {}), _meta_origem: "Bloco" };
                 const novas = dadosDoc.caixas.filter(c => c.id !== item.idSub);
-                await updateDoc(docRef, { caixas: novas });
+                const idsOut = [...new Set(novas.map(caixa => caixa?.id).filter(Boolean).map(String))];
+                await updateDoc(docRef, { caixas: novas, CaixasOut: idsOut, caixaIds: idsOut, caixasMigradas: true });
             }
         } else {
-            // Cenário: Nota, Tema ou Tópico Integral
-            payloadBlackbox = { ...dadosDoc, _meta_origem: "Documento" };
+            // CenÃ¡rio: Nota, Tema ou TÃ³pico Integral
+            payloadBlackbox = {
+                ...dadosDoc,
+                ...(caixasLocaisDaNota.length ? { caixas: caixasLocaisDaNota } : {}),
+                caixasPrincipais: Array.isArray(dadosDoc.caixas) ? dadosDoc.caixas : [],
+                caixasExternas: caixasLocaisDaNota,
+                _meta_origem: "Documento"
+            };
             await deleteDoc(docRef);
+            if (colecaoOriginal === "Share" && caixasLocaisDaNota.length) {
+                await Promise.all(caixasLocaisDaNota.map(caixa => apagarCaixaShare(db, item.id, caixa.id)));
+            } else if (caixasLocaisDaNota.length) {
+                await Promise.all(caixasLocaisDaNota.map(caixa =>
+                    apagarCaixaLocal(db, dadosDoc.userId || meuUid, caixa.id)
+                ));
+            }
         }
 
-        // 3. GRAVAR NA BLACKBOX (Com verificação de userId)
-        // 🚀 O SEGREDO: Se dadosDoc.userId for undefined, usa o meuUid. Nunca envia undefined.
+        // 3. GRAVAR NA BLACKBOX (Com verificaÃ§Ã£o de userId)
+        // ðŸš€ O SEGREDO: Se dadosDoc.userId for undefined, usa o meuUid. Nunca envia undefined.
         await addDoc(collection(db, "Blackbox"), {
             ...payloadBlackbox,
             deletedAt: serverTimestamp(),
@@ -290,12 +516,12 @@ async function processarEliminacaoSilenciosa(item) {
         });
 
     } catch (err) {
-        console.error(`❌ [RECYCLE] Erro ao processar item ${item.id}:`, err);
+        console.error(`âŒ [RECYCLE] Erro ao processar item ${item.id}:`, err);
     }
 }
 
 /**
- * PROMISE: Popup de confirmação reutilizável
+ * PROMISE: Popup de confirmaÃ§Ã£o reutilizÃ¡vel
  */
 function confirmarAcaoGeral(titulo, mensagem) {
     return new Promise((resolve) => {

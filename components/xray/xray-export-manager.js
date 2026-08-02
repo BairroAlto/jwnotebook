@@ -1,6 +1,8 @@
 // components/xray/xray-export-manager.js
 import { collection, query, where, getDocs, doc, getDoc, updateDoc, or, and } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
-import { dispararIndexacao } from '../editor/modulos/ai-search-indexer.js'; // 🚀 GATILHO GPS INTEGRADO
+import { dispararIndexacao } from '../editor/modulos/ai-search-indexer.js';
+import { hidratarNotaComCaixas, guardarCaixasDaNota, obterIdsCaixas } from '../local/caixas-repository.js'; // 🚀 GATILHO GPS INTEGRADO
+import { hidratarNotaShareComCaixas, guardarCaixasShareDaNota } from '../share/share-caixas-repository.js';
 
 let notaSelecionadaId = null;
 let colecaoAlvo = "Local";
@@ -155,7 +157,10 @@ async function executarConversao(db, auth) {
 
         if (!snap.exists()) throw new Error("Nota de destino não encontrada.");
 
-        const data = snap.data();
+        const dataBruta = snap.data();
+        const data = colecaoAlvo === "Local"
+            ? await hidratarNotaComCaixas({ ...dataBruta, onde: "local" }, db, auth, notaSelecionadaId)
+            : await hidratarNotaShareComCaixas({ ...dataBruta, onde: "share" }, db, notaSelecionadaId);
         let caixas = data.caixas || [];
 
         // Criar o novo bloco de conteúdo
@@ -182,7 +187,26 @@ async function executarConversao(db, auth) {
         caixas.forEach((c, i) => c.ordem = i + 1);
 
         // 1. GRAVAR NO FIRESTORE
-        await updateDoc(docRef, { caixas: caixas });
+        const destinoNormalizado = colecaoAlvo === "Local" || colecaoAlvo === "Share";
+        const idsDestino = [...new Set([...obterIdsCaixas(data), novaCaixa.id])];
+
+        if (colecaoAlvo === "Local") {
+            await guardarCaixasDaNota({
+                db,
+                userId: uid,
+                notaId: notaSelecionadaId,
+                caixas,
+                removerLegacy: true
+            });
+        } else {
+            await guardarCaixasShareDaNota({
+                db,
+                ownerId: data.userId || uid,
+                notaId: notaSelecionadaId,
+                caixas,
+                removerLegacy: true
+            });
+        }
         console.log(`✅ [X-RAY] Manuscrito exportado para nota ${notaSelecionadaId}`);
 
         // 2. 🚀 GATILHO NEXO GPS: Indexar o novo conteúdo imediatamente
@@ -190,6 +214,9 @@ async function executarConversao(db, auth) {
         dispararIndexacao(db, uid, notaSelecionadaId, {
             nome: data.nome,
             caixas: caixas,
+            caixaIds: destinoNormalizado ? idsDestino : undefined,
+            caixasMigradas: destinoNormalizado ? true : undefined,
+            onde: colecaoAlvo === "Share" ? "share" : "local",
             vincTopicos: data.vincTopicos || []
         });
 

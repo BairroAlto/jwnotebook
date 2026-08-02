@@ -389,14 +389,22 @@ export async function abrirNotaDaUrl(db, auth) {
     if (!notaId) return false;
 
     try {
-        const notaSnap = await getDoc(doc(db, 'Local', notaId));
+        const origem = params.get('onde') === 'share' ? 'share' : 'local';
+        const colecao = origem === 'share' ? 'Share' : 'Local';
+        const notaSnap = await getDoc(doc(db, colecao, notaId));
         if (!notaSnap.exists()) return false;
 
         const dados = notaSnap.data();
-        if (dados.userId !== auth.currentUser?.uid || dados.estado !== 'on' || dados.tipo === 'pasta') return false;
+        const uid = auth.currentUser?.uid;
+        const podeAbrirShare = origem === 'share' && (
+            dados.userId === uid ||
+            (dados.aprovado || []).includes(uid) ||
+            (dados.convidado || []).includes(uid)
+        );
+        if ((origem === 'local' && dados.userId !== uid) || (origem === 'share' && !podeAbrirShare) || dados.estado !== 'on' || dados.tipo === 'pasta') return false;
 
         const { abrirNotaNoEditor } = await import('../editor/editor.js');
-        await abrirNotaNoEditor(notaSnap.id, { ...dados, onde: 'local' }, db, auth, caixaId);
+        await abrirNotaNoEditor(notaSnap.id, { ...dados, onde: origem }, db, auth, caixaId);
         return true;
     } catch (erro) {
         console.error('[URL-NOTA] Não foi possível abrir a nota:', erro);

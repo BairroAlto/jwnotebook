@@ -1,6 +1,8 @@
 // components/topico-brain/topico-manager.js
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
 import { getFirestore, doc, updateDoc, getDoc, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { obterCaixasPorIds, obterNotasPorCaixas } from '../local/caixas-repository.js';
+import { obterCaixasShareAcessiveisPorIds, obterNotasSharePorCaixas } from '../share/share-caixas-repository.js';
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { firebaseConfig } from '../../firebase-config.js';
 import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
@@ -193,20 +195,26 @@ async function renderizarAbaCita(container) {
             return;
         }
 
-        const q = query(collection(db, "Local"), where("userId", "==", auth.currentUser.uid));
-        const snap = await getDocs(q);
-        let caixasEncontradas = [];
+        const idsNormalizados = [...new Set(ids.filter(Boolean).map(String))];
+        const localMap = await obterCaixasPorIds(db, auth.currentUser.uid, idsNormalizados);
+        const idsShare = idsNormalizados.filter(id => !localMap.has(id));
+        const shareMap = await obterCaixasShareAcessiveisPorIds(db, idsShare);
+        const [notasLocais, notasShare] = await Promise.all([
+            obterNotasPorCaixas(db, [...localMap.values()]),
+            obterNotasSharePorCaixas(db, shareMap.values())
+        ]);
+        const caixasEncontradas = [];
 
-        snap.forEach(docNota => {
-            const nota = docNota.data();
-            if (nota.estado !== "on") return; // 🛡️ Filtro Nota
+        localMap.forEach(caixa => {
+            const nota = notasLocais.get(caixa.localDocId);
+            if (!nota || nota.estado !== "on" || caixa.estado !== "on") return;
+            caixasEncontradas.push({ ...caixa, notaNome: nota.nome, notaId: caixa.localDocId, onde: "local" });
+        });
 
-            (nota.caixas || []).forEach(c => {
-                if (c.estado !== "on") return; // 🛡️ Filtro Caixa
-                if(ids.includes(c.id)) {
-                    caixasEncontradas.push({ ...c, notaNome: nota.nome, notaId: docNota.id });
-                }
-            });
+        shareMap.forEach(caixa => {
+            const nota = notasShare.get(caixa.shareId);
+            if (!nota || nota.estado !== "on" || caixa.estado !== "on") return;
+            caixasEncontradas.push({ ...caixa, notaNome: nota.nome, notaId: caixa.shareId, onde: "share" });
         });
 
         // Ordenar: Favoritos primeiro
@@ -221,7 +229,7 @@ async function renderizarAbaCita(container) {
                        onclick="event.stopPropagation(); window.toggleFavoritoCita('caixas', '${c.id}')"
                        style="position:absolute; top:12px; right:12px; color:${isFav ? '#fbbf24' : 'rgba(255,255,255,0.1)'}; cursor:pointer; z-index:10; font-size:14px;"></i>
                     
-                    <div onclick="window.irParaNotaECaixa('${c.notaId}', '${c.id}')">
+                    <div onclick="window.irParaNotaECaixa('${c.notaId}', '${c.id}', '${c.onde}')">
                         <div class="label-tipo" style="color:${config.cor}; margin-bottom:8px;">
                             <i class="${config.icon}"></i> ${config.nome}
                         </div>
@@ -255,7 +263,8 @@ async function renderizarAbaCita(container) {
 
         let html = "";
         for(const notaId of ids) {
-            const docSnap = await getDoc(doc(db, "Local", notaId));
+            const colecao = onde === "share" ? "Share" : "Local";
+    const docSnap = await getDoc(doc(db, colecao, notaId));
             if(docSnap.exists()) {
                 const d = docSnap.data();
                 if (d.estado !== "on") continue; // 🛡️ Filtro Nota
@@ -317,13 +326,14 @@ window.toggleFavoritoCita = async (tipo, idAlvo) => {
     }
 };
 
-window.irParaNotaECaixa = async (notaId, caixaId) => {
-    const docSnap = await getDoc(doc(db, "Local", notaId));
+window.irParaNotaECaixa = async (notaId, caixaId, onde = "local") => {
+    const colecao = onde === "share" ? "Share" : "Local";
+    const docSnap = await getDoc(doc(db, colecao, notaId));
     if (docSnap.exists()) {
         if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
-            window.abrirNotaNoBook(notaId, { ...docSnap.data(), onde: "local" }, db, auth, caixaId);
+            window.abrirNotaNoBook(notaId, { ...docSnap.data(), onde }, db, auth, caixaId);
         } else {
-            abrirNotaNoEditor(notaId, docSnap.data(), db, auth, caixaId);
+            abrirNotaNoEditor(notaId, { ...docSnap.data(), onde }, db, auth, caixaId);
         }
     }
 };
@@ -332,7 +342,7 @@ window.abrirNotaPeloBrain = async (notaId) => {
     const docSnap = await getDoc(doc(db, "Local", notaId));
     if (docSnap.exists()) {
         if (window.NotaBookMode === "book" && typeof window.abrirNotaNoBook === "function") {
-            window.abrirNotaNoBook(notaId, { ...docSnap.data(), onde: "local" }, db, auth);
+            window.abrirNotaNoBook(notaId, { ...docSnap.data(), onde }, db, auth);
         } else {
             abrirNotaNoEditor(notaId, docSnap.data(), db, auth);
         }

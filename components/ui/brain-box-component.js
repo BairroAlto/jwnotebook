@@ -13,7 +13,7 @@ export const BrainBoxFactory = {
      */
     criar: (data, index, actions) => {
         const { id, conteudo } = data;
-        const { onUpdate, onMove, onDelete, onFocus, onBlur } = actions;
+        const { onUpdate, onMove, onDelete, onSend, onFocus, onBlur } = actions;
 
         // 1. CONTENTOR PRINCIPAL
         const container = document.createElement('div');
@@ -43,6 +43,7 @@ export const BrainBoxFactory = {
             <div style="display:flex; gap:14px; color:rgba(255,255,255,0.25); font-size:11px;">
                 <i class="fa-solid fa-chevron-up btn-up" title="Mover para cima" style="cursor:pointer; transition: 0.2s;"></i>
                 <i class="fa-solid fa-chevron-down btn-down" title="Mover para baixo" style="cursor:pointer; transition: 0.2s;"></i>
+                <i class="fa-solid fa-paper-plane btn-send" title="Enviar para uma nota" style="cursor:pointer; transition: 0.2s;"></i>
             </div>
             <i class="fa-solid fa-trash-can btn-del" title="Eliminar" style="color:#f87171; font-size:11px; cursor:pointer; opacity:0.6; transition: 0.2s;"></i>
         `;
@@ -100,6 +101,7 @@ export const BrainBoxFactory = {
         const btnUp = toolbar.querySelector('.btn-up');
         const btnDown = toolbar.querySelector('.btn-down');
         const btnDel = toolbar.querySelector('.btn-del');
+        const btnSend = toolbar.querySelector('.btn-send');
 
         // Hover Effects nos ícones
         btnUp.onmouseenter = () => btnUp.style.color = "white";
@@ -108,11 +110,14 @@ export const BrainBoxFactory = {
         btnDown.onmouseleave = () => btnDown.style.color = "";
         btnDel.onmouseenter = () => btnDel.style.opacity = "1";
         btnDel.onmouseleave = () => btnDel.style.opacity = "0.6";
+        btnSend.onmouseenter = () => btnSend.style.color = "#a5b4fc";
+        btnSend.onmouseleave = () => btnSend.style.color = "";
 
         // Clique
         btnUp.onclick = (e) => { e.stopPropagation(); if (onMove) onMove(index, -1); };
         btnDown.onclick = (e) => { e.stopPropagation(); if (onMove) onMove(index, 1); };
         btnDel.onclick = (e) => { e.stopPropagation(); if (onDelete) onDelete(id); };
+        btnSend.onclick = (e) => { e.stopPropagation(); if (onSend) onSend(data); };
 
         // Montagem do elemento
         body.appendChild(textarea);

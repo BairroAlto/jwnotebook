@@ -3,6 +3,7 @@ import {
     collection, addDoc, getDocs, query, where, serverTimestamp, and, writeBatch, doc
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { abrirNotaNoEditor } from '../editor/editor.js';
+import { guardarCaixasShareDaNota } from './share-caixas-repository.js';
 
 export function inicializarCriacaoShare(db, auth) {
     const btnAddShare = document.getElementById('btn-add-share'); // O + na barra lateral Share
@@ -19,11 +20,11 @@ export function inicializarCriacaoShare(db, auth) {
 
     if (!btnAddShare) return;
 
-    // 1. ABRIR POPUP DE OPÇÕES (Nota ou Pasta)
+    // 1. ABRIR POPUP DE OPÃ‡Ã•ES (Nota ou Pasta)
     btnAddShare.onclick = () => overlayOpcoes.classList.add('active');
     btnFechar.onclick = () => overlayOpcoes.classList.remove('active');
 
-    // 2. LÓGICA PARA CRIAR NOTA
+    // 2. LÃ“GICA PARA CRIAR NOTA
     btnCriarNota.onclick = async () => {
         if (!auth.currentUser) return;
         
@@ -34,7 +35,7 @@ export function inicializarCriacaoShare(db, auth) {
             btnCriarNota.disabled = true;
             btnCriarNota.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> A criar...';
 
-            // CALCULAR ORDEM: Filtramos por userId para respeitar as Regras de Segurança
+            // CALCULAR ORDEM: Filtramos por userId para respeitar as Regras de SeguranÃ§a
             const qOrdem = query(
                 collection(db, "Share"), 
                 and(
@@ -69,6 +70,19 @@ export function inicializarCriacaoShare(db, auth) {
                 convidado: [],
                 modo: ["normal"],
                 vistoPor: [uid],
+
+                // LocalizaÃ§Ã£o e Ordem Privada
+                [uid]: {
+                    pastapai: pastaPai,
+                    ordem: novaOrdem
+                }
+            };
+
+            const docRef = await addDoc(collection(db, "Share"), dadosNovaNota);
+            await guardarCaixasShareDaNota({
+                db,
+                ownerId: uid,
+                notaId: docRef.id,
                 caixas: [{
                     id: idBlocoInicial,
                     tipo: "contentor",
@@ -78,15 +92,14 @@ export function inicializarCriacaoShare(db, auth) {
                     estado: "on",
                     ordem: 1
                 }],
-                // Localização e Ordem Privada
-                [uid]: {
-                    pastapai: pastaPai,
-                    ordem: novaOrdem
-                }
-            };
-
-            const docRef = await addDoc(collection(db, "Share"), dadosNovaNota);
+                removerLegacy: true
+            });
             
+            dadosNovaNota.CaixasOut = [idBlocoInicial];
+            dadosNovaNota.caixaIds = [idBlocoInicial];
+            dadosNovaNota.caixasMigradas = true;
+            dadosNovaNota.caixas = [{ id: idBlocoInicial, tipo: "contentor", conteudo: "", timestamp: new Date().toISOString(), protecao: "fechado", estado: "on", ordem: 1 }];
+
             overlayOpcoes.classList.remove('active');
             abrirNotaNoEditor(docRef.id, dadosNovaNota, db, auth);
 
@@ -98,16 +111,16 @@ export function inicializarCriacaoShare(db, auth) {
         }
     };
 
-    // 3. LÓGICA PARA ABRIR FORMULÁRIO DE PASTA
+    // 3. LÃ“GICA PARA ABRIR FORMULÃRIO DE PASTA
     btnAbrirPastaForm.onclick = () => {
         overlayOpcoes.classList.remove('active');
         popupNome.classList.add('active');
         inputNome.focus();
-        // Sinalizamos ao botão global que estamos em modo Share
+        // Sinalizamos ao botÃ£o global que estamos em modo Share
         btnConfirmarPasta.dataset.modo = "share";
     };
 
-    // 4. LÓGICA DE CONFIRMAÇÃO DA PASTA
+    // 4. LÃ“GICA DE CONFIRMAÃ‡ÃƒO DA PASTA
     btnConfirmarPasta.addEventListener('click', async () => {
         if (btnConfirmarPasta.dataset.modo !== "share") return;
 
@@ -120,7 +133,7 @@ export function inicializarCriacaoShare(db, auth) {
         btnConfirmarPasta.innerText = "A criar...";
 
         try {
-            // CALCULAR ORDEM: Filtramos por userId para respeitar as Regras de Segurança
+            // CALCULAR ORDEM: Filtramos por userId para respeitar as Regras de SeguranÃ§a
             const qOrdem = query(
                 collection(db, "Share"), 
                 and(
@@ -153,7 +166,7 @@ export function inicializarCriacaoShare(db, auth) {
                 icon: "folder",
                 pin: "nao",
                 aprovado: [],
-                // Localização e Ordem Privada
+                // LocalizaÃ§Ã£o e Ordem Privada
                 [uid]: {
                     pastapai: pastaPai,
                     ordem: novaOrdem

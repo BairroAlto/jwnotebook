@@ -1,6 +1,8 @@
 // components/topico-brain/topico-cita.js
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
 import { getFirestore, collection, query, where, getDocs, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { obterCaixasPorIds, obterNotasPorCaixas } from '../local/caixas-repository.js';
+import { obterCaixasShareAcessiveisPorIds, obterNotasSharePorCaixas } from '../share/share-caixas-repository.js';
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { firebaseConfig } from '../../firebase-config.js';
 import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
@@ -44,25 +46,39 @@ export async function abrirSubtopicoNoBrain(subtopico) {
         const ids = subtopico.caixas || [];
         if(ids.length === 0) { display.innerHTML = `<p style="text-align:center; color:gray; font-size:11px; padding:20px;">Nenhuma caixa vinculada.</p>`; return; }
 
-        const q = query(collection(db, "Local"), where("userId", "==", auth.currentUser.uid));
-        const snap = await getDocs(q);
-        let html = "";
+        const idsNormalizados = [...new Set(ids.filter(Boolean).map(String))];
+        const localMap = await obterCaixasPorIds(db, auth.currentUser.uid, idsNormalizados);
+        const idsShare = idsNormalizados.filter(id => !localMap.has(id));
+        const shareMap = await obterCaixasShareAcessiveisPorIds(db, idsShare);
+        const [notasLocais, notasShare] = await Promise.all([
+            obterNotasPorCaixas(db, [...localMap.values()]),
+            obterNotasSharePorCaixas(db, shareMap.values())
+        ]);
+        const caixasEncontradas = [];
 
-        snap.forEach(docNota => {
-            const nota = docNota.data();
-            (nota.caixas || []).forEach(c => {
-                if(ids.includes(c.id)) {
-                    const config = IDENTIDADE_FERRAMENTAS[c.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
-                    const resumo = c.titulo || (c.conteudo ? c.conteudo.substring(0, 60) + "..." : "Sem conteúdo");
-                    html += `
-                        <div class="indice-card" style="border-left-color:${config.cor}; background:rgba(255,255,255,0.03);" onclick="window.irParaNotaECaixa('${docNota.id}', '${c.id}')">
-                            <div class="label-tipo" style="color:${config.cor}"><i class="${config.icon}"></i> ${config.nome}</div>
-                            <div class="resumo-texto">${resumo}</div>
-                            <div style="font-size:8px; opacity:0.4; text-align:right; margin-top:4px;">Em: ${nota.nome}</div>
-                        </div>`;
-                }
-            });
+        localMap.forEach(caixa => {
+            const nota = notasLocais.get(caixa.localDocId);
+            if (nota?.estado === "on" && caixa.estado === "on") {
+                caixasEncontradas.push({ ...caixa, notaNome: nota.nome, notaId: caixa.localDocId, onde: "local" });
+            }
         });
+        shareMap.forEach(caixa => {
+            const nota = notasShare.get(caixa.shareId);
+            if (nota?.estado === "on" && caixa.estado === "on") {
+                caixasEncontradas.push({ ...caixa, notaNome: nota.nome, notaId: caixa.shareId, onde: "share" });
+            }
+        });
+
+        caixasEncontradas.forEach(caixa => {
+            const config = IDENTIDADE_FERRAMENTAS[caixa.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
+            const resumo = caixa.titulo || (caixa.conteudo ? caixa.conteudo.substring(0, 60) + "..." : "Sem conteúdo");
+            html += '<div class="indice-card" style="border-left-color:' + config.cor + '; background:rgba(255,255,255,0.03);" onclick="window.irParaNotaECaixa(\'' + caixa.notaId + '\', \'' + caixa.id + '\', \'' + caixa.onde + '\')">' +
+                '<div class="label-tipo" style="color:' + config.cor + '"><i class="' + config.icon + '"></i> ' + config.nome + '</div>' +
+                '<div class="resumo-texto">' + resumo + '</div>' +
+                '<div style="font-size:8px; opacity:0.4; text-align:right; margin-top:4px;">Em: ' + caixa.notaNome + '</div>' +
+                '</div>';
+        });
+
         display.innerHTML = html || "Conteúdo não encontrado.";
     };
 
