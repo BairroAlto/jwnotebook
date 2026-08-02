@@ -1,4 +1,5 @@
-const CACHE_NAME = 'notabook-x-v36';
+// Incrementar esta versão força a criação de uma cache limpa em todos os clientes.
+const CACHE_NAME = 'notabook-x-v37-cache-reset';
 
 const PRE_CACHE_ASSETS = [
   './',
@@ -35,7 +36,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => Promise.all(
       keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))
-    ))
+    )).then(() => self.clients.claim())
   );
 });
 
