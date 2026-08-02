@@ -305,7 +305,6 @@
         carregarComponente('area-popup-imagens', 'components/popup/popup-imagens-form.html'),
         carregarComponente('area-popup-sumariar', 'components/popup/popup-sumariar-form.html'),
         carregarComponente('area-popup-sumar-global', 'components/popup/popup-sumariar-global.html')
-        
     ]);
 
     // 2. INICIAR MOTORES
@@ -324,82 +323,71 @@
         await new Promise((resolve) => setTimeout(resolve, 500));
         loadingScreen.style.display = 'none';
     }
-  onAuthStateChanged(authInstance, async (user) => {
-    const loadingScreen = document.getElementById('loading-screen');
-    const loginScreen = document.getElementById('login-screen');
-    const areaEsquerda = document.getElementById('area-esquerda');
-    const overlay = document.getElementById('mobile-overlay');
 
-    if (user) {
-        console.log("ðŸš€ SessÃ£o ativa:", user.email);
-        
-        // 1. Esconder ecrÃ£ de login
-        if (loginScreen) loginScreen.style.display = 'none';
+    onAuthStateChanged(authInstance, async (user) => {
+        const loadingScreen = document.getElementById('loading-screen');
+        const loginScreen = document.getElementById('login-screen');
+        const areaEsquerda = document.getElementById('area-esquerda');
+        const overlay = document.getElementById('mobile-overlay');
 
-        const preCargaNotaArranque = precarregarNotaArranque(db, authInstance);
-        const preCargaResolved = await preCargaNotaArranque;
-        const hasArranqueMobile = isMobileViewport() && !!preCargaResolved;
+        if (user) {
+            console.log("🚀 Sessão ativa:", user.email);
+            
+            // 1. Esconder ecrã de login
+            if (loginScreen) loginScreen.style.display = 'none';
 
-        // 2. FORÃ‡AR BARRA ABERTA NO MOBILE (apenas se nÃ£o houver nota de arranque ativa)
-        if (isMobileViewport()) {
-            if (hasArranqueMobile) {
-                areaEsquerda.classList.add('closed');
-                overlay.classList.remove('active');
-            } else {
-                areaEsquerda.classList.remove('closed'); // Garante que NÃƒO estÃ¡ fechada
-                overlay.classList.add('active'); // Ativa o baÃ§o para o editor ficar atrÃ¡s
+            const hasUrlNota = new URLSearchParams(window.location.search).has('nota');
+            const preCargaNotaArranque = hasUrlNota ? null : precarregarNotaArranque(db, authInstance);
+            const promessaNotaUrl = hasUrlNota ? abrirNotaDaUrl(db, authInstance) : Promise.resolve(false);
+            const preCargaResolved = hasUrlNota ? null : await preCargaNotaArranque;
+            const hasArranqueMobile = isMobileViewport() && (!!preCargaResolved || hasUrlNota);
+
+            // 2. FORÇAR BARRA ABERTA NO MOBILE
+            if (isMobileViewport()) {
+                if (hasArranqueMobile) {
+                    areaEsquerda.classList.add('closed');
+                    overlay.classList.remove('active');
+                } else {
+                    areaEsquerda.classList.remove('closed');
+                    overlay.classList.add('active');
+                }
             }
+
+            // 3. INICIALIZAR TUDO
+            inicializarLeituraLocal(db, authInstance);
+            inicializarCriacaoPasta(db, authInstance);
+            inicializarCriacaoNota(db, authInstance);
+            inicializarLists(db, authInstance); 
+
+            const [preferencias, abriuNotaDaUrl] = await Promise.all([
+                inicializarSettings(db, authInstance),
+                promessaNotaUrl
+            ]);
+            if (!abriuNotaDaUrl) await abrirNotaDeArranque(db, authInstance, preferencias, preCargaResolved);
+
+            MobileBibleBar.iniciar();
+            inicializarLeituraShare(db, authInstance);
+            inicializarCriacaoShare(db, authInstance);
+            inicializarAmigos(db, authInstance);
+            inicializarGestaoLocal();
+            inicializarLeituraPins(db, authInstance);
+            iniciarSelectorBiblia();
+            vigiarConvitesPendentes(db, authInstance);
+            vigiarConvitesEntrada(db, authInstance);
+
+            await removerEcraCarregamento(loadingScreen);
+
+        } else {
+            setTimeout(() => {
+                if (!authInstance.currentUser) {
+                    if (loadingScreen) loadingScreen.style.display = 'none';
+                    if (loginScreen) loginScreen.style.display = 'flex';
+                }
+            }, 1000);
         }
+    });
 
-        // 3. INICIALIZAR TUDO
-        // Chamamos a leitura local primeiro para popular o menu que estÃ¡ aberto
-        inicializarLeituraLocal(db, authInstance);
-        
-        // Restantes inicializaÃ§Ãµes
-        inicializarCriacaoPasta(db, authInstance);
-        inicializarCriacaoNota(db, authInstance);
-        inicializarLists(db, authInstance); 
-        const preferencias = await inicializarSettings(db, authInstance);
-        const abriuNotaDaUrl = await abrirNotaDaUrl(db, authInstance);
-        if (!abriuNotaDaUrl) await abrirNotaDeArranque(db, authInstance, preferencias, preCargaResolved);
-        MobileBibleBar.iniciar();
-        inicializarLeituraShare(db, authInstance);
-        inicializarCriacaoShare(db, authInstance);
-        inicializarAmigos(db, authInstance);
-        inicializarGestaoLocal();
-        inicializarLeituraPins(db, authInstance);
-        iniciarSelectorBiblia();
-        vigiarConvitesPendentes(db, authInstance);
-        vigiarConvitesEntrada(db, authInstance);
-
-        // 3. Remover o loading apenas depois de a nota de arranque estar pronta
-        await removerEcraCarregamento(loadingScreen);
-
-    } else {
-        // ðŸš€ O SEGREDO: Esperamos 1 segundo. Se o Firebase nÃ£o encontrar sessÃ£o, mostra o login.
-        setTimeout(() => {
-            if (!authInstance.currentUser) {
-                if (loadingScreen) loadingScreen.style.display = 'none';
-                if (loginScreen) loginScreen.style.display = 'flex';
-            }
-        }, 1000);
-    }
-});
-
-    // 4. GESTOR DE CLIQUES GLOBAL
     document.addEventListener('click', (e) => {
-        if (e.target.closest('#btn-close-bottom-sheet')) {
-            MobileBottomSheet.fechar();
-            return;
-        }
-
-        const btnFecharPopup = e.target.closest('.popup-header button:not(#btn-close-bottom-sheet):not(#btn-apagar-modelo)');
-        if (btnFecharPopup || e.target.closest('.btn-cancelar')) {
-            const popup = e.target.closest('.popup-overlay');
-            if (popup) popup.classList.remove('active');
-            return;
-        }
-
         if (e.target.closest('#btn-add-novo-inline, #btn-add-share')) {
             const popupId = e.target.closest('#btn-add-share') ? 'popup-criar-share-overlay' : 'popup-criar-overlay';
             const popup = document.getElementById(popupId);
