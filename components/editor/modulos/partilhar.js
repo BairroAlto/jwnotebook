@@ -11,6 +11,8 @@ let caixaAtual = null;
 let notaAtualId = null;
 let callbackGravar = null;
 let abaPartilhaAtiva = "Local"; 
+let partilhaDb = null;
+let partilhaAuth = null;
 
 /**
  * 1. FUNÇÕES GLOBAIS DE INTERFACE (WINDOW)
@@ -60,7 +62,7 @@ export function iniciarSistemaPartilha(db, auth, callbackUpdate) {
 /**
  * 3. ABERTURA DO POPUP
  */
-export async function abrirPopupPartilhar(caixa, notaId, callbackUpdate) {
+export async function abrirPopupPartilhar(caixa, notaId, callbackUpdate, dbOverride = null, authOverride = null) {
     const idReal = notaId || window.notaAbertaId;
     
     if (!idReal || !caixa) {
@@ -71,6 +73,8 @@ export async function abrirPopupPartilhar(caixa, notaId, callbackUpdate) {
     caixaAtual = caixa;
     notaAtualId = idReal;
     callbackGravar = callbackUpdate;
+    partilhaDb = dbOverride || window.db || null;
+    partilhaAuth = authOverride || window.auth || null;
     abaPartilhaAtiva = "Local"; 
 
     let overlay = document.getElementById('popup-partilhar-overlay');
@@ -104,11 +108,14 @@ async function carregarDadosParaAlvo() {
 
     container.innerHTML = `<div style="text-align:center; padding:30px;"><i class="fa-solid fa-circle-notch fa-spin" style="color:var(--primary);"></i></div>`;
 
-    const db = getFirestore();
-    const auth = getAuth();
+    const db = partilhaDb || getFirestore();
+    const auth = partilhaAuth || getAuth();
     const uid = auth.currentUser?.uid;
 
-    if (!uid) return;
+    if (!uid) {
+        container.innerHTML = `<p style="text-align:center; color:var(--text-muted); font-size:11px; padding:20px;">A sessão ainda não está disponível.</p>`;
+        return;
+    }
 
     try {
         let q;
@@ -190,8 +197,8 @@ function renderizarNivelArvore(container, listaCompleta, paiId) {
  * 6. MOTOR DE CLONAGEM (AÇÃO FINAL COM ATUALIZAÇÃO DE ÍNDICE)
  */
 async function enviarCopiaParaNota(idDestino, nomeDestino, abaAlvo) {
-    const db = getFirestore();
-    const auth = getAuth();
+    const db = partilhaDb || getFirestore();
+    const auth = partilhaAuth || getAuth();
     const colecaoDestino = (abaAlvo === "Share") ? "Share" : "Local";
 
     try {

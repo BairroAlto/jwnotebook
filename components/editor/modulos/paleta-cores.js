@@ -114,7 +114,7 @@ function vincularCliquesAbas() {
  * ABRIR POPUP DE CORES E MUTAÃ‡ÃƒO (CENTRO DE PERSONALIZAÃ‡ÃƒO)
  * VersÃ£o Master: Auto-vÃ­nculo de abas e correÃ§Ã£o de Z-Index para popups sobrepostos.
  */
-export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTemporario = null) {
+export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTemporario = null, opcoes = {}) {
     console.log("ðŸŽ¨ [PALETA] Iniciando painel para:", caixaAlvo.tipo);
     caixaParaColorir = caixaAlvo;
 
@@ -126,11 +126,25 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
     const listaDest = document.getElementById('lista-cores-destaque');
     const listaFoco = document.getElementById('lista-cores-foco');
     const conteudoFundir = document.getElementById('fundir-conteudo');
+    const btnDestaques = document.querySelector('.tab-cor[data-target="tab-destaques"]');
+    const btnFundir = document.querySelector('.tab-cor[data-target="tab-fundir"]');
 
     if (!overlay) {
         console.error("âŒ Erro: Contentor #popup-cores-overlay nÃ£o encontrado no DOM.");
         return;
     }
+
+    // Contentores usam apenas Focos e Mutação. Destaques e Fundir não se
+    // aplicam a este tipo de caixa e não devem aparecer neste contexto.
+    const isContentor = opcoes.apenasFocosMutacao === true || caixaAlvo?.tipo === 'contentor' || caixaAlvo?.tipo === 'contentor-biblia';
+    if (btnDestaques) btnDestaques.style.setProperty('display', isContentor ? 'none' : 'inline-flex', isContentor ? 'important' : '');
+    if (btnFundir) btnFundir.style.setProperty('display', isContentor ? 'none' : 'inline-flex', isContentor ? 'important' : '');
+    overlay.classList.toggle('paleta-apenas-focos-mutacao', isContentor);
+    if (isContentor) {
+        overlay.querySelectorAll('.tab-cor[data-target="tab-destaques"], .tab-cor[data-target="tab-fundir"]')
+            .forEach(tab => tab.style.setProperty('display', 'none', 'important'));
+    }
+    if (isContentor && abaAlvo === 'tab-destaques') abaAlvo = 'tab-focos';
 
     // ========================================================
     // ðŸš€ 1. MOTOR DE ATIVAÃ‡ÃƒO DE ABAS (RESOLVE O PROBLEMA DO BRAIN)
@@ -176,8 +190,7 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
     // ========================================================
     // ðŸŽ¨ 3. RENDERIZAÃ‡ÃƒO DE DESTAQUES (CORES DE FUNDO)
     // ========================================================
-    const btnFundir = document.querySelector('.tab-cor[data-target="tab-fundir"]');
-    if (btnFundir) btnFundir.style.display = "inline-flex";
+    if (btnFundir && !isContentor) btnFundir.style.display = "inline-flex";
     FundirManager.renderizar(
         caixaParaColorir,
         conteudoFundir,
@@ -301,7 +314,7 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
                 }
                 
                 if (isMobileViewport()) overlay.classList.remove('active');
-                else abrirPaleta(caixaParaColorir, "tab-focos", callbackTemporario);
+                else abrirPaleta(caixaParaColorir, "tab-focos", callbackTemporario, opcoes);
             };
             listaFoco.appendChild(row);
         });
