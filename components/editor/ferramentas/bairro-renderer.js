@@ -110,6 +110,7 @@ function adicionarNovaLinhaNoPai({ caixa, pai, filhoAtual, onTextoAlterado, rend
         if (novoEl) {
             if (novoEl.matches('input')) {
                 novoEl.focus();
+                novoEl.setSelectionRange(novoEl.value.length, novoEl.value.length);
             } else {
                 novoEl.click();
             }
@@ -129,6 +130,7 @@ function confirmarERemoverFilho({ caixa, filho, onTextoAlterado, renderizar }) {
 }
 
 function editarTituloFilhoInline({ caixa, pai, filho, elemento, onTextoAlterado, renderizar }) {
+    let criouNovaLinha = false;
     const input = criarCampoBairro({
         value: filho.nome,
         placeholder: 'Nome da tarefa...',
@@ -142,6 +144,7 @@ function editarTituloFilhoInline({ caixa, pai, filho, elemento, onTextoAlterado,
     input.addEventListener('keydown', event => {
         if (event.key === 'Enter') {
             event.preventDefault();
+            criouNovaLinha = true;
             input.blur();
             adicionarNovaLinhaNoPai({ caixa, pai, filhoAtual: filho, onTextoAlterado, renderizar });
         } else if ((event.key === 'Backspace' || event.key === 'Delete') && !event.target.value.trim()) {
@@ -151,6 +154,7 @@ function editarTituloFilhoInline({ caixa, pai, filho, elemento, onTextoAlterado,
         }
     });
     input.addEventListener('blur', () => {
+        if (criouNovaLinha) return;
         setTimeout(() => { if (filho.nome.trim()) renderizar(); }, 150);
     });
     elemento.replaceWith(input);
@@ -236,6 +240,7 @@ function renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar }) {
         });
     } else {
         nome = criarCampoBairro({ value: filho.nome, placeholder: 'Nome da tarefa...', className: 'bairro-filho-nome' });
+        let criouNovaLinha = false;
         nome.addEventListener('input', event => {
             filho.nome = event.target.value;
             onTextoAlterado(caixa);
@@ -244,6 +249,7 @@ function renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar }) {
         nome.addEventListener('keydown', event => {
             if (event.key === 'Enter') {
                 event.preventDefault();
+                criouNovaLinha = true;
                 nome.blur();
                 adicionarNovaLinhaNoPai({ caixa, pai, filhoAtual: filho, onTextoAlterado, renderizar });
             } else if ((event.key === 'Backspace' || event.key === 'Delete') && !event.target.value.trim()) {
@@ -253,6 +259,7 @@ function renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar }) {
             }
         });
         nome.addEventListener('blur', () => {
+            if (criouNovaLinha) return;
             setTimeout(() => { if (filho.nome.trim()) renderizar(); }, 150);
         });
     }
