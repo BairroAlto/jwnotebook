@@ -746,6 +746,7 @@ function mostrarToolbar() {
     const toolbar = document.getElementById('bible-selection-toolbar');
     if (!toolbar) return;
     const temSublinhado = state.selectedGroupIds.length > 0;
+    toolbar.classList.toggle('bible-selection-toolbar-actions-active', temSublinhado);
     toolbar.querySelector('.bible-selection-remove')?.classList.toggle('hidden', !temSublinhado);
     toolbar.querySelectorAll('.bible-selection-color').forEach(colorButton => colorButton.classList.toggle('hidden', temSublinhado));
     toolbar.querySelector('.bible-selection-toolbar-actions')?.classList.toggle('hidden', !temSublinhado);
@@ -759,6 +760,7 @@ function esconderToolbar() {
     const toolbar = document.getElementById('bible-selection-toolbar');
     if (!toolbar) return;
     toolbar.querySelector('.bible-selection-remove')?.classList.add('hidden');
+    toolbar.classList.remove('bible-selection-toolbar-actions-active');
     toolbar.querySelector('.bible-selection-toolbar-actions')?.classList.add('hidden');
     toolbar.querySelector('.bible-selection-attach-actions')?.classList.add('hidden');
     toolbar.querySelectorAll('.bible-selection-color').forEach(colorButton => colorButton.classList.remove('hidden'));
