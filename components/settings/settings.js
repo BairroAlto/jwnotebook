@@ -161,6 +161,9 @@ function aplicarToggles(prefs) {
     const shareAnswers = document.getElementById('check-partilhar-respostas');
     if (shareAnswers) shareAnswers.checked = prefs.shareAnswers === "on";
 
+    const sublinhadosBibliaLists = document.getElementById('check-sublinhados-biblia-lists');
+    if (sublinhadosBibliaLists) sublinhadosBibliaLists.checked = prefs.sublinhadosBibliaLists === true;
+
     const leftCollapse = document.getElementById('check-colapso-coluna-esquerda');
     if (leftCollapse) leftCollapse.checked = Boolean(prefs.leftColumnCollapseButton);
     aplicarPreferenciaBotaoColapsoColunaEsquerda(Boolean(prefs.leftColumnCollapseButton));
@@ -199,6 +202,15 @@ function bindAvatares(db, uid, currentAvatar) {
 
 function bindToggles(db, auth) {
     const uid = auth.currentUser?.uid;
+    const sublinhadosBibliaLists = document.getElementById('check-sublinhados-biblia-lists');
+    if (sublinhadosBibliaLists) {
+        sublinhadosBibliaLists.onchange = async () => {
+            userPrefs.sublinhadosBibliaLists = sublinhadosBibliaLists.checked;
+            window.NotaBookUserPrefs = { ...(window.NotaBookUserPrefs || {}), sublinhadosBibliaLists: sublinhadosBibliaLists.checked };
+            await guardarPreferenciasUtilizador(db, uid, { sublinhadosBibliaLists: sublinhadosBibliaLists.checked });
+            window.dispatchEvent(new CustomEvent('preferencias:sublinhados-biblia-lists'));
+        };
+    }
     const checkColapso = document.getElementById('check-colapso-titulos');
     if (checkColapso) {
         checkColapso.onchange = async (e) => {
