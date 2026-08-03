@@ -22,19 +22,31 @@ export function iniciarXSat() {
     const botoesNum = document.querySelectorAll('.xsat-num');
     const subNav = document.getElementById('xsat-sub-nav');
 
- botoesNum.forEach(btn => {
-    btn.onclick = () => {
-        const num = btn.dataset.num;
-        
-        botoesNum.forEach(b => b.classList.remove('active'));
+    botoesNum.forEach(btn => {
+        btn.onclick = () => {
+            const num = btn.dataset.num;
+
+            // Ao mudar de canal, fecha qualquer fonte X-SAT contextual aberta.
+            window.fecharFonteXSatMobile?.({ restoreOnly: true });
+            
+            botoesNum.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         
         canalSelecionadoUI = num;
 
         if (num === "6") {
                 if (subNav) subNav.style.display = 'none';
-                // 🚀 CHAMADA DIRETA SEM CACHE
-                AIController.renderizarLista(); 
+                const contextoVersiculo = window.bibleVersiculoAIContext;
+                if (contextoVersiculo?.texto) {
+                    import('./ai-bridge-external.js').then(({ AIBridge }) => {
+                        AIBridge.iniciarAnaliseFonteExterna(
+                            contextoVersiculo.texto,
+                            contextoVersiculo.referencia
+                        );
+                    });
+                } else {
+                    AIController.renderizarLista();
+                }
         } else {
                 // MODO SATÉLITE (1-5): Mostra sub-nav e resultados
                 if (subNav) subNav.style.display = 'flex';

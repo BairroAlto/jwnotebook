@@ -21,6 +21,10 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth, tStart =
     if (globalTabs) globalTabs.style.display = 'none';
 
     versiculoAtivoMemoria = { livro, cap, ver, texto, referenciaSublinhado: highlightContext, _tStart: tStart };
+    window.bibleVersiculoAIContext = {
+        texto,
+        referencia: `${livro} ${cap}:${ver}`
+    };
 
     container.innerHTML = "";
     container.className = "cosmos-brain-wrapper"; 
