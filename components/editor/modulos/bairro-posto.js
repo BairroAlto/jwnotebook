@@ -556,6 +556,16 @@ function configurarAgendaBairro() {
         };
     }
 
+    const toggleDataRealizacao = document.getElementById('bairro-posto-mostrar-data-realizacao');
+    if (toggleDataRealizacao) {
+        toggleDataRealizacao.checked = Boolean(bairro.mostrarDataRealizacaoTarefa);
+        toggleDataRealizacao.onchange = () => {
+            bairro.mostrarDataRealizacaoTarefa = toggleDataRealizacao.checked;
+            estadoAtual.onTextoAlterado(bairro);
+            estadoAtual.renderizar?.();
+        };
+    }
+
     const toggleOrganizar = document.getElementById('bairro-posto-organizar-data');
     const containerAgrupar = document.getElementById('bairro-posto-agrupar-container');
     if (toggleOrganizar) {

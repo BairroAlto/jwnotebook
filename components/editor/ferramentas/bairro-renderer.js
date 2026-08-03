@@ -7,21 +7,26 @@ function alterar(caixa, onTextoAlterado, renderizar) {
     renderizar();
 }
 
+function registarEstadoTarefa(filho, concluido) {
+    const agora = Date.now();
+    filho.concluido = concluido;
+    filho.timestamp = agora;
+    filho.timestampRealizacao = concluido ? agora : null;
+}
+
 function alterarEstadoFilho({ caixa, pai, filho, linha, onTextoAlterado, renderizar }) {
     if (filho.__ocultarTimer) {
         clearTimeout(filho.__ocultarTimer);
         delete filho.__ocultarTimer;
-        filho.concluido = false;
+        registarEstadoTarefa(filho, false);
         filho.oculto = false;
-        filho.timestamp = Date.now();
         linha.classList.remove('bairro-filho--concluido', 'bairro-filho--a-ocultar');
         onTextoAlterado(caixa, { tipo: 'tarefa_reaberta' });
         renderizar();
         return;
     }
 
-    filho.concluido = !filho.concluido;
-    filho.timestamp = Date.now();
+    registarEstadoTarefa(filho, !filho.concluido);
 
     if (filho.concluido && pai.ocultarJaChecados) {
         onTextoAlterado(caixa, { tipo: 'tarefa_concluida' });
@@ -255,6 +260,15 @@ function renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar }) {
     const acoes = criarGrupoBairro();
     const actas = criarActasButton({ caixa, pai, filho, onTextoAlterado, renderizar });
     if (actas) acoes.appendChild(actas);
+
+    if (caixa?.mostrarDataRealizacaoTarefa && filho.timestampRealizacao) {
+        const spanDataRealizacao = document.createElement('span');
+        spanDataRealizacao.className = 'bairro-filho-data bairro-filho-data--realizacao';
+        const tsRealizacao = filho.timestampRealizacao;
+        spanDataRealizacao.innerHTML = `<i class="fa-solid fa-check" aria-hidden="true"></i> ${formatarDataCurta(tsRealizacao)}`;
+        spanDataRealizacao.title = `Realizada em: ${new Date(tsRealizacao).toLocaleString('pt-PT')}`;
+        acoes.appendChild(spanDataRealizacao);
+    }
 
     if (caixa?.mostrarDataTarefa) {
         const spanData = document.createElement('span');
