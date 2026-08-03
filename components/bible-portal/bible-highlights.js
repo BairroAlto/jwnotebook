@@ -10,12 +10,13 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
 const HIGHLIGHT_COLORS = [
-    "#818cf8",
-    "#facc15",
-    "#34d399",
-    "#fb7185",
-    "#38bdf8",
-    "#f97316"
+    "#92400e", // Castanho
+    "#f97316", // Laranja
+    "#fb7185", // Rosa
+    "#facc15", // Amarelo
+    "#34d399", // Verde
+    "#38bdf8", // Azul
+    "#a78bfa"  // Lilás
 ];
 
 const state = {
@@ -27,6 +28,7 @@ const state = {
     highlights: new Map(),
     currentSelection: [],
     selectedGroupIds: [],
+    selectionOverlaps: false,
     unsub: null,
     onRender: null,
     toolbarReady: false,
@@ -83,9 +85,6 @@ function garantirToolbar() {
     toolbar.className = 'bible-selection-toolbar hidden';
     toolbar.innerHTML = `
         <div class="bible-selection-toolbar-shell">
-            <div class="bible-selection-toolbar-top">
-                <div class="bible-selection-toolbar-label">Sublinhado</div>
-            </div>
             <div class="bible-selection-toolbar-colors">
                 ${HIGHLIGHT_COLORS.map(color => `
                     <button type="button" class="bible-selection-color" data-color="${color}" style="--swatch:${color};" aria-label="Aplicar cor ${color}"></button>
@@ -93,6 +92,15 @@ function garantirToolbar() {
                 <button type="button" class="bible-selection-remove hidden" aria-label="Remover sublinhado">
                     <i class="fa-solid fa-trash-can"></i>
                 </button>
+            </div>
+            <div class="bible-selection-attach-actions hidden" style="display:flex; justify-content:center; gap:7px; margin-top:8px;">
+                <button type="button" class="bible-selection-attach" data-attach="left" aria-label="Anexar ao sublinhado da esquerda" title="Anexar à esquerda" style="width:32px; height:30px; border:1px solid rgba(56,189,248,0.35); border-radius:7px; background:rgba(56,189,248,0.14); color:#7dd3fc; cursor:pointer;"><i class="fa-solid fa-arrow-left"></i></button>
+                <button type="button" class="bible-selection-attach" data-attach="both" aria-label="Anexar aos dois lados" title="Anexar aos dois lados" style="width:32px; height:30px; border:1px solid rgba(167,139,250,0.4); border-radius:7px; background:rgba(167,139,250,0.16); color:#c4b5fd; cursor:pointer;"><i class="fa-solid fa-link"></i></button>
+                <button type="button" class="bible-selection-attach" data-attach="right" aria-label="Anexar ao sublinhado da direita" title="Anexar à direita" style="width:32px; height:30px; border:1px solid rgba(56,189,248,0.35); border-radius:7px; background:rgba(56,189,248,0.14); color:#7dd3fc; cursor:pointer;"><i class="fa-solid fa-arrow-right"></i></button>
+            </div>
+            <div class="bible-selection-toolbar-actions hidden" style="display:flex; justify-content:center; gap:10px; margin-top:8px;">
+                <button type="button" class="bible-selection-action" data-action="simples" aria-label="Criar nota simples" style="width:32px; height:30px; border:1px solid rgba(251,191,36,0.35); border-radius:7px; background:rgba(251,191,36,0.14); color:#fbbf24; cursor:pointer;"><i class="fa-solid fa-note-sticky"></i></button>
+                <button type="button" class="bible-selection-action" data-action="conectora" aria-label="Criar caixa conectora" style="width:32px; height:30px; border:1px solid rgba(234,88,12,0.45); border-radius:7px; background:rgba(234,88,12,0.16); color:#ea580c; cursor:pointer;"><i class="fa-solid fa-box"></i></button>
             </div>
         </div>
     `;
@@ -105,6 +113,18 @@ function garantirToolbar() {
         const removeBtn = event.target.closest('.bible-selection-remove');
         if (removeBtn) {
             await removerSelecaoAtual();
+            return;
+        }
+
+        const attach = event.target.closest('.bible-selection-attach');
+        if (attach) {
+            await anexarSelecaoAtual(attach.dataset.attach);
+            return;
+        }
+
+        const action = event.target.closest('.bible-selection-action');
+        if (action) {
+            dispararAcaoSublinhado(action.dataset.action);
             return;
         }
 
@@ -164,6 +184,12 @@ function ligarEventosFeed() {
     feed.addEventListener('mouseup', () => reagendar(false));
     feed.addEventListener('touchend', () => reagendar(true));
     feed.addEventListener('pointerup', () => reagendar(true));
+    feed.addEventListener('click', event => {
+        const mark = event.target.closest('mark.bible-inline-highlight');
+        const selecao = window.getSelection();
+        if (mark && selecao && !selecao.isCollapsed && selecao.toString().trim()) return;
+        if (mark) selecionarHighlightPorClique(mark);
+    });
     feed.addEventListener('touchstart', () => reagendar(true), { passive: true });
 }
 
@@ -241,6 +267,7 @@ function atualizarSelecaoAtual() {
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
         state.currentSelection = [];
         state.selectedGroupIds = [];
+        state.selectionOverlaps = false;
         esconderToolbar();
         return;
     }
@@ -251,12 +278,14 @@ function atualizarSelecaoAtual() {
     if (!fragments.length) {
         state.currentSelection = [];
         state.selectedGroupIds = [];
+        state.selectionOverlaps = false;
         esconderToolbar();
         return;
     }
 
     state.currentSelection = fragments;
     state.selectedGroupIds = encontrarGroupIdsSelecionados(fragments);
+    state.selectionOverlaps = state.selectedGroupIds.length > 0;
     mostrarToolbar();
 }
 
@@ -334,7 +363,7 @@ function obterOffsetRelativo(container, targetNode, targetOffset) {
 
 async function gravarSelecaoAtual(color) {
     const fragments = [...state.currentSelection];
-    if (!fragments.length || !color || !state.livro || !state.cap) return;
+    if (!fragments.length || !color || !state.livro || !state.cap || state.selectionOverlaps) return;
 
     const groupId = crypto.randomUUID();
     aplicarHighlightsLocais(fragments, color, groupId);
@@ -346,6 +375,7 @@ async function gravarSelecaoAtual(color) {
 
     state.currentSelection = [];
     state.selectedGroupIds = [];
+    state.selectionOverlaps = false;
     esconderToolbar();
     limparSelecaoDom();
 }
@@ -420,29 +450,32 @@ async function removerSelecaoAtual() {
     const groupIds = [...state.selectedGroupIds];
     if (!groupIds.length) return;
 
-    removerHighlightsLocais(groupIds);
+    const gruposCompletos = encontrarGruposCompletamenteSelecionados(state.currentSelection, groupIds);
+    removerHighlightsLocais(groupIds, state.currentSelection, gruposCompletos);
     state.onRender?.();
 
     const uid = state.auth?.currentUser?.uid;
     if (!uid || !state.livro || !state.cap) return;
 
-    const docsCapitulo = await carregarDocsCapitulo(uid);
-    for (const docSnap of docsCapitulo) {
-        const data = docSnap.data();
-        const verseKey = String(data.versiculo ?? "");
-        const current = Array.isArray(data.Sublinhado) ? data.Sublinhado : [];
-        const next = obterHighlightsDoEstado(verseKey);
+    const verseKeys = [...new Set(state.currentSelection.map(fragment => String(fragment.verseNum)).filter(Boolean))];
+    for (const verseKey of verseKeys) {
+        const docsVersiculo = await carregarDocsVersiculo(uid, verseKey);
+        for (const docSnap of docsVersiculo) {
+            const data = docSnap.data();
+            const current = Array.isArray(data.Sublinhado) ? data.Sublinhado : [];
+            const next = removerIntervalosDosHighlights(current, verseKey, groupIds, state.currentSelection, gruposCompletos);
 
-        if (next.length !== current.length || current.some(item => groupIds.includes(item?.groupId))) {
-            await updateDoc(docSnap.ref, {
-                Sublinhado: next,
-                timestamp: serverTimestamp()
-            });
+            if (next.length !== current.length || current.some(item => groupIds.includes(item?.groupId))) {
+                await updateDoc(docSnap.ref, {
+                    Sublinhado: next,
+                    timestamp: serverTimestamp()
+                });
+            }
         }
     }
-
     state.currentSelection = [];
     state.selectedGroupIds = [];
+    state.selectionOverlaps = false;
     esconderToolbar();
     limparSelecaoDom();
 }
@@ -467,14 +500,69 @@ async function carregarDocsLivro(uid) {
     return snap.docs;
 }
 
-function removerHighlightsLocais(groupIds) {
+function encontrarGruposCompletamenteSelecionados(fragments, groupIds) {
+    const completos = new Set();
+    groupIds.forEach(groupId => {
+        const itensGrupo = [];
+        state.highlights.forEach(items => items.forEach(item => {
+            if (item.groupId === groupId) itensGrupo.push(item);
+        }));
+        if (itensGrupo.length && itensGrupo.every(item => fragments.some(fragment =>
+            String(fragment.verseNum) === String(item.versiculo) && fragment.start <= item.start && fragment.end >= item.end
+        ))) completos.add(groupId);
+    });
+    return [...completos];
+}
+
+function removerIntervalosDosHighlights(items, verseKey, groupIds, fragments = [], gruposCompletos = []) {
+    const ranges = fragments
+        .filter(fragment => String(fragment.verseNum) === String(verseKey))
+        .map(fragment => ({ start: fragment.start, end: fragment.end }))
+        .filter(range => range.end > range.start);
+
+    return items.flatMap(item => {
+        if (!groupIds.includes(item?.groupId)) return [item];
+        if (gruposCompletos.includes(item?.groupId)) return [];
+        if (!ranges.length) return [item];
+
+        let segmentos = [item];
+        ranges.forEach(range => {
+            segmentos = segmentos.flatMap(segmento => {
+                if (!intervalosSobrepoem(range.start, range.end, segmento.start, segmento.end)) {
+                    return [segmento];
+                }
+
+                const partes = [];
+                if (segmento.start < range.start) {
+                    partes.push({
+                        ...segmento,
+                        id: crypto.randomUUID(),
+                        end: range.start,
+                        texto: String(state.verses?.[verseKey] || "").slice(segmento.start, range.start)
+                    });
+                }
+                if (segmento.end > range.end) {
+                    partes.push({
+                        ...segmento,
+                        id: crypto.randomUUID(),
+                        start: range.end,
+                        texto: String(state.verses?.[verseKey] || "").slice(range.end, segmento.end)
+                    });
+                }
+                return partes;
+            });
+        });
+        return segmentos;
+    });
+}
+
+function removerHighlightsLocais(groupIds, fragments = [], gruposCompletos = []) {
     for (const [verseKey, items] of state.highlights.entries()) {
-        const filtered = items.filter(item => !groupIds.includes(item?.groupId));
-        if (filtered.length) state.highlights.set(verseKey, filtered);
+        const next = removerIntervalosDosHighlights(items, verseKey, groupIds, fragments, gruposCompletos);
+        if (next.length) state.highlights.set(verseKey, next);
         else state.highlights.delete(verseKey);
     }
 }
-
 function obterHighlightsDoEstado(verseKey, fallback = []) {
     const current = state.highlights.get(String(verseKey));
     return Array.isArray(current) && current.length ? current.map(item => ({ ...item })) : fallback.map(item => ({ ...item }));
@@ -497,6 +585,119 @@ function encontrarGroupIdsSelecionados(fragments) {
 
 function intervalosSobrepoem(startA, endA, startB, endB) {
     return startA < endB && endA > startB;
+}
+
+function obterOpcoesAnexo(fragments = []) {
+    if (fragments.length !== 1) return { left: null, right: null, both: false };
+
+    const fragment = fragments[0];
+    const items = state.highlights.get(String(fragment.verseNum)) || [];
+    const left = items
+        .filter(item => item.groupId && item.end === fragment.start)
+        .sort((a, b) => b.end - a.end)[0] || null;
+    const right = items
+        .filter(item => item.groupId && item.start === fragment.end)
+        .sort((a, b) => a.start - b.start)[0] || null;
+
+    return {
+        left,
+        right,
+        both: Boolean(left && right && left.groupId === right.groupId)
+    };
+}
+
+async function anexarSelecaoAtual(lado) {
+    const opcoes = obterOpcoesAnexo(state.currentSelection);
+    const alvo = lado === "left" ? opcoes.left : lado === "right" ? opcoes.right : (opcoes.both ? opcoes.left : null);
+    if (!alvo || !state.currentSelection.length || !state.livro || !state.cap) return;
+
+    const fragments = [...state.currentSelection];
+    const groupId = alvo.groupId;
+    const color = alvo.cor || HIGHLIGHT_COLORS[0];
+
+    aplicarHighlightsLocais(fragments, color, groupId);
+    state.onRender?.();
+
+    for (const fragment of fragments) {
+        await gravarFragmento(fragment, color, groupId);
+    }
+
+    state.currentSelection = [];
+    state.selectedGroupIds = [];
+    state.selectionOverlaps = false;
+    esconderToolbar();
+    limparSelecaoDom();
+}
+
+function atualizarBotoesAnexo() {
+    const wrapper = document.querySelector('.bible-selection-attach-actions');
+    if (!wrapper) return;
+
+    const opcoes = obterOpcoesAnexo(state.currentSelection);
+    const disponivel = state.selectedGroupIds.length === 0 && (opcoes.left || opcoes.right);
+    wrapper.classList.toggle('hidden', !disponivel);
+    wrapper.querySelector('[data-attach="left"]')?.classList.toggle('hidden', !opcoes.left);
+    wrapper.querySelector('[data-attach="right"]')?.classList.toggle('hidden', !opcoes.right);
+    wrapper.querySelector('[data-attach="both"]')?.classList.toggle('hidden', !opcoes.both);
+}
+function criarContextoSublinhado(groupIds, verseNum = null) {
+    const ids = [...new Set((groupIds || []).filter(Boolean))];
+    const fragmentos = [];
+    state.highlights.forEach((items, verseKey) => {
+        items.forEach(item => {
+            if (ids.includes(item.groupId)) {
+                fragmentos.push({
+                    id: item.id,
+                    groupId: item.groupId,
+                    versiculo: Number(verseKey),
+                    start: item.start,
+                    end: item.end,
+                    texto: item.texto || String(state.verses?.[verseKey] || "").slice(item.start, item.end),
+                    cor: item.cor
+                });
+            }
+        });
+    });
+    fragmentos.sort((a, b) => a.versiculo - b.versiculo || a.start - b.start);
+    const primeiro = fragmentos.find(item => String(item.versiculo) === String(verseNum)) || fragmentos[0];
+    return {
+        tipo: "biblia-sublinhado",
+        livro: state.livro,
+        capitulo: Number(state.cap),
+        groupId: ids[0] || null,
+        groupIds: ids,
+        versiculo: primeiro?.versiculo || Number(verseNum) || null,
+        texto: primeiro?.texto || "",
+        fragmentos
+    };
+}
+
+function selecionarHighlightPorClique(mark) {
+    const selecao = window.getSelection();
+    if (selecao && !selecao.isCollapsed && selecao.toString().trim()) return;
+    const groupId = mark.dataset.highlightGroup;
+    if (!groupId) return;
+    const contexto = criarContextoSublinhado([groupId], mark.dataset.verse);
+    state.currentSelection = [];
+    state.selectedGroupIds = [];
+    state.selectionOverlaps = false;
+    esconderToolbar();
+    limparSelecaoDom();
+    window.dispatchEvent(new CustomEvent("bible:sublinhadoSelecionado", { detail: contexto }));
+}
+
+function dispararAcaoSublinhado(tipo) {
+    const contexto = criarContextoSublinhado(state.selectedGroupIds);
+    if (!contexto.groupIds.length) return;
+    window.dispatchEvent(new CustomEvent('bible:abrirPuzzle'));
+    if (!window._activeBibliaPlusHandler) {
+        window._biblePendingPuzzleAction = tipo;
+        window.dispatchEvent(new CustomEvent("bible:sublinhadoSelecionado", { detail: contexto }));
+        return;
+    }
+    window.dispatchEvent(new CustomEvent("bible:adicionarTexto", {
+        detail: { ...contexto, tipo }
+    }));
 }
 
 function normalizarHighlights(items, verseText) {
@@ -533,7 +734,7 @@ function montarHtmlComHighlights(texto, highlights) {
         if (item.start < cursor || item.end > texto.length) return;
 
         html += escaparHtml(texto.slice(cursor, item.start));
-        html += `<mark class="bible-inline-highlight" style="--highlight:${item.cor}; border-bottom-color:${item.cor}; background:${item.cor}30;">${escaparHtml(texto.slice(item.start, item.end))}</mark>`;
+        html += `<mark class="bible-inline-highlight" data-highlight-group="${escaparHtml(item.groupId || "")}" data-highlight-id="${escaparHtml(item.id || "")}" data-verse="${escaparHtml(item.versiculo || "")}" style="--highlight:${item.cor}; border-bottom-color:${item.cor}; background:${item.cor}30; cursor:pointer;">${escaparHtml(texto.slice(item.start, item.end))}</mark>`;
         cursor = item.end;
     });
 
@@ -544,7 +745,11 @@ function montarHtmlComHighlights(texto, highlights) {
 function mostrarToolbar() {
     const toolbar = document.getElementById('bible-selection-toolbar');
     if (!toolbar) return;
-    toolbar.querySelector('.bible-selection-remove')?.classList.toggle('hidden', state.selectedGroupIds.length === 0);
+    const temSublinhado = state.selectedGroupIds.length > 0;
+    toolbar.querySelector('.bible-selection-remove')?.classList.toggle('hidden', !temSublinhado);
+    toolbar.querySelectorAll('.bible-selection-color').forEach(colorButton => colorButton.classList.toggle('hidden', temSublinhado));
+    toolbar.querySelector('.bible-selection-toolbar-actions')?.classList.toggle('hidden', !temSublinhado);
+    atualizarBotoesAnexo();
     toolbar.style.display = 'block';
     toolbar.classList.remove('hidden');
     toolbar.classList.add('active');
@@ -554,6 +759,9 @@ function esconderToolbar() {
     const toolbar = document.getElementById('bible-selection-toolbar');
     if (!toolbar) return;
     toolbar.querySelector('.bible-selection-remove')?.classList.add('hidden');
+    toolbar.querySelector('.bible-selection-toolbar-actions')?.classList.add('hidden');
+    toolbar.querySelector('.bible-selection-attach-actions')?.classList.add('hidden');
+    toolbar.querySelectorAll('.bible-selection-color').forEach(colorButton => colorButton.classList.remove('hidden'));
     toolbar.classList.add('hidden');
     toolbar.classList.remove('active');
     toolbar.style.removeProperty('display');

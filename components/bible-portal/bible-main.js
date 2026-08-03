@@ -15,6 +15,7 @@ import { BibleAnchors } from './bible-anchors.js';
 import { BibleAI } from './bible-ai.js';
 import { BibleSatellite } from './bible-satellite.js';
 import { BibleHighlights } from './bible-highlights.js';
+import { iniciarSistemaCores } from '../editor/modulos/paleta-cores.js';
 import { iniciarXSat } from '../direita/xsat-controller.js';
 import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
 import { aquecerCaixasAssociadas } from '../direita/biblia-associadas-cache.js';
@@ -77,7 +78,9 @@ function prepararBrainBiblia(ver) {
 
 await Promise.all([
     carregarComponente('area-popup-cosmos', 'components/popup/popup-cosmos.html'),
-    carregarComponente('area-popup-cosmos-fontes', 'components/popup/popup-cosmos-fontes.html')
+    carregarComponente('area-popup-cosmos-fontes', 'components/popup/popup-cosmos-fontes.html'),
+    carregarComponente('area-popup-cores', 'components/popup/popup-cores.html'),
+    carregarComponente('area-popup-editar-cor', 'components/popup/popup-editar-cor.html')
 ]);
 
 iniciarAutenticacao(app, db);
@@ -94,6 +97,7 @@ onAuthStateChanged(auth, async (user) => {
     bootDone = true;
 
     window.NotaBookUserPrefs = await carregarPreferenciasUtilizador(db, user.uid);
+    await iniciarSistemaCores(db, user, () => {});
 
     await BibleUI.carregarMenuSuperior();
     BibleSearch.preload().catch(error => console.warn("[BIBLE] Preload da pesquisa falhou.", error));
@@ -421,7 +425,7 @@ window.carregarCapituloNoPortal = carregarCapituloNoPortal;
 window.fecharPopup = (id) => BibleUI.togglePopup(id, false);
 window.prepararBrainBiblia = prepararBrainBiblia;
 
-window.ativarBrainBiblia = async (ver, texto) => {
+window.ativarBrainBiblia = async (ver, texto, highlightContext = null) => {
     const t0 = performance.now();
     console.log(`%c⏱️ [BRAIN-PERF] Início do clique no versículo ${ver}`, "color: #38bdf8; font-weight: bold;");
     prepararBrainBiblia(ver);
@@ -434,13 +438,25 @@ window.ativarBrainBiblia = async (ver, texto) => {
     console.log("[BRAIN-PERF] Painel lateral aberto em " + (performance.now() - t0).toFixed(1) + "ms");
     iniciarXSat();
     console.log(`⏱️ [BRAIN-PERF] Import biblia-brain.js efetuado em ${(performance.now() - tImport).toFixed(1)}ms`);
-    modulo.abrirVersiculoNoBrain(window.livroAtivo, window.capAtivo, ver, texto, db, auth, t0);
+    modulo.abrirVersiculoNoBrain(window.livroAtivo, window.capAtivo, ver, texto, db, auth, t0, highlightContext);
     setTimeout(() => {
         document.getElementById('btn-eye')?.remove();
         if (window.switchPanel) window.switchPanel('brain');
     }, 120);
     BibleUI.scrollParaVersiculo(ver);
 };
+
+window.addEventListener("bible:sublinhadoSelecionado", event => {
+    const contexto = event.detail;
+    if (!contexto?.versiculo || typeof window.ativarBrainBiblia !== "function") return;
+    window.ativarBrainBiblia(contexto.versiculo, contexto.texto || "", contexto);
+    if (window._biblePendingPuzzleAction) {
+        setTimeout(() => window.dispatchEvent(new CustomEvent('bible:abrirPuzzle')), 120);
+    }
+    const acao = window._biblePendingPuzzleAction;
+    window._biblePendingPuzzleAction = null;
+    if (acao) setTimeout(() => window.dispatchEvent(new CustomEvent("bible:adicionarTexto", { detail: { referenciaSublinhado: contexto, tipo: acao } })), 300);
+});
 
 window.switchPanel = (panel) => {
     document.querySelectorAll('#bible-right-col .tab-content').forEach(content => {
