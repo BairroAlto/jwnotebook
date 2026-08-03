@@ -20,6 +20,7 @@ import { iniciarXSat } from '../direita/xsat-controller.js';
 import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
 import { aquecerCaixasAssociadas } from '../direita/biblia-associadas-cache.js';
 import { MobilePanelManager } from '../ui/mobile-panel-manager.js';
+import { iniciarEstadoAnotacoesBiblia, versiculoTemAnotacao } from './bible-annotation-state.js';
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -99,6 +100,12 @@ onAuthStateChanged(auth, async (user) => {
 
     window.NotaBookUserPrefs = await carregarPreferenciasUtilizador(db, user.uid);
     await iniciarSistemaCores(db, user, () => {});
+
+    iniciarEstadoAnotacoesBiblia(db, auth, () => {
+        if (versiculosAtuais && window.livroAtivo && window.capAtivo) {
+            renderizarVersiculosNoFeed({ preserveScroll: true });
+        }
+    });
 
     await BibleUI.carregarMenuSuperior();
     MobilePanelManager.iniciar();
@@ -277,7 +284,7 @@ function renderizarVersiculosNoFeed({ preserveScroll = false, resetScroll = fals
 
     feed.className = modo === "sequence" ? "view-sequence" : (modo === "grid-broken" ? "view-grid-broken" : "view-grid");
     feed.innerHTML = Object.entries(versiculosAtuais).map(([num, texto]) => `
-        <div class="bible-verse-row" data-v="${num}">
+        <div class="bible-verse-row${versiculoTemAnotacao(window.livroAtivo, window.capAtivo, num) ? ' has-annotation' : ''}" data-v="${num}">
             <button class="v-num" onpointerenter="window.prepararBrainBiblia(this.closest('.bible-verse-row')?.dataset.v)" onfocus="window.prepararBrainBiblia(this.closest('.bible-verse-row')?.dataset.v)" ontouchstart="window.prepararBrainBiblia(this.closest('.bible-verse-row')?.dataset.v)" onclick="window.ativarBrainBiblia('${num}', '${escaparAtributo(texto)}')" aria-label="Abrir estudo de ${window.livroAtivo} ${window.capAtivo}:${num}">${num}</button>
             <span class="v-text" data-verse="${num}">${BibleHighlights.renderizarTextoVersiculo(num, texto)}</span>
         </div>
