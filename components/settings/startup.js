@@ -119,8 +119,12 @@ function renderizarResultados(dispositivo, termo = "") {
 
     atualizarSeletorDeArranque(dispositivo);
     const normalizado = termo.trim().toLocaleLowerCase("pt-PT");
+    if (!normalizado) {
+        lista.innerHTML = '<span class="arranque-empty">Escreva para procurar uma nota.</span>';
+        return;
+    }
     const notas = (estado.notas.get(dispositivo) || []).filter((nota) =>
-        !normalizado || nota.nome.toLocaleLowerCase("pt-PT").includes(normalizado)
+        nota.nome.toLocaleLowerCase("pt-PT").includes(normalizado)
     );
 
     if (!notas.length) {

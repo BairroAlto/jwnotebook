@@ -18,6 +18,7 @@ export function criarFilhoBairro(nome = '') {
         oculto: false,
         check: TIPO_CHECK_BAIRRO.NENHUM,
         concluido: false,
+        timestampRealizacao: null,
         'ligaçãoBairro': [],
         actas: [],
         timestamp: Date.now()
@@ -54,6 +55,9 @@ export function garantirEstruturaBairro(caixa) {
             if (typeof filho.oculto !== 'boolean') filho.oculto = false;
             if (!filho.check) filho.check = TIPO_CHECK_BAIRRO.NENHUM;
             if (typeof filho.concluido !== 'boolean') filho.concluido = false;
+            if (!Object.prototype.hasOwnProperty.call(filho, 'timestampRealizacao')) {
+                filho.timestampRealizacao = filho.concluido ? (filho.timestamp || null) : null;
+            }
             if (!Array.isArray(filho['ligaçãoBairro'])) filho['ligaçãoBairro'] = [];
             if (!Array.isArray(filho.actas)) filho.actas = [];
             filho.actas = filho.actas.filter(acta => acta && typeof acta.texto === 'string');
@@ -66,6 +70,7 @@ export function garantirEstruturaBairro(caixa) {
     });
     if (!Array.isArray(caixa['ligaçãoBairro'])) caixa['ligaçãoBairro'] = [];
     if (typeof caixa.oculto !== 'boolean') caixa.oculto = false;
+    if (typeof caixa.mostrarDataRealizacaoTarefa !== 'boolean') caixa.mostrarDataRealizacaoTarefa = false;
     if (!caixa.corBairro) caixa.corBairro = '#c084fc';
     if (!caixa.direcaoCriacao) caixa.direcaoCriacao = 'baixo';
     return caixa;

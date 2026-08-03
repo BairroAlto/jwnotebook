@@ -51,6 +51,7 @@ export async function inicializarSettings(db, auth) {
     aplicarToggles(userPrefs);
     renderFuseis(db, auth);
     ativarTabs(db, user.uid);
+    ativarSubAbasDefinicoes();
     bindSliders(db, user.uid);
     bindAvatares(db, user.uid, userPrefs.avatar || "gear");
     bindToggles(db, auth);
@@ -121,6 +122,76 @@ function ativarTabs(db, uid) {
             }
         };
     });
+}
+
+function ativarSubAbasDefinicoes() {
+    const root = document.getElementById('set-fontes');
+    const nav = root?.querySelector('.settings-subtabs');
+    if (!root || !nav || nav.dataset.organizado === 'true') return;
+
+    const mapaSecoes = [
+        { chave: 'paineis', icone: 'fa-table-columns' },
+        { chave: 'notas', icone: 'fa-boxes-stacked' },
+        { chave: 'biblia', icone: 'fa-book-open' },
+        { chave: 'arranque', icone: 'fa-power-off' },
+        { chave: 'barra-topo', icone: 'fa-bars' },
+        { chave: 'partilhar', icone: 'fa-comments' }
+    ];
+
+    const filhos = Array.from(root.children);
+    const titulos = filhos.filter(elemento => elemento.classList.contains('set-section-title'));
+    const grupos = new Map();
+
+    titulos.forEach((titulo, indice) => {
+        const icone = titulo.querySelector('i')?.classList;
+        const secao = mapaSecoes.find(item => icone?.contains(item.icone));
+        if (!secao) return;
+
+        const proximoTitulo = titulos[indice + 1];
+        const grupo = [titulo];
+        let elemento = titulo.nextElementSibling;
+        while (elemento && elemento !== proximoTitulo) {
+            grupo.push(elemento);
+            elemento = elemento.nextElementSibling;
+        }
+        grupos.set(secao.chave, grupo);
+    });
+
+    const filtrosDispositivo = root.querySelector('.settings-device-filters');
+    const fragmento = document.createDocumentFragment();
+    fragmento.appendChild(nav);
+    if (filtrosDispositivo) fragmento.appendChild(filtrosDispositivo);
+
+    mapaSecoes.forEach((secao, indice) => {
+        const painel = document.createElement('div');
+        painel.className = 'settings-subpanel';
+        painel.dataset.settingsPanel = secao.chave;
+        painel.hidden = indice !== 0;
+        (grupos.get(secao.chave) || []).forEach(elemento => {
+            if (elemento !== filtrosDispositivo) painel.appendChild(elemento);
+        });
+        fragmento.appendChild(painel);
+    });
+    root.replaceChildren(fragmento);
+
+    const botoes = root.querySelectorAll('[data-settings-subtab]');
+    const paineis = root.querySelectorAll('[data-settings-panel]');
+    botoes.forEach(botao => {
+        botao.onclick = () => {
+            const alvo = botao.dataset.settingsSubtab;
+            botoes.forEach(item => {
+                const ativo = item === botao;
+                item.classList.toggle('active', ativo);
+                item.setAttribute('aria-selected', String(ativo));
+            });
+            paineis.forEach(painel => {
+                painel.hidden = painel.dataset.settingsPanel !== alvo;
+            });
+            if (filtrosDispositivo) filtrosDispositivo.hidden = alvo === 'partilhar';
+        };
+    });
+    if (filtrosDispositivo) filtrosDispositivo.hidden = false;
+    nav.dataset.organizado = 'true';
 }
 
 function aplicarSliders(values) {
