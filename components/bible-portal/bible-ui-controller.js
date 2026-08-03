@@ -78,7 +78,8 @@ export const BibleUI = {
 
         setBibleRightPanelState(colDireita, true);
         if (isBibleTouchMobile()) {
-            colDireita.style.setProperty('height', `${Number(colDireita.dataset.sheetPct || 48)}vh`, 'important');
+            colDireita.dataset.sheetPct = '88';
+            colDireita.style.setProperty('height', '88vh', 'important');
         } else {
             colDireita.style.removeProperty('height');
         }
@@ -160,11 +161,11 @@ function instalarBibleMobileSheet(col) {
     let startHeight = 0;
 
     const setPct = (pct) => {
-        const clamped = Math.max(10, Math.min(85, pct));
+        const clamped = Math.max(10, Math.min(88, pct));
         col.style.setProperty('height', `${clamped}vh`, 'important');
         col.dataset.sheetPct = String(clamped);
     };
-    if (isBibleTouchMobile()) setPct(Number(col.dataset.sheetPct || 48));
+    if (isBibleTouchMobile()) setPct(Number(col.dataset.sheetPct || 88));
 
     const iniciarDrag = (event) => {
         if (event.target.closest('button')) return;
@@ -172,7 +173,7 @@ function instalarBibleMobileSheet(col) {
         event.preventDefault();
         event.stopPropagation();
         startY = event.clientY;
-        startHeight = Number(col.dataset.sheetPct || 48);
+        startHeight = Number(col.dataset.sheetPct || 88);
         col.classList.add('dragging');
         event.currentTarget.setPointerCapture?.(event.pointerId);
         document.body.style.overflow = 'hidden';
@@ -213,6 +214,7 @@ function setBibleRightPanelState(col, isOpen) {
     col.style.removeProperty('min-width');
 
     if (!isOpen) {
+        window.fecharFonteXSatMobile?.({ restoreOnly: true });
         col.style.removeProperty('height');
         col.style.removeProperty('bottom');
     }

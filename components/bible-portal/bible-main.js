@@ -19,6 +19,7 @@ import { iniciarSistemaCores } from '../editor/modulos/paleta-cores.js';
 import { iniciarXSat } from '../direita/xsat-controller.js';
 import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
 import { aquecerCaixasAssociadas } from '../direita/biblia-associadas-cache.js';
+import { MobilePanelManager } from '../ui/mobile-panel-manager.js';
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -100,6 +101,7 @@ onAuthStateChanged(auth, async (user) => {
     await iniciarSistemaCores(db, user, () => {});
 
     await BibleUI.carregarMenuSuperior();
+    MobilePanelManager.iniciar();
     BibleSearch.preload().catch(error => console.warn("[BIBLE] Preload da pesquisa falhou.", error));
     vincularEventos();
     BibleSettings.iniciar();
@@ -459,6 +461,10 @@ window.addEventListener("bible:sublinhadoSelecionado", event => {
 });
 
 window.switchPanel = (panel) => {
+    if (panel !== 'source') {
+        window.fecharFonteXSatMobile?.({ restoreOnly: true });
+    }
+
     document.querySelectorAll('#bible-right-col .tab-content').forEach(content => {
         content.classList.remove('active');
         content.style.display = 'none';
