@@ -112,6 +112,7 @@ function renderizarListaVersiculos(container, livroNome, textos, listaLivros, to
     });
 }
 
+
 /**
  * AUXILIAR: BUSCAR TEXTO NO JSON LOCAL
  */

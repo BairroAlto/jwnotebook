@@ -1,11 +1,20 @@
 // components/lists/biblia.js
 import { abrirVersiculoNoBrain } from '../direita/biblia-brain.js';
+import { collection, getDocs, query, where } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
 // Variáveis globais do módulo para persistência de dados do Firebase
 let dbGlobal = null;
 let authGlobal = null;
 let estadoBiblia = { livro: null, cap: null };
 let livroAtivoCache = null;
+let containerBibliaAtivo = null;
+let capituloBibliaAtivo = null;
+
+window.addEventListener('preferencias:sublinhados-biblia-lists', () => {
+    if (livroAtivoCache && capituloBibliaAtivo && containerBibliaAtivo) {
+        carregarVersiculos(livroAtivoCache, capituloBibliaAtivo, containerBibliaAtivo);
+    }
+});
 
 
 
@@ -254,6 +263,9 @@ function renderizarCapitulos(livro, container) {
 
 // 3. RENDERIZAR VERSÍCULOS
 async function carregarVersiculos(livro, capNum, container) {
+    livroAtivoCache = livro;
+    capituloBibliaAtivo = capNum;
+    containerBibliaAtivo = container;
     const slug = getSlug(livro.nome);
     container.innerHTML = `<div style="padding:40px; text-align:center;"><i class="fa-solid fa-spinner fa-spin"></i></div>`;
 
@@ -266,6 +278,8 @@ async function carregarVersiculos(livro, capNum, container) {
         if (!versiculosObj || typeof versiculosObj !== 'object') {
             throw new Error(`Capítulo não encontrado para ${livro.nome} ${capNum}`);
         }
+
+        const sublinhadosPorVersiculo = await carregarSublinhadosDoCapitulo(livro.nome, capNum);
 
         // Nota: O clique do #btn-voltar-caps agora é gerido pelo document.addEventListener acima
         container.innerHTML = `
@@ -281,8 +295,20 @@ async function carregarVersiculos(livro, capNum, container) {
         Object.keys(versiculosObj).forEach(vNum => {
             const item = document.createElement('div');
             item.style.cssText = `font-size: var(--fs-biblia-versiculos, 14px); line-height: 1.6; color: var(--text-main); cursor: pointer;`;
-            item.innerHTML = `<b style="color: var(--primary); font-size: 0.7em; margin-right: 8px;">${vNum}</b> ${versiculosObj[vNum]}`;
+            const texto = versiculosObj[vNum];
+            const textoRenderizado = window.NotaBookUserPrefs?.sublinhadosBibliaLists === true
+                ? renderizarSublinhados(texto, sublinhadosPorVersiculo.get(String(vNum)) || [])
+                : escaparTextoBiblia(texto);
+            item.innerHTML = `<b style="color: var(--primary); font-size: 0.7em; margin-right: 8px;">${vNum}</b> ${textoRenderizado}`;
             item.onclick = () => abrirVersiculoNoBrain(livro.nome, capNum, vNum, versiculosObj[vNum], dbGlobal, authGlobal);
+            item.querySelectorAll('mark[data-highlight-group]').forEach(mark => {
+                mark.onclick = (event) => {
+                    event.stopPropagation();
+                    const grupo = mark.dataset.highlightGroup;
+                    const referencia = criarContextoSublinhadoLista(grupo, livro.nome, capNum, vNum, texto, sublinhadosPorVersiculo);
+                    abrirVersiculoNoBrain(livro.nome, capNum, vNum, texto, dbGlobal, authGlobal, performance.now(), referencia);
+                };
+            });
             scrollArea.appendChild(item);
         });
 
@@ -295,6 +321,62 @@ async function carregarVersiculos(livro, capNum, container) {
 /**
  * FUNÇÃO DE TELEPORTE: Abre a Bíblia diretamente num versículo específico
  */
+async function carregarSublinhadosDoCapitulo(livro, capitulo) {
+    const mapa = new Map();
+    if (window.NotaBookUserPrefs?.sublinhadosBibliaLists !== true || !authGlobal?.currentUser) return mapa;
+    const consulta = query(collection(dbGlobal, 'TextosBiblia'), where('userId', '==', authGlobal.currentUser.uid), where('livro', '==', livro));
+    const snapshot = await getDocs(consulta);
+    snapshot.docs.filter(item => Number(item.data()?.capitulo) === Number(capitulo)).forEach(item => {
+        mapa.set(String(item.data()?.versiculo), Array.isArray(item.data()?.Sublinhado) ? item.data().Sublinhado : []);
+    });
+    return mapa;
+}
+
+function escaparTextoBiblia(texto) {
+    return String(texto || '').replace(/[&<>"']/g, caracter => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[caracter]));
+}
+
+function renderizarSublinhados(texto, sublinhados) {
+    const validos = sublinhados.filter(item => Number.isInteger(item?.start) && Number.isInteger(item?.end) && item.end > item.start).sort((a, b) => a.start - b.start);
+    if (!validos.length) return escaparTextoBiblia(texto);
+    let html = '', cursor = 0;
+    validos.forEach(item => {
+        const inicio = Math.max(cursor, item.start);
+        const fim = Math.min(String(texto).length, item.end);
+        if (fim <= inicio) return;
+        const cor = item.cor || '#f97316';
+        html += escaparTextoBiblia(String(texto).slice(cursor, inicio));
+        html += `<mark data-highlight-group="${escaparAtributoBiblia(item.groupId || '')}" style="background:${cor}30; border-bottom:2px solid ${cor}; color:inherit; padding:0 1px; cursor:pointer;">${escaparTextoBiblia(String(texto).slice(inicio, fim))}</mark>`;
+        cursor = fim;
+    });
+    return html + escaparTextoBiblia(String(texto).slice(cursor));
+}
+
+function criarContextoSublinhadoLista(groupId, livro, cap, versiculo, texto, mapa) {
+    const fragmentos = [];
+    mapa.forEach((items, numeroVersiculo) => {
+        items.filter(item => item.groupId === groupId).forEach(item => fragmentos.push({
+            ...item,
+            versiculo: Number(numeroVersiculo),
+            verseNum: Number(numeroVersiculo),
+            texto: numeroVersiculo === String(versiculo) ? texto : ''
+        }));
+    });
+    return {
+        tipo: 'biblia-sublinhado',
+        livro,
+        capitulo: Number(cap),
+        versiculo: Number(versiculo),
+        texto,
+        groupIds: [groupId],
+        fragmentos
+    };
+}
+
+function escaparAtributoBiblia(texto) {
+    return String(texto || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 export function viajarParaVersiculoBiblico(livroNome, capNum, verNum) {
     const container = document.getElementById('lista-lists');
     if (!container) return;
