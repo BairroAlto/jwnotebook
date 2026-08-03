@@ -489,16 +489,18 @@ function rebuildPuzzleUI(container, db, auth, tStart = performance.now()) {
         return;
     }
 
+    let faixaZero = null;
     if (gruposFiltro.length) {
         const faixa = document.createElement("div");
+        faixaZero = faixa;
         faixa.style.cssText = "display:flex; align-items:center; gap:9px; margin:-3px 0 14px; padding:10px 12px; border-radius:9px; background:rgba(129,140,248,0.12); border:1px solid rgba(129,140,248,0.24); color:#c4b5fd; font-size:11px;";
         faixa.innerHTML = '<i class="fa-solid fa-highlighter"></i><span><strong>0</strong> caixas anexadas ao sublinhado seleccionado</span>';
-        container.innerHTML = "";
         container.appendChild(faixa);
     }
     if (dadosEstruturaVersiculo) {
         console.log("ℹ️ [BRAIN-PERF] Lista de caixas vazia. Exibindo estado inicial.");
         container.innerHTML = `<p style="color:gray; text-align:center; margin-top:30px; font-size:11px; opacity:0.5;">Usa o + para anotar este versículo.</p>`;
+        if (faixaZero) container.prepend(faixaZero);
         ultimoJsonRenderizado = "empty";
     } else {
         console.log("⏳ [BRAIN-PERF] Lista vazia e dadosEstruturaVersiculo pendente. Skeleton mantido.");
