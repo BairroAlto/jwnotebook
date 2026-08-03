@@ -134,17 +134,17 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
         return;
     }
 
-    // Contentores usam apenas Focos e Mutação. Destaques e Fundir não se
-    // aplicam a este tipo de caixa e não devem aparecer neste contexto.
-    const isContentor = opcoes.apenasFocosMutacao === true || caixaAlvo?.tipo === 'contentor' || caixaAlvo?.tipo === 'contentor-biblia';
-    if (btnDestaques) btnDestaques.style.setProperty('display', isContentor ? 'none' : 'inline-flex', isContentor ? 'important' : '');
-    if (btnFundir) btnFundir.style.setProperty('display', isContentor ? 'none' : 'inline-flex', isContentor ? 'important' : '');
-    overlay.classList.toggle('paleta-apenas-focos-mutacao', isContentor);
-    if (isContentor) {
+    // Apenas o Contentor do contexto Bíblia/Puzzle usa duas abas.
+    // Nos restantes contextos, o Contentor mantém as quatro abas.
+    const isContextoBibliaPuzzle = opcoes.apenasFocosMutacao === true;
+    if (btnDestaques) btnDestaques.style.setProperty('display', isContextoBibliaPuzzle ? 'none' : 'inline-flex', isContextoBibliaPuzzle ? 'important' : '');
+    if (btnFundir) btnFundir.style.setProperty('display', isContextoBibliaPuzzle ? 'none' : 'inline-flex', isContextoBibliaPuzzle ? 'important' : '');
+    overlay.classList.toggle('paleta-apenas-focos-mutacao', isContextoBibliaPuzzle);
+    if (isContextoBibliaPuzzle) {
         overlay.querySelectorAll('.tab-cor[data-target="tab-destaques"], .tab-cor[data-target="tab-fundir"]')
             .forEach(tab => tab.style.setProperty('display', 'none', 'important'));
     }
-    if (isContentor && abaAlvo === 'tab-destaques') abaAlvo = 'tab-focos';
+    if (isContextoBibliaPuzzle && abaAlvo === 'tab-destaques') abaAlvo = 'tab-focos';
 
     // ========================================================
     // ðŸš€ 1. MOTOR DE ATIVAÃ‡ÃƒO DE ABAS (RESOLVE O PROBLEMA DO BRAIN)
@@ -190,7 +190,7 @@ export function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTempor
     // ========================================================
     // ðŸŽ¨ 3. RENDERIZAÃ‡ÃƒO DE DESTAQUES (CORES DE FUNDO)
     // ========================================================
-    if (btnFundir && !isContentor) btnFundir.style.display = "inline-flex";
+    if (btnFundir && !isContextoBibliaPuzzle) btnFundir.style.display = "inline-flex";
     FundirManager.renderizar(
         caixaParaColorir,
         conteudoFundir,
