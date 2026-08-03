@@ -9,7 +9,7 @@ export const SharedPuzzleUI = {
      * RENDERIZA O QUADRO MANUAL USANDO A FÁBRICA PADRONIZADA
      */
     renderQuadroManual: (q, index, listaCompleta, refDoc, callbacks) => {
-        const { setEstaAEscrever, moverItem, apagarItem, enviarItem } = callbacks;
+        const { setEstaAEscrever, moverItem, apagarItem, enviarItem, atualizarItem } = callbacks;
 
         return BrainBoxFactory.criar(q, index, {
             onUpdate: (novoTexto) => {
@@ -20,11 +20,15 @@ export const SharedPuzzleUI = {
 
                 const timer = setTimeout(async () => {
                     try {
-                        const snap = await getDoc(refDoc);
+                        if (atualizarItem) {
+                            await atualizarItem(q, novoTexto);
+                        } else {
+                            const snap = await getDoc(refDoc);
                         const novosQuadros = snap.data().Puzzle.quadros.map(item => 
                             item.id === q.id ? { ...item, conteudo: novoTexto } : item
                         );
                         await updateDoc(refDoc, { "Puzzle.quadros": novosQuadros });
+                        }
                         setEstaAEscrever(false);
                     } catch (err) { console.error(err); }
                 }, 1200);
@@ -38,7 +42,7 @@ export const SharedPuzzleUI = {
                     "Apagar Anotação?", 
                     "Tens a certeza que desejas eliminar este quadro permanentemente?"
                 );
-                if (confirmou) apagarItem(id);
+                if (confirmou) apagarItem(id, q);
             }
         });
     },
@@ -51,6 +55,7 @@ export const SharedPuzzleUI = {
         if(!overlay) return res(confirm(m));
         document.getElementById('puzzle-confirm-titulo').innerText = t;
         document.getElementById('puzzle-confirm-msg').innerText = m;
+
         overlay.classList.add('active');
         document.getElementById('btn-puzzle-confirm-sim').onclick = () => { overlay.classList.remove('active'); res(true); };
         document.getElementById('btn-puzzle-confirm-cancelar').onclick = () => { overlay.classList.remove('active'); res(false); };
@@ -59,7 +64,7 @@ export const SharedPuzzleUI = {
     /**
      * POPUP 1: ESCOLHER TIPO DE NOTA (NOTA SIMPLES VS CAIXA CONECTORA)
      */
-    abrirPopupTipoNota: () => new Promise(resolve => {
+    abrirPopupTipoNota: (contexto = null) => new Promise(resolve => {
         let overlay = document.getElementById('popup-tipo-puzzle-overlay');
         if (!overlay) {
             overlay = document.createElement('div');
@@ -71,6 +76,7 @@ export const SharedPuzzleUI = {
                     <div style="font-size:16px; font-weight:800; color:#f8fafc; margin-bottom:6px; display:flex; align-items:center; justify-content:center; gap:8px;">
                         <i class="fa-solid fa-plus-circle" style="color:var(--primary, #6366f1);"></i> Adicionar ao Puzzle
                     </div>
+                    <div class="puzzle-popup-contexto" style="display:none; font-size:12px; color:#c4b5fd; background:rgba(129,140,248,0.12); border:1px solid rgba(129,140,248,0.25); border-radius:10px; padding:9px 10px; margin:0 0 14px;">Esta nota será anexada ao sublinhado selecionado.</div>
                     <div style="font-size:12px; color:#94a3b8; margin-bottom:20px;">Escolhe o formato da nota a criar:</div>
                     <div style="display:flex; flex-direction:column; gap:10px;">
                         <button id="btn-tipo-simples" style="padding:14px 16px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.04); color:white; cursor:pointer; font-weight:700; font-size:13px; display:flex; align-items:center; gap:12px; transition:0.2s;">
@@ -81,7 +87,7 @@ export const SharedPuzzleUI = {
                             </div>
                         </button>
                         <button id="btn-tipo-conectora" style="padding:14px 16px; border-radius:12px; border:1px solid rgba(99,102,241,0.35); background:rgba(99,102,241,0.14); color:white; cursor:pointer; font-weight:700; font-size:13px; display:flex; align-items:center; gap:12px; transition:0.2s;">
-                            <i class="fa-solid fa-diagram-project" style="color:#818cf8; font-size:20px; width:24px;"></i>
+                            <i class="fa-solid fa-box" style="color:#ea580c; font-size:20px; width:24px;"></i>
                             <div style="text-align:left;">
                                 <div style="color:#f8fafc;">Caixa Conectora</div>
                                 <small style="color:#a5b4fc; font-weight:500;">Ferramenta completa para o estudo</small>
@@ -94,7 +100,9 @@ export const SharedPuzzleUI = {
             document.body.appendChild(overlay);
         }
 
-        overlay.classList.add('active');
+        const avisoContexto = overlay.querySelector('.puzzle-popup-contexto');
+        if (avisoContexto) avisoContexto.style.display = contexto?.groupIds?.length ? 'block' : 'none';
+overlay.classList.add('active');
 
         const btnSimples = overlay.querySelector('#btn-tipo-simples');
         const btnConectora = overlay.querySelector('#btn-tipo-conectora');

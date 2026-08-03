@@ -19,6 +19,7 @@ let unsubFontes = null;
 let urlsTemp = [""]; 
 let linkSendoEditado = null;
 let currentUid = null;
+let referenciaSublinhadoFontes = null;
 
 /**
  * LIMPEZA
@@ -30,9 +31,12 @@ export function limparFontesBiblia() {
 /**
  * RENDERIZAÇÃO DA ABA LINKS/CODEX
  */
-export async function renderizarFontesBiblia(info, container, db, auth) {
+export async function renderizarFontesBiblia(info, container, db, auth, referenciaSublinhado = null) {
     const nomeCompleto = `${info.livro} ${info.cap}:${info.ver}`;
     currentUid = auth.currentUser.uid;
+    referenciaSublinhadoFontes = referenciaSublinhado
+        ? { ...referenciaSublinhado, livro: info.livro, cap: info.cap }
+        : null;
     limparFontesBiblia();
 
     // 1. CONFIGURAR ALVOS PARA O POPUP GLOBAL
@@ -356,13 +360,38 @@ async function gravarLinksNoFirebase() {
     if (!titulo || urlsValidas.length === 0) return alert("Preenche os campos.");
     const snap = await getDoc(currentRef);
     let listaLinks = snap.data().Fontes?.Links || [];
+    let novoLink = null;
     if (linkSendoEditado) {
         listaLinks = listaLinks.map(l => l.timestamp === linkSendoEditado.timestamp ? { ...l, titulo, hiperlinks: urlsValidas } : l);
     } else {
-        listaLinks.push({ timestamp: new Date().toISOString(), titulo, hiperlinks: urlsValidas, estado: "on", favorito: "nao" });
+        novoLink = { timestamp: new Date().toISOString(), titulo, hiperlinks: urlsValidas, estado: "on", favorito: "nao" };
+        listaLinks.push(novoLink);
     }
     await updateDoc(currentRef, { "Fontes.Links": listaLinks });
+    if (novoLink) await sincronizarLinkNosVersiculos(novoLink);
     document.getElementById('popup-cosmos-fontes-overlay').classList.remove('active');
+}
+
+async function sincronizarLinkNosVersiculos(link) {
+    const versiculos = [...new Set((referenciaSublinhadoFontes?.fragmentos || [])
+        .map(fragmento => Number(fragmento.versiculo)).filter(Boolean))];
+    if (versiculos.length <= 1 || !currentRef) return;
+
+    const q = query(collection(currentRef.firestore, 'TextosBiblia'), where('userId', '==', currentUid));
+    const snapshot = await getDocs(q);
+    const docs = snapshot.docs.filter(snap => {
+        const data = snap.data() || {};
+        return data.livro === referenciaSublinhadoFontes.livro &&
+            Number(data.capitulo) === Number(referenciaSublinhadoFontes.cap) &&
+            versiculos.includes(Number(data.versiculo));
+    });
+    await Promise.all(docs.map(async snap => {
+        const fontes = snap.data().Fontes || {};
+        const links = Array.isArray(fontes.Links) ? fontes.Links : [];
+        if (!links.some(item => item.timestamp === link.timestamp)) {
+            await updateDoc(snap.ref, { 'Fontes.Links': [...links, link] });
+        }
+    }));
 }
 
 async function obterDocIdBiblia(nome, uid, db) {

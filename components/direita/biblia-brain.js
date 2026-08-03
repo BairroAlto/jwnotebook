@@ -10,7 +10,7 @@ let versiculoAtivoMemoria = null;
 let abaAtivaBiblia = 'puzzle'; 
 let unsubStatusMarcador = null;
 
-export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth, tStart = performance.now()) {
+export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth, tStart = performance.now(), highlightContext = null) {
     console.log(`⏱️ [BRAIN-PERF] abrirVersiculoNoBrain chamado aos ${(performance.now() - tStart).toFixed(1)}ms`);
     if (typeof window.switchPanel === 'function') window.switchPanel('brain');
 
@@ -20,7 +20,7 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth, tStart =
     const globalTabs = document.getElementById('sub-tabs-brain');
     if (globalTabs) globalTabs.style.display = 'none';
 
-    versiculoAtivoMemoria = { livro, cap, ver, texto, _tStart: tStart };
+    versiculoAtivoMemoria = { livro, cap, ver, texto, referenciaSublinhado: highlightContext, _tStart: tStart };
 
     container.innerHTML = "";
     container.className = "cosmos-brain-wrapper"; 
@@ -95,7 +95,7 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth, tStart =
         if (abaAtivaBiblia === 'puzzle') {
             btnCont.innerHTML = `<button style="${btnStyle} background:#818cf8;" title="Adicionar Texto"><i class="fa-solid fa-plus"></i></button>`;
             btnCont.querySelector('button').onclick = () => {
-                window.dispatchEvent(new CustomEvent('bible:adicionarTexto'));
+                window.dispatchEvent(new CustomEvent('bible:adicionarTexto', { detail: { referenciaSublinhado: versiculoAtivoMemoria.referenciaSublinhado } }));
             };
         } 
         else if (abaAtivaBiblia === 'links') {
@@ -159,6 +159,13 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth, tStart =
         };
     });
 
+    window.removeEventListener('bible:abrirPuzzle', window._abrirPuzzleBibliaHandler);
+    window._abrirPuzzleBibliaHandler = () => {
+        const puzzleIcon = stickyHeader.querySelector('.cosmos-nav-icons i[data-aba="puzzle"]');
+        if (puzzleIcon) puzzleIcon.click();
+    };
+    window.addEventListener('bible:abrirPuzzle', window._abrirPuzzleBibliaHandler);
+
     vigiarStatusMarcador();
     const iconPadrao = Array.from(icons).find(i => i.dataset.aba === abaAtivaBiblia) || icons[0];
     iconPadrao.click();
@@ -171,15 +178,15 @@ async function renderizarConteudoGeral(container, db, auth, callbackBotao) {
     limparDossieBiblia();
 
     if (abaAtivaBiblia === 'puzzle') {
-        renderizarPuzzleBiblia(versiculoAtivoMemoria, container, db, auth);
+        renderizarPuzzleBiblia(versiculoAtivoMemoria, container, db, auth, versiculoAtivoMemoria.referenciaSublinhado);
     } 
     else if (abaAtivaBiblia === 'links') {
-        renderizarFontesBiblia(versiculoAtivoMemoria, container, db, auth);
+        renderizarFontesBiblia(versiculoAtivoMemoria, container, db, auth, versiculoAtivoMemoria.referenciaSublinhado);
     }
     else if (abaAtivaBiblia === 'dossie') {
         renderizarDossieBiblia(versiculoAtivoMemoria, container, db, auth, (isMicaAberta) => {
             callbackBotao(isMicaAberta);
-        });
+        }, versiculoAtivoMemoria.referenciaSublinhado);
     }
     else if (abaAtivaBiblia === 'cita') {
         container.innerHTML = `<div style="text-align:center; padding:20px; opacity:0.5;"><i class="fa-solid fa-circle-notch fa-spin"></i></div>`;

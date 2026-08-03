@@ -24,6 +24,7 @@ let estruturaDossiePronta = false;
 let caixasAssociadasProntas = false;
 let dossieSemDocumento = false;
 let tInicioDossie = 0;
+let filtroSublinhadoDossie = null;
 export function limparDossieBiblia() {
     if (unsubDossie) unsubDossie();
     if (cancelLocalDossieSub) { cancelLocalDossieSub(); cancelLocalDossieSub = null; }
@@ -35,13 +36,14 @@ export function limparDossieBiblia() {
     dossieSemDocumento = false;
 }
 
-export async function renderizarDossieBiblia(info, container, db, auth, onNavegacaoMica) {
+export async function renderizarDossieBiblia(info, container, db, auth, onNavegacaoMica, referenciaSublinhado = null) {
     const tStart = performance.now();
     tInicioDossie = tStart;
     infoVersiculoAtual = info;
     const nomeCompleto = `${info.livro} ${info.cap}:${info.ver}`;
     currentUid = auth.currentUser.uid;
     limparDossieBiblia();
+    filtroSublinhadoDossie = referenciaSublinhado;
 
     mostrarCarregamentoCaixas(container, { area: "Dossiê", cor: "#f59e0b" });
 
@@ -126,6 +128,12 @@ function tentarRenderizarDossie(container, db, auth, onNavegacaoMica) {
 function executarDesenhoDossie(container, db, auth, onNavegacaoMica) {
     if (!container) return;
     container.innerHTML = "";
+    if (filtroSublinhadoDossie?.groupIds?.length) {
+        const faixa = document.createElement("div");
+        faixa.style.cssText = "display:flex; align-items:center; gap:8px; margin-bottom:12px; padding:9px 11px; border-radius:9px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.24); color:#fcd34d; font-size:11px;";
+        faixa.innerHTML = '<i class="fa-solid fa-highlighter"></i> A mostrar apenas caixas do sublinhado seleccionado';
+        container.appendChild(faixa);
+    }
     if (micaAbertaId && cacheMicas[micaAbertaId]) {
         renderizarInteriorMica(cacheMicas[micaAbertaId], container, db, auth, onNavegacaoMica);
         onNavegacaoMica(true); 
@@ -191,6 +199,9 @@ async function renderizarInteriorMica(mica, container, db, auth, onNavegacaoMica
         const idAlvo = typeof refObj === 'object' ? refObj.id : refObj;
         const c = ferramentasMapaVico[idAlvo];
         if (!c) return;
+        const grupos = filtroSublinhadoDossie?.groupIds || [];
+        const gruposCaixa = c.referenciaSublinhado?.groupIds || (c.referenciaSublinhado?.groupId ? [c.referenciaSublinhado.groupId] : []);
+        if (grupos.length && !gruposCaixa.some(groupId => grupos.includes(groupId))) return;
 
         const config = IDENTIDADE_FERRAMENTAS[c.tipo] || IDENTIDADE_FERRAMENTAS.contentor || { icon: 'fa-solid fa-box', cor: '#ea580c', nome: 'Contentor' };
         const mapaFocos = { subnota: FOCOS_SUBNOTA, questao: FOCOS_QUESTAO, raciocinio: FOCOS_RACIOCINIO };
@@ -308,17 +319,32 @@ export async function abrirPopupRefApta(db) {
 }
 
 export async function abrirPopupMica(db, auth) {
-    const overlay = document.getElementById('popup-add-mica-overlay');
-    const inputT = document.getElementById('input-titulo-mica');
-    const inputC = document.getElementById('input-cor-mica');
-    if (!overlay || !inputT || !inputC) return;
+    const overlay = document.getElementById('popup-mica-overlay');
+    const inputT = document.getElementById('mica-input-titulo');
+    const selectorCores = document.getElementById('mica-cor-selector');
+    const btnConfirmar = document.getElementById('btn-gravar-mica');
+    const btnCancelar = document.getElementById('btn-cancelar-mica');
+    if (!overlay || !inputT || !btnConfirmar) return;
 
     overlay.classList.add('active');
     inputT.value = "";
+    let corSelecionada = "#3b82f6";
+    if (selectorCores) {
+        selectorCores.innerHTML = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+            .map(cor => `<div class="color-dot-mica" data-hex="${cor}" style="background:${cor}; width:24px; height:24px; border-radius:50%; cursor:pointer; border:2px solid ${cor === corSelecionada ? 'white' : 'transparent'};"></div>`)
+            .join('');
+        selectorCores.querySelectorAll('.color-dot-mica').forEach(dot => {
+            dot.onclick = () => {
+                selectorCores.querySelectorAll('.color-dot-mica').forEach(item => item.style.borderColor = 'transparent');
+                dot.style.borderColor = 'white';
+                corSelecionada = dot.dataset.hex;
+            };
+        });
+    }
 
-    document.getElementById('btn-confirmar-criar-mica').onclick = async () => {
+    btnConfirmar.onclick = async () => {
         const titulo = inputT.value.trim();
-        const cor = inputC.value || "#3b82f6";
+        const cor = corSelecionada;
         if (!titulo) return;
 
         const idMica = crypto.randomUUID();
@@ -334,9 +360,11 @@ export async function abrirPopupMica(db, auth) {
         await updateDoc(currentRef, {
             [`Dossie.mica.${idMica}`]: novaMica
         });
+        await sincronizarMicaNosVersiculos(idMica, novaMica);
 
         overlay.classList.remove('active');
     };
+    if (btnCancelar) btnCancelar.onclick = () => overlay.classList.remove('active');
 }
 
 async function moverMica(index, direcao, lista) {
@@ -349,4 +377,25 @@ async function moverMica(index, direcao, lista) {
     const novasMicas = {};
     lista.forEach(m => { novasMicas[m.id] = m; });
     await updateDoc(currentRef, { "Dossie.mica": novasMicas });
+}
+
+async function sincronizarMicaNosVersiculos(idMica, mica) {
+    const versiculos = [...new Set((filtroSublinhadoDossie?.fragmentos || [])
+        .map(fragmento => Number(fragmento.versiculo)).filter(Boolean))];
+    if (versiculos.length <= 1 || !currentRef || !infoVersiculoAtual) return;
+
+    const qCapitulo = query(
+        collection(currentRef.firestore, 'TextosBiblia'),
+        where('userId', '==', currentUid),
+        where('livro', '==', infoVersiculoAtual.livro)
+    );
+    const snapshot = await getDocs(qCapitulo);
+    const docs = snapshot.docs.filter(snap =>
+        Number(snap.data()?.capitulo) === Number(infoVersiculoAtual.cap) &&
+        versiculos.includes(Number(snap.data()?.versiculo))
+    );
+
+    await Promise.all(docs.map(snap => updateDoc(snap.ref, {
+        [`Dossie.mica.${idMica}`]: mica
+    })));
 }
