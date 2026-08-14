@@ -1,0 +1,446 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ======================================================
+    // 1. FUNÇÕES AUXILIARES
+    // ======================================================
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isApproved() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.aceite == "on" ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.aceite == true);
+    }
+
+    function isOwner(rsc) {
+      return isSignedIn() && rsc.data.userId == request.auth.uid;
+    }
+
+    function isCollaborator(rsc) {
+      return isSignedIn() &&
+             "colaboradores" in rsc.data &&
+             rsc.data.colaboradores[request.auth.uid] == true;
+    }
+
+    function isSharingAtiva(rsc) {
+      return rsc.data.partilhado == "ativo" ||
+             ("shareSettings" in rsc.data && rsc.data.shareSettings.shared == true);
+    }
+
+    function isRuler() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.chave == "ruler";
+    }
+
+    function isCurrentUser(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function acceptanceUnchanged() {
+      return request.resource.data.get("aceite", null) == resource.data.get("aceite", null);
+    }
+
+    // ======================================================
+    // 2. DADOS DO UTILIZADOR E CONFIGURAÇÕES
+    // ======================================================
+
+    match /users/{userId} {
+      // O perfil guarda as preferências pessoais, incluindo o array calendarios.
+      allow get: if isCurrentUser(userId) || isApproved();
+      allow list: if isApproved();
+      allow create: if isCurrentUser(userId) &&
+                    request.resource.data.aceite == "off";
+      allow update: if isCurrentUser(userId) &&
+                    (acceptanceUnchanged() || isApproved());
+
+      match /{allSubcollections=**} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+
+    match /configuracoes/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // ======================================================
+    // 3. ESTRUTURA PRINCIPAL (PASTAS / NOTAS / LOCAL)
+    // ======================================================
+
+    match /pastas/{pastaId} {
+      allow read: if isApproved() &&
+                  (resource == null || isOwner(resource) || isCollaborator(resource) || isSharingAtiva(resource));
+      allow create: if isApproved();
+      allow update: if isApproved() &&
+                    (isOwner(resource) || isCollaborator(resource) || isSharingAtiva(resource));
+      allow delete: if isApproved() && isOwner(resource);
+
+      match /{allSubcollections=**} {
+        allow read, write: if isApproved();
+      }
+    }
+
+    match /Local/{docId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+
+      allow read: if isSignedIn() &&
+                  (resource == null || resource.data.userId == request.auth.uid);
+
+      allow update, delete: if isApproved() && resource.data.userId == request.auth.uid;
+
+      match /Backups/{backupId} {
+        allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+        allow read, update, delete: if isApproved() && resource.data.userId == request.auth.uid;
+      }
+    }
+
+    // --- CAIXAS NORMALIZADAS ---
+    match /LocalCaixas/{caixaId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow update, delete: if isApproved() && resource.data.userId == request.auth.uid;
+    }
+
+    // --- TAREFAS DO NOTADAY ---
+    // Um documento por tarefa permite actualizar, mover e eliminar sem regravar
+    // uma lista inteira. A data usa o formato ISO local: YYYY-MM-DD.
+    match /tarefas/{tarefaId} {
+      allow create: if isApproved() &&
+                    request.resource.data.userId == request.auth.uid &&
+                    request.resource.data.id == tarefaId;
+
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow update: if isApproved() &&
+                    resource.data.userId == request.auth.uid &&
+                    request.resource.data.userId == request.auth.uid &&
+                    request.resource.data.id == tarefaId;
+
+      allow delete: if isApproved() && resource.data.userId == request.auth.uid;
+    }
+
+    // --- CAIXAS NORMALIZADAS DE SHARE ---
+    match /ShareCaixas/{caixaId} {
+      function notaShare() {
+        return get(/databases/$(database)/documents/Share/$(resource.data.shareId));
+      }
+      function podeAcederShare() {
+        return isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          notaShare().data.userId == request.auth.uid ||
+          request.auth.uid in notaShare().data.get("aprovado", []) ||
+          request.auth.uid in notaShare().data.get("convidado", [])
+        );
+      }
+      allow create: if isApproved() &&
+                    request.resource.data.userId == get(/databases/$(database)/documents/Share/$(request.resource.data.shareId)).data.userId &&
+                    request.resource.data.shareId != null;
+      allow read: if podeAcederShare();
+      allow update: if podeAcederShare() &&
+                    request.resource.data.shareId == resource.data.shareId &&
+                    request.resource.data.userId == resource.data.userId;
+      allow delete: if podeAcederShare();
+    }
+
+    // --- COLEÇÃO SHARE ---
+    match /Share/{docId} {
+      function userInList(fieldName) {
+        return request.auth.uid in resource.data.get(fieldName, []);
+      }
+
+      allow read: if isSignedIn() && (
+        resource == null ||
+        resource.data.userId == request.auth.uid ||
+        userInList('aprovado') ||
+        userInList('convidado')
+      );
+
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+
+      allow update: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        userInList('aprovado') ||
+        userInList('convidado')
+      );
+
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      match /Backups/{backupId} {
+        allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+        allow read, update, delete: if isApproved() && resource.data.userId == request.auth.uid;
+      }
+    }
+
+    // --- COLEÇÃO RUA ---
+    match /RUA/{docId} {
+      allow read: if true;
+      allow create: if isApproved();
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // --- COLEÇÃO ATALHO (PINS) ---
+    match /Atalho/{docId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+      allow read, update, delete: if isSignedIn() &&
+                                  (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    // --- COLEÇÃO PALCO ---
+    match /Palco/{docId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+
+      allow read: if isSignedIn() &&
+                  (resource == null || resource.data.userId == request.auth.uid);
+
+      allow update, delete: if isApproved() &&
+                            (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    // --- CAIXAS NORMALIZADAS DO PALCO ---
+    match /PalcoCaixas/{caixaId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+      allow read: if isSignedIn() &&
+                  (resource == null || resource.data.userId == request.auth.uid);
+      allow update, delete: if isApproved() &&
+                            (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    match /PalcoNotificacoes/{docId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+
+      allow read: if isSignedIn() &&
+                  (resource == null || resource.data.userId == request.auth.uid);
+
+      allow update, delete: if isApproved() &&
+                            (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    // ======================================================
+    // 4. COLEÇÕES PRIVADAS E SOCIAIS
+    // ======================================================
+
+    match /Ancora/{docId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+
+      allow read: if isSignedIn() &&
+                  (resource == null || resource.data.userId == request.auth.uid);
+
+      allow update, delete: if isApproved() &&
+                            (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    match /Topico/{docId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+
+      allow read: if isSignedIn() &&
+                  (resource == null || resource.data.userId == request.auth.uid);
+
+      allow update, delete: if isApproved() &&
+                            (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    match /Marcador/{docId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+
+      allow read: if isSignedIn() &&
+                  (resource == null || resource.data.userId == request.auth.uid);
+
+      allow update, delete: if isApproved() &&
+                            (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    match /Cosmo/{docId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+
+      allow read: if isSignedIn() &&
+                  (resource == null || resource.data.userId == request.auth.uid);
+
+      allow update, delete: if isApproved() &&
+                            (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    match /Biblioteca/{docId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isOwner(resource);
+      allow read: if isApproved() && (resource == null || resource.data != null);
+    }
+
+    match /xray/{docId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+
+      allow read: if isSignedIn() &&
+                  (resource == null || resource.data.userId == request.auth.uid);
+
+      allow update, delete: if isApproved() &&
+                            (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    match /blackbox/{doc} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+
+      allow read: if isSignedIn() &&
+                  (resource == null || resource.data.userId == request.auth.uid);
+
+      allow update, delete: if isApproved() &&
+                            (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+
+    // --- COLEÇÃO BLACKBOX (NOME USADO PELA RECICLAGEM) ---
+    match /Blackbox/{doc} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+
+      allow read: if isSignedIn() &&
+                  (resource == null || resource.data.userId == request.auth.uid);
+
+      allow update, delete: if isApproved() &&
+                            (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    // ======================================================
+    // 5. LISTAS GLOBAIS / PARTILHADAS (READ-ONLY)
+    // ======================================================
+
+    match /ancoras/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /topicos/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /cosmos/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /subcosmos/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /tags/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /subtopicos/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /personagens/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /locais/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /datas/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /textosbiblicos/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /trechosbiblicos/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /marcadores/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /agenda/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /destaques/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /ideias/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /codex/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /livros/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /comentarios_status/{statusId} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /aquarium_annotations/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+    match /aquarium_shells/{doc} { allow read: if isSignedIn(); allow write: if isApproved(); }
+
+    // ======================================================
+    // 6. SISTEMAS ESPECIAIS E PÚBLICOS
+    // ======================================================
+
+    match /whitebooks/{boardId} {
+      allow read, update, delete: if isApproved() && (resource == null || isOwner(resource));
+      allow create: if isApproved();
+      match /{allSubcollections=**} { allow read, write: if isApproved(); }
+    }
+
+    match /bible_verses_public/{verseId} {
+      allow read: if isSignedIn();
+      allow create, update: if isApproved();
+    }
+
+    match /gavetoes/{docId} {
+      allow read, create, update: if isApproved();
+      allow delete: if isApproved() && (resource == null || isOwner(resource));
+    }
+
+    match /gavetas/{docId} { allow read, write: if isApproved(); }
+    match /shared_notes/{doc} { allow read: if true; allow write: if isApproved(); }
+
+    // ======================================================
+    // 7. SISTEMA DE AMIGOS
+    // ======================================================
+
+    match /Amigos/{docId} {
+      allow read: if isSignedIn() && (
+        resource == null ||
+        request.auth.uid == resource.data.remetenteId ||
+        request.auth.uid == resource.data.destinatarioId ||
+        request.auth.uid in resource.data.usuarios
+      );
+      allow create: if isSignedIn() && request.resource.data.remetenteId == request.auth.uid;
+      allow update, delete: if isSignedIn() && (
+        request.auth.uid == resource.data.remetenteId ||
+        request.auth.uid == resource.data.destinatarioId
+      );
+    }
+
+    // ======================================================
+    // 8. SISTEMA TEXTOS BÍBLIA (NEURÓNIOS)
+    // ======================================================
+
+    match /TextosBiblia/{docId} {
+      allow create: if isSignedIn();
+      allow read, update, delete: if isSignedIn() &&
+        (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    // ======================================================
+    // 9. SISTEMA DE TRANSFERÊNCIA (OUT)
+    // ======================================================
+
+    match /OUT/{docId} {
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow read, update, delete: if isSignedIn() && (
+        resource == null ||
+        resource.data.userId == request.auth.uid ||
+        resource.data.userConvidado == request.auth.uid
+      );
+    }
+
+    // ======================================================
+    // 10. SISTEMA DE BUSCA SEMÂNTICA (GPS IA)
+    // ======================================================
+
+    match /SearchIndex/{userId}/shards/{shardId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // ======================================================
+    // 11. REDE DE RESPOSTAS (PARTILHARCOM)
+    // ======================================================
+
+    match /Partilharcom/{userId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // ======================================================
+    // 12. SISTEMA DE ATUALIZAÇÕES DO RULER (FLECHA)
+    // ======================================================
+
+    match /updates/{updateId} {
+      // Qualquer utilizador autenticado pode ler atualizações
+      allow read: if isSignedIn();
+      
+      // Apenas utilizadores com a chave "ruler" podem criar atualizações
+      allow create: if isApproved() && isRuler();
+      
+      // Qualquer utilizador autenticado pode atualizar os campos vistos/naovisto do documento
+      allow update: if isSignedIn() && 
+                    (isRuler() || 
+                     (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['visto', 'naovisto', 'estado'])));
+      
+      // Apenas utilizadores com a chave "ruler" podem apagar atualizações
+      allow delete: if isApproved() && isRuler();
+    }
+
+    // ======================================================
+    // 13. SISTEMA DE MODELOS DE NOTAS (MODELOS)
+    // ======================================================
+
+    match /Modelos/{docId} {
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
+      
+      allow read: if isSignedIn() &&
+                  (resource == null || resource.data.userId == request.auth.uid);
+                  
+      allow update, delete: if isApproved() &&
+                            (resource == null || resource.data.userId == request.auth.uid);
+    }
+  }
+}

@@ -1,0 +1,258 @@
+import { isMobileViewport } from '../ui/mobile-device.js';
+// components/bible-portal/bible-ui-controller.js
+
+export const BibleUI = {
+    carregarMenuSuperior: async () => {
+        const menuArea = document.getElementById('area-menu-bible');
+        if (!menuArea) return;
+
+        try {
+            const res = await fetch('components/topo/menu.html');
+            menuArea.innerHTML = await res.text();
+
+            menuArea.querySelectorAll('.nav-item').forEach(link => {
+                const texto = link.textContent.trim().toLowerCase();
+                link.classList.toggle('active', texto.includes('bíblia') || texto.includes('bã­blia') || texto.includes('bÃ­blia') || texto.includes('biblia'));
+            });
+        } catch (e) {
+            console.error("Erro ao carregar menu superior:", e);
+        }
+    },
+
+    finalizarLoading: async () => {
+        await aguardarPrimeiraVistaPronta();
+        document.body.classList.remove('bible-booting');
+        const loader = document.getElementById('loading-screen');
+        if (loader) {
+            loader.style.opacity = '0';
+            setTimeout(() => loader.style.display = 'none', 500);
+        }
+    },
+
+    mostrarLogin: () => {
+        const loading = document.getElementById('loading-screen');
+        const login = document.getElementById('login-screen');
+        if (loading) loading.style.display = 'none';
+        if (login) login.style.display = 'flex';
+    },
+
+    mostrarLoadingLeitura: (status) => {
+        const feed = document.getElementById('bible-feed');
+        if (feed) {
+            feed.style.opacity = status ? '0.3' : '1';
+            feed.style.pointerEvents = status ? 'none' : 'auto';
+        }
+    },
+
+    ativarModoLeitura: (ativo, titulo) => {
+        document.body.classList.toggle('bible-chapter-active', Boolean(ativo));
+
+        if (!ativo && typeof window.fecharPainelNavBiblia === 'function') {
+            window.fecharPainelNavBiblia();
+        }
+
+        const idsContextuais = [
+            'btn-abrir-ancoras-biblia',
+            'btn-xsat-bible',
+            'btn-abrir-ai-biblia',
+            'btn-prev-cap',
+            'btn-next-cap'
+        ];
+
+        idsContextuais.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                const esconderAi = id === 'btn-abrir-ai-biblia' && ativo && window.BibleSettings?.state?.aiFloating;
+                const valorDisplay = ativo && !esconderAi ? 'inline-flex' : 'none';
+                el.style.setProperty('display', valorDisplay, 'important');
+            }
+        });
+
+        const titleEl = document.getElementById('bible-context-title');
+        if (titleEl) titleEl.innerText = ativo ? (titulo || "ESCOLHER LIVRO") : "ESCOLHER LIVRO";
+    },
+
+    abrirPainelLateral: async () => {
+        const colDireita = document.getElementById('bible-right-col');
+        if (!colDireita) return;
+
+        setBibleRightPanelState(colDireita, true);
+        if (isBibleTouchMobile()) {
+            colDireita.dataset.sheetPct = '88';
+            colDireita.style.setProperty('height', '88vh', 'important');
+        } else {
+            colDireita.style.removeProperty('height');
+        }
+
+        if (colDireita.innerHTML.trim() === "" || !document.getElementById('panel-brain')) {
+            try {
+                const res = await fetch('components/direita/menu.html');
+                colDireita.innerHTML = await res.text();
+
+                instalarBibleMobileSheet(colDireita);
+                colDireita.querySelector('#btn-eye')?.remove();
+                colDireita.querySelector('#sub-tabs-brain')?.remove();
+
+                const btnBrain = colDireita.querySelector('#btn-brain');
+                if (btnBrain) btnBrain.style.marginLeft = "0";
+            } catch (e) {
+                console.error("Erro no fetch do menu:", e);
+            }
+        } else {
+            instalarBibleMobileSheet(colDireita);
+        }
+
+        requestAnimationFrame(() => {
+            if (window.switchPanel) window.switchPanel('brain');
+        });
+    },
+
+    fecharPainelLateral: () => {
+        const colDireita = document.getElementById('bible-right-col');
+        if (colDireita) {
+            setBibleRightPanelState(colDireita, false);
+        }
+    },
+
+    togglePopup: (id, status) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('active', status);
+    },
+
+    scrollParaVersiculo: (num) => {
+        const el = document.querySelector(`[data-v="${num}"]`);
+        if (!el) return;
+
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.remove('ai-highlight-pulse');
+        el.classList.add('bible-verse-focus');
+
+        setTimeout(() => {
+            el.classList.remove('bible-verse-focus');
+        }, 1800);
+    }
+};
+
+function instalarBibleMobileSheet(col) {
+    if (!col) return;
+
+    if (!isBibleTouchMobile()) {
+        col.querySelector('.mobile-sheet-chrome')?.remove();
+        return;
+    }
+
+    if (col.querySelector('.mobile-sheet-chrome')) return;
+
+    const chrome = document.createElement('div');
+    chrome.className = 'mobile-sheet-chrome';
+    chrome.innerHTML = `
+        <div class="mobile-sheet-handle"></div>
+        <button class="mobile-sheet-close" title="Fechar"><i class="fa-solid fa-xmark"></i></button>
+    `;
+    col.prepend(chrome);
+
+    chrome.querySelector('.mobile-sheet-close').onclick = () => {
+        setBibleRightPanelState(col, false);
+    };
+
+    const handle = chrome.querySelector('.mobile-sheet-handle');
+    const dragTargets = [handle, chrome].filter(Boolean);
+    let startY = 0;
+    let startHeight = 0;
+
+    const setPct = (pct) => {
+        const clamped = Math.max(10, Math.min(88, pct));
+        col.style.setProperty('height', `${clamped}vh`, 'important');
+        col.dataset.sheetPct = String(clamped);
+    };
+    if (isBibleTouchMobile()) setPct(Number(col.dataset.sheetPct || 88));
+
+    const iniciarDrag = (event) => {
+        if (event.target.closest('button')) return;
+        if (!isBibleTouchMobile()) return;
+        event.preventDefault();
+        event.stopPropagation();
+        startY = event.clientY;
+        startHeight = Number(col.dataset.sheetPct || 88);
+        col.classList.add('dragging');
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        document.body.style.overflow = 'hidden';
+    };
+
+    const moverDrag = (event) => {
+        if (!col.classList.contains('dragging')) return;
+        event.preventDefault();
+        const delta = ((startY - event.clientY) / window.innerHeight) * 100;
+        setPct(startHeight + delta);
+    };
+
+    const terminarDrag = () => {
+        if (!col.classList.contains('dragging')) return;
+        col.classList.remove('dragging');
+        document.body.style.overflow = '';
+    };
+
+    dragTargets.forEach(target => {
+        target.addEventListener('pointerdown', iniciarDrag);
+        target.addEventListener('pointermove', moverDrag);
+        target.addEventListener('pointerup', terminarDrag);
+        target.addEventListener('pointercancel', terminarDrag);
+        target.addEventListener('lostpointercapture', terminarDrag);
+    });
+}
+
+function isBibleTouchMobile() {
+    return isMobileViewport();
+}
+
+function setBibleRightPanelState(col, isOpen) {
+    if (!col) return;
+
+    col.classList.toggle('active', isOpen);
+    col.classList.toggle('closed', !isOpen);
+    col.style.removeProperty('width');
+    col.style.removeProperty('min-width');
+
+    if (!isOpen) {
+        window.fecharFonteXSatMobile?.({ restoreOnly: true });
+        col.style.removeProperty('height');
+        col.style.removeProperty('bottom');
+    }
+
+    const overlay = document.getElementById('mobile-overlay');
+    if (isBibleTouchMobile()) {
+        overlay?.classList.toggle('active', isOpen);
+        document.body.style.overflow = isOpen ? 'hidden' : '';
+    } else {
+        overlay?.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+async function aguardarPrimeiraVistaPronta() {
+    const maxTentativas = 40;
+
+    for (let tentativa = 0; tentativa < maxTentativas; tentativa++) {
+        const quadradosLivros = document.querySelectorAll('.mosaico-book-card');
+        const botaoBookAi = document.getElementById('btn-abrir-ai-biblia');
+        const botaoParabolica = document.getElementById('btn-xsat-bible');
+
+        if (!quadradosLivros.length || !botaoBookAi || !botaoParabolica) {
+            await esperarFrame();
+            continue;
+        }
+
+        const estiloBookAi = window.getComputedStyle(botaoBookAi);
+        const estiloParabolica = window.getComputedStyle(botaoParabolica);
+        const bookAiOculto = estiloBookAi.display === 'none' || estiloBookAi.visibility === 'hidden';
+        const parabolicaOculta = estiloParabolica.display === 'none' || estiloParabolica.visibility === 'hidden';
+
+        if (bookAiOculto && parabolicaOculta) return;
+
+        await esperarFrame();
+    }
+}
+
+function esperarFrame() {
+    return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}

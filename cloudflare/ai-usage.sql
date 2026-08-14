@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS ai_usage (
+  user_id TEXT PRIMARY KEY,
+  day_key TEXT NOT NULL,
+  daily_count INTEGER NOT NULL DEFAULT 0,
+  month_key TEXT NOT NULL,
+  month_count INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
