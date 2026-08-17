@@ -4,6 +4,35 @@ import { IDENTIDADE_FERRAMENTAS } from '../../../constants/ferramentas.js';
 import { carregarExploradorAssociar } from './tags-associar-explorer.js';
 import { perguntarRemocaoHub } from './tags-utils.js';
 
+function sincronizarCaixaAssociadaEmLive(caixaAlvo) {
+    if (!Array.isArray(window.caixasAtuais) || !caixaAlvo?.id) return;
+
+    const indice = window.caixasAtuais.findIndex(caixa =>
+        String(caixa?.id) === String(caixaAlvo.id)
+    );
+    if (indice === -1) return;
+
+    // Mantém a mesma lista global que o dispatcher do EYE consulta.
+    // O merge evita perder alterações entretanto feitas noutros campos.
+    window.caixasAtuais[indice] = {
+        ...window.caixasAtuais[indice],
+        associados: [...(caixaAlvo.associados || [])]
+    };
+}
+
+async function atualizarPainelCaixasAssociadas(dbRef, authRef, caixaAlvo = null) {
+    const userId = authRef?.currentUser?.uid;
+    if (!userId || !Array.isArray(window.caixasAtuais)) return;
+
+    const modulo = await import('../../../direita/caixas-associadas.js');
+    // Passa um snapshot para esta renderização não ser afectada por uma
+    // mutação posterior enquanto as leituras das caixas terminam.
+    const caixasLive = [...window.caixasAtuais];
+    const indiceAlvo = caixasLive.findIndex(caixa => String(caixa?.id) === String(caixaAlvo?.id));
+    if (indiceAlvo === -1 && caixaAlvo?.id) caixasLive.push(caixaAlvo);
+    await modulo.carregarCaixasAssociadas(caixasLive, dbRef, userId);
+}
+
 /**
  * Inicializa o explorador em escadinha: pastas, notas e caixas.
  */
@@ -26,14 +55,15 @@ export async function vincular(idAlvo, titulo, tipo, ctx) {
     
     caixaAlvo.associados.push({ id: idAlvo, titulo, tipo });
     await persistir('associados', caixaAlvo.associados);
+    sincronizarCaixaAssociadaEmLive(caixaAlvo);
 
     // Refresh na UI do Popup e da Coluna EYE
     import('./tags-ui.js').then(m => {
         m.renderizarAssociados(caixaAlvo);
         m.renderizarHub(caixaAlvo);
     });
-    import('../../../direita/caixas-associadas.js').then(m => {
-        m.carregarCaixasAssociadas(window.caixasAtuais, dbRef, authRef.currentUser.uid);
+    atualizarPainelCaixasAssociadas(dbRef, authRef, caixaAlvo).catch(error => {
+        console.error('Erro ao actualizar Caixas do EYE:', error);
     });
 }
 
@@ -50,13 +80,14 @@ export async function remover(idAlvo, ctx) {
 
     caixaAlvo.associados = (caixaAlvo.associados || []).filter(a => a.id !== idAlvo);
     await persistir('associados', caixaAlvo.associados);
+    sincronizarCaixaAssociadaEmLive(caixaAlvo);
     
     import('./tags-ui.js').then(m => {
         m.renderizarAssociados(caixaAlvo);
         m.renderizarHub(caixaAlvo);
     });
-    import('../../../direita/caixas-associadas.js').then(m => {
-        m.carregarCaixasAssociadas(window.caixasAtuais, dbRef, authRef.currentUser.uid);
+    atualizarPainelCaixasAssociadas(dbRef, authRef, caixaAlvo).catch(error => {
+        console.error('Erro ao actualizar Caixas do EYE:', error);
     });
 }
 

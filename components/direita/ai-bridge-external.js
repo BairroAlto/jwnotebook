@@ -14,15 +14,8 @@ export const AIBridge = {
 
         console.log("🛠️ [AI-BRIDGE] Caixa virtual criada:", dadosVirtuais);
 
-        // Mudar painel
-        if (window.switchPanel) window.switchPanel('xsat');
-        
-        // Ativar Canal 6
-        const btn6 = document.querySelector('.xsat-num[data-num="6"]');
-        if (btn6) {
-            document.querySelectorAll('.xsat-num').forEach(b => b.classList.remove('active'));
-            btn6.classList.add('active');
-        }
+        // O BookAI tem agora um painel próprio, fora do X-SAT.
+        if (window.switchPanel) window.switchPanel('bookai');
 
         // Entregar ao controlador
         AIController.configurarAlvoExterno(dadosVirtuais);

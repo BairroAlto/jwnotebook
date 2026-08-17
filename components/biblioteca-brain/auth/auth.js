@@ -1,4 +1,4 @@
-// components/auth/auth.js
+// components/biblioteca-brain/auth/auth.js
 import { 
     getAuth, 
     onAuthStateChanged, 

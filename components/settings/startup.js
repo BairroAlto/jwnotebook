@@ -1,5 +1,6 @@
 import { collection, query, where, getDocs, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { isMobileViewport } from '../ui/mobile-device.js';
+import { notaEstaVisivel } from '../notes/note-visibility.js';
 import {
     atualizarEntradaArranque,
     guardarPreferenciasUtilizador,
@@ -167,7 +168,7 @@ async function carregarNotasLocais(dispositivo) {
         const notas = [];
         snapshot.forEach((notaSnap) => {
             const dados = notaSnap.data();
-            if (dados.estado === "on" && dados.tipo !== "pasta") {
+            if (dados.estado === "on" && dados.tipo !== "pasta" && notaEstaVisivel(dados)) {
                 notas.push({ id: notaSnap.id, nome: String(dados.nome || "Nota sem título") });
             }
         });

@@ -5,8 +5,50 @@ import { getFirestore, doc, updateDoc, deleteDoc, getDoc, collection, addDoc, se
 import { RecycleViewer } from './recycle-viewer.js';
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js"; // Garante este import no topo
 import { obterParCaixa, eliminarParCaixa, restaurarParCaixa } from './recycle-caixa-pair.js';
+import { obterApresentacaoCaixaReciclada } from './recycle-tool-presentation.js';
+import { executarEliminacaoSequencial, ordenarItensParaEliminacao } from './recycle-batch-runner.js';
+import { bloquearInterfaceDuranteReciclagem } from './recycle-operation-lock.js';
+import { guardarNoArquivoReciclagem } from './recycle-blackbox-archive.js';
 
 let cacheItensNaLixeira = [];
+let limpezaEmCurso = false;
+
+function obterIdArquivoReciclagem(item, colecaoOriginal, userId) {
+    return ["reciclagem", userId, colecaoOriginal, item.tipoItem, item.id, item.idSub || "documento"]
+        .map(valor => encodeURIComponent(String(valor)))
+        .join("__");
+}
+
+function descreverErroReciclagem(item, erro) {
+    const codigo = String(erro?.code || "sem-código");
+    const mensagem = String(erro?.message || erro || "erro desconhecido");
+    return [
+        `item=${item.idSub || item.id}`,
+        `tipo=${item.tipoItem || "desconhecido"}`,
+        `origem=${item.origem || "sem-origem"}`,
+        `código=${codigo}`,
+        `mensagem=${mensagem}`
+    ].join(" | ");
+}
+
+function aguardarPinturaDoEcrã() {
+    return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
+
+async function guardarArquivoReciclagem(item, colecaoOriginal, userId, dados) {
+    const { deletedAt: _deletedAt, ...conteudo } = dados;
+    await guardarNoArquivoReciclagem({
+        db,
+        arquivoId: obterIdArquivoReciclagem(item, colecaoOriginal, userId),
+        userId,
+        dados: conteudo,
+        camposIndice: {
+            originalId: item.idSub || item.id,
+            originalCollection: colecaoOriginal,
+            tipoItem: item.tipoItem
+        }
+    });
+}
 
 
 const db = getFirestore();
@@ -57,7 +99,11 @@ export function renderizarItensReciclagem(lista, isAutoOpen) {
 function criarCardHTML(item) {
     let nome = item.dados.nome || item.dados.titulo || "Sem Nome";
     let icone = "fa-file-lines";
-    if (item.tipoItem === 'caixa') { icone = "fa-box"; nome += ` (em ${item.nomePai})`; }
+    if (item.tipoItem === 'caixa') {
+        const apresentacao = obterApresentacaoCaixaReciclada(item.dados);
+        icone = apresentacao.identidade.icon;
+        nome = `${item.dados.nome || item.dados.titulo || apresentacao.nome} (em ${item.nomePai})`;
+    }
     if (item.tipoItem === 'mica') { icone = "fa-folder-open"; nome += ` (DossiÃª: ${item.nomePai})`; }
     if (item.tipoItem === 'cosmos-tema') icone = "fa-meteor";
     if (item.tipoItem === 'topico') icone = "fa-hashtag";
@@ -65,6 +111,7 @@ function criarCardHTML(item) {
     // CodificaÃ§Ã£o segura para evitar quebra de aspas no HTML
     const payload = btoa(unescape(encodeURIComponent(JSON.stringify(item))));
     const bordaColor = item.expirado ? "#ef4444" : "rgba(255,255,255,0.1)";
+    const classeIcone = icone.includes(' ') ? icone : `fa-solid ${icone}`;
 
     return `
         <div class="menu-item-list" style="flex-direction: column; align-items: flex-start; gap: 10px; background: rgba(255,255,255,0.02); padding: 12px; border: 1px solid ${bordaColor}; border-radius: 10px; margin-bottom: 8px; position: relative;">
@@ -77,7 +124,7 @@ function criarCardHTML(item) {
 
             <div style="width:100%; display:flex; justify-content:space-between; align-items:center; padding-right: 25px;">
                 <div style="display:flex; align-items:center; gap:10px;">
-                    <i class="fa-solid ${icone}" style="color:var(--primary); font-size:12px;"></i>
+                    <i class="${classeIcone}" style="color:var(--primary); font-size:12px;"></i>
                     <span style="font-size:13px; font-weight:700; color:white;">${nome}</span>
                 </div>
                 <span style="font-size:8px; font-weight:900; opacity:0.3;">${item.tipoItem.toUpperCase()}</span>
@@ -360,7 +407,8 @@ window.execEliminar = async (docId, subId, tipo, origem = "") => {
  * ðŸš€ MOTOR DE ELIMINAÃ‡ÃƒO EM MASSA (LIMPEZA TOTAL)
  */
 window.execApagarTudo = async () => {
-    if (cacheItensNaLixeira.length === 0) return;
+    if (limpezaEmCurso || cacheItensNaLixeira.length === 0) return;
+    limpezaEmCurso = true;
 
     const total = cacheItensNaLixeira.length;
     const confirmou = await confirmarAcaoGeral(
@@ -368,29 +416,66 @@ window.execApagarTudo = async () => {
         `Desejas mover todos os ${total} itens para o arquivo morto (Blackbox)? Esta aÃ§Ã£o nÃ£o pode ser desfeita.`
     );
 
-    if (!confirmou) return;
+    if (!confirmou) {
+        limpezaEmCurso = false;
+        return;
+    }
 
     const btn = document.getElementById('btn-vazamento-lixeira');
-    btn.disabled = true;
-    btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> A PROCESSAR...`;
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> A PROCESSAR...`;
+    }
 
-    console.group(`ðŸ—‘ï¸ [MASS-DELETE] Iniciando limpeza de ${total} itens`);
+    const bloqueio = bloquearInterfaceDuranteReciclagem(total);
+    const itensOrdenados = ordenarItensParaEliminacao([...cacheItensNaLixeira]);
+    let manterBloqueioAteRecarregar = false;
+
+    console.group(`🗑️ [MASS-DELETE] A iniciar limpeza de ${total} itens`);
 
     try {
-        // Processamos todos os itens em paralelo para ser instantÃ¢neo
-        const promessas = cacheItensNaLixeira.map(item => processarEliminacaoSilenciosa(item));
-        await Promise.all(promessas);
+        const resultado = await executarEliminacaoSequencial(
+            itensOrdenados,
+            processarEliminacaoSilenciosa,
+            progresso => bloqueio.atualizar(progresso)
+        );
 
-        console.log("âœ… [MASS-DELETE] Lixeira limpa e Blackbox alimentada.");
-        location.reload(); // Atualiza para limpar o ecrÃ£ e as listas
+        if (resultado.falhas.length > 0) {
+            resultado.falhas.forEach(({ item, erro }) => {
+                console.error(`❌ [MASS-DELETE] ${descreverErroReciclagem(item, erro)}`);
+            });
+            bloqueio.concluirComFalhas({
+                sucessos: resultado.sucessos.length,
+                falhas: resultado.falhas.length,
+                total
+            });
+            await aguardarPinturaDoEcrã();
+            alert(
+                `${resultado.sucessos.length} de ${total} itens foram eliminados. ` +
+                `${resultado.falhas.length} não puderam ser eliminados e continuarão na reciclagem.`
+            );
+            location.reload();
+            return;
+        }
 
+        console.log("✅ [MASS-DELETE] Reciclagem limpa e Blackbox alimentada.");
+        bloqueio.concluir();
+        manterBloqueioAteRecarregar = true;
+        location.reload();
     } catch (e) {
         console.error("Erro na limpeza em massa:", e);
-        alert("Ocorreu um erro ao limpar alguns itens.");
-        btn.disabled = false;
-        btn.innerHTML = `<i class="fa-solid fa-dumpster-fire"></i> APAGAR TUDO`;
+        alert("Ocorreu um erro inesperado durante a limpeza. Os itens não processados continuam na reciclagem.");
+    } finally {
+        if (!manterBloqueioAteRecarregar) {
+            bloqueio.fechar();
+            limpezaEmCurso = false;
+        }
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<i class="fa-solid fa-dumpster-fire"></i> APAGAR TUDO`;
+        }
+        console.groupEnd();
     }
-    console.groupEnd();
 };
 
 /**
@@ -401,8 +486,7 @@ async function processarEliminacaoSilenciosa(item) {
     const meuUid = auth.currentUser ? auth.currentUser.uid : null;
 
     if (!meuUid) {
-        console.error("âŒ [RECYCLE] Utilizador nÃ£o autenticado para realizar limpeza.");
-        return;
+        throw new Error("Utilizador não autenticado para realizar a limpeza.");
     }
 
     if (item.tipoItem === "caixa" && obterParCaixa(item.origem)) {
@@ -454,6 +538,9 @@ async function processarEliminacaoSilenciosa(item) {
         const snap = await getDoc(docRef);
         if (!snap.exists()) return;
         const dadosDoc = snap.data();
+        if (dadosDoc.userId && dadosDoc.userId !== meuUid) {
+            throw new Error("O item não pertence ao utilizador autenticado.");
+        }
         let caixasLocaisDaNota = [];
         if (colecaoOriginal === "Share" && !item.idSub && (dadosDoc.caixasMigradas || Array.isArray(dadosDoc.caixaIds))) {
             const caixasMap = await obterCaixasSharePorIds(db, item.id, obterIdsCaixasShare(dadosDoc));
@@ -470,6 +557,7 @@ async function processarEliminacaoSilenciosa(item) {
         }
 
         let payloadBlackbox = null;
+        let eliminarOriginal = async () => {};
 
         // 2. Extrair o conteÃºdo correto para o backup
         if (item.idSub) {
@@ -478,13 +566,13 @@ async function processarEliminacaoSilenciosa(item) {
                 payloadBlackbox = { ...(dadosDoc.Dossie?.mica[item.idSub] || {}), _meta_origem: "Mica" };
                 const micas = { ...dadosDoc.Dossie.mica }; 
                 delete micas[item.idSub];
-                await updateDoc(docRef, { "Dossie.mica": micas });
+                eliminarOriginal = () => updateDoc(docRef, { "Dossie.mica": micas });
             } else {
                 const caixaAlvo = (dadosDoc.caixas || []).find(c => c.id === item.idSub);
                 payloadBlackbox = { ...(caixaAlvo || {}), _meta_origem: "Bloco" };
-                const novas = dadosDoc.caixas.filter(c => c.id !== item.idSub);
+                const novas = (dadosDoc.caixas || []).filter(c => c.id !== item.idSub);
                 const idsOut = [...new Set(novas.map(caixa => caixa?.id).filter(Boolean).map(String))];
-                await updateDoc(docRef, { caixas: novas, CaixasOut: idsOut, caixaIds: idsOut, caixasMigradas: true });
+                eliminarOriginal = () => updateDoc(docRef, { caixas: novas, CaixasOut: idsOut, caixaIds: idsOut, caixasMigradas: true });
             }
         } else {
             // CenÃ¡rio: Nota, Tema ou TÃ³pico Integral
@@ -495,28 +583,36 @@ async function processarEliminacaoSilenciosa(item) {
                 caixasExternas: caixasLocaisDaNota,
                 _meta_origem: "Documento"
             };
-            await deleteDoc(docRef);
-            if (colecaoOriginal === "Share" && caixasLocaisDaNota.length) {
-                await Promise.all(caixasLocaisDaNota.map(caixa => apagarCaixaShare(db, item.id, caixa.id)));
-            } else if (caixasLocaisDaNota.length) {
-                await Promise.all(caixasLocaisDaNota.map(caixa =>
-                    apagarCaixaLocal(db, dadosDoc.userId || meuUid, caixa.id)
-                ));
-            }
+            eliminarOriginal = async () => {
+                if (colecaoOriginal === "Share" && caixasLocaisDaNota.length) {
+                    for (const caixa of caixasLocaisDaNota) {
+                        await deleteDoc(doc(db, COLECAO_CAIXAS_SHARE, String(caixa.id)));
+                    }
+                } else if (caixasLocaisDaNota.length) {
+                    for (const caixa of caixasLocaisDaNota) {
+                        await deleteDoc(doc(db, COLECAO_CAIXAS, String(caixa.id)));
+                    }
+                }
+                await deleteDoc(docRef);
+            };
         }
 
-        // 3. GRAVAR NA BLACKBOX (Com verificaÃ§Ã£o de userId)
-        // ðŸš€ O SEGREDO: Se dadosDoc.userId for undefined, usa o meuUid. Nunca envia undefined.
-        await addDoc(collection(db, "Blackbox"), {
+        // 3. Criar o backup antes de tocar no original.
+        await guardarArquivoReciclagem(item, colecaoOriginal, meuUid, {
             ...payloadBlackbox,
             deletedAt: serverTimestamp(),
+            originalId: item.idSub || item.id,
             originalCollection: colecaoOriginal,
             tipoItem: item.tipoItem,
             userId: dadosDoc.userId || meuUid 
         });
 
+        // 4. Só eliminar depois de o arquivo de segurança estar confirmado.
+        await eliminarOriginal();
+
     } catch (err) {
-        console.error(`âŒ [RECYCLE] Erro ao processar item ${item.id}:`, err);
+        console.error(`❌ [RECYCLE] ${descreverErroReciclagem(item, err)}`);
+        throw err;
     }
 }
 
@@ -529,7 +625,7 @@ function confirmarAcaoGeral(titulo, mensagem) {
         const btnSim = document.getElementById('btn-confirmar-remover-final');
         const btnNao = document.getElementById('btn-cancelar-remover');
 
-        if (!overlay) return resolve(confirm(mensagem));
+        if (!overlay || !btnSim || !btnNao) return resolve(confirm(mensagem));
 
         overlay.querySelector('h3').innerText = titulo;
         overlay.querySelector('p').innerText = mensagem;
@@ -540,6 +636,7 @@ function confirmarAcaoGeral(titulo, mensagem) {
         const fechar = (r) => {
             overlay.classList.remove('active');
             btnSim.onclick = null;
+            btnNao.onclick = null;
             resolve(r);
         };
 

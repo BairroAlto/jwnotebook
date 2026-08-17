@@ -2,6 +2,7 @@ import { obterCaixasPorIds, obterIdsCaixas } from '../../local/caixas-repository
 import { obterCaixasSharePorIds, obterIdsCaixasShare } from '../../share/share-caixas-repository.js';
 // components/editor/modulos/ai-search-indexer.js
 import { doc, setDoc, updateDoc, deleteField } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { notaEstaOculta } from '../../notes/note-visibility.js';
 
 export async function dispararIndexacao(db, userId, notaId, dadosNota) {
     if (!db || !userId || !notaId) return;
@@ -11,7 +12,7 @@ export async function dispararIndexacao(db, userId, notaId, dadosNota) {
     const indexRef = doc(db, "SearchIndex", userId, "shards", shardId);
 
     // Remoção se a nota estiver off
-    if (dadosNota.estado === "off") {
+    if (dadosNota.estado === "off" || notaEstaOculta(dadosNota)) {
         try { await updateDoc(indexRef, { [`n_${notaId}`]: deleteField() }); return; } catch (e) { return; }
     }
 

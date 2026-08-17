@@ -1,5 +1,6 @@
 // components/editor/modulos/lab-modelos.js
 import { criarAjustadorAlturaAbas } from '../../ui/fixed-tabs-height.js';
+import { criarCaixaBairroDoModelo, criarEditorBairroModelo } from './lab-bairro-modelos.js';
 
 export const LabModelos = {
     init: (ctx) => {
@@ -246,14 +247,14 @@ export const LabModelos = {
             if (modeloData.caixas && modeloData.caixas.length > 0) {
                 modeloData.caixas.forEach(c => {
                     const conteudo = ["subnota", "questao", "raciocinio", "cartaovisita"].includes(c.tipo) ? (c.titulo || "") : (c.conteudo || "");
-                    window.adicionarAtalhoRow(conteudo, c.tipo || "contentor", c.foco || "original", c.pastapai || []);
+                    window.adicionarAtalhoRow(conteudo, c.tipo || "contentor", c.foco || "original", c.pastapai || [], c);
                 });
             } else {
                 window.adicionarAtalhoRow("", "contentor", "original", []);
             }
         };
 
-        window.adicionarAtalhoRow = (conteudo = "", tipo = "contentor", foco = "original", pastapai = []) => {
+        window.adicionarAtalhoRow = (conteudo = "", tipo = "contentor", foco = "original", pastapai = [], configuracao = null) => {
             const container = document.getElementById('modelo-caixas-lista');
             if (!container) return;
 
@@ -316,8 +317,14 @@ export const LabModelos = {
 
                 inputContainer.innerHTML = "";
                 
-                if (selectedTipo === "bairro" || selectedTipo === "elevador") {
-                    // Interface de Hierarquia para Bairro ou Elevador
+                if (selectedTipo === "bairro") {
+                    const editorBairro = criarEditorBairroModelo(configuracao?.tipo === 'bairro'
+                        ? configuracao
+                        : { pastapai });
+                    row.obterBairroModelo = () => editorBairro.obterModelo();
+                    inputContainer.appendChild(editorBairro);
+                } else if (selectedTipo === "elevador") {
+                    // Interface de Hierarquia para Elevador
                     const hierDiv = document.createElement('div');
                     hierDiv.className = 'hierarchy-container';
                     hierDiv.style.cssText = 'display: flex; flex-direction: column; gap: 8px; width: 100%; margin-bottom: 6px;';
@@ -534,7 +541,11 @@ export const LabModelos = {
                     tipo: tipo
                 };
 
-                if (tipo === "bairro" || tipo === "elevador") {
+                if (tipo === "bairro") {
+                    const configuracaoBairro = row.obterBairroModelo?.() || { pastapai: [] };
+                    Object.assign(caixaObj, configuracaoBairro);
+                    caixaObj.conteudo = "";
+                } else if (tipo === "elevador") {
                     const pastapai = [];
                     row.querySelectorAll('.pai-item-row').forEach(paiEl => {
                         const pName = paiEl.querySelector('.pai-row-input').value.trim();
@@ -641,8 +652,10 @@ export const LabModelos = {
                     nova.textoFirmamento = "#ffffff";
                 }
                 
-                if (c.tipo === "bairro" || c.tipo === "elevador") {
-                    const isBairro = c.tipo === "bairro";
+                if (c.tipo === "bairro") {
+                    Object.assign(nova, criarCaixaBairroDoModelo(c));
+                } else if (c.tipo === "elevador") {
+                    const isBairro = false;
                     const criarId = (p) => p + '-' + crypto.randomUUID();
                     nova.corBairro = isBairro ? "#c084fc" : undefined;
                     

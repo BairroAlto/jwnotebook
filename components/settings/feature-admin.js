@@ -23,7 +23,12 @@ const FEATURE_GROUPS = {
 
 const FEATURE_GROUP_ORDER = ['painel', 'ferramentas', 'conexoes', 'partilha', 'personalizacao', 'posto', 'ia', 'outros'];
 const PAINEL_UTILIZADOR_CHAVES = new Set(PAINEL_UTILIZADOR_ABAS.map(aba => aba.key));
-const FEATURES_ESTRUTURAIS_CHAVES = new Set([...PAINEL_UTILIZADOR_CHAVES, 'ferramenta_noticias', 'ferramenta_tempo']);
+const FEATURES_ESTRUTURAIS_CHAVES = new Set([
+    ...PAINEL_UTILIZADOR_CHAVES,
+    'ferramenta_noticias',
+    'ferramenta_tempo',
+    'ferramenta_gmail'
+]);
 
 function isFeatureModoNota(feature) {
     return String(feature?.feature_key || '').startsWith('modo_');
@@ -242,6 +247,10 @@ export async function inicializarAdminFeatures(auth) {
     const listaModos = document.getElementById('note-mode-admin-list');
     if (!tab || !area || !lista || !tabs || !adicionar || !listaModos) return;
 
+    tab.hidden = true;
+    area.hidden = true;
+    delete tab.dataset.adminAuthorized;
+
     let grupoAtivo = 'painel';
     let featuresAtuais = [];
 
@@ -329,9 +338,13 @@ export async function inicializarAdminFeatures(auth) {
 
     try {
         await carregar();
+        tab.dataset.adminAuthorized = 'true';
+        area.hidden = false;
         tab.hidden = false;
     } catch (erro) {
         tab.hidden = true;
+        area.hidden = true;
+        delete tab.dataset.adminAuthorized;
         if (erro.status !== 403) console.info('[FEATURES] Administração indisponível:', erro.message);
         return;
     }

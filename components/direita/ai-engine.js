@@ -1,5 +1,6 @@
 // components/direita/ai-engine.js
 import { chatWithQuota } from '../ai/ai-client.js';
+import { normalizarRespostaIA } from '../ai/ai-response.js';
 
 /**
  * MOTOR DE INTELIGÊNCIA BOOKAI (OPENROUTER)
@@ -54,7 +55,15 @@ export const NexoEngine = {
             "estruturar": "Transforma o parágrafo num esboço organizado por tópicos (I, II, a, b)."
         };
 
-        const systemContent = `Tu és o BookAI. ${prompts[modo] || "Responde de forma útil e contextual."} Usa negrito com ** e títulos com ###. Responde em Português de Portugal.${contextoExtra ? `\n\nCONTEXTO OBRIGATORIO:\n${contextoExtra}` : ""}`;
+        const systemContent = `Tu és o BookAI. ${prompts[modo] || "Responde de forma útil e contextual."}
+
+REGRAS OBRIGATÓRIAS:
+- Responde exclusivamente em Português de Portugal.
+- Não uses palavras aleatórias de outros idiomas, caracteres de outros alfabetos ou símbolos decorativos.
+- Não inventes pessoas, fontes, descobertas arqueológicas, datas ou acontecimentos. Se não houver dados suficientes, diz claramente que não é possível confirmar.
+- Revê a resposta antes de a enviares e remove qualquer palavra corrompida, repetida ou sem sentido.
+- Usa Markdown simples: títulos com ###, negrito com ** e listas com hífen.
+${contextoExtra ? `\nCONTEXTO OBRIGATÓRIO:\n${contextoExtra}` : ""}`;
 
         try {
             const data = await chatWithQuota({
@@ -63,9 +72,9 @@ export const NexoEngine = {
                     { role: 'system', content: systemContent },
                     { role: 'user', content: texto }
                 ],
-                temperature: 0.7
+                temperature: modo === 'investigar' || modo === 'cronologia' ? 0.25 : 0.45
             });
-            return data.choices[0].message.content;
+            return normalizarRespostaIA(data.choices?.[0]?.message?.content, modo);
         } catch (e) { return "Erro ao processar sinal do satélite."; }
     }
 };

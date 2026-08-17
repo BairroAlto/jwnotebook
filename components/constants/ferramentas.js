@@ -12,4 +12,6 @@ export const IDENTIDADE_FERRAMENTAS = {
      firmamento: { id: "firmamento", nome: "Firmamento", icon: "fa-solid fa-aquarius", cor: "#d4af37" },
      bairro: { id: "bairro", nome: "Bairro", icon: "fa-solid fa-city", cor: "#c084fc" },
      noticias: { id: "noticias", nome: "Notícias", icon: "fa-solid fa-square-rss", cor: "#d6a47f" },
+     tempo: { id: "tempo", nome: "Tempo", icon: "fa-solid fa-cloud-sun", cor: "#7dd3fc" },
+     gmail: { id: "gmail", nome: "Gmail", icon: "fa-solid fa-envelope", cor: "#f87171" },
 };

@@ -7,6 +7,7 @@ import { dispararIndexacao } from './ai-search-indexer.js';
 import { hidratarNotaComCaixas, guardarCaixasDaNota, obterIdsCaixas } from '../../local/caixas-repository.js';
 import { hidratarNotaShareComCaixas, guardarCaixasShareDaNota } from '../../share/share-caixas-repository.js';
 import { exigirAcessoFerramenta } from '../../settings/feature-admin.js';
+import { notaEstaVisivel } from '../../notes/note-visibility.js';
 
 let caixaAtual = null;
 let notaAtualId = null;
@@ -141,6 +142,7 @@ async function carregarDadosParaAlvo() {
 
         snapshot.forEach(docSnap => {
             const data = docSnap.data();
+            if (!notaEstaVisivel(data)) return;
             let paiReal = (abaPartilhaAtiva === "Local") ? (data.pastapai || "root") : (data[uid]?.pastapai || "home");
 
             todosItens.push({

@@ -12,6 +12,7 @@ import {
     removerLigacaoBairroDaCasa,
     irParaLigacaoBairro
 } from './bairro-ligacoes.js';
+import { criarGestorNotasBairro } from './bairro-notas-controller.js';
 
 const OPCOES_CHECK = [
     { tipo: TIPO_CHECK_BAIRRO.NENHUM, nome: 'X', detalhe: 'Clicável por completo', icone: 'fa-solid fa-xmark' },
@@ -78,6 +79,7 @@ function selecionarSubAbaCasa(alvo) {
         panel.hidden = panel.dataset.bairroCasaPanel !== alvo;
     });
     if (alvo === 'actas') estadoAtual?.gestorActas?.renderizarHistorico();
+    if (alvo === 'notas') estadoAtual?.gestorNotas?.renderizar();
     if (deveRolarParaHistorico && alvo === 'actas') {
         requestAnimationFrame(() => {
             setTimeout(() => {
@@ -111,6 +113,13 @@ function configurarActas(subAba = 'geral') {
             estadoAtual.renderizar?.();
         },
         aoAbrirHistorico: () => selecionarSubAbaCasa('historico-actas')
+    });
+    estadoAtual.gestorNotas = criarGestorNotasBairro({
+        bairro: estadoAtual.bairro,
+        filho,
+        painel: overlay.querySelector('[data-bairro-casa-panel="notas"]'),
+        guardar: () => estadoAtual.onTextoAlterado(estadoAtual.bairro),
+        renderizarBairro: () => estadoAtual.renderizar?.()
     });
     const contexto = obterContexto();
     const painelFicheiros = overlay.querySelector('#bairro-posto-ficheiros-panel');

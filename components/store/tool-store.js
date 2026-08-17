@@ -25,6 +25,14 @@ export const FERRAMENTAS_LOJA = Object.freeze([
         descricao: 'Mostra o estado do tempo da cidade escolhida e atualiza uma vez por dia.',
         icon: 'fa-solid fa-cloud-sun',
         corInterface: '#7dd3fc'
+    },
+    {
+        id: 'gmail',
+        featureKey: 'ferramenta_gmail',
+        nome: 'Gmail',
+        descricao: 'Mostra os emails recentes da conta Google ligada, em modo somente leitura.',
+        icon: 'fa-solid fa-envelope',
+        corInterface: '#f87171'
     }
 ]);
 

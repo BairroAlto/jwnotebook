@@ -66,6 +66,9 @@ export function iniciarXSat() {
         canalSelecionadoUI = num;
 
         if (num === "6") {
+                // Compatibilidade com chamadas antigas: o BookAI deixou de
+                // ser um canal do X-SAT e vive no painel principal próprio.
+                if (window.switchPanel) window.switchPanel('bookai');
                 if (subNav) subNav.style.display = 'none';
                 const contextoVersiculo = window.bibleVersiculoAIContext;
                 if (contextoVersiculo?.texto) {
@@ -389,15 +392,18 @@ function mostrarCanalLivre(num) {
     document.querySelectorAll('#xsat-sub-nav button').forEach(b => b.classList.remove('active'));
 }
 
+function obterDisplayNexo() {
+    return document.getElementById('bookai-display-content')
+        || document.getElementById('xsat-display-content');
+}
+
 window.dispararNexoAI = (texto) => {
     if (!texto || texto.trim().length < 5) return;
 
-    // 1. Ir para o Canal 6
-    if (window.switchPanel) window.switchPanel('xsat');
-    const btn6 = document.querySelector('.xsat-num[data-num="6"]');
-    if (btn6) btn6.click();
+    // 1. Ir para o painel próprio do BookAI
+    if (window.switchPanel) window.switchPanel('bookai');
 
-    const display = document.getElementById('xsat-display-content');
+    const display = obterDisplayNexo();
 
     // 2. DESENHAR O MENU DE PROTOCOLO
     display.innerHTML = `
@@ -437,7 +443,7 @@ window.dispararNexoAI = (texto) => {
 
 // 3. FUNÇÃO QUE FAZ O TRABALHO APÓS A ESCOLHA
 window.executarProtocoloAI = async (texto, modo) => {
-    const display = document.getElementById('xsat-display-content');
+    const display = obterDisplayNexo();
     const cor = modo === 'melhorar' ? '#10b981' : '#6366f1';
 
     display.innerHTML = `

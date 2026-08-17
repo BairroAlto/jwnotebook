@@ -1,15 +1,13 @@
 import {
-    addDoc,
-    collection,
     deleteDoc,
     doc,
     getDoc,
-    serverTimestamp,
     setDoc,
     updateDoc
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { COLECAO_CAIXAS } from "../local/caixas-repository.js";
 import { COLECAO_CAIXAS_SHARE } from "../share/share-caixas-repository.js";
+import { guardarNoArquivoReciclagem } from "./recycle-blackbox-archive.js";
 
 const PARES = {
     Local: { pai: "Local", caixas: COLECAO_CAIXAS, campoPai: "localDocId" },
@@ -26,12 +24,18 @@ async function lerParCaixa({ db, origem, parentId, caixaId }) {
     const par = obterParCaixa(origem);
     if (!db || !par || !parentId || !caixaId) return null;
 
-    const [paiSnap, caixaSnap] = await Promise.all([
+    const [resultadoPai, resultadoCaixa] = await Promise.allSettled([
         getDoc(doc(db, par.pai, String(parentId))),
         getDoc(doc(db, par.caixas, String(caixaId)))
     ]);
-    const pai = paiSnap.exists() ? { id: paiSnap.id, ...paiSnap.data() } : null;
-    const caixaExterna = caixaSnap.exists() ? { id: caixaSnap.id, ...caixaSnap.data() } : null;
+    if (resultadoPai.status === "rejected" && resultadoCaixa.status === "rejected") {
+        throw resultadoCaixa.reason || resultadoPai.reason;
+    }
+
+    const paiSnap = resultadoPai.status === "fulfilled" ? resultadoPai.value : null;
+    const caixaSnap = resultadoCaixa.status === "fulfilled" ? resultadoCaixa.value : null;
+    const pai = paiSnap?.exists() ? { id: paiSnap.id, ...paiSnap.data() } : null;
+    const caixaExterna = caixaSnap?.exists() ? { id: caixaSnap.id, ...caixaSnap.data() } : null;
     const caixaPrincipal = pai?.caixas?.find(item => String(item?.id) === String(caixaId)) || null;
     const userId = caixaExterna?.userId || pai?.userId || null;
 
@@ -58,31 +62,41 @@ function caixaComEstado(caixa, caixaId) {
 async function guardarParNaBlackbox(parCaixa) {
     const { par, parentId, caixaId, pai, caixaExterna, caixaPrincipal, userId } = parCaixa;
     const caixaBase = caixaExterna || caixaPrincipal || {};
-    await addDoc(collection(par.db, "Blackbox"), {
-        ...caixaBase,
-        caixaPrincipal: caixaPrincipal ? { ...caixaPrincipal } : null,
-        caixaExterna: caixaExterna ? { ...caixaExterna } : null,
-        originalId: caixaId,
-        originalCollection: par.caixas,
-        originalParentId: parentId,
-        originalParentCollection: par.pai,
-        tipoItem: "caixa",
+    const idArquivo = ["reciclagem", userId || pai?.userId, par.caixas, parentId, caixaId]
+        .map(valor => encodeURIComponent(String(valor)))
+        .join("__");
+    await guardarNoArquivoReciclagem({
+        db: par.db,
+        arquivoId: idArquivo,
         userId: userId || pai?.userId,
-        deletedAt: serverTimestamp()
+        dados: {
+            ...caixaBase,
+            caixaPrincipal: caixaPrincipal ? { ...caixaPrincipal } : null,
+            caixaExterna: caixaExterna ? { ...caixaExterna } : null,
+        },
+        camposIndice: {
+            originalId: caixaId,
+            originalCollection: par.caixas,
+            originalParentId: parentId,
+            originalParentCollection: par.pai,
+            tipoItem: "caixa"
+        }
     });
 }
 
 export async function eliminarParCaixa({ db, origem, parentId, caixaId, userId }) {
     const parCaixa = await lerParCaixa({ db, origem, parentId, caixaId });
     if (!parCaixa || !parCaixa.caixaExterna && !parCaixa.caixaPrincipal) return false;
-    if (userId && parCaixa.userId !== userId) return false;
+    if (userId && parCaixa.userId !== userId) {
+        throw new Error("A caixa não pertence ao utilizador autenticado.");
+    }
 
     await guardarParNaBlackbox({ ...parCaixa, par: { ...parCaixa.par, db } });
 
     if (parCaixa.caixaExterna) {
         await deleteDoc(doc(db, parCaixa.par.caixas, parCaixa.caixaId));
     }
-    if (parCaixa.pai) {
+    if (parCaixa.pai && (!userId || parCaixa.pai.userId === userId)) {
         const caixas = Array.isArray(parCaixa.pai.caixas)
             ? parCaixa.pai.caixas.filter(item => String(item?.id) !== parCaixa.caixaId)
             : [];

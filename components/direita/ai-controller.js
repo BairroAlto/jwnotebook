@@ -13,6 +13,12 @@ let state = {
     incluirTitulo: false
 };
 
+function obterDisplayBookAI() {
+    // Compatibilidade: o segundo destino permite abrir versões antigas do menu.
+    return document.getElementById('bookai-display-content')
+        || document.getElementById('xsat-display-content');
+}
+
 export const AIController = {
 
     /**
@@ -41,7 +47,7 @@ export const AIController = {
      * VISTA 1: LISTA DE BLOCOS (SCANNER)
      */
     renderizarLista: (listaManual = null, notaRecebida = null) => {
-        const display = document.getElementById('xsat-display-content');
+        const display = obterDisplayBookAI();
         if (!display) return;
 
         // 1. DETERMINAR CONTEXTO DE FORMA SEGURA
@@ -119,7 +125,7 @@ export const AIController = {
     abrirProtocolos: () => {
         if (!state.caixaAlvo) return AIController.renderizarLista();
         
-        const display = document.getElementById('xsat-display-content');
+        const display = obterDisplayBookAI();
         display.scrollTop = 0;
 
         window.removeEventListener('ai:toggleTitulo', window._handlerToggleTitulo);
@@ -145,7 +151,7 @@ export const AIController = {
      * EXECUÇÃO DA CONSULTA À IA
      */
     executarAnalise: async (modo) => {
-        const display = document.getElementById('xsat-display-content');
+        const display = obterDisplayBookAI();
         display.scrollTop = 0;
         display.innerHTML = `
             <div style="text-align:center; padding:60px 20px; color:#10b981;">

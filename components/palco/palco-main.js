@@ -2,7 +2,7 @@ import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.8.
 import { doc, getDoc, getFirestore, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { firebaseConfig } from '../../firebase-config.js';
-import { iniciarAutenticacao } from '../auth/auth.js';
+import { iniciarAutenticacao } from '../biblioteca-brain/auth/auth.js';
 import { initPalcoStore } from './palco-store.js';
 import { iniciarPalcoUI } from './palco-ui.js';
 import {

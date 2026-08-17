@@ -4,6 +4,7 @@ import { dispararIndexacao } from '../editor/modulos/ai-search-indexer.js';
 import { hidratarNotaComCaixas, guardarCaixasDaNota, obterIdsCaixas } from '../local/caixas-repository.js'; // 🚀 GATILHO GPS INTEGRADO
 import { hidratarNotaShareComCaixas, guardarCaixasShareDaNota } from '../share/share-caixas-repository.js';
 import { verificarLimiteCaixas } from '../billing/box-limits.js';
+import { notaEstaVisivel } from '../notes/note-visibility.js';
 
 let notaSelecionadaId = null;
 let colecaoAlvo = "Local";
@@ -75,6 +76,7 @@ async function carregarEstruturaParaExport(db, auth) {
         
         snap.forEach(d => {
             const data = d.data();
+            if (!notaEstaVisivel(data)) return;
             let pai = (colecaoAlvo === "Local") ? (data.pastapai || "root") : (data[uid]?.pastapai || "home");
             todosItens.push({ docId: d.id, ...data, paiCalculado: pai }); 
         });

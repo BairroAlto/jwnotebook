@@ -4,7 +4,7 @@ import { getFirestore } from "https://www.gstatic.com/firebasejs/10.8.1/firebase
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { firebaseConfig } from '../../firebase-config.js';
 
-import { iniciarAutenticacao } from '../auth/auth.js';
+import { iniciarAutenticacao } from '../biblioteca-brain/auth/auth.js';
 import { BIBLIA_METADATA } from '../lists/biblia.js';
 import { BibleUI } from './bible-ui-controller.js';
 import { BibleSettings } from './bible-settings.js';
@@ -485,4 +485,7 @@ window.switchPanel = (panel) => {
         target.style.display = 'flex';
     }
     if (btn) btn.classList.add('active');
+    if (panel === 'bookai') {
+        import('../direita/bookai-panel.js').then(m => m.renderizarPainelBookAI());
+    }
 };

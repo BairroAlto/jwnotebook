@@ -39,6 +39,7 @@ export const NotaManager = {
 
                     window.notaAtualContext = {
                         notaId: id,
+                        maeId: maeId || id,
                         dadosNota: dados,
                         db,
                         auth

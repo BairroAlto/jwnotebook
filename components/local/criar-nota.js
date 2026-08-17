@@ -1,8 +1,7 @@
-import { guardarCaixasDaNota } from './caixas-repository.js';
 // components/local/criar-nota.js
 import { isMobileViewport } from '../ui/mobile-device.js';
-import { collection, addDoc, getDoc, getDocs, query, where, serverTimestamp, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { abrirNotaNoEditor, forcarGravacaoImediata } from '../editor/editor.js';
+import { criarNotaLocal } from './criar-nota-service.js';
 
 /**
  * Inicializa a lógica do botão de criar nota.
@@ -22,82 +21,11 @@ export function inicializarCriacaoNota(db, auth) {
                 btnCriarNota.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> A criar...`;
                 btnCriarNota.style.pointerEvents = "none";
                 
-                const userId = auth.currentUser.uid;
-                const pastapai = window.pastaAtual || "root"; 
-                const localRef = collection(db, "Local");
-                
-                const q = query(localRef, where("pastapai", "==", pastapai), where("userId", "==", userId));
-                const querySnapshot = await getDocs(q);
-                const ordem = 1;
+                const pastapai = window.pastaAtual || "root";
+                const notaCriada = await criarNotaLocal(db, auth, { pastapai });
 
-                if (!querySnapshot.empty) {
-                    const batch = writeBatch(db);
-                    querySnapshot.forEach(item => {
-                        batch.update(doc(db, "Local", item.id), {
-                            ordem: (item.data().ordem || 0) + 1
-                        });
-                    });
-                    await batch.commit();
-                }
-
-                const idNotaUnico = crypto.randomUUID();
-                const idBlocoInicial = crypto.randomUUID();
-
-                // --- OBJETO DE DADOS DA NOTA ---
-                const dadosNovaNota = {
-                    id: idNotaUnico,
-                    userId: userId,
-                    tipo: "nota",
-                    modo: "normal", // <--- NOVO CAMPO ADICIONADO AQUI
-                    estado: "on",
-                    nome: "Nova Nota",
-                    pastapai: pastapai,
-                    ordem: ordem,
-                    browser: [], // Lista de abas vazia
-                  caixas: [
-        {
-            id: idBlocoInicial,
-            tipo: "contentor",
-            conteudo: "",
-            timestamp: new Date().toISOString(),
-            protecao: "fechado",
-            estado: "on",
-            foco: "original",
-            // origem: removido. Só será adicionado quando a caixa for copiada.
-            ordem: 1
-        }
-    ]
-};
-
-                // 2. Gravar no Firestore
-                const { caixas: caixasNovas, ...dadosNotaSemCaixas } = dadosNovaNota;
-                const docRef = await addDoc(localRef, {
-                    ...dadosNotaSemCaixas,
-                    timestamp: serverTimestamp()
-                });
-
-                await guardarCaixasDaNota({
-                    db,
-                    userId,
-                    notaId: docRef.id,
-                    caixas: caixasNovas,
-                    removerLegacy: true
-                });
-
-                // 3. ABRIR NO EDITOR IMEDIATAMENTE
-                let dadosNotaCriada = {
-                    ...dadosNovaNota,
-                    timestamp: new Date().toISOString()
-                };
-
-                try {
-                    const snapshotCriado = await getDoc(docRef);
-                    if (snapshotCriado.exists()) dadosNotaCriada = snapshotCriado.data();
-                } catch (erroTimestamp) {
-                    console.warn('[CRIAR-NOTA] Não foi possível reler o timestamp do servidor; será usada a data local.', erroTimestamp);
-                }
-
-                await abrirNotaNoEditor(docRef.id, dadosNotaCriada, db, auth);
+                // 2. ABRIR NO EDITOR IMEDIATAMENTE
+                await abrirNotaNoEditor(notaCriada.id, notaCriada.dados, db, auth);
 
                 if (isMobileViewport()) {
     document.getElementById('area-esquerda').classList.add('closed');

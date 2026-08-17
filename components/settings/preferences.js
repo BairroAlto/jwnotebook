@@ -93,7 +93,8 @@ export async function carregarPreferenciasUtilizador(db, uid) {
             barraSuperiorMobileNota: true,
             barraSuperiorMobilePrincipal: true,
             mobileBibleHelperBar: true,
-            leftColumnCollapseButton: false
+            leftColumnCollapseButton: false,
+            rightColumnCollapseButton: false
         };
     }
 
@@ -112,7 +113,8 @@ export async function carregarPreferenciasUtilizador(db, uid) {
             barraSuperiorMobileNota: dados.barraSuperiorMobileNota !== false,
             barraSuperiorMobilePrincipal: dados.barraSuperiorMobilePrincipal !== false,
             mobileBibleHelperBar: dados.mobileBibleHelperBar !== false,
-            leftColumnCollapseButton: Boolean(dados.leftColumnCollapseButton)
+            leftColumnCollapseButton: Boolean(dados.leftColumnCollapseButton),
+            rightColumnCollapseButton: Boolean(dados.rightColumnCollapseButton)
         };
     } catch (_) {
         return {
@@ -126,7 +128,8 @@ export async function carregarPreferenciasUtilizador(db, uid) {
             barraSuperiorMobileNota: true,
             barraSuperiorMobilePrincipal: true,
             mobileBibleHelperBar: true,
-            leftColumnCollapseButton: false
+            leftColumnCollapseButton: false,
+            rightColumnCollapseButton: false
         };
     }
 }

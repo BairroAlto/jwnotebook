@@ -1,5 +1,37 @@
 // components/editor/modulos/editor-actions.js
 
+import { construirGruposFundidos } from './fundir-manager.js';
+
+function obterOrdemNumerica(caixa) {
+    const ordem = Number(caixa?.ordem);
+    return Number.isFinite(ordem) ? ordem : 0;
+}
+
+function ordenarCaixasDeFormaEstavel(caixas) {
+    return caixas
+        .map((caixa, indice) => ({ caixa, indice }))
+        .sort((a, b) => obterOrdemNumerica(a.caixa) - obterOrdemNumerica(b.caixa) || a.indice - b.indice)
+        .map(item => item.caixa);
+}
+
+function pertenceAoMesmoFeed(caixa, caixaAlvo) {
+    const alvoSentinela = caixaAlvo?.referenciacodex !== undefined && caixaAlvo?.referenciacodex !== null;
+    const caixaSentinela = caixa?.referenciacodex !== undefined && caixa?.referenciacodex !== null;
+    return alvoSentinela === caixaSentinela;
+}
+
+/**
+ * Corrige ordens antigas, em falta ou repetidas antes de qualquer movimento.
+ * A posição actual no array serve de desempate para não haver saltos aleatórios.
+ */
+export function normalizarOrdemDasCaixas(caixasAtuais) {
+    const ordenadas = ordenarCaixasDeFormaEstavel(caixasAtuais || []);
+    ordenadas.forEach((caixa, indice) => {
+        caixa.ordem = indice + 1;
+    });
+    return ordenadas;
+}
+
 /**
  * MOVE UMA CAIXA PARA CIMA OU PARA BAIXO
  * @param {Array} caixasAtuais - Array original do estado
@@ -9,40 +41,38 @@
  * @param {Function} callback - Função para redesenhar o feed
  */
 export function moverCaixa(caixasAtuais, caixaAlvo, direcao, isModoPost, callback) {
-    // 1. Filtrar apenas as caixas ativas e ordenar por ordem real (1...N)
-    const ativas = caixasAtuais
-        .filter(c => c.estado === 'on')
-        .sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+    if (!Array.isArray(caixasAtuais) || !caixaAlvo?.id || !['cima', 'baixo'].includes(direcao)) return false;
 
-    const indexAtual = ativas.findIndex(c => c.id === caixaAlvo.id);
-    if (indexAtual === -1) return;
+    // O elemento renderizado pode pertencer a uma renderização anterior.
+    // Usa a versão viva da lista para determinar o feed e manter a ordem actual.
+    const caixaAlvoViva = caixasAtuais.find(caixa => caixa?.id === caixaAlvo.id) || caixaAlvo;
 
-    // 2. DETERMINAR O ALVO DA TROCA
-    // No Modo Post, a Seta "Cima" quer na verdade AUMENTAR a ordem (ir para o fim do array lógico)
-    // No Modo Normal, a Seta "Cima" quer DIMINUIR a ordem (ir para o início do array lógico)
-    
-    let swapIndex = -1;
+    // Só entram no movimento as caixas realmente apresentadas no mesmo feed.
+    // Isto evita trocar com itens Sentinela invisíveis e o aparente "clique sem efeito".
+    const caixasDoFeed = ordenarCaixasDeFormaEstavel(caixasAtuais.filter(caixa =>
+        caixa?.estado === 'on' && pertenceAoMesmoFeed(caixa, caixaAlvoViva)
+    ));
+    const grupos = construirGruposFundidos(caixasDoFeed);
+    const indiceAtual = grupos.findIndex(grupo => grupo.caixas.some(caixa => caixa.id === caixaAlvoViva.id));
+    if (indiceAtual === -1) return false;
 
-    if (isModoPost) {
-        // LÓGICA INVERTIDA
-        if (direcao === "cima") swapIndex = indexAtual + 1; // Sobe no ecrã = sobe no número
-        if (direcao === "baixo") swapIndex = indexAtual - 1; // Desce no ecrã = desce no número
-    } else {
-        // LÓGICA NORMAL
-        if (direcao === "cima") swapIndex = indexAtual - 1;
-        if (direcao === "baixo") swapIndex = indexAtual + 1;
-    }
+    const deslocamentoVisual = direcao === 'baixo' ? 1 : -1;
+    const deslocamentoLogico = isModoPost ? -deslocamentoVisual : deslocamentoVisual;
+    const indiceDestino = indiceAtual + deslocamentoLogico;
+    if (indiceDestino < 0 || indiceDestino >= grupos.length) return false;
 
-    // 3. EXECUTAR A TROCA (Se o alvo for válido)
-    if (swapIndex >= 0 && swapIndex < ativas.length) {
-        const itemTroca = ativas[swapIndex];
-        const tempOrdem = caixaAlvo.ordem;
-        caixaAlvo.ordem = itemTroca.ordem;
-        itemTroca.ordem = tempOrdem;
+    normalizarOrdemDasCaixas(caixasAtuais);
+    [grupos[indiceAtual], grupos[indiceDestino]] = [grupos[indiceDestino], grupos[indiceAtual]];
 
-        console.log(`↕️ [MOVE] Swapping ${caixaAlvo.ordem} with ${itemTroca.ordem}`);
-        callback(); // Redesenha e Grava
-    }
+    // Mantém os intervalos ocupados por caixas de outros feeds, mas reordena
+    // todo o grupo fundido como uma só unidade visual.
+    const ordensDisponiveis = caixasDoFeed.map(caixa => caixa.ordem).sort((a, b) => a - b);
+    grupos.flatMap(grupo => grupo.caixas).forEach((caixa, indice) => {
+        caixa.ordem = ordensDisponiveis[indice];
+    });
+
+    callback?.();
+    return true;
 }
 
 /**

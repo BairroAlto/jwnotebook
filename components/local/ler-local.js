@@ -1,6 +1,7 @@
 // components/local/ler-local.js
 import { collection, query, where, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { abrirNotaNoEditor } from '../editor/editor.js';
+import { notaEstaVisivel } from '../notes/note-visibility.js';
 
 window.pastaAtual = "root";
 window.historicoPastas = [{ id: "root", nome: "Local" }];
@@ -86,17 +87,19 @@ function carregarPasta(idPasta, onPronto = () => {}) {
             try {
                 const fragmento = document.createDocumentFragment();
 
-            if (snapshot.empty) {
+            const itensParaDesenhar = [];
+            snapshot.forEach((docSnap) => {
+                const dados = docSnap.data();
+                if (!notaEstaVisivel(dados)) return;
+                itensParaDesenhar.push({ idFirestore: docSnap.id, ...dados });
+            });
+
+            if (!itensParaDesenhar.length) {
                 const aviso = document.createElement("div");
                 aviso.style.cssText = "text-align:center; color:gray; font-size:11px; padding:30px; opacity:0.6;";
                 aviso.innerHTML = window.NotaBookMode === "book" ? "Pasta vazia." : "Pasta vazia.<br>Clica no '+' para criar.";
                 fragmento.appendChild(aviso);
             } else {
-                const itensParaDesenhar = [];
-                snapshot.forEach((docSnap) => {
-                    itensParaDesenhar.push({ idFirestore: docSnap.id, ...docSnap.data() });
-                });
-
                 itensParaDesenhar.sort((a, b) => {
                     const aTop = (a.Top && a.Top.estado === "on") ? 1 : 0;
                     const bTop = (b.Top && b.Top.estado === "on") ? 1 : 0;

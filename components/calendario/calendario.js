@@ -6,7 +6,7 @@ import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.8.
 import { getFirestore } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { firebaseConfig } from '../../firebase-config.js';
-import { iniciarAutenticacao } from '../auth/auth.js';
+import { iniciarAutenticacao } from '../biblioteca-brain/auth/auth.js';
 import {
     apagarTarefas,
     guardarTarefas,

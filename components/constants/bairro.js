@@ -21,6 +21,8 @@ export function criarFilhoBairro(nome = '') {
         timestampRealizacao: null,
         'ligaçãoBairro': [],
         actas: [],
+        notasAnexadas: [],
+        notaCriadaId: null,
         timestamp: Date.now()
     };
 }
@@ -60,6 +62,8 @@ export function garantirEstruturaBairro(caixa) {
             }
             if (!Array.isArray(filho['ligaçãoBairro'])) filho['ligaçãoBairro'] = [];
             if (!Array.isArray(filho.actas)) filho.actas = [];
+            if (!Array.isArray(filho.notasAnexadas)) filho.notasAnexadas = [];
+            if (filho.notaCriadaId != null) filho.notaCriadaId = String(filho.notaCriadaId);
             filho.actas = filho.actas.filter(acta => acta && typeof acta.texto === 'string');
             filho.actas.forEach(acta => {
                 if (!acta.id) acta.id = criarIdBairro('acta');

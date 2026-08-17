@@ -3,6 +3,125 @@ import { BIBLE_ABBREVIATIONS } from '../lists/bilbe-abreviatura.js';
 import { obterEstadoConteudoBiblico } from './eye-biblia-conteudo-cache.js';
 
 let listaIdsAnteriores = [];
+let referenciasBiblicasPorCaixa = new Map();
+
+function definirVisibilidadeAbaTextos(visivel) {
+    const botao = document.getElementById('btn-tab-textos');
+    if (!botao) return;
+    botao.style.display = visivel ? 'inline-flex' : 'none';
+    if (!visivel && botao.classList.contains('active')) window.switchEyeTab?.('indice');
+}
+
+function mostrarAvisoNavegacao(mensagem) {
+    const container = document.getElementById('textos-container');
+    if (!container) return;
+    let aviso = container.querySelector('.eye-bible-focus-message');
+    if (!aviso) {
+        aviso = document.createElement('div');
+        aviso.className = 'eye-bible-focus-message';
+        container.prepend(aviso);
+    }
+    aviso.textContent = mensagem;
+    aviso.hidden = false;
+}
+
+function limparAvisoNavegacao() {
+    document.getElementById('textos-container')?.querySelector('.eye-bible-focus-message')?.remove();
+}
+
+function chaveVersiculo(livro, cap, ver) {
+    return `${livro}|${cap}|${ver}`;
+}
+
+function destacarAlvoNoEditor(alvo) {
+    if (!alvo) return;
+    alvo.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    alvo.classList.add('eye-bible-editor-target');
+    setTimeout(() => alvo.classList.remove('eye-bible-editor-target'), 1800);
+}
+
+function focarVersiculoNoEditor(ref) {
+    const bloco = document.getElementById(`bloco-${ref.caixaId}`);
+    if (!bloco) {
+        mostrarAvisoNavegacao('Não foi possível localizar a caixa deste versículo na nota.');
+        return;
+    }
+
+    const chave = chaveVersiculo(ref.livro, ref.cap, ref.ver);
+    const versiculoAnexado = Array.from(bloco.querySelectorAll('[data-eye-bible-versiculo]'))
+        .find(elemento => {
+            try {
+                return decodeURIComponent(elemento.dataset.eyeBibleVersiculo || '') === chave;
+            } catch (_) {
+                return false;
+            }
+        });
+
+    if (versiculoAnexado) {
+        limparAvisoNavegacao();
+        destacarAlvoNoEditor(versiculoAnexado);
+        return;
+    }
+
+    const campoTexto = bloco.querySelector('textarea, input[type="text"]');
+    if (campoTexto && typeof campoTexto.value === 'string') {
+        const alternativas = Object.entries(BIBLE_ABBREVIATIONS)
+            .filter(([, livroOficial]) => livroOficial === ref.livro)
+            .map(([abreviatura]) => `${abreviatura} ${ref.cap}:${ref.ver}`);
+        alternativas.unshift(`${ref.livro} ${ref.cap}:${ref.ver}`);
+        const textoCampo = campoTexto.value.toLocaleLowerCase('pt-PT');
+        const alternativa = alternativas.find(texto => textoCampo.includes(texto.toLocaleLowerCase('pt-PT')));
+        if (alternativa) {
+            const inicio = textoCampo.indexOf(alternativa.toLocaleLowerCase('pt-PT'));
+            campoTexto.focus({ preventScroll: true });
+            campoTexto.setSelectionRange(inicio, inicio + alternativa.length);
+            limparAvisoNavegacao();
+            destacarAlvoNoEditor(campoTexto);
+            return;
+        }
+    }
+
+    limparAvisoNavegacao();
+    destacarAlvoNoEditor(bloco);
+}
+
+function obterIdCaixaSelecionadaNoIndice() {
+    const card = document.querySelector('#indice-nota-container .indice-card.active');
+    return card?.id?.startsWith('nav-card-') ? card.id.slice('nav-card-'.length) : '';
+}
+
+function configurarBotaoFocoCaixa() {
+    const botao = document.getElementById('btn-eye-bible-focus');
+    if (!botao || botao.dataset.configurado === 'true') return;
+    botao.dataset.configurado = 'true';
+    botao.addEventListener('click', () => {
+        const idCaixa = obterIdCaixaSelecionadaNoIndice();
+        if (!idCaixa) {
+            mostrarAvisoNavegacao('Seleciona primeiro uma caixa na aba Índice.');
+            return;
+        }
+
+        const referencias = referenciasBiblicasPorCaixa.get(idCaixa) || [];
+        if (!referencias.length) {
+            mostrarAvisoNavegacao('A caixa selecionada não tem textos bíblicos detetados.');
+            return;
+        }
+
+        const primeiroCard = document.getElementById(`bib-card-${referencias[0].idUnico}`);
+        const alvo = primeiroCard?.querySelector('.biblia-ver-ref') || primeiroCard;
+        if (!alvo) {
+            mostrarAvisoNavegacao('O primeiro texto bíblico ainda está a carregar.');
+            return;
+        }
+
+        limparAvisoNavegacao();
+        alvo.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        primeiroCard.style.borderColor = 'var(--primary)';
+        setTimeout(() => {
+            primeiroCard.style.borderColor = 'transparent';
+        }, 1500);
+    });
+}
 
 /**
  * MOTOR DE DETECÇÃO BÍBLICA "EYE"
@@ -16,18 +135,31 @@ export async function detectarEExibirTextosBiblicos(caixasParaVarrer) {
 
     // Se o Dispatcher ou o SwitchTab enviarem uma lista vazia, limpamos a aba
     if (!caixasParaVarrer || caixasParaVarrer.length === 0) {
-        container.innerHTML = `<div style="text-align:center; padding:40px; color:var(--text-muted); font-size:11px; opacity:0.5;">Nenhuma referência bíblica detetada neste modo.</div>`;
+        container.replaceChildren();
+        definirVisibilidadeAbaTextos(false);
+        referenciasBiblicasPorCaixa = new Map();
         listaIdsAnteriores = [];
         return;
     }
 
-    // 2. EXTRAIR TEXTO BRUTO (Apenas das caixas permitidas)
-   let textoGlobal = caixasParaVarrer
-        .map(c => `${c.titulo || ""} ${c.conteudo || ""}`)
-        .join(" [SEP] ");
-
-    // 3. EXTRAIR REFERÊNCIAS REAIS (Lógica de Livros e Capítulos)
-    const citacoesEncontradas = localizarLivrosESlices(textoGlobal);
+    // 2. EXTRAIR REFERÊNCIAS POR CAIXA (mantendo a ordem global do Índice)
+    const contagemOcorrencias = {};
+    const referenciasPorCaixa = caixasParaVarrer.map(caixa => {
+        const referencias = localizarLivrosESlices(
+            `${caixa.titulo || ''} ${caixa.conteudo || ''}`,
+            contagemOcorrencias
+        );
+        referencias.forEach(referencia => {
+            referencia.caixaId = caixa.id;
+        });
+        return { caixa, referencias };
+    });
+    referenciasBiblicasPorCaixa = new Map(
+        referenciasPorCaixa.map(({ caixa, referencias }) => [String(caixa.id), referencias])
+    );
+    const citacoesEncontradas = referenciasPorCaixa.flatMap(item => item.referencias);
+    definirVisibilidadeAbaTextos(citacoesEncontradas.length > 0);
+    configurarBotaoFocoCaixa();
 
     // 4. COMPARADOR DE ASSINATURA (Evita resetar a aba enquanto o utilizador escreve)
     const idsAtuais = citacoesEncontradas.map(r => r.idUnico);
@@ -39,7 +171,8 @@ export async function detectarEExibirTextosBiblicos(caixasParaVarrer) {
 
     // 5. RENDERIZAR ESTRUTURA BASE (INCREMENTAL E SEM RECARREGAR CARDS EXISTENTES)
     if (citacoesEncontradas.length === 0) {
-        container.innerHTML = `<div style="text-align:center; padding:40px; color:var(--text-muted); font-size:11px; opacity:0.5;">Escreve uma referência (ex: João 3:16) para ler aqui.</div>`;
+        container.replaceChildren();
+        listaIdsAnteriores = [];
         return;
     }
 
@@ -48,14 +181,18 @@ export async function detectarEExibirTextosBiblicos(caixasParaVarrer) {
 
     if (!listaArea) {
         container.innerHTML = `
-            <div style="padding: 10px; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                <p style="font-size: 10px; color: var(--primary); font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin: 0;">
-                    <i class="fa-solid fa-book-bible"></i> Escrituras Detetadas (<span class="escrituras-header-count">${citacoesEncontradas.length}</span>)
+            <div class="eye-bible-header">
+                <p class="eye-bible-header-title">
+                    <span><i class="fa-solid fa-book-open"></i> Escrituras Detetadas (<span class="escrituras-header-count">${citacoesEncontradas.length}</span>)</span>
+                    <button id="btn-eye-bible-focus" class="eye-bible-focus-button" type="button" title="Ir para o primeiro texto da caixa selecionada" aria-label="Ir para o primeiro texto bíblico da caixa selecionada">
+                        <i class="fa-solid fa-compass" aria-hidden="true"></i>
+                    </button>
                 </p>
             </div>
             <div id="lista-escrituras-nota" style="padding: 0 10px 20px 10px; display: flex; flex-direction: column; gap:12px;"></div>
         `;
-        listaArea = document.getElementById('lista-escrituras-nota');
+            listaArea = document.getElementById('lista-escrituras-nota');
+        configurarBotaoFocoCaixa();
     } else if (headerCont) {
         headerCont.textContent = citacoesEncontradas.length;
     }
@@ -78,8 +215,9 @@ export async function detectarEExibirTextosBiblicos(caixasParaVarrer) {
 
         if (ehNovo) {
             div = document.createElement('div');
+            div.className = 'eye-bible-card';
             div.id = idCard;
-            div.style.cssText = "background: rgba(255,255,255,0.02); border-radius: 8px; padding: 12px; border: 1px solid transparent; transition: border 0.5s;";
+            div.style.cssText = "position:relative; background: rgba(255,255,255,0.02); border-radius: 8px; padding: 12px; border: 1px solid transparent; transition: border 0.5s;";
             div.innerHTML = `<p style="font-size:9px; color:var(--text-muted); opacity:0.5;">Sincronizando ${ref.livro}...</p>`;
             novasRefsParaCarregar.push(ref);
         }
@@ -155,7 +293,15 @@ async function preencherTextoNoCard(ref, estadoConteudo = new Map()) {
             return;
         }
 
-        let html = `<p style="color:var(--primary); font-size:10px; font-weight:800; margin-bottom:8px; text-transform:uppercase;">${ref.livro}</p>`;
+        const primeiraCitacao = ref.citacoes[0];
+        const primeiroVersiculo = primeiraCitacao?.versiculos?.[0];
+        let html = `
+            <div class="eye-bible-card-header">
+                <p style="color:var(--primary); font-size:10px; font-weight:800; margin-bottom:8px; text-transform:uppercase;">${ref.livro}</p>
+                <button type="button" class="eye-bible-focus-verse" data-livro="${encodeURIComponent(ref.livro)}" data-cap="${primeiraCitacao?.cap || ''}" data-ver="${primeiroVersiculo || ''}" data-caixa-id="${encodeURIComponent(ref.caixaId || '')}" title="Localizar card na nota" aria-label="Localizar ${ref.livro} na nota">
+                    <i class="fa-solid fa-location-crosshairs" aria-hidden="true"></i>
+                </button>
+            </div>`;
         
         for (const cite of ref.citacoes) {
             const capData = livroData[cite.cap];
@@ -172,7 +318,7 @@ async function preencherTextoNoCard(ref, estadoConteudo = new Map()) {
                 const textoLimpo = String(capData[vNum]).replace(/"/g, '&quot;');
 
                 html += `
-                <div style="margin-bottom:6px; line-height:1.4;">
+                <div class="eye-bible-versiculo-linha" style="margin-bottom:6px; line-height:1.4;">
                     <b class="biblia-ver-ref${temConteudo ? ' is-pink' : ''}" 
                        data-livro="${ref.livro}" 
                        data-cap="${cite.cap}" 
@@ -185,6 +331,12 @@ async function preencherTextoNoCard(ref, estadoConteudo = new Map()) {
         }
         card.innerHTML = html;
 
+        card.addEventListener('click', evento => {
+            if (!window.matchMedia?.('(hover: none)').matches && window.innerWidth > 700) return;
+            if (evento.target.closest('.eye-bible-focus-verse')) return;
+            card.classList.add('is-touch-active');
+        });
+
         card.querySelectorAll('.biblia-ver-ref').forEach(b => {
             b.addEventListener('click', () => {
                 const db = window.notaAtualContext?.db;
@@ -195,6 +347,19 @@ async function preencherTextoNoCard(ref, estadoConteudo = new Map()) {
             });
         });
 
+        card.querySelectorAll('.eye-bible-focus-verse').forEach(botao => {
+            botao.addEventListener('click', evento => {
+                evento.preventDefault();
+                evento.stopPropagation();
+                focarVersiculoNoEditor({
+                    livro: decodeURIComponent(botao.dataset.livro || ''),
+                    cap: botao.dataset.cap,
+                    ver: botao.dataset.ver,
+                    caixaId: decodeURIComponent(botao.dataset.caixaId || '')
+                });
+            });
+        });
+
         console.log(`✅ [EYE-BIBLE] Sucesso ao carregar ${ref.livro}`);
     } catch (e) {
         console.error(`❌ [EYE-BIBLE ERRO] Falha ao ler ${caminhoFicheiro}:`, e);
@@ -202,7 +367,7 @@ async function preencherTextoNoCard(ref, estadoConteudo = new Map()) {
     }
 }
 
-function localizarLivrosESlices(texto) {
+function localizarLivrosESlices(texto, contagemOcorrencias = {}) {
     const achados = [];
     const nomesOrdenados = Object.keys(BIBLE_ABBREVIATIONS).sort((a, b) => b.length - a.length);
     const regexLivros = nomesOrdenados.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
@@ -210,8 +375,6 @@ function localizarLivrosESlices(texto) {
     
     let match;
     const posicoesLivros = [];
-    const contagemOcorrencias = {};
-
     while ((match = regexMatchLivro.exec(texto)) !== null) {
         const siglaEncontrada = match[1];
         const indiceReal = match.index + match[0].indexOf(siglaEncontrada);

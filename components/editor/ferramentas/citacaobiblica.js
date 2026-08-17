@@ -71,8 +71,8 @@ btnLupa.onclick = (e) => {
             corpo.innerHTML = `<div style="text-align:center; color:${corPrata}; font-size:12px; font-style:italic; padding:10px;">Clica na lupa para anexar escrituras...</div>`;
             return;
         }
-        corpo.innerHTML = caixa.textosanexados.map(item => `
-            <div style="margin-bottom: 10px; line-height: 1.5;">
+            corpo.innerHTML = caixa.textosanexados.map(item => `
+            <div class="eye-bible-editor-row" data-eye-bible-versiculo="${encodeURIComponent(`${item.livro}|${item.cap}|${item.ver}`)}" style="margin-bottom: 10px; line-height: 1.5;">
                 <b style="color:${corPrata}; font-size:10px; margin-right:8px; text-transform:uppercase;">${item.livro} ${item.cap}:${item.ver}</b>
                 <span style="font-size: var(--fs-editor-texto); color: #f1f5f9;">${item.texto}</span>
             </div>

@@ -1,5 +1,6 @@
 import { collection, orderBy, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { hidratarNotaComCaixas, obterCaixasLocais } from '../../../local/caixas-repository.js';
+import { notaEstaVisivel } from '../../../notes/note-visibility.js';
 
 function textoSeguro(valor, fallback = '') {
     const texto = String(valor ?? '').trim();
@@ -61,7 +62,9 @@ async function obterItensDoPai(state, paiId) {
         orderBy('ordem', 'asc')
     );
     const snapshot = await getDocs(consulta);
-    const itens = snapshot.docs.map(docSnap => ({ docIdFirebase: docSnap.id, ...docSnap.data() }));
+    const itens = snapshot.docs
+        .map(docSnap => ({ docIdFirebase: docSnap.id, ...docSnap.data() }))
+        .filter(notaEstaVisivel);
     state.cache.set(paiId, itens);
     return itens;
 }
@@ -239,7 +242,7 @@ export async function pesquisarExploradorAssociar(ctx, termo, onVincular, identi
     const resultados = [];
 
     notas.forEach((dadosNota, notaId) => {
-        if (dadosNota.estado !== 'on') return;
+        if (dadosNota.estado !== 'on' || !notaEstaVisivel(dadosNota)) return;
         const item = { docIdFirebase: notaId, ...dadosNota };
         const nome = textoSeguro(item.nome, item.tipo === 'pasta' ? 'Pasta sem nome' : 'Nota sem título');
         if (textoNormalizado(nome).includes(pesquisa)) {

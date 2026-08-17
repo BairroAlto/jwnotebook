@@ -153,7 +153,10 @@ export const AIView = {
      */
     formatarTexto: (t) => {
         if (!t) return "";
-        return t.replace(/^### (.*$)/gim, '<h4 style="color:#10b981; margin:15px 0 5px 0; font-weight:800; font-size:11px; text-transform:uppercase;">$1</h4>')
+        const seguro = String(t).replace(/[&<>"']/g, caracter => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[caracter]);
+        return seguro.replace(/^### (.*$)/gim, '<h4 style="color:#10b981; margin:15px 0 5px 0; font-weight:800; font-size:11px; text-transform:uppercase;">$1</h4>')
                 .replace(/\*\*(.*?)\*\*/g, '<b style="color:white; font-weight:700;">$1</b>')
                 .replace(/^\s*[\-\*]\s+(.*)$/gim, '<div style="margin-left:10px; margin-bottom:5px; display:flex; gap:8px; line-height:1.5;"><span style="color:#10b981;">•</span><span>$1</span></div>');
     }

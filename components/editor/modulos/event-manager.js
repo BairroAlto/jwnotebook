@@ -12,6 +12,12 @@ import { obterFeaturesDisponiveis } from '../../settings/feature-admin.js';
 import { obterDefinicaoModoNota, chaveAcessoModoNota } from './nota-modes.js';
 import { criarAjustadorAlturaAbas } from '../../ui/fixed-tabs-height.js';
 
+function notaEstaEmModoPost(dadosNota) {
+    const modo = dadosNota?.modo;
+    const modos = Array.isArray(modo) ? modo : [modo || 'normal'];
+    return modos.includes('post');
+}
+
 async function verificarAcessoModoNota(ctx, modo, modosAtuais = []) {
     const featureKey = chaveAcessoModoNota(modo);
     if (!featureKey || modosAtuais.includes(modo)) return true;
@@ -112,16 +118,10 @@ export const EventManager = {
             if(target) { target.classList.add('active'); target.style.display = 'flex'; }
             if(btn) btn.classList.add('active');
 
-           if (p === 'xsat') {
-                const canalA = document.querySelector('.xsat-num.active');
-                if (!canalA || canalA.dataset.num === "6") {
-                    const b6 = document.querySelector('.xsat-num[data-num="6"]');
-                    if (b6) b6.classList.add('active');
-                    // ForÃ§a a IA a ler os dados da nota atual respeitando o modo
-                    import('../../direita/ai-controller.js').then(m => {
-                        m.AIController.renderizarLista(null, ctx.dadosNotaOriginal);
-                        });
-                }
+            if (p === 'bookai') {
+                import('../../direita/bookai-panel.js').then(m => {
+                    m.renderizarPainelBookAI({ nota: ctx.dadosNotaOriginal });
+                });
             }
             if (p === 'brain' && !document.querySelector('.cosmos-brain-wrapper')) {
                 if (typeof window.mostrarBrainIdle === 'function') window.mostrarBrainIdle();
@@ -172,6 +172,19 @@ export const EventManager = {
             if (t === 'fontes') import('../../direita/eye-fontes-nota.js').then(m => m.carregarFontesGlobaisDaNota(flt));
             if (t === 'glosas') import('../../direita/eye-glosas.js').then(m => m.carregarGlosasDaNota(flt));
             if (t === 'indice') import('../../direita/indice.js').then(m => m.renderizarIndice(flt, modos.includes('post')));
+            if (t === 'caixas') {
+                const caixasBase = Array.isArray(window.caixasAtuais)
+                    ? window.caixasAtuais
+                    : (Array.isArray(ctx.caixasAtuais) ? ctx.caixasAtuais : []);
+                const caixasLive = caixasBase
+                    .filter(caixa => {
+                        if (caixa.estado === 'off') return false;
+                        return isSentinela ? !!caixa.referenciacodex : !caixa.referenciacodex;
+                    });
+                import('../../direita/caixas-associadas.js').then(m =>
+                    m.carregarCaixasAssociadas(caixasLive, ctx.dbRef, ctx.authRef?.currentUser?.uid)
+                );
+            }
             if (t === 'ancora') {import('../../direita/eye-ancora.js').then(m => m.iniciarAbaAncora(ctx.notaAbertaId, ctx.dbRef, ctx.authRef) );}
             if (t === 'ficheiros') {
                 import('../../storage/storage-ui.js').then(m => m.montarPainelFicheiros(target, {
@@ -384,7 +397,26 @@ export const EventManager = {
         window.abrirPaletaGlobal = (caixa) => abrirPaleta(caixa);
         window.prepararInsercaoGlobal = (id) => prepararInsercao(id);
         window.abrirPopupPartilharGlobal = (caixa, id) => abrirPopupPartilhar(caixa, id || ctx.notaAbertaId, ctx.atualizarFeedEGravar);
-        window.moverCaixaGlobal = (c, d) => moverCaixa(ctx.caixasAtuais, c, d, ctx.dadosNotaOriginal.modo.includes('post'), ctx.atualizarFeedEGravar);
+        window.moverCaixaGlobal = (c, d) => {
+            const caixasAtuais = Array.isArray(window.caixasAtuais)
+                ? window.caixasAtuais
+                : ctx.caixasAtuais;
+            const moveu = moverCaixa(
+                caixasAtuais,
+                c,
+                d,
+                notaEstaEmModoPost(ctx.dadosNotaOriginal),
+                ctx.atualizarFeedEGravar
+            );
+            if (!moveu) {
+                console.warn('[MOVE] Movimento ignorado:', {
+                    caixaId: c?.id || null,
+                    direcao: d,
+                    totalCaixas: caixasAtuais?.length || 0
+                });
+            }
+            return moveu;
+        };
         
         window.abrirPopupTagsGlobal = (caixa, id) => {
             const origem = ctx.dadosNotaOriginal.onde || "local";
@@ -465,7 +497,7 @@ export const EventManager = {
                 const { aplicarPreferenciasDeNota } = await import('../../settings/preferences.js');
                 if (ctx.dadosNotaOriginal.onde === "share") ctx.dadosNotaOriginal[uid] = { ...(ctx.dadosNotaOriginal[uid] || {}), notaConfig: merged };
                 else ctx.dadosNotaOriginal.notaConfig = merged;
-                window.notaAtualContext = { notaId: ctx.notaAbertaId, dadosNota: ctx.dadosNotaOriginal, db: ctx.dbRef, auth: ctx.authRef };
+                window.notaAtualContext = { notaId: ctx.notaAbertaId, maeId: ctx.notaMaeAtualId || ctx.notaAbertaId, dadosNota: ctx.dadosNotaOriginal, db: ctx.dbRef, auth: ctx.authRef };
                 aplicarPreferenciasDeNota({
                     ...merged,
                     collapseNoteTitle: merged.collapseNoteTitle || Boolean(window.NotaBookUserPrefs?.noteTitleCollapse)
@@ -626,7 +658,7 @@ export const EventManager = {
                 });
                 if (ctx.dadosNotaOriginal.onde === "share") ctx.dadosNotaOriginal[uid] = { ...(ctx.dadosNotaOriginal[uid] || {}), notaConfig: merged };
                 else ctx.dadosNotaOriginal.notaConfig = merged;
-                window.notaAtualContext = { notaId: ctx.notaAbertaId, dadosNota: ctx.dadosNotaOriginal, db: ctx.dbRef, auth: ctx.authRef };
+                window.notaAtualContext = { notaId: ctx.notaAbertaId, maeId: ctx.notaMaeAtualId || ctx.notaAbertaId, dadosNota: ctx.dadosNotaOriginal, db: ctx.dbRef, auth: ctx.authRef };
                 pref.aplicarPreferenciasDeNota(merged);
                 await ctx.atualizarFeedEGravar(false);
             };

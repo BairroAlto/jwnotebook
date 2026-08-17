@@ -3,7 +3,7 @@ import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.8.
 import { getFirestore } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { firebaseConfig } from '../../firebase-config.js';
-import { iniciarAutenticacao } from '../auth/auth.js';
+import { iniciarAutenticacao } from '../biblioteca-brain/auth/auth.js';
 import { inicializarLeituraLocal } from '../local/ler-local.js';
 import { inicializarLeituraShare } from '../share/ler-share.js';
 import { inicializarLists } from '../lists/ler-lists.js';
@@ -20,6 +20,7 @@ import { iniciarBookGames } from './book-games.js';
 import { iniciarBookAI } from './book-ai.js';
 import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
 import { aplicarPreferenciaBotaoColapsoColunaEsquerda, iniciarControloColunaEsquerda } from '../ui/left-column-collapse.js';
+import { aplicarPreferenciaBotaoColapsoColunaDireita, iniciarControloColunaDireita } from '../ui/right-column-collapse.js';
 import './book-viewer.js';
 
 window.NotaBookMode = "book";
@@ -56,6 +57,7 @@ MobilePanelManager.iniciar();
 iniciarControladorEsquerda();
 iniciarXSat();
 iniciarControloColunaEsquerda();
+iniciarControloColunaDireita();
 iniciarBookSettings();
 iniciarBookToolbar();
 iniciarBookReader();
@@ -80,6 +82,7 @@ onAuthStateChanged(auth, async user => {
     window.NotaBookUserPrefs = await carregarPreferenciasUtilizador(db, user.uid);
     MobileBibleBar.iniciar();
     aplicarPreferenciaBotaoColapsoColunaEsquerda(Boolean(window.NotaBookUserPrefs?.leftColumnCollapseButton));
+    aplicarPreferenciaBotaoColapsoColunaDireita(Boolean(window.NotaBookUserPrefs?.rightColumnCollapseButton));
     const collapseToggle = document.getElementById('book-left-collapse-toggle');
     if (collapseToggle) collapseToggle.checked = Boolean(window.NotaBookUserPrefs?.leftColumnCollapseButton);
     sincronizarBookReaderPrefs();
@@ -145,6 +148,14 @@ function bindRightPanelNavigation() {
             target.style.display = 'flex';
         }
         if (btn) btn.classList.add('active');
+        if (panel === 'bookai') {
+            import('../direita/bookai-panel.js').then(m => {
+                m.renderizarPainelBookAI({
+                    lista: window.bookCaixasAtuais,
+                    nota: window.bookNotaAtual
+                });
+            });
+        }
         if (isMobileViewport()) {
             MobilePanelManager.abrir('right');
         }

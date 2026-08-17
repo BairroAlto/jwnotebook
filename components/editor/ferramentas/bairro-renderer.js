@@ -3,6 +3,7 @@ import { criarBotaoBairro, criarCampoBairro, criarGrupoBairro } from './bairro-c
 import { temActas } from '../modulos/bairro-actas.js';
 import { listarFicheiros } from '../../storage/storage-client.js';
 import { criarSecaoMeuBairro } from './bairro-meu-bairro.js';
+import { garantirNotasAnexadas } from '../modulos/bairro-notas-model.js';
 
 function executarQuandoElementoDisponivel(contentor, localizar, aoEncontrar) {
     if (!contentor) {
@@ -36,6 +37,17 @@ function executarQuandoElementoDisponivel(contentor, localizar, aoEncontrar) {
 function alterar(caixa, onTextoAlterado, renderizar) {
     onTextoAlterado(caixa);
     renderizar();
+}
+
+function actualizarDepoisDoBlur({ input, filho, renderizar }) {
+    // O blur acontece antes do foco no próximo campo. Esperamos um ciclo do
+    // browser para não reconstruir o Bairro por baixo da tarefa seguinte.
+    setTimeout(() => {
+        const focoActual = document.activeElement;
+        const continuaNoBairro = focoActual?.closest?.('.bairro-body');
+        if (continuaNoBairro && focoActual !== input) return;
+        if (filho.nome.trim()) renderizar();
+    }, 0);
 }
 
 function registarEstadoTarefa(filho, concluido) {
@@ -117,6 +129,74 @@ function criarActasButton({ caixa, pai, filho, onTextoAlterado, renderizar }) {
         className: 'bairro-control--acta',
         onClick: () => abrirPostoBairro(caixa, pai, filho, onTextoAlterado, renderizar, 'historico-actas')
     });
+}
+
+function criarBotaoGrupoNotas({ caixa, pai, filho, onTextoAlterado, renderizar, notas, label, className }) {
+    if (!notas.length) return null;
+    return criarBotaoBairro({
+        icon: 'fa-solid fa-note-sticky',
+        label,
+        className,
+        onClick: () => {
+            console.info('[BAIRRO-NOTAS][INDICADOR] Clique no ícone da linha:', {
+                tipo: className,
+                notas: notas.map(nota => ({ id: nota.id, onde: nota.onde, origem: nota.origem, nome: nota.nome }))
+            });
+            if (notas.length > 1) {
+                console.info('[BAIRRO-NOTAS][INDICADOR] A abrir o Posto na aba Notas:', {
+                    total: notas.length,
+                    tarefaId: filho?.id
+                });
+                abrirPostoBairro(caixa, pai, filho, onTextoAlterado, renderizar, 'notas');
+                return;
+            }
+            console.info('[BAIRRO-NOTAS][INDICADOR] A abrir nota única no Browser:', notas[0]);
+            import('../modulos/bairro-notas-controller.js')
+                .then(modulo => modulo.abrirNotaAnexadaNoBrowser(notas[0], () => {
+                    onTextoAlterado(caixa);
+                    renderizar?.();
+                }))
+                .then(resultado => console.info('[BAIRRO-NOTAS][INDICADOR] Resultado da abertura:', resultado))
+                .catch(error => console.error('[BAIRRO-NOTAS][INDICADOR] Erro ao abrir a nota:', error));
+        }
+    });
+}
+
+function criarNotasButtons({ caixa, pai, filho, onTextoAlterado, renderizar }) {
+    const notas = garantirNotasAnexadas(filho);
+    if (!notas.length) return [];
+
+    const notaCriada = notas.find(nota => nota.origem === 'criada');
+    const outrasNotas = notaCriada
+        ? notas.filter(nota => nota !== notaCriada)
+        : notas;
+    const botoes = [];
+
+    const botaoCriada = criarBotaoGrupoNotas({
+        caixa,
+        pai,
+        filho,
+        onTextoAlterado,
+        renderizar,
+        notas: notaCriada ? [notaCriada] : [],
+        label: 'Abrir nota criada nesta tarefa',
+        className: 'bairro-control--notas-criada'
+    });
+    if (botaoCriada) botoes.push(botaoCriada);
+
+    const plural = outrasNotas.length === 1 ? 'nota anexada' : 'notas anexadas';
+    const botaoOutras = criarBotaoGrupoNotas({
+        caixa,
+        pai,
+        filho,
+        onTextoAlterado,
+        renderizar,
+        notas: outrasNotas,
+        label: `${outrasNotas.length} ${plural}`,
+        className: 'bairro-control--notas-anexadas'
+    });
+    if (botaoOutras) botoes.push(botaoOutras);
+    return botoes;
 }
 
 function adicionarIndicadorFicheiros({ acoes, referenciaActas, ficheirosPorTarefa, caixa, pai, filho, onTextoAlterado, renderizar }) {
@@ -208,7 +288,7 @@ function editarTituloFilhoInline({ caixa, pai, filho, elemento, onTextoAlterado,
     });
     input.addEventListener('blur', () => {
         if (criouNovaLinha) return;
-        setTimeout(() => { if (filho.nome.trim()) renderizar(); }, 150);
+        actualizarDepoisDoBlur({ input, filho, renderizar });
     });
     elemento.replaceWith(input);
     input.focus();
@@ -313,13 +393,15 @@ function renderizarFilho({ caixa, pai, filho, onTextoAlterado, renderizar, fiche
         });
         nome.addEventListener('blur', () => {
             if (criouNovaLinha) return;
-            setTimeout(() => { if (filho.nome.trim()) renderizar(); }, 150);
+            actualizarDepoisDoBlur({ input: nome, filho, renderizar });
         });
     }
 
     const acoes = criarGrupoBairro();
     const actas = criarActasButton({ caixa, pai, filho, onTextoAlterado, renderizar });
     if (actas) acoes.appendChild(actas);
+    const notas = criarNotasButtons({ caixa, pai, filho, onTextoAlterado, renderizar });
+    notas.forEach(botao => acoes.appendChild(botao));
     adicionarIndicadorFicheiros({
         acoes,
         referenciaActas: actas,

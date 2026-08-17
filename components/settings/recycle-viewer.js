@@ -1,4 +1,5 @@
 // components/settings/recycle-viewer.js
+import { obterApresentacaoCaixaReciclada } from './recycle-tool-presentation.js';
 
 export const RecycleViewer = {
     abrir: (item) => {
@@ -9,7 +10,10 @@ export const RecycleViewer = {
 
         if (!overlay) return;
 
-        titEl.innerText = item.dados.nome || item.dados.titulo || "Visualizar Conteúdo";
+        const apresentacaoCaixa = item.tipoItem === 'caixa'
+            ? obterApresentacaoCaixaReciclada(item.dados)
+            : null;
+        titEl.innerText = item.dados.nome || item.dados.titulo || apresentacaoCaixa?.nome || "Visualizar Conteúdo";
 
         let htmlConteudo = "";
         if (item.tipoItem === 'nota') {
@@ -21,7 +25,7 @@ export const RecycleViewer = {
                 </div>
             `).join('');
         } else if (item.tipoItem === 'caixa') {
-            htmlConteudo = `<p style="font-size:14px; color:white; line-height:1.6; white-space:pre-wrap;">${item.dados.conteudo || "Sem texto."}</p>`;
+            htmlConteudo = `<p style="font-size:14px; color:white; line-height:1.6; white-space:pre-wrap;">${apresentacaoCaixa.resumo}</p>`;
         } else if (item.tipoItem === 'mica') {
             const itensMica = item.dados.caixas || [];
             htmlConteudo = `

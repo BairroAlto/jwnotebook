@@ -4,19 +4,22 @@ import { obterConfigNota } from '../../settings/preferences.js';
 import { obterGrupoFundido, sincronizarGrupoFundido } from './fundir-manager.js';
 import { obterAcessoFerramenta } from '../../settings/feature-admin.js';
 import { verificarLimiteCaixas } from '../../billing/box-limits.js';
+import { inserirAbaixoNaOrdemVisual } from './tool-insertion-order.js';
 
 const FEATURE_KEYS_POR_FERRAMENTA = {
     contentor: 'contentor',
     questao: 'questao',
     noticias: 'ferramenta_noticias',
-    tempo: 'ferramenta_tempo'
+    tempo: 'ferramenta_tempo',
+    gmail: 'ferramenta_gmail'
 };
 
 const NOMES_FERRAMENTAS = {
     contentor: 'Contentor',
     questao: 'Questão',
     noticias: 'Notícias',
-    tempo: 'Tempo'
+    tempo: 'Tempo',
+    gmail: 'Gmail'
 };
 
 export const ToolManager = {
@@ -90,13 +93,16 @@ export const ToolManager = {
         if (tipo === "noticias") {
             novaCaixa.noticiasPreferencias = { temas: [], excluir: [], mercado: "PT", limitePorTema: 4, vista: "grelha" };
             novaCaixa.noticiasCache = [];
-            novaCaixa.today = null;
+            novaCaixa.noticiasAtualizadasEm = null;
         }
         if (tipo === "tempo") {
             novaCaixa.tempoLocalizacao = null;
             novaCaixa.tempoOpcoes = { temperatura: true, condicao: false, maxima: false, minima: false, vento: false, sensacao: false, humidade: false, chuva: false };
             novaCaixa.tempoDados = null;
             novaCaixa.today = null;
+        }
+        if (tipo === "gmail") {
+            novaCaixa.gmailPreferencias = { limite: 25, filtro: "todos" };
         }
         if (tipo !== "firmamento" && noteConfig.defaultFocos?.[tipo]) novaCaixa.foco = noteConfig.defaultFocos[tipo];
 
@@ -106,7 +112,7 @@ export const ToolManager = {
 
         if (window.idReferenciaInsercao) {
             // Quando o "+" vem de uma caixa fundida, a nova ferramenta
-            // entra automaticamente no fim da mesma fusão.
+            // entra na mesma fusão, imediatamente abaixo da referência.
             const idxAlvo = caixasAtuais.findIndex(c => c.id === window.idReferenciaInsercao);
             const caixaReferencia = idxAlvo >= 0 ? caixasAtuais[idxAlvo] : null;
 
@@ -116,9 +122,9 @@ export const ToolManager = {
                     grupoFundidoAntigo = [...grupoDetectado];
                     grupoFundidoBase = [...grupoDetectado];
                     const posicaoNaFusao = grupoFundidoBase.findIndex(caixa => caixa.id === caixaReferencia.id);
-                    grupoFundidoBase.splice(Math.max(0, posicaoNaFusao + 1), 0, novaCaixa);
+                    inserirAbaixoNaOrdemVisual(grupoFundidoBase, posicaoNaFusao, novaCaixa, isModoPost);
                 }
-                caixasAtuais.splice(idxAlvo + 1, 0, novaCaixa);
+                inserirAbaixoNaOrdemVisual(caixasAtuais, idxAlvo, novaCaixa, isModoPost);
             } else {
                 caixasAtuais.push(novaCaixa);
             }

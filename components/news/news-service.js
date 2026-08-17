@@ -1,4 +1,5 @@
 import { cabecalhosComPrevisualizacao } from '../billing/plan-preview.js';
+import { ordenarNoticiasMaisRecentes } from './news-freshness.js';
 
 const NEWS_API_URL = 'https://storage.notabook.site';
 const MERCADOS = new Set(['PT', 'BR', 'US', 'GB', 'ES']);
@@ -153,13 +154,14 @@ function imagemDoRss(item) {
 function interpretarRss(xml, limite = 10) {
     const documento = new DOMParser().parseFromString(xml, 'application/xml');
     if (documento.querySelector('parsererror')) throw new Error('O feed de notícias recebido é inválido.');
-    return [...documento.querySelectorAll('item')].slice(0, limite).map(item => ({
+    const noticias = [...documento.querySelectorAll('item')].map(item => ({
         titulo: textoDo(item, 'title'),
         link: textoDo(item, 'link'),
         fonte: textoDo(item, 'source'),
         publicadoEm: textoDo(item, 'pubDate'),
         imagem: imagemDoRss(item)
     })).filter(item => item.titulo && item.link);
+    return ordenarNoticiasMaisRecentes(noticias).slice(0, limite);
 }
 
 async function carregarNoticiasDoTema(tema, config, token) {
@@ -169,6 +171,7 @@ async function carregarNoticiasDoTema(tema, config, token) {
         mercado: config.mercado
     });
     const resposta = await fetch(`${NEWS_API_URL}/news/rss?${parametros}`, {
+        cache: 'no-store',
         headers: {
             Authorization: `Bearer ${token}`,
             ...cabecalhosComPrevisualizacao()
@@ -198,5 +201,5 @@ export async function carregarNoticias(preferencias, auth) {
         linksVistos.add(identificador);
         noticias.push(noticia);
     });
-    return noticias;
+    return ordenarNoticiasMaisRecentes(noticias);
 }

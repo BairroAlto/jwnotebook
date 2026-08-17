@@ -118,12 +118,12 @@ export function criarIntegracaoGoogleCalendar({ auth, onEstado, onEventos } = {}
 
     async function ligarComFirebaseGoogle() {
         const user = auth?.currentUser;
-        if (!user) throw new Error('Inicia sessão no notABook antes de ligares o Google Calendar.');
+        if (!user) throw new Error('Inicia sessão no NotaBook antes de ligares o Google Calendar.');
 
         const provider = new GoogleAuthProvider();
         provider.addScope(GOOGLE_CALENDAR_SCOPE);
         // Permite escolher explicitamente a conta Google, mesmo quando o
-        // utilizador entrou primeiro no notABook com e-mail e palavra-passe.
+        // utilizador entrou primeiro no NotaBook com e-mail e palavra-passe.
         provider.setCustomParameters({ prompt: 'select_account' });
 
         const jaLigado = user.providerData.some(({ providerId }) => providerId === 'google.com');

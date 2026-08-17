@@ -5,6 +5,7 @@ import {
 import { abrirNotaNoEditor } from '../editor/editor.js';
 import { ICONS } from '../constants/icons.js';
 import { temNovidadesShareNaoVistas } from './share-notification-state.js';
+import { notaEstaVisivel } from '../notes/note-visibility.js';
 
 // --- ESTADO DE NAVEGAÇÃO E INTERFACE ---
 window.pastaShareAtual = "home"; 
@@ -137,9 +138,10 @@ function carregarDadosShare() {
 
             // PROCESSAMENTO INICIAL (Notificações e Convites)
             snapshot.forEach(docSnap => {
-                const d = docSnap.data();
                 const id = docSnap.id;
-                todosOsDocumentos.push({ id, ...d });
+                const d = { id, ...docSnap.data() };
+                if (!notaEstaVisivel(d)) return;
+                todosOsDocumentos.push(d);
 
                 if (d.convidado && d.convidado.includes(uid)) {
                     convitesPendentes.push({ id, ...d });
@@ -313,17 +315,30 @@ export function vigiarConvitesPendentes(db, auth) {
 
     if (unsubscribeConvitesPendentes) unsubscribeConvitesPendentes();
     return new Promise((resolve) => {
+        let concluida = false;
+        let timeoutInicial = null;
+        const concluirArranque = () => {
+            if (concluida) return;
+            concluida = true;
+            clearTimeout(timeoutInicial);
+            resolve();
+        };
+        timeoutInicial = setTimeout(() => {
+            console.warn('[SHARE-NOTIF] A primeira resposta está demorada; o listener continua ativo.');
+            concluirArranque();
+        }, 8000);
+
         unsubscribeConvitesPendentes = onSnapshot(q, (snapshot) => {
             const btnShare = Array.from(document.querySelectorAll('#left-buttons button'))
                                   .find(b => b.innerText.trim().toUpperCase() === 'SHARE');
             if (!btnShare) {
-                resolve();
+                concluirArranque();
                 return;
             }
 
             let temNovidade = false;
             snapshot.forEach(docSnap => {
-                const d = docSnap.data();
+                const d = { id: docSnap.id, ...docSnap.data() };
                 if ((d.convidado && d.convidado.includes(uid)) || temNovidadesShareNaoVistas(d, uid)) {
                     temNovidade = true;
                 }
@@ -332,10 +347,10 @@ export function vigiarConvitesPendentes(db, auth) {
             btnShare.style.color = temNovidade ? "#ef4444" : "";
             btnShare.style.fontWeight = temNovidade ? "900" : "";
             console.info('[SHARE-NOTIF][botao-share]', { uid, temNovidade });
-            resolve();
+            concluirArranque();
         }, (error) => {
-        console.error("Erro na vigilância de convites:", error);
-            resolve();
+            console.error("Erro na vigilância de convites:", error);
+            concluirArranque();
         });
     });
 }

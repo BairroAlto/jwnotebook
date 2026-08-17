@@ -4,7 +4,7 @@ import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/
 import { firebaseConfig } from '../../firebase-config.js';
 import { isMobileViewport } from '../ui/mobile-device.js';
 
-import { iniciarAutenticacao } from '../auth/auth.js';
+import { iniciarAutenticacao } from '../biblioteca-brain/auth/auth.js';
 import { SIGLAS_LIVROS } from '../lists/siglas-data.js';
 import { BIBLIA_METADATA } from '../lists/biblia.js';
 import { BIBLE_ABBREVIATIONS } from '../lists/bilbe-abreviatura.js';

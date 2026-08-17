@@ -7,7 +7,7 @@ import { chatWithQuota } from '../ai/ai-client.js';
  */
 export const GpsEngine = {
     varrerMemoria: async (pergunta, mapaMemoria) => {
-        const systemPrompt = `Tu és o Navegador GPS do notABook. Analisa o índice e localiza as notas relevantes.
+        const systemPrompt = `Tu és o Navegador GPS do NotaBook. Analisa o índice e localiza as notas relevantes.
 
 REGRAS OBRIGATÓRIAS DE RESPOSTA:
 1. Responde APENAS com um array JSON válido, sem texto explicativo antes ou depois.

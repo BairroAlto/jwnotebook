@@ -1,8 +1,15 @@
 import {
-    doc, getDoc, updateDoc, arrayUnion, arrayRemove,
+    doc, getDoc, updateDoc,
     collection, query, where, getDocs, or, and
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
-import { abrirNotaNoEditor } from '../editor.js';
+import { abrirNotaNoEditor, forcarGravacaoImediata } from '../editor.js';
+import { criarNotaLocal } from '../../local/criar-nota-service.js';
+import {
+    avaliarEspacoNasAbas,
+    garantirAbaBrowser,
+    normalizarAbasBrowser
+} from './browser-tabs-service.js';
+import { notaEstaVisivel } from '../../notes/note-visibility.js';
 
 let dbRef = null;
 let authRef = null;
@@ -18,6 +25,11 @@ export function iniciarSistemaBrowser(db, auth) {
     const btnFechar = document.getElementById('btn-fechar-browser');
     if (btnFechar) {
         btnFechar.onclick = () => document.getElementById('popup-browser-overlay')?.classList.remove('active');
+    }
+
+    const btnCriarNota = document.getElementById('btn-criar-nota-browser');
+    if (btnCriarNota) {
+        btnCriarNota.onclick = () => criarNotaEmAbaBrowser(btnCriarNota);
     }
 
     document.querySelectorAll('.tab-browser').forEach(btn => {
@@ -80,7 +92,9 @@ async function carregarNotasParaBrowser() {
         const items = [];
         snap.forEach(docSnap => {
             if (docSnap.id === notaMaeIdLocal) return;
-            items.push({ ...docSnap.data(), id: docSnap.id, onde: abaBrowserAtiva.toLowerCase() });
+            const dados = docSnap.data();
+            if (!notaEstaVisivel(dados)) return;
+            items.push({ ...dados, id: docSnap.id, onde: abaBrowserAtiva.toLowerCase() });
         });
 
         container.innerHTML = "";
@@ -140,16 +154,12 @@ function renderizarArvoreBrowser(container, items, paiId, level, uid) {
         `;
 
         row.onclick = async () => {
-            const resMae = await buscarNotaHibrida(notaMaeIdLocal);
-            const colecaoMae = resMae?.colecao || "Local";
-            const db = dbRef || window.db;
-
-            await updateDoc(doc(db, colecaoMae, notaMaeIdLocal), {
-                browser: arrayUnion({ id: item.id, onde: abaBrowserAtiva.toLowerCase() })
-            });
-
-            document.getElementById('popup-browser-overlay')?.classList.remove('active');
-            abrirNotaNoEditor(item.id, item, db, authRef || window.auth, null, notaMaeIdLocal);
+            const resultado = await abrirNotaEmAbaBrowser(item.id, abaBrowserAtiva.toLowerCase());
+            if (!resultado?.ok && resultado?.motivo === 'limite') {
+                window.alert(`O Browser já tem ${resultado.limite} abas abertas. Fecha uma aba antes de continuar.`);
+                return;
+            }
+            if (resultado?.ok) document.getElementById('popup-browser-overlay')?.classList.remove('active');
         };
 
         container.appendChild(row);
@@ -184,7 +194,7 @@ export async function carregarAbasDaNota(maeId, dadosNota, notaAtivaId) {
         return;
     }
 
-    const listaAbas = resMae.dados.browser || [];
+    const listaAbas = normalizarAbasBrowser(resMae.dados.browser);
     console.log("📂 [TABS-DEBUG] listaAbas da nota mãe:", listaAbas);
     const fragmento = document.createDocumentFragment();
     fragmento.appendChild(criarElementoAba(maeId, resMae.dados.nome, true, false, resMae.dados.onde || "local", (maeId === notaAtivaId)));
@@ -272,7 +282,9 @@ async function fecharAba(idAlvo, ondeAba) {
     const db = dbRef || window.db;
     const resMae = await buscarNotaHibrida(notaMaeIdLocal);
     if (!resMae || !db) return;
-    await updateDoc(doc(db, resMae.colecao, notaMaeIdLocal), { browser: arrayRemove({ id: idAlvo, onde: ondeAba }) });
+    const browser = normalizarAbasBrowser(resMae.dados.browser)
+        .filter(aba => aba.id !== idAlvo);
+    await updateDoc(doc(db, resMae.colecao, notaMaeIdLocal), { browser });
     if (idAlvo === notaAtivaIdGlobal) {
         buscarNotaHibrida(notaMaeIdLocal).then(r => abrirNotaNoEditor(notaMaeIdLocal, r.dados, db, authRef || window.auth, null, null));
     } else {
@@ -280,7 +292,127 @@ async function fecharAba(idAlvo, ondeAba) {
     }
 }
 
-export async function buscarNotaHibrida(id) {
+function obterNotaMaeBrowserId() {
+    return notaMaeIdLocal || window.notaAtualContext?.maeId || window.notaAtualContext?.notaId || null;
+}
+
+export async function verificarEspacoNasAbasBrowser(notaId = '__nova_nota__') {
+    const maeId = obterNotaMaeBrowserId();
+    if (!maeId) return { disponivel: false, motivo: 'sem-contexto', total: 0, limite: 15, abas: [] };
+    const resMae = await buscarNotaHibrida(maeId);
+    if (!resMae) return { disponivel: false, motivo: 'sem-contexto', total: 0, limite: 15, abas: [] };
+    return avaliarEspacoNasAbas(resMae.dados, notaId);
+}
+
+export async function abrirNotaEmAbaBrowser(notaId, ondePreferida = null) {
+    const db = dbRef || window.db;
+    const auth = authRef || window.auth;
+    const maeId = obterNotaMaeBrowserId();
+    console.info('[BROWSER][BAIRRO-NOTAS] A preparar abertura:', {
+        notaId,
+        ondePreferida,
+        maeId,
+        temDb: Boolean(db),
+        temSessao: Boolean(auth?.currentUser)
+    });
+    if (!db || !auth || !maeId || !notaId) return { ok: false, motivo: 'sem-contexto' };
+
+    const [resMae, resAlvo] = await Promise.all([
+        buscarNotaHibrida(maeId),
+        buscarNotaHibrida(notaId, ondePreferida)
+    ]);
+    console.info('[BROWSER][BAIRRO-NOTAS] Resultado das procuras:', {
+        mae: resMae ? { id: maeId, colecao: resMae.colecao, nome: resMae.dados?.nome } : null,
+        alvo: resAlvo ? {
+            idPedido: notaId,
+            idFirestore: resAlvo.id,
+            colecao: resAlvo.colecao,
+            nome: resAlvo.dados?.nome
+        } : null
+    });
+    if (!resMae || !resAlvo) return { ok: false, motivo: 'nota-inexistente' };
+
+    const idAlvo = resAlvo.id || notaId;
+    const estado = await garantirAbaBrowser({
+        db,
+        colecaoMae: resMae.colecao,
+        maeId,
+        dadosNotaMae: resMae.dados,
+        notaId: idAlvo,
+        onde: ondePreferida || resAlvo.colecao
+    });
+    console.info('[BROWSER][BAIRRO-NOTAS] Estado da aba:', estado);
+    if (!estado.disponivel) return { ok: false, motivo: 'limite', ...estado };
+
+    await abrirNotaNoEditor(idAlvo, resAlvo.dados, db, auth, null, maeId);
+    requestAnimationFrame(() => {
+        document.querySelector('.center-col')?.scrollTo({ top: 0, behavior: 'auto' });
+        window.scrollTo({ top: 0, behavior: 'auto' });
+        document.getElementById('editor-container')?.scrollIntoView({ block: 'start' });
+    });
+    return {
+        ok: true,
+        ...estado,
+        notaId: idAlvo,
+        onde: resAlvo.colecao.toLowerCase()
+    };
+}
+
+async function criarNotaEmAbaBrowser(btn) {
+    const db = dbRef || window.db;
+    const auth = authRef || window.auth;
+    const maeId = obterNotaMaeBrowserId();
+    if (!db || !auth?.currentUser || !maeId) return;
+
+    const textoOriginal = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> A criar...';
+
+    try {
+        const notaActualId = notaAtivaIdGlobal || window.notaAtualContext?.notaId || maeId;
+        const [resMae, resActual] = await Promise.all([
+            buscarNotaHibrida(maeId),
+            buscarNotaHibrida(notaActualId)
+        ]);
+        if (!resMae) throw new Error('Não foi possível encontrar a nota actual.');
+        if (!resActual || resMae.colecao !== 'Local' || resActual.colecao !== 'Local') {
+            throw new Error('A criação automática está disponível quando a nota actual é Local.');
+        }
+
+        const estado = avaliarEspacoNasAbas(resMae.dados, '__nova_nota__');
+        if (!estado.disponivel) {
+            window.alert(`O Browser já tem ${estado.limite} abas abertas. Fecha uma aba antes de criares outra.`);
+            return;
+        }
+
+        await forcarGravacaoImediata();
+        const notaCriada = await criarNotaLocal(db, auth, {
+            pastapai: resActual.dados.pastapai || 'root'
+        });
+
+        await garantirAbaBrowser({
+            db,
+            colecaoMae: resMae.colecao,
+            maeId,
+            dadosNotaMae: resMae.dados,
+            notaId: notaCriada.id,
+            onde: 'local'
+        });
+
+        window.pastaAtual = resActual.dados.pastapai || 'root';
+        window.itemSelecionadoId = notaCriada.id;
+        await abrirNotaNoEditor(notaCriada.id, notaCriada.dados, db, auth, null, maeId);
+        document.getElementById('popup-browser-overlay')?.classList.remove('active');
+    } catch (erro) {
+        console.error('[BROWSER] Não foi possível criar a nota na aba:', erro);
+        window.alert(erro.message || 'Não foi possível criar a nota.');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = textoOriginal;
+    }
+}
+
+export async function buscarNotaHibrida(id, ondePreferida = null) {
     const db = dbRef || window.db;
     if (!db) return null;
     try {
@@ -289,10 +421,73 @@ export async function buscarNotaHibrida(id) {
         );
         
         const buscar = async () => {
-            const sLocal = await getDoc(doc(db, "Local", id));
-            if (sLocal.exists()) return { dados: { ...sLocal.data(), onde: "local" }, colecao: "Local" };
-            const sShare = await getDoc(doc(db, "Share", id));
-            if (sShare.exists()) return { dados: { ...sShare.data(), onde: "share" }, colecao: "Share" };
+            const primeiro = String(ondePreferida || '').toLowerCase() === 'share' ? 'Share' : 'Local';
+            const colecoes = primeiro === 'Share' ? ['Share', 'Local'] : ['Local', 'Share'];
+            for (const colecao of colecoes) {
+                try {
+                    const snap = await getDoc(doc(db, colecao, id));
+                    if (snap.exists()) {
+                        return {
+                            id: snap.id,
+                            dados: { ...snap.data(), onde: colecao === 'Share' ? 'share' : 'local' },
+                            colecao
+                        };
+                    }
+                } catch (erroColecao) {
+                    // Uma regra de segurança pode rejeitar a consulta numa
+                    // colecção; isso não deve impedir a tentativa na outra.
+                    console.warn(`[BROWSER] Não foi possível consultar ${colecao} para ${id}:`, erroColecao?.code || erroColecao?.message || erroColecao);
+                }
+            }
+
+            const auth = authRef || window.auth;
+            const uid = auth?.currentUser?.uid;
+            if (!uid) return null;
+
+            // Compatibilidade com notas antigas: alguns registos guardavam o
+            // UUID do campo `id`, em vez do ID real do documento Firestore.
+            for (const colecao of colecoes) {
+                try {
+                    const consulta = colecao === 'Local'
+                        ? query(
+                            collection(db, 'Local'),
+                            where('userId', '==', uid),
+                            where('estado', '==', 'on')
+                        )
+                        : query(
+                            collection(db, 'Share'),
+                            and(
+                                where('estado', '==', 'on'),
+                                where('tipo', 'in', ['nota', 'pasta']),
+                                or(
+                                    where('userId', '==', uid),
+                                    where('aprovado', 'array-contains', uid)
+                                )
+                            )
+                        );
+                    const antigos = await getDocs(consulta);
+                    for (const snap of antigos.docs) {
+                        const dados = snap.data() || {};
+                        const idsInternos = [dados.id, dados.idFirestore, dados.docIdFirebase]
+                            .filter(Boolean)
+                            .map(String);
+                        if (idsInternos.includes(String(id))) {
+                            console.info('[BROWSER][BAIRRO-NOTAS] ID antigo resolvido:', {
+                                idPedido: id,
+                                idFirestore: snap.id,
+                                colecao
+                            });
+                            return {
+                                id: snap.id,
+                                dados: { ...dados, onde: colecao === 'Share' ? 'share' : 'local' },
+                                colecao
+                            };
+                        }
+                    }
+                } catch (erroLegado) {
+                    console.warn(`[BROWSER][BAIRRO-NOTAS] Falha na compatibilidade ${colecao}:`, erroLegado?.code || erroLegado?.message || erroLegado);
+                }
+            }
             return null;
         };
 

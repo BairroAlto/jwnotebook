@@ -53,7 +53,12 @@ export async function obterCaixasShareAcessiveisPorIds(db, ids = [], { incluirOf
             if (!incluirOff && dados.estado === "off") return null;
             return [id, { ...dados, id: snap.id, onde: "share" }];
         } catch (erro) {
-            console.warn("[SHARECAIXAS] Falha ao ler caixa acessível", id, erro);
+            // Um ID local/antigo pode não existir em ShareCaixas ou não ser
+            // acessível pelo utilizador. Não é uma falha do servidor nem deve
+            // activar o aviso global de indisponibilidade.
+            if (erro?.code !== 'permission-denied') {
+                console.warn("[SHARECAIXAS] Falha ao ler caixa acessível", id, erro);
+            }
             return null;
         }
     }));

@@ -1,5 +1,30 @@
 import { marcarFerramentaShareComoVista } from '../../share/share-notification-state.js';
 import { construirGruposFundidos, aplicarEstiloGrupoFundido } from './fundir-manager.js';
+import { obterFeaturesDisponiveis } from '../../settings/feature-admin.js';
+
+const FEATURE_KEYS_POR_TIPO_CAIXA = Object.freeze({
+    noticias: 'ferramenta_noticias',
+    tempo: 'ferramenta_tempo',
+    gmail: 'ferramenta_gmail'
+});
+
+async function filtrarCaixasSemAcesso(caixas, authRef) {
+    const tiposProtegidos = new Set(Object.keys(FEATURE_KEYS_POR_TIPO_CAIXA));
+    if (!caixas.some(caixa => tiposProtegidos.has(caixa.tipo))) return caixas;
+
+    try {
+        const features = await obterFeaturesDisponiveis(authRef);
+        const acessos = new Map(features.map(feature => [feature.feature_key, feature]));
+        return caixas.filter(caixa => {
+            const featureKey = FEATURE_KEYS_POR_TIPO_CAIXA[caixa.tipo];
+            if (!featureKey) return true;
+            return acessos.get(featureKey)?.allowed !== false;
+        });
+    } catch (erro) {
+        console.warn('[EDITOR-RENDER] Não foi possível verificar o acesso às ferramentas:', erro);
+        return caixas;
+    }
+}
 
 function formatarMesDiario(date) {
     return new Intl.DateTimeFormat('pt-PT', { month: 'long', year: 'numeric' }).format(date);
@@ -24,11 +49,15 @@ export async function renderizarFeed(params) {
     const isModoDiario = modos.includes('diario');
     const isModoSocial = modos.includes('social') && dadosNota?.onde === "share";
 
-    const caixasParaMostrar = caixasAtuais.filter(c => {
+    let caixasParaMostrar = caixasAtuais.filter(c => {
         if (c.estado !== "on") return false;
         const temRef = c.referenciacodex !== undefined && c.referenciacodex !== null;
         return isModoSentinela ? temRef : !temRef;
     });
+
+    // As ferramentas sem acesso continuam guardadas no Firebase, mas ficam
+    // invisíveis na nota até o utilizador recuperar o plano correspondente.
+    caixasParaMostrar = await filtrarCaixasSemAcesso(caixasParaMostrar, authRef);
 
     feed.style.minHeight = feed.offsetHeight + "px";
     feed.innerHTML = "";
@@ -183,6 +212,9 @@ async function renderizarCaixa(caixa, raciociniosVivos, handlers) {
         case "tempo":
             modulo = await import('../ferramentas/tempo.js');
             return modulo.criarTempo(caixa, acionarGravacao, onApagar, moverCaixa, prepararInsercao);
+        case "gmail":
+            modulo = await import('../ferramentas/gmail.js');
+            return modulo.criarGmail(caixa, acionarGravacao, onApagar, moverCaixa, prepararInsercao);
         case "firmamento": {
             modulo = await import('../ferramentas/firmamento.js');
             const { abrirPaletaFirmamento } = await import('./firmamento-paleta.js');

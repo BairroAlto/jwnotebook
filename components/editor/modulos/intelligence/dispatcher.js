@@ -51,7 +51,7 @@ export function despacharInteligenciaEye(caixas, nota, db, auth) {
             m.renderizarIndice(caixasFiltradas, isModoPost);
         });
 
-        // B) Scanner de IA (BookAI) - Canal 6 do X-SAT
+        // B) Scanner de IA (BookAI) - painel independente
         import('../../../direita/ai-controller.js').then(m => {
             if (m.AIController && m.AIController.renderizarLista) {
                 // PASSAMOS A NOTA AQUI PARA EVITAR O ID "temp"

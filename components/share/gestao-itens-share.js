@@ -4,6 +4,7 @@ import {
     where, getDocs, addDoc, deleteDoc, serverTimestamp, or, and 
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+import { renderFolderTree } from "../ui/folder-tree.js";
 
 let itemAlvo = null; 
 let listaParaReordenar = [];
@@ -179,6 +180,10 @@ window.abrirMotorMoverShare = async () => {
 
     const db = getFirestore();
     const uid = getAuth().currentUser.uid;
+    window.pastaDestinoShareId = null;
+    btnConfirmar.disabled = true;
+    btnConfirmar.style.opacity = "0.5";
+    document.getElementById('nome-pasta-selecionada').innerText = "Escolhe uma pasta...";
 
     try {
         // CORREÇÃO: Envolver os filtros num and(...) para evitar o erro InvalidQuery
@@ -195,38 +200,26 @@ window.abrirMotorMoverShare = async () => {
         const pastasParaArvore = [];
         snap.forEach(d => pastasParaArvore.push({ id: d.id, ...d.data() }));
 
-        container.innerHTML = "";
-        container.appendChild(criarItemPastaShare("home", "SHARE (RAIZ)", 0));
-        renderizarNivelPastasShare(container, pastasParaArvore, "home", 1, uid);
+        const pastaAtualId = itemAlvo[uid]?.pastapai || "home";
+        renderFolderTree(container, {
+            items: pastasParaArvore,
+            rootId: "home",
+            rootLabel: "SHARE (RAIZ)",
+            theme: "share",
+            currentId: pastaAtualId,
+            excludeId: itemAlvo.id,
+            getParentId: item => item[uid]?.pastapai || "home",
+            onSelect: ({ id, name }) => {
+                window.pastaDestinoShareId = id;
+                document.getElementById('nome-pasta-selecionada').innerText = name;
+                btnConfirmar.disabled = false;
+                btnConfirmar.style.opacity = "1";
+            }
+        });
 
         btnConfirmar.onclick = () => executarMudancaPastaShare(db, uid);
     } catch (e) { console.error("Erro na Árvore:", e); }
 };
-
-// ... Funções auxiliares da árvore (renderizarNivelPastasShare, criarItemPastaShare, executarMudancaPastaShare) ...
-function renderizarNivelPastasShare(container, lista, paiId, level, uid) {
-    const filhas = lista.filter(p => p[uid]?.pastapai === paiId && p.id !== itemAlvo.id);
-    filhas.forEach(p => {
-        container.appendChild(criarItemPastaShare(p.id, p.nome, level));
-        renderizarNivelPastasShare(container, lista, p.id, level + 1, uid);
-    });
-}
-
-function criarItemPastaShare(id, nome, level) {
-    const div = document.createElement('div');
-    div.className = "tree-item-pasta-select";
-    div.style.cssText = `padding: 10px 10px 10px ${level * 15 + 10}px; cursor: pointer; border-radius: 6px; display: flex; align-items: center; gap: 10px; color:white;`;
-    div.innerHTML = `<i class="fa-solid fa-folder" style="color: #fca5a5; opacity: 0.7;"></i> <span style="font-size:13px;">${nome}</span>`;
-    div.onclick = () => {
-        document.querySelectorAll('.tree-item-pasta-select').forEach(el => el.style.background = "transparent");
-        div.style.background = "rgba(239, 68, 68, 0.2)";
-        window.pastaDestinoShareId = id;
-        document.getElementById('nome-pasta-selecionada').innerText = nome;
-        document.getElementById('btn-confirmar-movimentacao').disabled = false;
-        document.getElementById('btn-confirmar-movimentacao').style.opacity = "1";
-    };
-    return div;
-}
 
 async function executarMudancaPastaShare(db, uid) {
     if (!window.pastaDestinoShareId || !itemAlvo) return;

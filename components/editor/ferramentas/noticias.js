@@ -1,9 +1,14 @@
 import {
     abrirConfiguradorNoticias,
     carregarNoticias,
-    normalizarPreferenciasNoticias,
-    obterDiaAtual
+    normalizarPreferenciasNoticias
 } from '../../news/news-service.js';
+import {
+    ATRASO_REPETICAO_NOTICIAS_MS,
+    cacheNoticiasEstaAtualizada,
+    ordenarNoticiasMaisRecentes,
+    tempoAteAtualizarNoticias
+} from '../../news/news-freshness.js';
 import { iniciarSelecaoFerramentas } from './tool-selection.js';
 
 const COR_NOTICIAS = '#5b3824';
@@ -50,7 +55,7 @@ function formatarData(valor) {
 
 function agruparNoticiasPorTema(noticias) {
     const grupos = new Map();
-    noticias.forEach(noticia => {
+    ordenarNoticiasMaisRecentes(noticias).forEach(noticia => {
         const tema = String(noticia.tema || 'Notícias').trim() || 'Notícias';
         if (!grupos.has(tema)) grupos.set(tema, []);
         grupos.get(tema).push(noticia);
@@ -163,6 +168,15 @@ export function criarNoticias(caixa, onAlterar, onApagar, onMover, onAddAbaixo) 
     };
 
     let atualizacaoEmCurso = false;
+    let temporizadorAtualizacao = null;
+
+    const agendarAtualizacao = atraso => {
+        clearTimeout(temporizadorAtualizacao);
+        temporizadorAtualizacao = setTimeout(() => {
+            if (!caixaDiv.isConnected) return;
+            atualizarNoticias();
+        }, Math.max(1000, atraso));
+    };
 
     const renderizarCache = () => {
         const preferencias = normalizarPreferenciasNoticias(caixa.noticiasPreferencias);
@@ -170,15 +184,16 @@ export function criarNoticias(caixa, onAlterar, onApagar, onMover, onAddAbaixo) 
         corpo.replaceChildren();
         if (!preferencias.temas.length) {
             corpo.appendChild(criarMensagem('Clica na lupa para escolher os temas das notícias…', COR_NOTICIAS_CLARA));
-            return;
+            return { temTemas: false, estaAtualizada: false };
         }
 
         const cache = Array.isArray(caixa.noticiasCache) ? caixa.noticiasCache : [];
-        const estaAtualizada = caixa.today === obterDiaAtual();
+        const estaAtualizada = cache.length > 0
+            && cacheNoticiasEstaAtualizada(caixa.noticiasAtualizadasEm);
         if (!estaAtualizada || !cache.length) {
             const mensagem = estaAtualizada
                 ? 'Ainda não existem notícias carregadas nesta ferramenta.'
-                : 'As notícias não foram atualizadas hoje.';
+                : 'A procurar as notícias mais recentes…';
             corpo.appendChild(criarAvisoAtualizacao(mensagem, atualizarNoticias));
         }
         if (cache.length) {
@@ -187,6 +202,7 @@ export function criarNoticias(caixa, onAlterar, onApagar, onMover, onAddAbaixo) 
                 criarGrupoTema(tema, noticias, preferencias.vista, indice > 0)
             )));
         }
+        return { temTemas: true, estaAtualizada };
     };
 
     const atualizarNoticias = async () => {
@@ -195,22 +211,34 @@ export function criarNoticias(caixa, onAlterar, onApagar, onMover, onAddAbaixo) 
         const preferencias = normalizarPreferenciasNoticias(caixa.noticiasPreferencias);
         aplicarVista(preferencias.vista);
         corpo.replaceChildren(criarMensagem('A carregar notícias…', COR_NOTICIAS_CLARA));
+        let atualizada = false;
         try {
             const auth = window.notaAtualContext?.auth || window.auth;
             const noticias = await carregarNoticias(preferencias, auth);
-            caixa.noticiasCache = noticias;
-            caixa.today = obterDiaAtual();
+            caixa.noticiasCache = ordenarNoticiasMaisRecentes(noticias);
+            caixa.noticiasAtualizadasEm = new Date().toISOString();
+            atualizada = true;
             onAlterar(caixa);
             renderizarCache();
         } catch (erro) {
             corpo.replaceChildren(criarAvisoAtualizacao(erro.message, atualizarNoticias));
         } finally {
             atualizacaoEmCurso = false;
+            agendarAtualizacao(atualizada
+                ? tempoAteAtualizarNoticias(caixa.noticiasAtualizadasEm)
+                : ATRASO_REPETICAO_NOTICIAS_MS);
         }
     };
 
     const renderizar = async () => {
-        return renderizarCache();
+        const estado = renderizarCache();
+        if (!estado.temTemas) return;
+        if (!estado.estaAtualizada) {
+            await atualizarNoticias();
+            return;
+        }
+        agendarAtualizacao(tempoAteAtualizarNoticias(caixa.noticiasAtualizadasEm));
+        return;
         /*
         const versao = ++renderizacao;
         const preferencias = normalizarPreferenciasNoticias(caixa.noticiasPreferencias);
@@ -244,7 +272,7 @@ export function criarNoticias(caixa, onAlterar, onApagar, onMover, onAddAbaixo) 
         if (!preferencias) return;
         caixa.noticiasPreferencias = preferencias;
         caixa.noticiasCache = [];
-        caixa.today = null;
+        caixa.noticiasAtualizadasEm = null;
         onAlterar(caixa);
         await renderizar();
     };

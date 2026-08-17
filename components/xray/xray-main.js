@@ -9,7 +9,7 @@ import { executarAnaliseProfunda } from './xray-search.js';
 import { XRayUI } from './xray-ui.js';
 import { iniciarSettingsXRay, renderizarPiccards } from './xray-settings-manager.js';
 import { iniciarExportManager } from './xray-export-manager.js';
-import { iniciarAutenticacao } from '../auth/auth.js';
+import { iniciarAutenticacao } from '../biblioteca-brain/auth/auth.js';
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);

@@ -2,8 +2,8 @@ import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.8.
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { collection, getDocs, query, where } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { firebaseConfig } from "../../firebase-config.js";
-import { iniciarAutenticacao } from "../auth/auth.js";
-import { criarGuardaDeAutenticacao } from "../auth/auth-guard.js";
+import { iniciarAutenticacao } from "../biblioteca-brain/auth/auth.js";
+import { criarGuardaDeAutenticacao } from "../biblioteca-brain/auth/auth-guard.js";
 import { migrarNotaParaLocalCaixas } from "../local/caixas-repository.js";
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);

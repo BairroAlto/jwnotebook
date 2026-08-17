@@ -1,6 +1,7 @@
 // components/editor/modulos/recuperacao.js
 import { collection, addDoc, getDocs, query, orderBy, serverTimestamp, where } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { IDENTIDADE_FERRAMENTAS } from '../../constants/ferramentas.js';
+import { obterApresentacaoCaixaReciclada } from '../../settings/recycle-tool-presentation.js';
 import { perguntarRestauroBackup } from './tags/tags-utils.js';
 import { SyncLogic } from './sync-logic.js';
 import { guardarCaixasDaNota } from '../../local/caixas-repository.js';
@@ -223,10 +224,11 @@ function renderizarReciclagem() {
 
     // 4. RENDERIZAR OS CARDS DE RESTAURO
     apagadas.forEach(caixa => {
-        const config = IDENTIDADE_FERRAMENTAS[caixa.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
+        const apresentacao = obterApresentacaoCaixaReciclada(caixa);
+        const config = apresentacao.identidade;
         
         // Formatar o resumo do texto
-        let resumo = (caixa.titulo || caixa.conteudo || "Bloco sem conteúdo").substring(0, 45);
+        let resumo = apresentacao.resumo.substring(0, 45);
         if (resumo.length >= 45) resumo += "...";
 
         const div = document.createElement('div');

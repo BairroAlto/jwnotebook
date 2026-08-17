@@ -6,7 +6,7 @@ export const PAINEL_UTILIZADOR_ABAS = [
     {
         key: 'painel_geral',
         target: 'set-geral',
-        label: 'Geral',
+        label: 'Avatar',
         description: 'Perfil, avatar e identidade visual.'
     },
     {

@@ -13,9 +13,10 @@ import {
     obterConfigNotaEfetiva
 } from './preferences.js';
 import { aplicarPreferenciaBotaoColapsoColunaEsquerda, iniciarControloColunaEsquerda } from '../ui/left-column-collapse.js';
+import { aplicarPreferenciaBotaoColapsoColunaDireita, iniciarControloColunaDireita } from '../ui/right-column-collapse.js';
 import { inicializarArranque } from './startup.js';
 import { inicializarManual } from '../manual/manual.js';
-import { inicializarPlanos } from '../billing/billing-client.js';
+import { inicializarPlanos, obterPlanoAtual } from '../billing/billing-client.js';
 import { inicializarAdminFeatures, obterFeaturesDisponiveis } from './feature-admin.js';
 import { PAINEL_UTILIZADOR_ABAS } from './user-panel-tabs.js';
 import { inicializarLoja } from '../store/tool-store.js';
@@ -41,10 +42,9 @@ export async function inicializarSettings(db, auth) {
     const overlay = document.getElementById('popup-settings-overlay');
     const btnAbrir = document.getElementById('btnDefinicoes');
     const btnFechar = document.getElementById('btn-fechar-settings');
-    const areaPainelUtilizador = overlay?.querySelector('.settings-content-wrapper');
-    const paineisUtilizador = areaPainelUtilizador
-        ? [...areaPainelUtilizador.querySelectorAll(':scope > .setting-content')]
-        : [];
+    const settingsRoot = overlay || document;
+    const areaPainelUtilizador = settingsRoot.querySelector('.settings-content-wrapper');
+    const paineisUtilizador = [...document.querySelectorAll('.setting-content')];
     const ajustadorAlturaPainelUtilizador = criarAjustadorAlturaAbas({
         area: areaPainelUtilizador,
         paineis: paineisUtilizador,
@@ -55,8 +55,11 @@ export async function inicializarSettings(db, auth) {
         observarAlteracoes: true
     });
 
+    let sincronizarPainelAtivo = () => {};
+
     if (btnAbrir) btnAbrir.onclick = () => {
         overlay?.classList.add('active');
+        sincronizarPainelAtivo();
         requestAnimationFrame(() => ajustadorAlturaPainelUtilizador.atualizar());
     };
     if (btnFechar) btnFechar.onclick = () => {
@@ -64,14 +67,24 @@ export async function inicializarSettings(db, auth) {
         const refineContainer = document.getElementById('refine-search-container');
         if (refineContainer) refineContainer.style.display = 'none';
     };
-    userPrefs = await carregarPreferenciasUtilizador(db, user.uid);
+
+    // Os separadores da janela não dependem das preferências nem do Firestore.
+    // Devem ficar utilizáveis mesmo quando a leitura da conta está lenta ou falha.
+    sincronizarPainelAtivo = ativarTabs(db, user.uid, overlay);
+
+    try {
+        userPrefs = await carregarPreferenciasUtilizador(db, user.uid);
+    } catch (erro) {
+        console.error('[SETTINGS] Não foi possível carregar as preferências do utilizador:', erro);
+        userPrefs = {};
+    }
     window.NotaBookUserPrefs = userPrefs;
 
     iniciarControloColunaEsquerda();
+    iniciarControloColunaDireita();
     aplicarSliders(userPrefs.tamanholetra || {});
     aplicarToggles(userPrefs);
     renderFuseis(db, auth);
-    ativarTabs(db, user.uid);
     aplicarAcessoAbasPainel(auth).catch(erro => {
         console.info('[SETTINGS] Não foi possível validar as abas do Painel de Utilizador:', erro.message);
     });
@@ -135,20 +148,82 @@ function ativarFiltroDispositivo() {
     filters[0]?.click();
 }
 
-function ativarTabs(db, uid) {
-    const tabs = document.querySelectorAll('.tab-settings:not(#btn-abrir-manual)');
+function ativarTabs(db, uid, overlay) {
+    const settingsRoot = overlay || document;
+    const tabs = settingsRoot.querySelectorAll('.tab-settings:not(#btn-abrir-manual)');
+    // Os painéis podem ser inseridos por um carregador de componentes fora da
+    // raiz inicialmente encontrada. A classe é exclusiva deste popup, por isso
+    // a procura global mantém compatibilidade com as versões anteriores.
+    const paineisPorClasse = [...document.querySelectorAll('.setting-content')];
+    const paineisPorAlvo = [...tabs]
+        .map(tab => tab.dataset.target)
+        .filter(Boolean)
+        .map(id => document.getElementById(id))
+        .filter(Boolean);
+    const paineis = [...new Set([...paineisPorClasse, ...paineisPorAlvo])];
+
+    const aplicarPainelAtivo = (targetId) => {
+        const painelAlvo = [...paineis].find(painel => painel.id === targetId);
+        const abaAlvo = [...tabs].find(tab => (
+            tab.dataset.target === targetId
+            && !tab.hidden
+            && tab.dataset.adminAuthorized !== 'false'
+        ));
+        const primeiroAlvo = [...tabs].find(tab => (
+            tab.dataset.target
+            && !tab.hidden
+            && tab.dataset.adminAuthorized !== 'false'
+            && [...paineis].some(painel => painel.id === tab.dataset.target)
+        ));
+        const alvo = painelAlvo && abaAlvo ? targetId : primeiroAlvo?.dataset.target;
+
+        tabs.forEach(tab => {
+            const ativo = Boolean(alvo && tab.dataset.target === alvo);
+            tab.classList.toggle('active', ativo);
+            tab.setAttribute('aria-selected', String(ativo));
+        });
+        paineis.forEach(painel => {
+            const ativo = painel.id === alvo;
+            painel.style.display = ativo ? 'block' : 'none';
+            painel.setAttribute('aria-hidden', String(!ativo));
+        });
+    };
+
     tabs.forEach(tab => {
         tab.onclick = () => {
-            tabs.forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-            document.querySelectorAll('.setting-content').forEach(c => c.style.display = 'none');
             const targetId = tab.getAttribute('data-target');
-            document.getElementById(targetId)?.style.setProperty('display', 'block');
+            const acessoAdminPendente = targetId === 'set-admin-features'
+                && tab.dataset.adminAuthorized !== 'true';
+
+            if (targetId === 'set-planos') {
+                console.log('[SETTINGS][clique-planos]', {
+                    painelEncontrado: Boolean(document.getElementById(targetId)),
+                    paineisEncontrados: paineis.length
+                });
+            }
+
+            if (tab.hidden || acessoAdminPendente) return;
+
+            aplicarPainelAtivo(targetId);
+
             if (targetId === 'set-reciclagem') {
-                import('./recycle-manager.js').then(m => m.carregarTodaReciclagem(window.db, uid));
+                import('./recycle-manager.js')
+                    .then(modulo => modulo.carregarTodaReciclagem(db, uid))
+                    .catch(erro => {
+                        console.error('[SETTINGS] Não foi possível carregar a Reciclagem:', erro);
+                        const container = document.getElementById('lista-reciclagem-expirada');
+                        if (container) container.textContent = 'Não foi possível carregar a Reciclagem.';
+                    });
             }
         };
     });
+
+    const abaInicial = [...tabs].find(tab => tab.classList.contains('active') && tab.dataset.target)
+        || [...tabs].find(tab => tab.dataset.target);
+    aplicarPainelAtivo(abaInicial?.dataset.target || 'set-geral');
+    return () => aplicarPainelAtivo(
+        settingsRoot.querySelector('.tab-settings.active[data-target]')?.dataset.target || 'set-geral'
+    );
 }
 
 async function aplicarAcessoAbasPainel(auth) {
@@ -193,7 +268,8 @@ function ativarSubAbasDefinicoes() {
 
     titulos.forEach((titulo, indice) => {
         const icone = titulo.querySelector('i')?.classList;
-        const secao = mapaSecoes.find(item => icone?.contains(item.icone));
+        const secao = mapaSecoes.find(item => item.chave === titulo.dataset.settingsSection)
+            || mapaSecoes.find(item => icone?.contains(item.icone));
         if (!secao) return;
 
         const proximoTitulo = titulos[indice + 1];
@@ -205,6 +281,19 @@ function ativarSubAbasDefinicoes() {
         }
         grupos.set(secao.chave, grupo);
     });
+
+    // Não deixar conteúdo órfão desaparecer se for acrescentada uma secção
+    // nova sem ainda existir uma subaba correspondente.
+    const elementosAtribuidos = new Set([...grupos.values()].flat());
+    const conteudoOrfao = filhos.filter(elemento => (
+        elemento !== nav
+        && elemento !== root.querySelector('.settings-device-filters')
+        && !elementosAtribuidos.has(elemento)
+    ));
+    if (conteudoOrfao.length) {
+        const grupoPrincipal = grupos.get('paineis') || [];
+        grupos.set('paineis', [...grupoPrincipal, ...conteudoOrfao]);
+    }
 
     const filtrosDispositivo = root.querySelector('.settings-device-filters');
     const fragmento = document.createDocumentFragment();
@@ -288,6 +377,10 @@ function aplicarToggles(prefs) {
     if (leftCollapse) leftCollapse.checked = Boolean(prefs.leftColumnCollapseButton);
     aplicarPreferenciaBotaoColapsoColunaEsquerda(Boolean(prefs.leftColumnCollapseButton));
 
+    const rightCollapse = document.getElementById('check-colapso-coluna-direita');
+    if (rightCollapse) rightCollapse.checked = Boolean(prefs.rightColumnCollapseButton);
+    aplicarPreferenciaBotaoColapsoColunaDireita(Boolean(prefs.rightColumnCollapseButton));
+
     atualizarIconeBotaoTopo(prefs.avatar || "gear");
     syncCurrentNoteToggle();
 }
@@ -306,18 +399,61 @@ function bindSliders(db, uid) {
     });
 }
 
-function bindAvatares(db, uid, currentAvatar) {
-    document.querySelectorAll('.avatar-item').forEach(item => {
-        item.classList.toggle('active', item.dataset.avatar === currentAvatar);
-        item.onclick = async () => {
-            const avatar = item.dataset.avatar;
-            document.querySelectorAll('.avatar-item').forEach(el => el.classList.remove('active'));
-            item.classList.add('active');
-            atualizarIconeBotaoTopo(avatar);
-            userPrefs.avatar = avatar;
-            await guardarPreferenciasUtilizador(db, uid, { avatar });
-        };
-    });
+async function bindAvatares(db, uid, currentAvatar) {
+    const niveisPlano = { free: 0, premium: 1, premium_plus: 2 };
+    let planoAtual = 'free';
+
+    const aplicarAcesso = async () => {
+        try {
+            const dadosPlano = await obterPlanoAtual();
+            planoAtual = Object.prototype.hasOwnProperty.call(niveisPlano, dadosPlano?.plan)
+                ? dadosPlano.plan
+                : 'free';
+        } catch (erro) {
+            console.warn('[SETTINGS] Não foi possível verificar o plano dos avatares:', erro.message);
+            planoAtual = 'free';
+        }
+
+        const itens = [...document.querySelectorAll('.avatar-item')];
+        const itensPermitidos = [];
+        itens.forEach(item => {
+            const planoMinimo = item.dataset.minPlan || 'free';
+            const permitido = niveisPlano[planoAtual] >= (niveisPlano[planoMinimo] ?? 0);
+            item.hidden = false;
+            item.classList.toggle('avatar-item--locked', !permitido);
+            item.setAttribute('aria-hidden', 'false');
+            item.setAttribute('aria-disabled', String(!permitido));
+            if (permitido) itensPermitidos.push(item);
+        });
+
+        let avatarSelecionado = currentAvatar;
+        const avatarAtualPermitido = itensPermitidos.some(item => item.dataset.avatar === avatarSelecionado);
+        if (avatarSelecionado !== 'gear' && !avatarAtualPermitido) {
+            avatarSelecionado = 'user';
+            currentAvatar = avatarSelecionado;
+            userPrefs.avatar = avatarSelecionado;
+            await guardarPreferenciasUtilizador(db, uid, { avatar: avatarSelecionado });
+            atualizarIconeBotaoTopo(avatarSelecionado);
+        }
+
+        itens.forEach(item => {
+            const podeEscolher = itensPermitidos.includes(item);
+            item.classList.toggle('active', podeEscolher && item.dataset.avatar === avatarSelecionado);
+            item.onclick = podeEscolher
+                ? async () => {
+                    const avatar = item.dataset.avatar;
+                    itens.forEach(el => el.classList.remove('active'));
+                    item.classList.add('active');
+                    atualizarIconeBotaoTopo(avatar);
+                    userPrefs.avatar = avatar;
+                    await guardarPreferenciasUtilizador(db, uid, { avatar });
+                }
+                : () => window.alert(`Este avatar requer o plano ${item.dataset.minPlan === 'premium_plus' ? 'Premium Plus' : 'Premium'}.`);
+        });
+    };
+
+    await aplicarAcesso();
+    window.addEventListener('notabook:plan-preview-changed', aplicarAcesso);
 }
 
 function bindToggles(db, auth) {
@@ -416,6 +552,16 @@ function bindToggles(db, auth) {
             userPrefs.leftColumnCollapseButton = checked;
             aplicarPreferenciaBotaoColapsoColunaEsquerda(checked);
             await guardarPreferenciasUtilizador(db, uid, { leftColumnCollapseButton: checked });
+        };
+    }
+
+    const checkColapsoDireita = document.getElementById('check-colapso-coluna-direita');
+    if (checkColapsoDireita) {
+        checkColapsoDireita.onchange = async (e) => {
+            const checked = e.target.checked;
+            userPrefs.rightColumnCollapseButton = checked;
+            aplicarPreferenciaBotaoColapsoColunaDireita(checked);
+            await guardarPreferenciasUtilizador(db, uid, { rightColumnCollapseButton: checked });
         };
     }
 
@@ -612,7 +758,9 @@ function atualizarIconeBotaoTopo(avatar) {
         icone.className = "fa-solid fa-gear";
         return;
     }
-    const prefixo = (avatar === 'discord' || avatar === 'xbox') ? 'fa-brands' : 'fa-solid';
+    const prefixo = (avatar === 'discord' || avatar === 'xbox' || avatar === 'android' || avatar === 'web-awesome')
+        ? 'fa-brands'
+        : 'fa-solid';
     icone.className = `${prefixo} fa-${avatar}`;
 }
 
