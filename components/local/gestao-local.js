@@ -6,6 +6,7 @@ import {
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { iniciarMotorMover } from './local-tree-mover.js';
 import { abrirPopupOrdenacao } from './local-order-manager.js';
+import { forcarGravacaoImediata, fecharNotaAtual } from '../editor/editor.js';
 
 // Variável de estado para o item que está a ser gerido no momento
 let itemAtual = null; 
@@ -380,6 +381,29 @@ async function ocultarConteudoRecursivoLocal(db, pastaId, timestamp) {
     return Promise.all(promessas);
 }
 
+function restaurarPopupConfirmacaoOcultar() {
+    const popupConfirm = document.getElementById('popup-confirmar-ocultar-item');
+    if (!popupConfirm) return;
+
+    const titulo = popupConfirm.querySelector('h3');
+    const mensagem = popupConfirm.querySelector('p');
+    const icone = popupConfirm.querySelector('.fa-triangle-exclamation, .fa-circle-notch');
+    const btn = document.getElementById('btn-confirmar-ocultar-final');
+    const btnCancelar = document.getElementById('btn-cancelar-ocultar-final');
+
+    if (titulo) titulo.textContent = 'Confirmar Ocultação?';
+    if (mensagem) mensagem.textContent = 'Esta nota deixará de estar visível. Poderás recuperá-la no painel de reciclagem nos próximos 3 meses.';
+    if (icone) {
+        icone.className = 'fa-solid fa-triangle-exclamation';
+        icone.style.color = '#ef4444';
+    }
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = 'Sim, Ocultar';
+    }
+    if (btnCancelar) btnCancelar.style.display = '';
+}
+
 /**
  * 5. OUVINTE GLOBAL PARA SUB-MENUS (Mover, Ordenar, Ocultar)
  */
@@ -391,6 +415,7 @@ document.addEventListener('click', async (e) => {
     if (e.target.closest('#btn-gestao-ocultar')) {
         document.getElementById('popup-gestao-item-overlay').classList.remove('active');
         const popupConfirm = document.getElementById('popup-confirmar-ocultar-item');
+        restaurarPopupConfirmacaoOcultar();
         if (popupConfirm) popupConfirm.classList.add('active');
         return;
     }
@@ -401,18 +426,35 @@ document.addEventListener('click', async (e) => {
         return;
     }
 
-    // --- C) EXECUTAR OCULTAÇÃO DEFINITIVA (CASCATA + REFRESH) ---
+    // --- C) EXECUTAR OCULTAÇÃO DEFINITIVA (CASCATA + ACTUALIZAÇÃO EM DIRECTO) ---
     if (e.target.id === 'btn-confirmar-ocultar-final') {
         const db = getFirestore();
         const timestamp = new Date().toISOString();
         const btn = e.target;
+        const popupConfirm = document.getElementById('popup-confirmar-ocultar-item');
+        const titulo = popupConfirm?.querySelector('h3');
+        const mensagem = popupConfirm?.querySelector('p');
+        const icone = popupConfirm?.querySelector('.fa-triangle-exclamation');
+        const btnCancelar = document.getElementById('btn-cancelar-ocultar-final');
 
         // Feedback visual de carregamento
         btn.disabled = true;
         btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> A processar...';
+        if (btnCancelar) btnCancelar.style.display = 'none';
+        if (titulo) titulo.textContent = 'A ocultar...';
+        if (mensagem) mensagem.textContent = 'A sincronizar a alteração. Esta janela fechará automaticamente.';
+        if (icone) {
+            icone.className = 'fa-solid fa-circle-notch fa-spin';
+            icone.style.color = 'var(--primary)';
+        }
 
         try {
             console.log(`🗑️ [CASCATA] Iniciando ocultação do item: ${itemAtual.id}`);
+
+            // Evita que um autosave pendente volte a gravar a nota enquanto
+            // esta operação de ocultação está a ser concluída.
+            const notaEstaAberta = window.notaAtualContext?.notaId === itemAtual.id;
+            if (notaEstaAberta) await forcarGravacaoImediata();
 
             // 1. Ocultar o item principal (Pasta ou Nota)
             const docRef = doc(db, "Local", itemAtual.id);
@@ -427,19 +469,18 @@ document.addEventListener('click', async (e) => {
                 await ocultarConteudoRecursivoLocal(db, itemAtual.id, timestamp);
             }
 
-            console.log("✅ Processo concluído. Reiniciando sistema...");
+            console.log("✅ Processo concluído. A actualizar a interface em directo...");
 
-            // 3. FECHAR POPUPS E FAZER REFRESH
+            // 3. Fechar popups. A lista local desaparece através do onSnapshot.
+            restaurarPopupConfirmacaoOcultar();
             document.querySelectorAll('.popup-overlay').forEach(p => p.classList.remove('active'));
-            
-            // O refresh garante que o editor central e as listas limpam os dados antigos
-            location.reload();
+            if (notaEstaAberta) fecharNotaAtual(itemAtual.id);
+            itemAtual = null;
 
         } catch (err) {
             console.error("❌ Erro crítico na ocultação em cascata:", err);
             alert("Erro ao ocultar itens. Verifica as permissões de administrador.");
-            btn.disabled = false;
-            btn.innerText = "Sim, Ocultar";
+            restaurarPopupConfirmacaoOcultar();
         }
     }
 });

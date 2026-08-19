@@ -1,5 +1,6 @@
 import { FERRAMENTAS_MANUAL } from './manual-data.js';
 import { configurarDuplicacaoManual } from './manual-duplicate.js';
+import { MANUAL_ACOES, criarAcaoManual, configurarAcoesManual } from './manual-actions.js';
 
 const timers = (items) => {
     const ids = [];
@@ -14,57 +15,57 @@ function node(tag, className, text = '') {
     return element;
 }
 
-const controlo = (icon, label, extra = '') => ({ icon, label, extra });
+const controlo = (icon, label, extra = '', action = '') => criarAcaoManual(icon, label, extra, action);
 const separador = Object.freeze({ separator: true });
 const estatico = (icon, label) => ({ icon, label, static: true });
 
 const TOOLBARS = {
     contentor: {
-        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add'), separador, controlo('fa-satellite-dish', 'Pesquisa X-SAT')],
-        right: [controlo('fa-tag', 'Conexões'), controlo('fa-paper-plane', 'Partilhar'), controlo('fa-palette', 'Mudar cor'), controlo('fa-trash', 'Ocultar', 'danger')]
+        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add', MANUAL_ACOES.DUPLICAR), separador, controlo('fa-satellite-dish', 'Pesquisa X-SAT')],
+        right: [controlo('fa-tag', 'Abrir Centro de Conexões', '', MANUAL_ACOES.LIGACAO), controlo('fa-paper-plane', 'Partilhar'), controlo('fa-palette', 'Abrir Centro de personalização', '', MANUAL_ACOES.PERSONALIZACAO), controlo('fa-trash', 'Ocultar', 'danger')]
     },
     subnota: {
-        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add'), separador, controlo('fa-satellite-dish', 'Pesquisa X-SAT')],
-        right: [controlo('fa-tag', 'Conexões'), controlo('fa-paper-plane', 'Partilhar'), controlo('fa-palette', 'Mudar cor'), controlo('fa-trash', 'Ocultar', 'danger')]
+        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add', MANUAL_ACOES.DUPLICAR), separador, controlo('fa-satellite-dish', 'Pesquisa X-SAT')],
+        right: [controlo('fa-tag', 'Abrir Centro de Conexões', '', MANUAL_ACOES.LIGACAO), controlo('fa-paper-plane', 'Partilhar'), controlo('fa-palette', 'Abrir Centro de personalização', '', MANUAL_ACOES.PERSONALIZACAO), controlo('fa-trash', 'Ocultar', 'danger')]
     },
     questao: {
-        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add'), separador, controlo('fa-satellite-dish', 'Pesquisa X-SAT')],
-        right: [controlo('fa-tag', 'Conexões'), controlo('fa-paper-plane', 'Partilhar'), controlo('fa-palette', 'Mudar cor'), controlo('fa-trash', 'Ocultar', 'danger')]
+        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add', MANUAL_ACOES.DUPLICAR), separador, controlo('fa-satellite-dish', 'Pesquisa X-SAT')],
+        right: [controlo('fa-tag', 'Abrir Centro de Conexões', '', MANUAL_ACOES.LIGACAO), controlo('fa-paper-plane', 'Partilhar'), controlo('fa-palette', 'Abrir Centro de personalização', '', MANUAL_ACOES.PERSONALIZACAO), controlo('fa-trash', 'Ocultar', 'danger')]
     },
     raciocinio: {
-        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add'), controlo('fa-satellite-dish', 'Pesquisa X-SAT')],
-        right: [controlo('fa-tag', 'Conexões'), controlo('fa-paper-plane', 'Partilhar'), controlo('fa-palette', 'Mudar cor'), controlo('fa-trash', 'Ocultar', 'danger')]
+        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add', MANUAL_ACOES.DUPLICAR), controlo('fa-satellite-dish', 'Pesquisa X-SAT')],
+        right: [controlo('fa-tag', 'Abrir Centro de Conexões', '', MANUAL_ACOES.LIGACAO), controlo('fa-paper-plane', 'Partilhar'), controlo('fa-palette', 'Abrir Centro de personalização', '', MANUAL_ACOES.PERSONALIZACAO), controlo('fa-trash', 'Ocultar', 'danger')]
     },
     elevador: {
-        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add'), controlo('fa-folder-plus', 'Adicionar barra pai')],
-        right: [controlo('fa-tag', 'Tópicos'), controlo('fa-paper-plane', 'Partilhar'), controlo('fa-trash', 'Ocultar Elevador', 'danger')]
+        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add', MANUAL_ACOES.DUPLICAR), controlo('fa-folder-plus', 'Adicionar barra pai')],
+        right: [controlo('fa-tag', 'Abrir Centro de Conexões', '', MANUAL_ACOES.LIGACAO), controlo('fa-paper-plane', 'Partilhar'), controlo('fa-trash', 'Ocultar Elevador', 'danger')]
     },
     bairro: {
-        left: [controlo('fa-chevron-up', 'Mover Bairro para cima'), controlo('fa-chevron-down', 'Mover Bairro para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add'), controlo('fa-building', 'Adicionar grupo de tarefas')],
-        right: [controlo('fa-palette', 'Colorir Bairro'), controlo('fa-trash', 'Ocultar Bairro', 'danger')]
+        left: [controlo('fa-chevron-up', 'Mover Bairro para cima'), controlo('fa-chevron-down', 'Mover Bairro para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add', MANUAL_ACOES.DUPLICAR), controlo('fa-building', 'Adicionar grupo de tarefas')],
+        right: [controlo('fa-palette', 'Abrir Centro de personalização', '', MANUAL_ACOES.PERSONALIZACAO), controlo('fa-trash', 'Ocultar Bairro', 'danger')]
     },
     firmamento: {
-        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add'), controlo('fa-satellite-dish', 'Pesquisa X-SAT')],
-        right: [controlo('fa-palette', 'Centro de Personalização'), controlo('fa-trash', 'Ocultar', 'danger')]
+        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add', MANUAL_ACOES.DUPLICAR), controlo('fa-satellite-dish', 'Pesquisa X-SAT')],
+        right: [controlo('fa-palette', 'Abrir Centro de personalização', '', MANUAL_ACOES.PERSONALIZACAO), controlo('fa-trash', 'Ocultar', 'danger')]
     },
     cartaovisita: {
-        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), controlo('fa-plus', 'Inserir ferramenta abaixo', 'add')],
+        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), controlo('fa-plus', 'Inserir ferramenta abaixo', 'add', MANUAL_ACOES.DUPLICAR)],
         right: [controlo('fa-trash', 'Ocultar', 'danger')]
     },
     citacaobiblica: {
-        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add'), controlo('fa-magnifying-glass', 'Escolher versículos')],
+        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add', MANUAL_ACOES.DUPLICAR), controlo('fa-magnifying-glass', 'Escolher versículos')],
         right: [controlo('fa-trash', 'Ocultar', 'danger')]
     },
     webcard: {
-        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add'), controlo('fa-magnifying-glass', 'Configurar links')],
+        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add', MANUAL_ACOES.DUPLICAR), controlo('fa-magnifying-glass', 'Configurar links')],
         right: [controlo('fa-trash', 'Ocultar', 'danger')]
     },
     galeria: {
-        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add'), controlo('fa-magnifying-glass', 'Configurar imagens')],
+        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add', MANUAL_ACOES.DUPLICAR), controlo('fa-magnifying-glass', 'Configurar imagens')],
         right: [controlo('fa-trash', 'Ocultar', 'danger')]
     },
     sumariar: {
-        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add'), separador, controlo('fa-magnifying-glass', 'Configurar sumário')],
+        left: [controlo('fa-chevron-up', 'Mover para cima'), controlo('fa-chevron-down', 'Mover para baixo'), separador, controlo('fa-plus', 'Inserir ferramenta abaixo', 'add', MANUAL_ACOES.DUPLICAR), separador, controlo('fa-magnifying-glass', 'Configurar sumário')],
         right: [estatico('fa-mailchimp', 'Sumariar IA'), controlo('fa-trash', 'Ocultar', 'danger')]
     }
 };
@@ -81,15 +82,17 @@ function criarControlo(item) {
 
     const controlo = node('button', 'demo-control' + (item.extra ? ' demo-control--' + item.extra : ''));
     controlo.type = 'button';
-    controlo.tabIndex = item.extra === 'add' ? 0 : -1;
+    controlo.tabIndex = item.action ? 0 : -1;
     controlo.innerHTML = '<i class="fa-solid ' + item.icon + '" aria-hidden="true"></i>';
     controlo.title = item.label;
     controlo.setAttribute('aria-label', item.label);
-    if (item.extra === 'add') {
-        controlo.dataset.demoAction = 'duplicate';
+    if (item.action) {
+        controlo.dataset.demoAction = item.action;
         controlo.classList.add('demo-control--interactive');
-        controlo.title = 'Abrir ferramentas e duplicar esta ferramenta';
-        controlo.setAttribute('aria-label', 'Abrir ferramentas e duplicar esta ferramenta');
+        if (item.action === MANUAL_ACOES.DUPLICAR) {
+            controlo.title = 'Abrir ferramentas e duplicar esta ferramenta';
+            controlo.setAttribute('aria-label', 'Abrir ferramentas e duplicar esta ferramenta');
+        }
         controlo.setAttribute('aria-disabled', 'false');
     } else {
         controlo.setAttribute('aria-disabled', 'true');
@@ -475,7 +478,7 @@ const BUILDERS = {
     sumariar: buildSummary
 };
 
-export function renderManualDemo(container, tipo) {
+export function renderManualDemo(container, tipo, options = {}) {
     const controls = timers();
     const result = BUILDERS[tipo]?.() || buildContentor();
     const frame = result.frame || result;
@@ -485,9 +488,11 @@ export function renderManualDemo(container, tipo) {
     stage.appendChild(frame);
     container.replaceChildren(stage);
     result.animate?.(controls);
+    const limparAcoes = configurarAcoesManual({ frame, onAction: options.onAction });
     const limparDuplicacao = configurarDuplicacaoManual({ stage, frame, ferramenta, controls });
     return () => {
         controls.clear();
+        limparAcoes();
         limparDuplicacao();
     };
 }

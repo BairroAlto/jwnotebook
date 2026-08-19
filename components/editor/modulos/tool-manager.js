@@ -5,22 +5,7 @@ import { obterGrupoFundido, sincronizarGrupoFundido } from './fundir-manager.js'
 import { obterAcessoFerramenta } from '../../settings/feature-admin.js';
 import { verificarLimiteCaixas } from '../../billing/box-limits.js';
 import { inserirAbaixoNaOrdemVisual } from './tool-insertion-order.js';
-
-const FEATURE_KEYS_POR_FERRAMENTA = {
-    contentor: 'contentor',
-    questao: 'questao',
-    noticias: 'ferramenta_noticias',
-    tempo: 'ferramenta_tempo',
-    gmail: 'ferramenta_gmail'
-};
-
-const NOMES_FERRAMENTAS = {
-    contentor: 'Contentor',
-    questao: 'Questão',
-    noticias: 'Notícias',
-    tempo: 'Tempo',
-    gmail: 'Gmail'
-};
+import { obterFerramenta } from '../../constants/ferramentas.js';
 
 export const ToolManager = {
     /**
@@ -31,17 +16,24 @@ export const ToolManager = {
     inserir: async (tipo, state, callbacks) => {
         const { caixasAtuais, aCriarCaixa, dadosNotaOriginal } = state;
         const { setACriarCaixa, atualizarFeedEGravar } = callbacks;
+        const ferramenta = obterFerramenta(tipo);
 
         if (aCriarCaixa) return;
 
+        if (!ferramenta) {
+            console.warn(`[TOOL-MANAGER] Tipo de ferramenta desconhecido: ${tipo}`);
+            window.alert('Esta ferramenta não está registada no NotaBook.');
+            return;
+        }
+
         if (!(await verificarLimiteCaixas(state.authRef, caixasAtuais, 1))) return;
 
-        const featureKey = FEATURE_KEYS_POR_FERRAMENTA[tipo];
+        const featureKey = ferramenta.featureKey;
         if (featureKey && state.authRef?.currentUser) {
             try {
                 const permitido = await obterAcessoFerramenta(state.authRef, featureKey);
                 if (!permitido) {
-                    window.alert(`A ferramenta ${NOMES_FERRAMENTAS[tipo] || tipo} não está disponível no teu plano.`);
+                    window.alert(`A ferramenta ${ferramenta.nome} não está disponível no teu plano.`);
                     return;
                 }
             } catch (erro) {
@@ -100,6 +92,14 @@ export const ToolManager = {
             novaCaixa.tempoOpcoes = { temperatura: true, condicao: false, maxima: false, minima: false, vento: false, sensacao: false, humidade: false, chuva: false };
             novaCaixa.tempoDados = null;
             novaCaixa.today = null;
+        }
+        if (tipo === "inspirador") {
+            novaCaixa.inspiradorPreferencias = {
+                modo: 'aleatorio', autor: 'NotaBook', tema: 'esperanca', quantidade: 1,
+                variedade: 'mesmo', frequencia: 'diaria', vista: 'lista'
+            };
+            novaCaixa.inspiradorCitacoes = [];
+            novaCaixa.inspiradorCacheKey = null;
         }
         if (tipo === "gmail") {
             novaCaixa.gmailPreferencias = { limite: 25, filtro: "todos" };

@@ -3,12 +3,12 @@ import { hidratarNotaShareComCaixas } from '../../share/share-caixas-repository.
 // components/editor/modulos/nota-manager.js
 import { processarAberturaNota, configurarBotaoShare } from './nota-viewer.js';
 import { gerirSessaoShare } from './share-controller.js';
-import { carregarAbasDaNota, iniciarSistemaBrowser } from './browser.js';
+import { carregarAbasDaNota, iniciarSistemaBrowser } from './browser.js?browser-runtime=v8';
 import { syncCurrentNoteToggle } from '../../settings/settings.js';
 
 export const NotaManager = {
     abrir: async (ctx, callbacks) => {
-        const { notaId, dadosNota, db, auth, idCaixaFoco, maeIdOverride } = ctx;
+        const { notaId, dadosNota, db, auth, idCaixaFoco, maeIdOverride, sincronizarBarraLateral } = ctx;
         const { setEstadoGlobal, atualizarFeedEGravar, forcarGravacaoImediata } = callbacks;
 
         console.log(`📂 [NOTA-MANAGER] Abrindo nota: ${notaId}`);
@@ -23,7 +23,13 @@ export const NotaManager = {
             : await hidratarNotaComCaixas(dadosNota, db, auth, notaId);
 
         await processarAberturaNota({
-            notaId, dadosNota: dadosNotaComCaixas, db, auth, idCaixaFoco, maeIdOverride,
+            notaId,
+            dadosNota: dadosNotaComCaixas,
+            db,
+            auth,
+            idCaixaFoco,
+            maeIdOverride,
+            sincronizarBarraLateral,
             stateManager: {
                 inicializarDadosNota: async (id, dados, maeId) => {
                     

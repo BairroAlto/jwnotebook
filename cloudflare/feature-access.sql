@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS feature_access (
 
 INSERT OR IGNORE INTO feature_access (feature_key, label, description, min_plan, active)
 VALUES
+  ('aba_laboratorio', 'Aba Laboratório', 'Acesso ao Laboratório de ferramentas e opções.', 'free', 1),
+  ('aba_modelos', 'Aba Modelos', 'Acesso aos modelos guardados pelo utilizador.', 'free', 1),
+  ('sites_publicos', 'Sites públicos', 'Publicação segura de notas em páginas Sites sem login', 'free', 1),
   ('modo_normal', 'Modo Normal', 'Modo de nota com escrita sequencial padrão', 'free', 1),
   ('modo_arquivo', 'Modo Arquivo', 'Modo de nota com gavetas e prateleiras', 'free', 1),
   ('modo_post', 'Modo Post', 'Modo de nota com feed invertido', 'free', 1),
@@ -54,7 +57,7 @@ VALUES
 -- Abas do Painel de Utilizador. Administração fica fora por ser exclusiva do administrador.
 INSERT OR IGNORE INTO feature_access (feature_key, label, description, min_plan, active)
 VALUES
-  ('painel_geral', 'Painel — Geral', 'Perfil, avatar e identidade visual.', 'free', 1),
+  ('painel_geral', 'Painel — Avatar', 'Perfil, avatar e identidade visual.', 'free', 1),
   ('painel_planos', 'Painel — Planos', 'Consulta e gestão dos planos da conta.', 'free', 1),
   ('painel_loja', 'Painel — Loja', 'Ferramentas adicionais para instalar na nota.', 'free', 1),
   ('painel_amigos', 'Painel — Amigos', 'Convites e gestão de amizades.', 'free', 1),
@@ -67,4 +70,10 @@ VALUES
 
 INSERT OR IGNORE INTO feature_access (feature_key, label, description, min_plan, active)
 VALUES
-  ('ferramenta_noticias', 'Notícias', 'Ferramenta de notícias RSS disponível na Loja.', 'free', 1);
+  ('ferramenta_noticias', 'Notícias', 'Ferramenta de notícias RSS disponível na Loja.', 'free', 1),
+  ('ferramenta_tempo', 'Tempo', 'Ferramenta meteorológica com atualização diária disponível na Loja.', 'free', 1),
+  ('ferramenta_inspirador', 'Inspirador', 'Citações da Wikiquote por autor, tema ou aleatórias.', 'free', 1),
+  ('ferramenta_gmail', 'Gmail', 'Consulta os emails recentes da conta Google em modo somente leitura.', 'free', 1),
+  ('plug_wikipedia', 'Wikipédia', 'Pesquisa artigos da Wikipédia na coluna EYE.', 'free', 1),
+  ('plug_wikidata', 'Wikidata', 'Pesquisa dados estruturados do Wikidata na coluna EYE.', 'free', 1),
+  ('plug_wikimedia', 'Wikimedia', 'Pesquisa imagens do Wikimedia Commons na coluna EYE.', 'free', 1);

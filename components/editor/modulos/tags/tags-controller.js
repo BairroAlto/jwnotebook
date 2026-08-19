@@ -439,7 +439,7 @@ window.formatarInputTempo = (input) => {
     };
     window.abrirNoBrowserExterno = async (id) => {
         try {
-            const browser = await import('../browser.js');
+            const browser = await import('../browser.js?browser-runtime=v8');
             const res = await browser.buscarNotaHibrida(id);
             if (!res) return;
 

@@ -1,7 +1,8 @@
 import {
     collection, addDoc, query, where, getDocs,
-    doc, updateDoc, deleteDoc, onSnapshot, serverTimestamp
+    doc, updateDoc, deleteDoc, limit, onSnapshot, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { COLECAO_PERFIS_PUBLICOS } from '../users/public-profile.js';
 
 let db, auth;
 let unsubAmigos = null;
@@ -157,11 +158,12 @@ async function processarConvite() {
     showFeedback("A procurar utilizador...");
 
     try {
-        const snapUser = await getDocs(collection(db, "users"));
-        const docAmigo = snapUser.docs.find((userDoc) => {
-            const dados = userDoc.data() || {};
-            return normalizarEmail(dados.email) === emailAlvo;
-        });
+        const snapUser = await getDocs(query(
+            collection(db, COLECAO_PERFIS_PUBLICOS),
+            where('emailNormalizado', '==', emailAlvo),
+            limit(1)
+        ));
+        const docAmigo = snapUser.docs[0] || null;
 
         if (!docAmigo) {
             showFeedback("Utilizador não encontrado.", "#ef4444");

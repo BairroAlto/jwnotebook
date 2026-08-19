@@ -9,10 +9,15 @@ import {
     temNotaCriadaNoFilho
 } from './bairro-notas-model.js';
 import { abrirExploradorNotasBairro } from './bairro-notas-explorer.js';
-import { criarNotaOcultaDaTarefa, enviarNotaParaReciclagem, obterNotaPorId } from './bairro-notas-repository.js';
+import { criarNotaOcultaDaTarefa, enviarNotaParaReciclagem, obterNotaPorId, obterPastaPaiDaNotaActual, removerNotaOcultaCriada } from './bairro-notas-repository.js';
 // O sufixo evita que uma sessão com hot-reload reutilize uma versão antiga
 // de browser.js sem as exportações específicas das notas do Bairro.
-import { abrirNotaEmAbaBrowser, verificarEspacoNasAbasBrowser } from './browser.js?bairro-notas=v3';
+import {
+    abrirNotaEmAbaBrowser,
+    fecharNotaEmAbaBrowser,
+    garantirNotaEmAbaBrowser,
+    verificarEspacoNasAbasBrowser
+} from './browser.js?browser-runtime=v8';
 
 function criarIcone(classe) {
     const icone = document.createElement('i');
@@ -177,9 +182,109 @@ export function criarGestorNotasBairro({ bairro, filho, painel, guardar, renderi
     const botaoCriar = painel.querySelector('#btn-bairro-nota-criar');
     const contador = painel.querySelector('#bairro-posto-notas-contador');
     const lista = painel.querySelector('#bairro-posto-notas-lista');
+    const avisoCriacao = painel.querySelector('#bairro-posto-notas-criacao-aviso');
     const botaoHistorico = painel.querySelector('#btn-bairro-notas-historico');
     const listaHistorico = painel.querySelector('#bairro-posto-notas-historico-lista');
     let reconstruirHistoricoEmCurso = false;
+    let criacaoNotaEmCurso = false;
+    let ultimaChaveDiagnosticoCriacao = null;
+
+    function actualizarAvisoCriacao(estado) {
+        if (!avisoCriacao) return;
+        if (estado === 'off') {
+            avisoCriacao.textContent = 'A nota criada para esta tarefa está na Reciclagem. Restaura-a ou elimina-a permanentemente antes de criares uma nova nota anexada a esta tarefa.';
+            avisoCriacao.hidden = false;
+            botaoCriar?.setAttribute('aria-describedby', avisoCriacao.id);
+            return;
+        }
+        avisoCriacao.textContent = '';
+        avisoCriacao.hidden = true;
+        botaoCriar?.removeAttribute('aria-describedby');
+    }
+
+    function diagnosticarEstadoCriacao(notas, jaCriou, limiteAtingido) {
+        const idNotaCriada = String(filho.notaCriadaId || '');
+        const notasCriadas = notas
+            .filter(nota => nota.origem === 'criada')
+            .map(nota => ({ id: nota.id, onde: nota.onde, nome: nota.nome }));
+        const chave = JSON.stringify({
+            idNotaCriada,
+            notas: notas.map(nota => `${nota.onde}:${nota.id}:${nota.origem}`),
+            jaCriou,
+            limiteAtingido
+        });
+        if (chave === ultimaChaveDiagnosticoCriacao) return;
+        ultimaChaveDiagnosticoCriacao = chave;
+
+        const contexto = window.notaAtualContext;
+        const motivos = [];
+        if (jaCriou) motivos.push('notaCriadaId existente ou nota com origem "criada"');
+        if (limiteAtingido) motivos.push(`limite de ${LIMITE_NOTAS_POR_TAREFA} anexos atingido`);
+        console.info('[BAIRRO-NOTAS][CRIAR][UI] Estado do botão Criar:', {
+            disabled: jaCriou || limiteAtingido,
+            motivos,
+            tarefa: {
+                id: filho.id || null,
+                nome: filho.nome || '',
+                notaCriadaId: filho.notaCriadaId || null,
+                notasAnexadas: notas,
+                notasCriadas
+            },
+            contexto: contexto ? {
+                notaId: contexto.notaId || null,
+                onde: contexto.dadosNota?.onde || 'local',
+                userId: contexto.auth?.currentUser?.uid || null
+            } : null
+        });
+
+        if (!idNotaCriada) {
+            actualizarAvisoCriacao(null);
+            console.info('[BAIRRO-NOTAS][CRIAR][FIREBASE] Não foi feita consulta: a tarefa não tem notaCriadaId guardado.');
+            return;
+        }
+
+        const onde = contexto?.dadosNota?.onde === 'share' ? 'share' : 'local';
+        console.info('[BAIRRO-NOTAS][CRIAR][FIREBASE] A verificar a referência guardada:', {
+            colecao: onde === 'share' ? 'Share' : 'Local',
+            id: idNotaCriada
+        });
+        obterNotaPorId({ db: contexto?.db, nota: { id: idNotaCriada, onde } })
+            .then(dados => {
+                console.info('[BAIRRO-NOTAS][CRIAR][FIREBASE] Resultado da referência guardada:', {
+                    existe: Boolean(dados),
+                    id: idNotaCriada,
+                    colecao: onde === 'share' ? 'Share' : 'Local',
+                    estado: dados?.estado ?? null,
+                    tipo: dados?.tipo ?? null,
+                    nome: dados?.nome ?? null,
+                    userId: dados?.userId ?? null,
+                    oculto: dados?.Oculto ?? null,
+                    anexadoA: dados?.Anexado ?? null
+                });
+
+                if (String(filho.notaCriadaId || '') !== idNotaCriada) return;
+                if (dados?.estado === 'off') {
+                    actualizarAvisoCriacao('off');
+                    botaoCriar.title = 'Restaura ou elimina permanentemente a nota da Reciclagem antes de criar outra';
+                    return;
+                }
+
+                actualizarAvisoCriacao(null);
+                botaoCriar.title = dados ? 'Esta tarefa já criou uma nota' : 'Criar uma nota ligada à tarefa';
+
+                if (!dados && contexto?.db && contexto?.auth?.currentUser?.uid) {
+                    delete filho.notaCriadaId;
+                    console.info('[BAIRRO-NOTAS][CRIAR][UI] Referência órfã removida depois de confirmar que o documento já não existe:', {
+                        id: idNotaCriada,
+                        tarefaId: filho.id || null
+                    });
+                    guardar?.();
+                    renderizar();
+                    renderizarBairro?.();
+                }
+            })
+            .catch(erro => console.error('[BAIRRO-NOTAS][CRIAR][FIREBASE] Falha ao verificar a referência:', erro));
+    }
 
     const persistir = () => {
         guardar?.();
@@ -204,6 +309,10 @@ export function criarGestorNotasBairro({ bairro, filho, painel, guardar, renderi
                     delete nota.estado;
                     delete nota.reciclagemPendente;
                     alterou = true;
+                    if (String(filho.notaCriadaId || '') === String(nota.id)) {
+                        actualizarAvisoCriacao(null);
+                        if (botaoCriar) botaoCriar.title = 'Esta tarefa já criou uma nota';
+                    }
                 }
             });
             if (alterou) {
@@ -256,8 +365,10 @@ export function criarGestorNotasBairro({ bairro, filho, painel, guardar, renderi
         if (botaoAnexar) botaoAnexar.disabled = notas.length >= LIMITE_NOTAS_POR_TAREFA;
         if (botaoCriar) {
             const jaCriou = temNotaCriadaNoFilho(filho);
-            botaoCriar.disabled = jaCriou || notas.length >= LIMITE_NOTAS_POR_TAREFA;
+            const limiteAtingido = notas.length >= LIMITE_NOTAS_POR_TAREFA;
+            botaoCriar.disabled = jaCriou || limiteAtingido;
             botaoCriar.title = jaCriou ? 'Esta tarefa já criou uma nota' : 'Criar uma nota ligada à tarefa';
+            diagnosticarEstadoCriacao(notas, jaCriou, limiteAtingido);
         }
 
         lista?.replaceChildren();
@@ -270,10 +381,16 @@ export function criarGestorNotasBairro({ bairro, filho, painel, guardar, renderi
             notas.forEach(nota => lista?.appendChild(criarCartaoNota(
                 nota,
                 () => abrir(nota),
-                () => {
+                async () => {
                     if (!removerNotaDoFilho(filho, nota)) return;
+                    const raizBrowserId = window.notaAtualContext?.maeId || window.notaAtualContext?.notaId || null;
                     registarNotaNoHistorico(filho, nota);
                     persistir();
+                    try {
+                        await fecharNotaEmAbaBrowser(nota.id, raizBrowserId);
+                    } catch (erro) {
+                        console.warn('[BAIRRO-NOTAS] A nota foi removida, mas não foi possível fechar a aba do Browser:', erro);
+                    }
                 }
             )));
         }
@@ -291,12 +408,20 @@ export function criarGestorNotasBairro({ bairro, filho, painel, guardar, renderi
         } else {
             historicoVisivel.forEach(nota => listaHistorico?.appendChild(criarCartaoHistorico(
                 nota,
-                () => {
+                async () => {
                     if (garantirNotasAnexadas(filho).length >= LIMITE_NOTAS_POR_TAREFA) {
                         window.alert(`Cada tarefa pode ter no máximo ${LIMITE_NOTAS_POR_TAREFA} notas anexadas.`);
                         return;
                     }
-                    if (reanexarNotaDoHistorico(filho, nota)) persistir();
+                    if (!reanexarNotaDoHistorico(filho, nota)) return;
+                    const raizBrowserId = window.notaAtualContext?.maeId || window.notaAtualContext?.notaId || null;
+                    persistir();
+                    try {
+                        const resultado = await garantirNotaEmAbaBrowser(nota.id, nota.onde, raizBrowserId);
+                        if (!resultado?.ok && resultado?.motivo === 'limite') mostrarLimiteAbas(resultado);
+                    } catch (erro) {
+                        console.warn('[BAIRRO-NOTAS] A nota foi reanexada, mas não foi possível repor a aba do Browser:', erro);
+                    }
                 },
                 async (nota, botao) => {
                     const contexto = window.notaAtualContext;
@@ -314,6 +439,14 @@ export function criarGestorNotasBairro({ bairro, filho, painel, guardar, renderi
                         nota.estado = 'off';
                         nota.reciclagemPendente = true;
                         persistir();
+                        try {
+                            await fecharNotaEmAbaBrowser(
+                                nota.id,
+                                contexto.maeId || contexto.notaId || null
+                            );
+                        } catch (erroAba) {
+                            console.warn('[BAIRRO-NOTAS] A nota foi enviada para a Reciclagem, mas não foi possível fechar a aba do Browser:', erroAba);
+                        }
                     } catch (erro) {
                         console.error('[BAIRRO-NOTAS] Não foi possível enviar a nota para a reciclagem:', erro);
                         window.alert('Não foi possível enviar a nota para a reciclagem. Tenta novamente.');
@@ -357,6 +490,7 @@ export function criarGestorNotasBairro({ bairro, filho, painel, guardar, renderi
 
     if (botaoCriar) {
         botaoCriar.onclick = async () => {
+            if (criacaoNotaEmCurso) return;
             if (temNotaCriadaNoFilho(filho)) {
                 window.alert('Só podes criar uma nota por linha de tarefa.');
                 return;
@@ -366,39 +500,63 @@ export function criarGestorNotasBairro({ bairro, filho, painel, guardar, renderi
                 return;
             }
 
-            const espaco = await verificarEspacoNasAbasBrowser();
-            if (!espaco.disponivel) {
-                if (espaco.motivo === 'sem-contexto') {
-                    window.alert('Não foi possível validar as abas do Browser. Volta a abrir a nota e tenta novamente.');
-                } else {
-                    mostrarLimiteAbas(espaco);
-                }
-                return;
-            }
-
             const contexto = window.notaAtualContext;
+            const raizBrowserId = contexto?.maeId || contexto?.notaId || null;
+            const pastaPaiAnfitria = obterPastaPaiDaNotaActual(contexto, contexto?.auth);
+            criacaoNotaEmCurso = true;
             botaoCriar.disabled = true;
+            botaoCriar.style.pointerEvents = 'none';
             const conteudoAnterior = botaoCriar.innerHTML;
-            botaoCriar.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" aria-hidden="true"></i><span>A criar...</span>';
+            botaoCriar.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" aria-hidden="true"></i><span>A preparar...</span>';
+            let criada = null;
+            let notaAnexada = false;
             try {
-                const criada = await criarNotaOcultaDaTarefa({
+                const espaco = await verificarEspacoNasAbasBrowser();
+                if (!espaco.disponivel) {
+                    if (espaco.motivo === 'sem-contexto') {
+                        window.alert('Não foi possível validar as abas do Browser. Volta a abrir a nota e tenta novamente.');
+                    } else {
+                        mostrarLimiteAbas(espaco);
+                    }
+                    return;
+                }
+
+                botaoCriar.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" aria-hidden="true"></i><span>A criar...</span>';
+                criada = await criarNotaOcultaDaTarefa({
                     db: contexto?.db,
                     auth: contexto?.auth,
                     contextoNota: contexto,
                     bairro,
-                    filho
+                    filho,
+                    pastaPai: pastaPaiAnfitria
                 });
                 filho.notaCriadaId = criada.id;
-                anexarNotaAoFilho(filho, { ...criada, origem: 'criada' });
+                notaAnexada = Boolean(anexarNotaAoFilho(filho, { ...criada, origem: 'criada' }));
+                if (!notaAnexada) throw new Error('Não foi possível associar a nota à tarefa.');
                 guardar?.();
                 renderizarBairro?.();
-                const resultado = await abrirNotaEmAbaBrowser(criada.id, criada.onde);
-                if (!resultado?.ok && resultado?.motivo === 'limite') mostrarLimiteAbas(resultado);
-                if (resultado?.ok) document.getElementById('popup-bairro-posto-overlay')?.classList.remove('active');
+                const resultado = await abrirNotaEmAbaBrowser(criada.id, criada.onde, raizBrowserId, pastaPaiAnfitria);
+                if (!resultado?.ok) {
+                    if (resultado.motivo === 'limite') mostrarLimiteAbas(resultado);
+                    throw new Error('Não foi possível abrir a nota no Browser.');
+                }
+                document.getElementById('popup-bairro-posto-overlay')?.classList.remove('active');
             } catch (erro) {
                 console.error('[BAIRRO-NOTAS] Não foi possível criar a nota:', erro);
+                if (criada?.id) {
+                    delete filho.notaCriadaId;
+                    if (notaAnexada) removerNotaDoFilho(filho, criada);
+                    guardar?.();
+                    try {
+                        await removerNotaOcultaCriada({ db: contexto?.db, nota: criada });
+                    } catch (erroRollback) {
+                        console.error('[BAIRRO-NOTAS] Não foi possível desfazer a nota criada:', erroRollback);
+                    }
+                }
                 window.alert('Não foi possível criar a nota. Tenta novamente.');
             } finally {
+                criacaoNotaEmCurso = false;
+                botaoCriar.style.pointerEvents = 'auto';
                 botaoCriar.innerHTML = conteudoAnterior;
                 renderizar();
             }

@@ -1,6 +1,9 @@
 // components/editor/modulos/lab-modelos.js
 import { criarAjustadorAlturaAbas } from '../../ui/fixed-tabs-height.js';
 import { criarCaixaBairroDoModelo, criarEditorBairroModelo } from './lab-bairro-modelos.js';
+import { guardarConfiguracaoLocalSites, guardarPublicacaoSites, removerPublicacaoSites } from './sites-publicacao.js?v=20260819-capa-altura-sinaletica';
+import { exigirAcessoFerramenta } from '../../settings/feature-admin.js';
+import { apagarFicheiro, enviarFicheiro, obterUsoArmazenamento } from '../../storage/storage-client.js';
 
 export const LabModelos = {
     init: (ctx) => {
@@ -144,26 +147,256 @@ export const LabModelos = {
         window.ajustarAlturaLabPopup = () => ajustadorAlturaLab.atualizar();
         window.destruirAjustadorAlturaLabPopup = () => ajustadorAlturaLab.destruir();
 
-        window.switchLabPopupTab = (tabName) => {
+        window.switchLabPopupTab = async (tabName) => {
             const btnLab = document.getElementById('tab-btn-lab');
             const btnModelos = document.getElementById('tab-btn-modelos');
+            const btnSites = document.getElementById('tab-btn-sites');
             const contentLab = document.getElementById('lab-options-list');
             const contentModelos = document.getElementById('lab-modelos-tab-content');
+            const contentSites = document.getElementById('lab-sites-tab-content');
+
+            const acessoDaAba = {
+                lab: ['aba_laboratorio', 'A aba Laboratório requer o plano definido pelo administrador.'],
+                modelos: ['aba_modelos', 'A aba Modelos requer o plano definido pelo administrador.'],
+                sites: ['sites_publicos', 'A aba Sites requer o plano definido pelo administrador.']
+            }[tabName];
+            if (acessoDaAba && !(await exigirAcessoFerramenta(
+                ctx.authRef,
+                acessoDaAba[0],
+                acessoDaAba[1]
+            ))) return;
             
             if (tabName === 'lab') {
                 btnLab?.classList.add('active');
                 btnModelos?.classList.remove('active');
+                btnSites?.classList.remove('active');
                 if (contentLab) contentLab.style.display = 'block';
                 if (contentModelos) contentModelos.style.display = 'none';
-            } else {
+                if (contentSites) contentSites.style.display = 'none';
+            } else if (tabName === 'modelos') {
                 btnLab?.classList.remove('active');
                 btnModelos?.classList.add('active');
+                btnSites?.classList.remove('active');
                 if (contentLab) contentLab.style.display = 'none';
                 if (contentModelos) contentModelos.style.display = 'block';
+                if (contentSites) contentSites.style.display = 'none';
                 window.carregarModelosDoUtilizador();
+            } else {
+                btnLab?.classList.remove('active');
+                btnModelos?.classList.remove('active');
+                btnSites?.classList.add('active');
+                if (contentLab) contentLab.style.display = 'none';
+                if (contentModelos) contentModelos.style.display = 'none';
+                if (contentSites) contentSites.style.display = 'block';
             }
             ajustadorAlturaLab.atualizar();
         };
+
+        const sitesToggle = document.getElementById('lab-sites-toggle');
+        const sitesCapa = document.getElementById('lab-sites-capa-url');
+        const sitesCapaUpload = document.getElementById('lab-sites-capa-upload');
+        const sitesCapaUploadButton = document.getElementById('lab-sites-capa-upload-button');
+        const sitesCapaUploadStatus = document.getElementById('lab-sites-capa-upload-status');
+        const sitesCapaAltura = [...document.querySelectorAll('input[name="lab-sites-capa-altura"]')];
+        const sitesBrowser = document.getElementById('lab-sites-browser-toggle');
+        const sitesLargura = document.getElementById('lab-sites-largura');
+        const sitesModoAtualizacao = document.getElementById('lab-sites-modo-atualizacao');
+        const sitesPublicarAgora = document.getElementById('lab-sites-publicar-agora');
+        const sitesUpdateStatus = document.getElementById('lab-sites-update-status');
+        const sitesLink = document.getElementById('lab-sites-link');
+        const sitesLinkUrl = document.getElementById('lab-sites-link-url');
+        const sitesLinkOpen = document.getElementById('lab-sites-link-open');
+        const sitesConfig = ctx.dadosNotaOriginal?.sites || {};
+        let sitesCapaFileId = typeof sitesConfig.capaFileId === 'string' ? sitesConfig.capaFileId : '';
+        let sitesCapaPublicadaFileId = sitesCapaFileId;
+        const SITES_COVER_URL = `https://storage.notabook.site/sites/${encodeURIComponent(ctx.notaAbertaId)}/cover`;
+        const SITES_COVER_MAX_BYTES = 10 * 1024 * 1024;
+        const formatarBytesCapa = bytes => {
+            if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+            if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+            return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+        };
+        const actualizarLinkSites = () => {
+            const url = `${window.location.origin}/sites.html?id=${encodeURIComponent(ctx.notaAbertaId)}`;
+            if (sitesLinkUrl) {
+                sitesLinkUrl.href = url;
+                sitesLinkUrl.textContent = url;
+            }
+            if (sitesLinkOpen) sitesLinkOpen.href = url;
+            if (sitesLink) sitesLink.hidden = false;
+        };
+        if (sitesToggle) sitesToggle.checked = sitesConfig.estado === 'on';
+        if (sitesCapa) sitesCapa.value = sitesConfig.capaUrl || '';
+        const definirCapaAltura = (valor) => {
+            const altura = ['pequena', 'media', 'grande'].includes(valor) ? valor : 'grande';
+            sitesCapaAltura.forEach(input => { input.checked = input.value === altura; });
+        };
+        definirCapaAltura(sitesConfig.capaAltura);
+        if (sitesBrowser) sitesBrowser.checked = sitesConfig.mostrarBrowser === true;
+        if (sitesLargura) sitesLargura.value = sitesConfig.largura || 'centralizada';
+        if (sitesModoAtualizacao) {
+            sitesModoAtualizacao.value = sitesConfig.modoActualizacao || (sitesConfig.estado === 'on' ? 'manual' : 'automatico');
+        }
+        const obterModoActualizacao = () => sitesModoAtualizacao?.value === 'automatico' ? 'automatico' : 'manual';
+        const actualizarEstadoActualizacao = () => {
+            const activo = sitesToggle?.checked === true;
+            const automatico = obterModoActualizacao() === 'automatico';
+            if (sitesPublicarAgora) sitesPublicarAgora.hidden = !activo || automatico;
+            if (sitesUpdateStatus) {
+                sitesUpdateStatus.hidden = !activo;
+                sitesUpdateStatus.textContent = automatico
+                    ? 'As alterações serão publicadas automaticamente depois de serem guardadas.'
+                    : 'As alterações ficam na nota até clicares em “Actualizar Site agora”.';
+            }
+        };
+        if (sitesLink && sitesConfig.estado === 'on') {
+            actualizarLinkSites();
+        }
+        actualizarEstadoActualizacao();
+        const obterCapaAltura = () => sitesCapaAltura.find(input => input.checked)?.value || 'grande';
+        const obterConfiguracaoSites = () => ({
+            capaUrl: sitesCapa.value.trim(),
+            capaFileId: sitesCapaFileId,
+            capaAltura: obterCapaAltura(),
+            largura: sitesLargura.value,
+            mostrarBrowser: sitesBrowser.checked,
+            modoActualizacao: obterModoActualizacao()
+        });
+        sitesToggle?.addEventListener('change', async () => {
+            console.debug('[SITES] Toggle Publicar Site alterado.', {
+                checked: sitesToggle.checked,
+                notaId: ctx.notaAbertaId || null,
+                userId: ctx.authRef?.currentUser?.uid || null
+            });
+            sitesToggle.disabled = true;
+            try {
+                if (sitesToggle.checked) {
+                    const configuracao = obterConfiguracaoSites();
+                    const capaUrl = configuracao.capaUrl;
+                    if (capaUrl && !/^https:\/\//i.test(capaUrl)) throw new Error('A imagem de capa tem de usar HTTPS.');
+                    await guardarPublicacaoSites(ctx, configuracao);
+                    actualizarLinkSites();
+                } else {
+                    const idCapaAEliminar = sitesCapaFileId;
+                    await removerPublicacaoSites(ctx);
+                    if (idCapaAEliminar) {
+                        apagarFicheiro(idCapaAEliminar).catch(erro => console.warn('[SITES] A capa removida não foi eliminada do armazenamento.', erro));
+                    }
+                    sitesCapaFileId = '';
+                    sitesCapaPublicadaFileId = '';
+                    sitesLink.hidden = true;
+                }
+                ctx.dadosNotaOriginal.sites = { estado: sitesToggle.checked ? 'on' : 'off', ...obterConfiguracaoSites() };
+                actualizarEstadoActualizacao();
+            } catch (erro) {
+                console.error('[SITES] Erro ao processar o toggle Publicar Site.', {
+                    code: erro?.code || null,
+                    message: erro?.message || String(erro),
+                    name: erro?.name || null
+                }, erro);
+                sitesToggle.checked = !sitesToggle.checked;
+                window.alert(erro.message || 'Não foi possível actualizar a publicação.');
+            } finally { sitesToggle.disabled = false; }
+        });
+        const actualizarSitesPublico = async (forcar = false) => {
+            if (!sitesToggle?.checked) return;
+            if (!forcar && obterModoActualizacao() !== 'automatico') {
+                actualizarEstadoActualizacao();
+                return;
+            }
+            try {
+                const configuracao = obterConfiguracaoSites();
+                const capaUrl = configuracao.capaUrl;
+                if (capaUrl && !/^https:\/\//i.test(capaUrl)) throw new Error('A imagem de capa tem de usar HTTPS.');
+                const idCapaAnterior = sitesCapaPublicadaFileId;
+                await guardarPublicacaoSites(ctx, configuracao);
+                ctx.dadosNotaOriginal.sites = { estado: 'on', ...configuracao };
+                sitesCapaPublicadaFileId = configuracao.capaFileId || '';
+                if (idCapaAnterior && idCapaAnterior !== configuracao.capaFileId) {
+                    apagarFicheiro(idCapaAnterior).catch(erro => console.warn('[SITES] A capa antiga não foi removida.', erro));
+                }
+                actualizarEstadoActualizacao();
+            } catch (erro) { window.alert(erro.message || 'Não foi possível actualizar o Site.'); }
+        };
+        const actualizarEspacoCapa = async () => {
+            if (!sitesCapaUploadStatus) return;
+            try {
+                const uso = await obterUsoArmazenamento();
+                const restante = Math.max(0, Number(uso.remainingBytes || Number(uso.quotaBytes || 0) - Number(uso.usedBytes || 0)));
+                sitesCapaUploadStatus.textContent = restante > 0
+                    ? `Espaço disponível: ${formatarBytesCapa(restante)}. Limite por imagem: 10 MB.`
+                    : 'Não tens espaço disponível no plano para carregar uma imagem.';
+                if (sitesCapaUploadButton) sitesCapaUploadButton.disabled = restante <= 0;
+            } catch (_) {
+                sitesCapaUploadStatus.textContent = 'A quota será verificada ao carregar. Limite por imagem: 10 MB.';
+            }
+        };
+        actualizarEspacoCapa();
+        sitesCapaUploadButton?.addEventListener('click', () => sitesCapaUpload?.click());
+        sitesCapaUpload?.addEventListener('change', async () => {
+            const ficheiro = sitesCapaUpload.files?.[0];
+            if (!ficheiro) return;
+            const urlAnterior = sitesCapa.value;
+            const idAnterior = sitesCapaFileId;
+            let idNovo = '';
+            try {
+                if (!ficheiro.type.startsWith('image/')) throw new Error('Escolhe um ficheiro de imagem.');
+                if (ficheiro.size > SITES_COVER_MAX_BYTES) throw new Error('A imagem de capa não pode ultrapassar 10 MB.');
+                sitesCapaUploadButton.disabled = true;
+                if (sitesCapaUploadStatus) sitesCapaUploadStatus.textContent = 'A verificar espaço disponível…';
+                const uso = await obterUsoArmazenamento();
+                const restante = Math.max(0, Number(uso.remainingBytes || Number(uso.quotaBytes || 0) - Number(uso.usedBytes || 0)));
+                if (ficheiro.size > restante) throw new Error('Não tens espaço suficiente no plano para esta imagem.');
+
+                if (!sitesToggle?.checked) throw new Error('Activa primeiro a opção “Publicar Site”.');
+                if (sitesCapaUploadStatus) sitesCapaUploadStatus.textContent = 'A carregar a imagem…';
+                const carregado = await enviarFicheiro(ficheiro, {
+                    noteId: ctx.notaAbertaId,
+                    contextType: 'site',
+                    contextId: ctx.notaAbertaId
+                });
+                idNovo = carregado.id;
+                sitesCapaFileId = idNovo;
+                sitesCapa.value = SITES_COVER_URL;
+                const configuracao = obterConfiguracaoSites();
+                if (obterModoActualizacao() === 'automatico') {
+                    await guardarPublicacaoSites(ctx, configuracao);
+                    if (sitesCapaPublicadaFileId && sitesCapaPublicadaFileId !== sitesCapaFileId) {
+                        apagarFicheiro(sitesCapaPublicadaFileId).catch(erro => console.warn('[SITES] A capa antiga não foi removida.', erro));
+                    }
+                    sitesCapaPublicadaFileId = sitesCapaFileId;
+                } else {
+                    await guardarConfiguracaoLocalSites(ctx, configuracao);
+                }
+                ctx.dadosNotaOriginal.sites = { estado: 'on', ...configuracao };
+                actualizarLinkSites();
+                if (sitesCapaUploadStatus) sitesCapaUploadStatus.textContent = obterModoActualizacao() === 'automatico'
+                    ? 'Imagem carregada e publicada com sucesso.'
+                    : 'Imagem carregada. Clique em “Actualizar Site agora” para a publicar.';
+                actualizarEstadoActualizacao();
+            } catch (erro) {
+                if (idNovo) apagarFicheiro(idNovo).catch(() => {});
+                sitesCapaFileId = idAnterior;
+                sitesCapa.value = urlAnterior;
+                window.alert(erro.message || 'Não foi possível carregar a imagem.');
+                actualizarEspacoCapa();
+            } finally {
+                sitesCapaUpload.value = '';
+                if (sitesCapaUploadButton) sitesCapaUploadButton.disabled = false;
+            }
+        });
+        sitesBrowser?.addEventListener('change', actualizarSitesPublico);
+        sitesCapa?.addEventListener('input', () => {
+            if (sitesCapa.value.trim() !== SITES_COVER_URL) sitesCapaFileId = '';
+        });
+        sitesCapa?.addEventListener('change', actualizarSitesPublico);
+        sitesCapaAltura.forEach(input => input.addEventListener('change', actualizarSitesPublico));
+        sitesLargura?.addEventListener('change', actualizarSitesPublico);
+        sitesModoAtualizacao?.addEventListener('change', () => {
+            actualizarEstadoActualizacao();
+            actualizarSitesPublico();
+        });
+        sitesPublicarAgora?.addEventListener('click', () => actualizarSitesPublico(true));
 
         window.carregarModelosDoUtilizador = async () => {
             const uid = ctx.authRef.currentUser?.uid;

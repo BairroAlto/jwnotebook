@@ -10,6 +10,7 @@ import { despacharInteligenciaEye } from './modulos/intelligence/dispatcher.js';
 import { hidratarNotaComCaixas } from '../local/caixas-repository.js';
 import { hidratarNotaShareComCaixas } from '../share/share-caixas-repository.js';
 import { criarFilaPersistencia } from './modulos/persistence-queue.js';
+import { actualizarPublicacaoSitesAutomatica } from './modulos/sites-publicacao.js?v=20260819-capa-altura-sinaletica';
 
 let state = {
     notaAbertaId: null,
@@ -32,12 +33,21 @@ let unsubscribeNotaAberta = null;
 const filaPersistencia = criarFilaPersistencia(() => PersistenceManager.guardar(state));
 
 // 1. ABRIR NOTA
-export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco = null, maeIdOverride = null) {
+export async function abrirNotaNoEditor(notaId, dadosNota, db, auth, idCaixaFoco = null, maeIdOverride = null, opcoes = {}) {
+    window.NotaBookNotaSessao = `${notaId || 'nota'}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     await forcarGravacaoImediata();
     pararEscutaNotaAberta();
 
     await NotaManager.abrir(
-        { notaId, dadosNota, db, auth, idCaixaFoco, maeIdOverride },
+        {
+            notaId,
+            dadosNota,
+            db,
+            auth,
+            idCaixaFoco,
+            maeIdOverride,
+            sincronizarBarraLateral: opcoes?.sincronizarBarraLateral !== false
+        },
         { 
        setEstadoGlobal: (novosDados) => { 
         Object.assign(state, novosDados, {
@@ -134,7 +144,17 @@ function acionarGravacao(caixa = null, evento = null) {
 
 // 5. GUARDAR NO FIREBASE
 async function guardarNotaNoFirebase() {
-    return filaPersistencia.solicitar();
+    const resultado = await filaPersistencia.solicitar();
+    try {
+        await actualizarPublicacaoSitesAutomatica(state);
+    } catch (erro) {
+        console.error('[SITES] Falha na actualização automática depois de guardar a nota.', {
+            notaId: state.notaAbertaId || null,
+            code: erro?.code || null,
+            message: erro?.message || String(erro)
+        }, erro);
+    }
+    return resultado;
 }
 
 // 6. GRAVAÇÃO IMEDIATA
@@ -163,6 +183,46 @@ export async function forcarGravacaoImediata() {
     } else {
         await filaPersistencia.aguardar();
     }
+}
+
+// Fecha a nota actual sem recarregar a página. É usado quando a nota é
+// ocultada a partir do painel de gestão.
+export function fecharNotaAtual(notaId = null) {
+    const notaActualId = state.notaAbertaId || window.notaAtualContext?.notaId;
+    if (!notaActualId || (notaId && notaActualId !== notaId)) return false;
+
+    pararEscutaNotaAberta();
+    clearTimeout(state.timerGravacao);
+
+    state.notaAbertaId = null;
+    state.dadosNotaOriginal = null;
+    state.caixasAtuais = [];
+    state.notaComAlteracoes = false;
+    state.caixasEditadas = {};
+    state.timerGravacao = null;
+    window.caixasAtuais = [];
+    window.notaAtualContext = null;
+
+    const container = document.getElementById('editor-container');
+    const placeholder = document.getElementById('editor-placeholder');
+    const loading = document.getElementById('editor-loading');
+    const feed = document.getElementById('editor-feed');
+    const tabs = document.getElementById('editor-tabs-list');
+    const titulo = document.getElementById('editor-titulo');
+
+    if (container) container.style.display = 'none';
+    if (loading) loading.style.display = 'none';
+    if (placeholder) {
+        placeholder.style.display = 'flex';
+        const mensagem = placeholder.querySelector('p');
+        if (mensagem) mensagem.textContent = 'Seleciona uma nota na barra lateral para começar.';
+    }
+    if (feed) feed.innerHTML = '';
+    if (tabs) tabs.innerHTML = '';
+    if (titulo) titulo.innerText = 'Nome da Nota';
+
+    window.dispatchEvent(new Event('nota:fechada'));
+    return true;
 }
 
 function iniciarEscutaNotaAberta() {
@@ -221,6 +281,9 @@ function assinaturaCaixas(caixas) {
         tempoLocalizacao: caixa.tempoLocalizacao || null,
         tempoOpcoes: caixa.tempoOpcoes || null,
         tempoDados: caixa.tempoDados || null,
+        inspiradorPreferencias: caixa.inspiradorPreferencias || null,
+        inspiradorCitacoes: caixa.inspiradorCitacoes || [],
+        inspiradorCacheKey: caixa.inspiradorCacheKey || null,
         gmailPreferencias: caixa.gmailPreferencias || null,
         today: caixa.today || null,
         estado: caixa.estado || "on",

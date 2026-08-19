@@ -7,6 +7,7 @@ import {
     query,
     where
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { COLECAO_PERFIS_PUBLICOS } from '../users/public-profile.js';
 
 function getDb() {
     return window.db || getFirestore();
@@ -34,9 +35,9 @@ async function getFriendIds() {
 }
 
 async function friendAllowsPalco(friendUid) {
-    const prefSnap = await getDoc(doc(getDb(), "users", friendUid));
+    const prefSnap = await getDoc(doc(getDb(), COLECAO_PERFIS_PUBLICOS, friendUid));
     const prefs = prefSnap.exists() ? prefSnap.data() : {};
-    return prefs?.palco?.shareWithFriends === "on";
+    return prefs.palcoPartilha === "on";
 }
 
 export async function carregarFeedAmigosPalco() {

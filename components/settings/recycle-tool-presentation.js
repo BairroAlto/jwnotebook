@@ -27,6 +27,15 @@ function resumoGmail(caixa) {
     return `Gmail em modo somente leitura${filtro ? ` · filtro ${filtro}` : ''} · ${limite} mensagens.`;
 }
 
+function resumoInspirador(caixa) {
+    const preferencias = caixa.inspiradorPreferencias || {};
+    const quantidade = Number(preferencias.quantidade) || 1;
+    const origem = preferencias.modo === 'autor'
+        ? preferencias.autor
+        : preferencias.modo === 'tema' ? preferencias.tema : 'aleatória';
+    return `${quantidade} ${quantidade === 1 ? 'citação' : 'citações'} da Wikiquote · ${origem}.`;
+}
+
 export function obterApresentacaoCaixaReciclada(caixa = {}) {
     const identidade = IDENTIDADE_FERRAMENTAS[caixa.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
     let resumo = textoSeguro(caixa.titulo || caixa.conteudo);
@@ -34,6 +43,7 @@ export function obterApresentacaoCaixaReciclada(caixa = {}) {
     if (caixa.tipo === 'noticias') resumo = resumoNoticias(caixa);
     if (caixa.tipo === 'tempo') resumo = resumoTempo(caixa);
     if (caixa.tipo === 'gmail') resumo = resumoGmail(caixa);
+    if (caixa.tipo === 'inspirador') resumo = resumoInspirador(caixa);
 
     return {
         identidade,

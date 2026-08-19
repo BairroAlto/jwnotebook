@@ -1,5 +1,6 @@
 // components/share/gestao-share.js
 import { getFirestore, doc, updateDoc, arrayUnion, arrayRemove, getDoc, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { COLECAO_PERFIS_PUBLICOS } from '../users/public-profile.js';
 
 const db = getFirestore();
 
@@ -53,7 +54,7 @@ export async function abrirGestaoPartilha(notaId, auth) {
 
         // 2. BUSCAR APROVADOS (Quem já edita)
         for (const colabUid of aprovados) {
-            const uSnap = await getDoc(doc(db, "users", colabUid));
+            const uSnap = await getDoc(doc(db, COLECAO_PERFIS_PUBLICOS, colabUid));
             const email = uSnap.exists() ? uSnap.data().email : colabUid;
             
             const div = document.createElement('div');

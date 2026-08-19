@@ -4,7 +4,7 @@ import { iniciarSelectorBiblia } from './biblia-selector.js';
 import { iniciarSistemaRecuperacao } from './recuperacao.js';
 import { iniciarSistemaCores } from './paleta-cores.js';
 import { iniciarSistemaTags } from './tags/tags-controller.js';
-import { iniciarSistemaBrowser } from './browser.js';
+import { iniciarSistemaBrowser } from './browser.js?browser-runtime=v8';
 import { EventManager } from './event-manager.js';
 
 export const BootManager = {

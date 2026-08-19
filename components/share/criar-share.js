@@ -5,6 +5,8 @@ import {
 import { abrirNotaNoEditor } from '../editor/editor.js';
 import { guardarCaixasShareDaNota } from './share-caixas-repository.js';
 
+let criacaoPastaShareEmCurso = false;
+
 export function inicializarCriacaoShare(db, auth) {
     const btnAddShare = document.getElementById('btn-add-share'); // O + na barra lateral Share
     const overlayOpcoes = document.getElementById('popup-criar-share-overlay');
@@ -123,16 +125,22 @@ export function inicializarCriacaoShare(db, auth) {
     // 4. LÃ“GICA DE CONFIRMAÃ‡ÃƒO DA PASTA
     btnConfirmarPasta.addEventListener('click', async () => {
         if (btnConfirmarPasta.dataset.modo !== "share") return;
+        if (criacaoPastaShareEmCurso) return;
 
         const nome = inputNome.value.trim();
         if (!nome || !auth.currentUser) return;
         
+        criacaoPastaShareEmCurso = true;
+        btnConfirmarPasta.disabled = true;
+        btnConfirmarPasta.style.pointerEvents = "none";
+        btnConfirmarPasta.innerText = "A preparar...";
+
         const uid = auth.currentUser.uid;
         const pastaPai = window.pastaShareAtual || "home";
 
-        btnConfirmarPasta.innerText = "A criar...";
-
         try {
+            btnConfirmarPasta.innerText = "A criar...";
+
             // CALCULAR ORDEM: Filtramos por userId para respeitar as Regras de SeguranÃ§a
             const qOrdem = query(
                 collection(db, "Share"), 
@@ -177,11 +185,14 @@ export function inicializarCriacaoShare(db, auth) {
             
             popupNome.classList.remove('active');
             inputNome.value = "";
-            btnConfirmarPasta.innerText = "Criar Pasta";
             btnConfirmarPasta.dataset.modo = "local"; // Reset
 
         } catch (e) {
             console.error("Erro ao criar pasta no Share:", e);
+        } finally {
+            criacaoPastaShareEmCurso = false;
+            btnConfirmarPasta.disabled = false;
+            btnConfirmarPasta.style.pointerEvents = "auto";
             btnConfirmarPasta.innerText = "Criar Pasta";
         }
     });

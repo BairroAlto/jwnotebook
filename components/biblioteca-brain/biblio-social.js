@@ -1,4 +1,14 @@
 import { getFirestore, collection, query, where, getDocs, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { COLECAO_PERFIS_PUBLICOS } from '../users/public-profile.js';
+
+function escaparHtml(valor) {
+    return String(valor || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 export async function buscarRespostasDaRede(estudoAtivo, container) {
     const db = getFirestore();
@@ -59,8 +69,9 @@ export async function buscarRespostasDaRede(estudoAtivo, container) {
             if (!caixa || !caixa.conteudo || caixa.estado === "off") continue;
 
             // Buscar nome do autor
-            const userSnap = await getDoc(doc(db, "users", data.userId));
-            const nomeAutor = userSnap.exists() ? (userSnap.data().email.split('@')[0]) : "Amigo";
+            const userSnap = await getDoc(doc(db, COLECAO_PERFIS_PUBLICOS, data.userId));
+            const perfilAutor = userSnap.exists() ? userSnap.data() : {};
+            const nomeAutor = escaparHtml(perfilAutor.nome || perfilAutor.email?.split('@')[0] || 'Amigo');
 
             const card = document.createElement('div');
             card.style.cssText = `background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 10px; padding: 15px; margin-bottom: 12px; border-left: 4px solid var(--primary);`;

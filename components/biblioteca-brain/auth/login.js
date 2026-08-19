@@ -122,7 +122,7 @@ authForm.addEventListener("submit", async (event) => {
             const credentials = await createUserWithEmailAndPassword(auth, email, password);
             await setDoc(doc(db, "users", credentials.user.uid), {
                 nome: name,
-                email,
+                email: String(credentials.user.email || email).toLowerCase(),
                 ativo: true,
                 aceite: "off",
                 createdAt: serverTimestamp()

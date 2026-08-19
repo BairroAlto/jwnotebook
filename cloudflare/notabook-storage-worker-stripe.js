@@ -1,10 +1,15 @@
 const FREE_QUOTA_BYTES = 3 * 1024 * 1024 * 1024;
 const PREMIUM_DEFAULT_QUOTA_BYTES = 25 * 1024 * 1024 * 1024;
 const PREMIUM_PLUS_DEFAULT_QUOTA_BYTES = 100 * 1024 * 1024 * 1024;
+const SITE_COVER_MAX_BYTES = 10 * 1024 * 1024;
+const PUBLIC_SITE_RATE_LIMITS = Object.freeze({
+  site: { limit: 90, windowSeconds: 60 },
+  cover: { limit: 180, windowSeconds: 60 }
+});
 const AI_PAID_MODEL = "deepseek/deepseek-chat";
 const AI_FREE_MODELS = [
-  "meta-llama/llama-3.3-70b-instruct:free",
   "openai/gpt-oss-120b:free",
+  "meta-llama/llama-3.3-70b-instruct:free",
   "qwen/qwen3-next-80b-a3b-instruct:free",
   "google/gemini-2.0-flash-lite-preview-02-05:free",
   "meta-llama/llama-3.2-3b-instruct:free",
@@ -14,8 +19,13 @@ const AI_FREE_DAILY_LIMIT = 10;
 const AI_MONTHLY_LIMITS = { premium: 500, premium_plus: 1000 };
 const AI_PAID_LIMITS = { premium: 300, premium_plus: 800 };
 const FEATURE_PLAN_RANK = { free: 0, premium: 1, premium_plus: 2 };
+const LIMITE_CAIXAS_POR_PLANO = Object.freeze({
+  free: 55,
+  premium: 110,
+  premium_plus: 190
+});
 const USER_PANEL_FEATURES = [
-  ['painel_geral', 'Painel — Geral', 'Perfil, avatar e identidade visual.'],
+  ['painel_geral', 'Painel — Avatar', 'Perfil, avatar e identidade visual.'],
   ['painel_planos', 'Painel — Planos', 'Consulta e gestão dos planos da conta.'],
   ['painel_loja', 'Painel — Loja', 'Ferramentas adicionais para instalar na nota.'],
   ['painel_amigos', 'Painel — Amigos', 'Convites e gestão de amizades.'],
@@ -28,8 +38,17 @@ const USER_PANEL_FEATURES = [
 ];
 const STORE_FEATURES = [
   ['ferramenta_noticias', 'Notícias', 'Ferramenta de notícias RSS disponível na Loja.', 'free'],
-  ['ferramenta_tempo', 'Tempo', 'Ferramenta meteorológica com atualização diária disponível na Loja.', 'free']
+  ['ferramenta_tempo', 'Tempo', 'Ferramenta meteorológica com atualização diária disponível na Loja.', 'free'],
+  ['ferramenta_inspirador', 'Inspirador', 'Citações da Wikiquote por autor, tema ou aleatórias.', 'free'],
+  ['ferramenta_gmail', 'Gmail', 'Consulta os emails recentes da conta Google em modo somente leitura.', 'free'],
+  ['plug_wikipedia', 'Wikipédia', 'Pesquisa artigos da Wikipédia na coluna EYE.', 'free'],
+  ['plug_wikidata', 'Wikidata', 'Pesquisa dados estruturados do Wikidata na coluna EYE.', 'free'],
+  ['plug_wikimedia', 'Wikimedia', 'Pesquisa imagens do Wikimedia Commons na coluna EYE.', 'free']
 ];
+const GMAIL_API_URL = "https://gmail.googleapis.com/gmail/v1/users/me";
+const GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GMAIL_REVOKE_URL = "https://oauth2.googleapis.com/revoke";
+const GMAIL_DAILY_LIMIT = 100;
 const PROTECTED_FEATURE_KEYS = new Set([
   ...USER_PANEL_FEATURES.map(([key]) => key),
   ...STORE_FEATURES.map(([key]) => key)
@@ -44,10 +63,84 @@ const ALLOWED_ORIGINS = new Set([
   "http://127.0.0.1:5174"
 ]);
 
+const FIRESTORE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const FIRESTORE_SCOPE = "https://www.googleapis.com/auth/datastore";
+const FIRESTORE_SITE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+let firestoreTokenCache = null;
+let firestoreTokenPromise = null;
+let publicRateLimitTableReady = false;
+let publicRateLimitLastCleanup = 0;
+
 class HttpError extends Error {
-  constructor(status, message) {
+  constructor(status, message, headers = {}) {
     super(message);
     this.status = status;
+    this.headers = headers;
+  }
+}
+
+async function ensurePublicRateLimitTable(env) {
+  if (publicRateLimitTableReady) return;
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS public_site_rate_limits (
+      bucket_key TEXT PRIMARY KEY,
+      request_count INTEGER NOT NULL DEFAULT 0,
+      expires_at INTEGER NOT NULL
+    )
+  `).run();
+  publicRateLimitTableReady = true;
+}
+
+async function publicRequestFingerprint(request) {
+  const ip = String(request.headers.get("CF-Connecting-IP") || "unknown").trim();
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(ip)
+  );
+  return [...new Uint8Array(digest)]
+    .map(value => value.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 32);
+}
+
+async function assertPublicSiteRateLimit(env, request, type) {
+  const policy = PUBLIC_SITE_RATE_LIMITS[type];
+  if (!policy) throw new HttpError(500, "Política de pedidos públicos inválida.");
+
+  await ensurePublicRateLimitTable(env);
+  const now = Math.floor(Date.now() / 1000);
+
+  if (now - publicRateLimitLastCleanup >= 3600) {
+    await env.DB.prepare(`
+      DELETE FROM public_site_rate_limits
+      WHERE expires_at < ?
+    `).bind(now).run();
+    publicRateLimitLastCleanup = now;
+  }
+
+  const windowStart = Math.floor(now / policy.windowSeconds) * policy.windowSeconds;
+  const expiresAt = windowStart + policy.windowSeconds + 120;
+  const fingerprint = await publicRequestFingerprint(request);
+  const bucketKey = `${type}:${windowStart}:${fingerprint}`;
+
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO public_site_rate_limits (
+      bucket_key, request_count, expires_at
+    ) VALUES (?, 0, ?)
+  `).bind(bucketKey, expiresAt).run();
+
+  const reservation = await env.DB.prepare(`
+    UPDATE public_site_rate_limits
+    SET request_count = request_count + 1
+    WHERE bucket_key = ? AND request_count < ?
+  `).bind(bucketKey, policy.limit).run();
+
+  if (Number(reservation.meta?.changes || 0) !== 1) {
+    throw new HttpError(
+      429,
+      "Foram feitos demasiados pedidos. Tenta novamente dentro de um minuto.",
+      { "Retry-After": String(policy.windowSeconds) }
+    );
   }
 }
 
@@ -58,23 +151,266 @@ function headersFor(request, extra = {}) {
   });
 
   const origin = request.headers.get("Origin");
+  headers.set("Vary", "Origin");
 
   if (ALLOWED_ORIGINS.has(origin)) {
     headers.set("Access-Control-Allow-Origin", origin);
     headers.set("Access-Control-Allow-Methods", "GET, PUT, DELETE, POST, OPTIONS");
-    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Admin-Plan-Preview");
+    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Admin-Plan-Preview, X-Requested-With");
     headers.set("Access-Control-Expose-Headers", "Content-Length, ETag");
   }
 
   headers.set("Cache-Control", "no-store");
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("X-Frame-Options", "DENY");
+  headers.set("Referrer-Policy", "no-referrer");
+  headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  headers.set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
 
   return headers;
 }
 
-function json(request, data, status = 200) {
+function json(request, data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: headersFor(request)
+    headers: headersFor(request, extraHeaders)
+  });
+}
+
+function base64UrlEncodeBytes(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlEncodeText(value) {
+  return base64UrlEncodeBytes(new TextEncoder().encode(value));
+}
+
+function pemToBytes(pem) {
+  const base64 = String(pem || "")
+    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
+    .replace(/-----END PRIVATE KEY-----/g, "")
+    .replace(/\\n/g, "")
+    .replace(/\s+/g, "");
+  if (!base64) throw new HttpError(503, "A credencial do Firestore não está configurada.");
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+async function obterTokenFirestore(env) {
+  const agora = Math.floor(Date.now() / 1000);
+  if (firestoreTokenCache && firestoreTokenCache.expiraEm > agora + 60) {
+    return firestoreTokenCache.token;
+  }
+  if (firestoreTokenPromise) return firestoreTokenPromise;
+
+  firestoreTokenPromise = (async () => {
+    const clientEmail = String(env.FIREBASE_CLIENT_EMAIL || "").trim();
+    const projectId = String(env.FIREBASE_PROJECT_ID || "").trim();
+    const secretsEmFalta = [
+      !projectId && "FIREBASE_PROJECT_ID",
+      !clientEmail && "FIREBASE_CLIENT_EMAIL",
+      !env.FIREBASE_PRIVATE_KEY && "FIREBASE_PRIVATE_KEY"
+    ].filter(Boolean);
+    if (secretsEmFalta.length) {
+      console.error("[SITES] Secrets do Firestore em falta:", secretsEmFalta);
+      throw new HttpError(503, "A leitura segura de Sites ainda não está configurada.");
+    }
+
+    const cabecalho = base64UrlEncodeText(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+    const payload = base64UrlEncodeText(JSON.stringify({
+      iss: clientEmail,
+      scope: FIRESTORE_SCOPE,
+      aud: FIRESTORE_TOKEN_URL,
+      iat: agora,
+      exp: agora + 3600
+    }));
+    const chave = await crypto.subtle.importKey(
+      "pkcs8",
+      pemToBytes(env.FIREBASE_PRIVATE_KEY),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const assinatura = await crypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      chave,
+      new TextEncoder().encode(`${cabecalho}.${payload}`)
+    );
+    const assertion = `${cabecalho}.${payload}.${base64UrlEncodeBytes(new Uint8Array(assinatura))}`;
+    const resposta = await fetch(FIRESTORE_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion
+      })
+    });
+    const dados = await resposta.json().catch(() => ({}));
+    if (!resposta.ok || !dados.access_token) {
+      console.error("[SITES] Falha ao obter credencial de leitura do Firestore:", resposta.status);
+      throw new HttpError(502, "Não foi possível ler o Site com segurança.");
+    }
+    firestoreTokenCache = {
+      token: dados.access_token,
+      expiraEm: agora + Number(dados.expires_in || 3600)
+    };
+    return firestoreTokenCache.token;
+  })().finally(() => {
+    firestoreTokenPromise = null;
+  });
+
+  return firestoreTokenPromise;
+}
+
+function valorFirestore(valor) {
+  if (!valor || typeof valor !== "object") return null;
+  const tem = (chave) => Object.prototype.hasOwnProperty.call(valor, chave);
+  if (tem("nullValue")) return null;
+  if (tem("stringValue")) return valor.stringValue;
+  if (tem("booleanValue")) return valor.booleanValue === true;
+  if (tem("integerValue")) return Number(valor.integerValue);
+  if (tem("doubleValue")) return Number(valor.doubleValue);
+  if (tem("timestampValue")) return valor.timestampValue;
+  if (tem("arrayValue")) {
+    return (valor.arrayValue.values || []).map(valorFirestore);
+  }
+  if (tem("mapValue")) {
+    return Object.fromEntries(Object.entries(valor.mapValue.fields || {}).map(([chave, item]) => [chave, valorFirestore(item)]));
+  }
+  return null;
+}
+
+function documentoFirestoreParaObject(documento) {
+  return Object.fromEntries(Object.entries(documento?.fields || {}).map(([chave, valor]) => [chave, valorFirestore(valor)]));
+}
+
+async function lerDocumentoFirestore(env, coleccao, docId) {
+  const token = await obterTokenFirestore(env);
+  const projectId = encodeURIComponent(String(env.FIREBASE_PROJECT_ID).trim());
+  const caminho = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${coleccao}/${encodeURIComponent(docId)}`;
+  const resposta = await fetch(caminho, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" }
+  });
+  if (resposta.status === 404) return null;
+  if (!resposta.ok) {
+    console.error("[SITES] Firestore rejeitou a leitura do Site:", resposta.status);
+    throw new HttpError(502, "Não foi possível ler o Site.");
+  }
+  return documentoFirestoreParaObject(await resposta.json());
+}
+
+function textoPublico(valor, limite = 12000) {
+  return typeof valor === "string"
+    ? valor.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").slice(0, limite)
+    : "";
+}
+
+function numeroPublico(valor) {
+  const numero = Number(valor);
+  return Number.isFinite(numero) && numero > 0 ? numero : null;
+}
+
+function sanitizarBairroPublico(bairro) {
+  if (!bairro || !Array.isArray(bairro.grupos)) return null;
+  const mostrarDataTarefa = bairro.mostrarDataTarefa === true;
+  const mostrarDataRealizacaoTarefa = bairro.mostrarDataRealizacaoTarefa === true;
+  return {
+    mostrarDataTarefa,
+    mostrarDataRealizacaoTarefa,
+    grupos: bairro.grupos.slice(0, 200).map(grupo => ({
+      nome: textoPublico(grupo?.nome, 500),
+      tarefas: (Array.isArray(grupo?.tarefas) ? grupo.tarefas : [])
+        .filter(tarefa => textoPublico(tarefa?.nome, 500).trim())
+        .slice(0, 1000)
+        .map(tarefa => ({
+          nome: textoPublico(tarefa?.nome, 500),
+          concluido: tarefa?.concluido === true,
+          criadaEm: mostrarDataTarefa ? numeroPublico(tarefa?.criadaEm) : null,
+          realizadaEm: mostrarDataRealizacaoTarefa ? numeroPublico(tarefa?.realizadaEm) : null
+        }))
+    }))
+  };
+}
+
+function sanitizarSitePublico(site) {
+  const caixas = Array.isArray(site?.caixas) ? site.caixas : [];
+  return {
+    estado: "on",
+    titulo: textoPublico(site?.titulo, 500),
+    capaUrl: /^https:\/\//i.test(site?.capaUrl || "") ? String(site.capaUrl).slice(0, 2048) : "",
+    capaAltura: ["pequena", "media", "grande"].includes(site?.capaAltura) ? site.capaAltura : "grande",
+    largura: site?.largura === "esticada" ? "esticada" : "centralizada",
+    mostrarBrowser: site?.mostrarBrowser === true,
+    browserIds: (Array.isArray(site?.browserIds) ? site.browserIds : [])
+      .map(id => String(id || ""))
+      .filter(id => FIRESTORE_SITE_ID_PATTERN.test(id))
+      .slice(0, 20),
+    caixas: caixas.slice(0, 200).map((caixa, indice) => ({
+      tipo: textoPublico(caixa?.tipo, 40),
+      titulo: textoPublico(caixa?.titulo, 500),
+      conteudo: textoPublico(caixa?.conteudo, 12000),
+      ordem: Number.isFinite(Number(caixa?.ordem)) ? Number(caixa.ordem) : indice,
+      ...(caixa?.tipo === "bairro" && sanitizarBairroPublico(caixa.bairro)
+        ? { bairro: sanitizarBairroPublico(caixa.bairro) }
+        : {})
+    }))
+  };
+}
+
+async function obterDocumentoSiteAutorizado(env, docId) {
+  const actual = await lerDocumentoFirestore(env, "sites", docId);
+  const site = actual || await lerDocumentoFirestore(env, "SitesPublicos", docId);
+  if (!site || site.estado !== "on" || !FIRESTORE_SITE_ID_PATTERN.test(String(site.userId || ""))) {
+    throw new HttpError(404, "Site não encontrado.");
+  }
+
+  const entitlement = await getEntitlement(env, site.userId);
+  const feature = await env.DB.prepare(`
+    SELECT feature_key, min_plan, active
+    FROM feature_access
+    WHERE feature_key = ?
+  `).bind("sites_publicos").first();
+  if (!feature || !isFeatureAllowed(feature, entitlement.plan)) {
+    throw new HttpError(404, "Site não encontrado.");
+  }
+  return site;
+}
+
+async function obterSiteAutorizado(env, docId) {
+  const site = await obterDocumentoSiteAutorizado(env, docId);
+  return sanitizarSitePublico(site);
+}
+
+async function obterCapaSitePublica(env, request, docId) {
+  const site = await obterDocumentoSiteAutorizado(env, docId);
+  const fileId = String(site?.capaFileId || "");
+  if (!/^[0-9a-f-]{36}$/i.test(fileId)) {
+    throw new HttpError(404, "Capa não encontrada.");
+  }
+
+  const file = await env.DB.prepare(`
+    SELECT object_key, content_type, size_bytes, file_name
+    FROM files
+    WHERE id = ? AND user_id = ? AND note_id = ?
+      AND context_type = 'site' AND context_id = ?
+  `).bind(fileId, site.userId, docId, docId).first();
+  if (!file || !String(file.content_type || "").toLowerCase().startsWith("image/")) {
+    throw new HttpError(404, "Capa não encontrada.");
+  }
+
+  const object = await env.FILES.get(file.object_key);
+  if (!object) throw new HttpError(404, "Capa não encontrada.");
+
+  return new Response(object.body, {
+    headers: headersFor(request, {
+      "Content-Type": file.content_type,
+      "Content-Length": String(file.size_bytes),
+      "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(file.file_name || "capa")}`
+    })
   });
 }
 
@@ -118,6 +454,387 @@ async function authenticate(request, env) {
   return user.localId;
 }
 
+async function ensureGmailTables(env) {
+  await env.DB.batch([
+    env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS gmail_connections (
+        user_id TEXT PRIMARY KEY,
+        google_email TEXT NOT NULL DEFAULT '',
+        refresh_token_ciphertext TEXT NOT NULL,
+        refresh_token_iv TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `),
+    env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS gmail_usage (
+        user_id TEXT NOT NULL,
+        day_key TEXT NOT NULL,
+        messages_read INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, day_key)
+      )
+    `)
+  ]);
+}
+
+function gmailBase64Encode(bytes) {
+  let binary = "";
+  for (const byte of new Uint8Array(bytes)) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function gmailBase64Decode(value) {
+  const binary = atob(String(value || ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function gmailEncryptionKey(env) {
+  let raw;
+  try {
+    raw = gmailBase64Decode(env.GMAIL_TOKEN_ENCRYPTION_KEY);
+  } catch (_) {
+    throw new HttpError(500, "A chave de cifragem do Gmail não está configurada corretamente.");
+  }
+
+  if (raw.byteLength !== 32) {
+    throw new HttpError(500, "A chave de cifragem do Gmail deve ter 32 bytes em Base64.");
+  }
+
+  return crypto.subtle.importKey(
+    "raw",
+    raw,
+    { name: "AES-GCM" },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function cifrarGmailToken(env, token) {
+  const key = await gmailEncryptionKey(env);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    new TextEncoder().encode(token)
+  );
+  return {
+    ciphertext: gmailBase64Encode(ciphertext),
+    iv: gmailBase64Encode(iv)
+  };
+}
+
+async function decifrarGmailToken(env, row) {
+  try {
+    const key = await gmailEncryptionKey(env);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: gmailBase64Decode(row.refresh_token_iv) },
+      key,
+      gmailBase64Decode(row.refresh_token_ciphertext)
+    );
+    return new TextDecoder().decode(plaintext);
+  } catch (_) {
+    throw new HttpError(500, "Não foi possível abrir a autorização Gmail guardada.");
+  }
+}
+
+function gmailOrigin(request) {
+  const origin = request.headers.get("Origin");
+  if (!ALLOWED_ORIGINS.has(origin)) {
+    throw new HttpError(403, "A origem desta autorização Gmail não é permitida.");
+  }
+  return origin;
+}
+
+async function assertGmailFeature(env, uid, request) {
+  const entitlement = await getEntitlement(env, uid, request);
+  const features = await getFeatureRows(env);
+  const feature = features.find(item => item.feature_key === "ferramenta_gmail");
+  if (!feature || !isFeatureAllowed(feature, entitlement.plan)) {
+    throw new HttpError(403, "A ferramenta Gmail não está disponível no teu plano.");
+  }
+}
+
+async function obterLigacaoGmail(env, uid) {
+  return env.DB.prepare(`
+    SELECT user_id, google_email, refresh_token_ciphertext, refresh_token_iv,
+           created_at, updated_at
+    FROM gmail_connections
+    WHERE user_id = ?
+  `).bind(uid).first();
+}
+
+async function trocarCodigoGmail(env, request, uid, code) {
+  if (!env.GOOGLE_GMAIL_CLIENT_ID || !env.GOOGLE_GMAIL_CLIENT_SECRET) {
+    throw new HttpError(500, "A autorização Gmail ainda não está configurada no Worker.");
+  }
+
+  const response = await fetch(GMAIL_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: env.GOOGLE_GMAIL_CLIENT_ID,
+      client_secret: env.GOOGLE_GMAIL_CLIENT_SECRET,
+      redirect_uri: gmailOrigin(request),
+      grant_type: "authorization_code"
+    })
+  });
+
+  const tokenData = await response.json().catch(() => ({}));
+  if (!response.ok || !tokenData.access_token) {
+    console.error("[GMAIL] Falha na troca do código OAuth", tokenData.error || response.status);
+    throw new HttpError(502, "A Google não aceitou a autorização Gmail.");
+  }
+
+  const existing = await obterLigacaoGmail(env, uid);
+  const refreshToken = tokenData.refresh_token || (existing && await decifrarGmailToken(env, existing));
+  if (!refreshToken) {
+    throw new HttpError(502, "A Google não devolveu uma autorização persistente para esta conta.");
+  }
+
+  const profile = await pedidoGmailWorker("/profile", tokenData.access_token);
+  const encrypted = await cifrarGmailToken(env, refreshToken);
+  await env.DB.prepare(`
+    INSERT INTO gmail_connections (
+      user_id, google_email, refresh_token_ciphertext, refresh_token_iv,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id) DO UPDATE SET
+      google_email = excluded.google_email,
+      refresh_token_ciphertext = excluded.refresh_token_ciphertext,
+      refresh_token_iv = excluded.refresh_token_iv,
+      updated_at = CURRENT_TIMESTAMP
+  `).bind(
+    uid,
+    String(profile.emailAddress || ""),
+    encrypted.ciphertext,
+    encrypted.iv
+  ).run();
+
+  return {
+    email: String(profile.emailAddress || ""),
+    totalMensagens: Number(profile.messagesTotal || 0),
+    totalConversas: Number(profile.threadsTotal || 0)
+  };
+}
+
+async function obterTokenGmail(env, uid) {
+  const connection = await obterLigacaoGmail(env, uid);
+  if (!connection) throw new HttpError(404, "Nenhuma conta Gmail está ligada.");
+
+  const refreshToken = await decifrarGmailToken(env, connection);
+  const response = await fetch(GMAIL_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: env.GOOGLE_GMAIL_CLIENT_ID,
+      client_secret: env.GOOGLE_GMAIL_CLIENT_SECRET,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token"
+    })
+  });
+  const tokenData = await response.json().catch(() => ({}));
+  if (!response.ok || !tokenData.access_token) {
+    if (tokenData.error === "invalid_grant") {
+      await env.DB.prepare(`DELETE FROM gmail_connections WHERE user_id = ?`).bind(uid).run();
+      throw new HttpError(401, "A autorização Gmail foi revogada. Liga novamente a conta.");
+    }
+    throw new HttpError(502, "Não foi possível renovar a autorização Gmail.");
+  }
+  return tokenData.access_token;
+}
+
+async function pedidoGmailWorker(caminho, accessToken) {
+  const response = await fetch(`${GMAIL_API_URL}${caminho}`, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new HttpError(response.status === 401 ? 401 : 502, data?.error?.message || "O Gmail não respondeu.");
+  }
+  return data;
+}
+
+function gmailDayKey() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Lisbon",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+}
+
+async function reservarLeiturasGmail(env, uid, quantidade) {
+  if (!quantidade) return 0;
+  const dayKey = gmailDayKey();
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO gmail_usage (user_id, day_key, messages_read)
+    VALUES (?, ?, 0)
+  `).bind(uid, dayKey).run();
+
+  const reservation = await env.DB.prepare(`
+    UPDATE gmail_usage
+    SET messages_read = messages_read + ?, updated_at = CURRENT_TIMESTAMP
+    WHERE user_id = ? AND day_key = ? AND messages_read + ? <= ?
+  `).bind(quantidade, uid, dayKey, quantidade, GMAIL_DAILY_LIMIT).run();
+
+  if (Number(reservation.meta?.changes || 0) !== 1) {
+    throw new HttpError(429, "Atingiste o limite diário de 100 emails nesta ferramenta.");
+  }
+  return quantidade;
+}
+
+function normalizarRemetenteGmail(valor = "") {
+  const match = String(valor).match(/^\s*"?([^"<]*)"?\s*<([^>]+)>/);
+  if (match) return { nome: match[1].trim(), email: match[2].trim() };
+  const email = String(valor).trim();
+  return { nome: email.includes("@") ? email.split("@")[0] : email, email };
+}
+
+function normalizarMensagemGmail(message) {
+  const headers = new Map((message.payload?.headers || []).map(item => [
+    String(item.name || "").toLowerCase(),
+    String(item.value || "")
+  ]));
+  const sender = normalizarRemetenteGmail(headers.get("from"));
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    assunto: headers.get("subject") || "(Sem assunto)",
+    remetente: sender.nome || sender.email || "Remetente desconhecido",
+    emailRemetente: sender.email,
+    data: Number(message.internalDate) || Date.parse(headers.get("date")) || Date.now(),
+    excerto: String(message.snippet || "").trim(),
+    naoLido: Array.isArray(message.labelIds) && message.labelIds.includes("UNREAD"),
+    importante: Array.isArray(message.labelIds) && message.labelIds.includes("IMPORTANT"),
+    link: `https://mail.google.com/mail/u/0/#inbox/${message.threadId}`
+  };
+}
+
+function descodificarBase64UrlGmail(value) {
+  if (!value) return "";
+  const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  try {
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return new TextDecoder().decode(bytes);
+  } catch (_) {
+    return "";
+  }
+}
+
+function limparHtmlGmail(value) {
+  return String(value || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/p\s*>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function extrairCorpoGmail(partes = []) {
+  let html = "";
+  for (const part of partes) {
+    const tipo = String(part.mimeType || "").toLowerCase();
+    const decoded = descodificarBase64UrlGmail(part.body?.data);
+    if (tipo === "text/plain" && decoded) return decoded;
+    if (tipo === "text/html" && decoded && !html) html = limparHtmlGmail(decoded);
+    if (Array.isArray(part.parts)) {
+      const nested = extrairCorpoGmail(part.parts);
+      if (nested) return nested;
+    }
+  }
+  return html;
+}
+
+async function obterMensagemGmail(env, uid, messageId) {
+  await reservarLeiturasGmail(env, uid, 1);
+  const accessToken = await obterTokenGmail(env, uid);
+  const message = await pedidoGmailWorker(
+    `/messages/${encodeURIComponent(messageId)}?format=full`,
+    accessToken
+  );
+  const resumo = normalizarMensagemGmail(message);
+  const partes = message.payload?.parts || (message.payload ? [message.payload] : []);
+  const corpo = extrairCorpoGmail(partes).slice(0, 200_000);
+  return {
+    ...resumo,
+    corpo
+  };
+}
+
+async function listarMensagensGmail(env, uid, url) {
+  const limite = [10, 25, 50].includes(Number(url.searchParams.get("limite")))
+    ? Number(url.searchParams.get("limite"))
+    : 25;
+  const filtro = ["todos", "nao_lidos", "anexos"].includes(url.searchParams.get("filtro"))
+    ? url.searchParams.get("filtro")
+    : "todos";
+  const accessToken = await obterTokenGmail(env, uid);
+  const params = new URLSearchParams({ maxResults: String(limite), labelIds: "INBOX" });
+  if (filtro === "nao_lidos") params.set("q", "is:unread");
+  if (filtro === "anexos") params.set("q", "has:attachment");
+
+  const list = await pedidoGmailWorker(`/messages?${params}`, accessToken);
+  const ids = Array.isArray(list.messages) ? list.messages.slice(0, limite) : [];
+  await reservarLeiturasGmail(env, uid, ids.length);
+
+  const messages = [];
+  for (let index = 0; index < ids.length; index += 5) {
+    const batch = ids.slice(index, index + 5);
+    const results = await Promise.all(batch.map(({ id }) => {
+      const headers = new URLSearchParams({ format: "metadata" });
+      ["From", "Subject", "Date"].forEach(name => headers.append("metadataHeaders", name));
+      return pedidoGmailWorker(`/messages/${encodeURIComponent(id)}?${headers}`, accessToken);
+    }));
+    messages.push(...results.map(normalizarMensagemGmail));
+  }
+
+  const usage = await env.DB.prepare(`
+    SELECT messages_read FROM gmail_usage WHERE user_id = ? AND day_key = ?
+  `).bind(uid, gmailDayKey()).first();
+  return {
+    messages,
+    readCount: ids.length,
+    remaining: Math.max(0, GMAIL_DAILY_LIMIT - Number(usage?.messages_read || 0))
+  };
+}
+
+async function revogarLigacaoGmail(env, uid) {
+  const connection = await obterLigacaoGmail(env, uid);
+  if (!connection) return;
+  try {
+    const refreshToken = await decifrarGmailToken(env, connection);
+    await fetch(GMAIL_REVOKE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token: refreshToken })
+    });
+  } catch (error) {
+    console.warn("[GMAIL] Não foi possível revogar a autorização Google", error);
+  } finally {
+    await env.DB.prepare(`DELETE FROM gmail_connections WHERE user_id = ?`).bind(uid).run();
+  }
+}
+
 async function ensureUsage(env, uid) {
   await env.DB.prepare(`
     INSERT OR IGNORE INTO storage_usage (user_id)
@@ -145,6 +862,23 @@ function quotaForPlan(env, plan) {
   }
 
   return FREE_QUOTA_BYTES;
+}
+
+async function limiteCaixasPorPlano(env, plan) {
+  try {
+    const linha = await env.DB.prepare(`
+      SELECT max_caixas_por_nota
+      FROM plan_limits
+      WHERE plan = ?
+    `).bind(plan).first();
+
+    const limite = Number(linha?.max_caixas_por_nota);
+    if (Number.isInteger(limite) && limite > 0) return limite;
+  } catch (erro) {
+    console.warn('[BILLING] Não foi possível ler plan_limits; a usar o limite predefinido:', erro);
+  }
+
+  return LIMITE_CAIXAS_POR_PLANO[plan] || LIMITE_CAIXAS_POR_PLANO.free;
 }
 
 function aiPolicyForPlan(plan) {
@@ -246,7 +980,7 @@ async function openRouterChat(env, model, payload) {
       Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
       "Content-Type": "application/json",
       "HTTP-Referer": env.APP_URL || "https://notabook.site",
-      "X-Title": "notABook X"
+      "X-Title": "NotaBook"
     },
     body: JSON.stringify(body)
   });
@@ -307,6 +1041,7 @@ async function getEntitlement(env, uid, request = null) {
   const actualPlan = active ? subscription.plan : "free";
   const previewPlan = getAdminPlanPreview(request, uid, env);
   const plan = previewPlan || actualPlan;
+  const maxCaixasPorNota = await limiteCaixasPorPlano(env, plan);
 
   return {
     plan,
@@ -314,6 +1049,7 @@ async function getEntitlement(env, uid, request = null) {
     previewPlan,
     status: subscription?.status || "inactive",
     quotaBytes: quotaForPlan(env, plan),
+    maxCaixasPorNota,
     currentPeriodEnd: subscription?.current_period_end || null,
     subscription
   };
@@ -648,7 +1384,7 @@ function normaliseNewsTerms(value, limit) {
     .slice(0, limit);
 }
 
-function buildBingNewsRssUrl(url) {
+function buildNewsSearchConfig(url) {
   const topics = normaliseNewsTerms(url.searchParams.get("temas"), 8);
   const excluded = normaliseNewsTerms(url.searchParams.get("excluir"), 6);
   if (!topics.length) throw new HttpError(400, "Indica pelo menos um tema de notícias.");
@@ -659,6 +1395,11 @@ function buildBingNewsRssUrl(url) {
     topics.join(" OR "),
     ...excluded.map(term => `-${term}`)
   ].join(" ");
+  return { topics, excluded, marketKey, market, query };
+}
+
+function buildBingNewsRssUrl(url) {
+  const { market, query } = buildNewsSearchConfig(url);
   const feedUrl = new URL("https://www.bing.com/news/search");
   feedUrl.searchParams.set("q", query);
   feedUrl.searchParams.set("format", "rss");
@@ -666,6 +1407,146 @@ function buildBingNewsRssUrl(url) {
   feedUrl.searchParams.set("cc", market.cc);
   feedUrl.searchParams.set("count", "30");
   return feedUrl;
+}
+
+function buildGNewsUrl(config, apiKey) {
+  const endpoint = new URL("https://gnews.io/api/v4/search");
+  endpoint.searchParams.set("q", config.query);
+  endpoint.searchParams.set("lang", "pt");
+  endpoint.searchParams.set("country", config.market.cc.toLowerCase());
+  endpoint.searchParams.set("max", "10");
+  endpoint.searchParams.set("sortby", "publishedAt");
+  endpoint.searchParams.set("apikey", apiKey);
+  return endpoint;
+}
+
+function buildNewsApiUrl(config, apiKey) {
+  const endpoint = new URL("https://newsapi.org/v2/everything");
+  endpoint.searchParams.set("q", config.query);
+  endpoint.searchParams.set("language", "pt");
+  endpoint.searchParams.set("sortBy", "publishedAt");
+  endpoint.searchParams.set("pageSize", "20");
+  endpoint.searchParams.set("apiKey", apiKey);
+  return endpoint;
+}
+
+function buildMediastackUrl(config, apiKey) {
+  const endpoint = new URL("https://api.mediastack.com/v1/news");
+  endpoint.searchParams.set("access_key", apiKey);
+  endpoint.searchParams.set("keywords", config.query);
+  endpoint.searchParams.set("languages", "pt");
+  endpoint.searchParams.set("countries", config.market.cc.toLowerCase());
+  endpoint.searchParams.set("sort", "published_desc");
+  endpoint.searchParams.set("limit", "25");
+  return endpoint;
+}
+
+function buildGdeltUrl(config) {
+  const filtrosPorMercado = {
+    PT: { idioma: "portuguese", pais: "portugal" },
+    BR: { idioma: "portuguese", pais: "brazil" },
+    US: { idioma: "english", pais: "unitedstates" },
+    GB: { idioma: "english", pais: "unitedkingdom" },
+    ES: { idioma: "spanish", pais: "spain" }
+  };
+  const filtro = filtrosPorMercado[config.marketKey] || filtrosPorMercado.PT;
+  const endpoint = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
+  endpoint.searchParams.set(
+    "query",
+    `${config.query} sourcelang:${filtro.idioma} sourcecountry:${filtro.pais}`
+  );
+  endpoint.searchParams.set("mode", "artlist");
+  endpoint.searchParams.set("maxrecords", "25");
+  endpoint.searchParams.set("timespan", "24h");
+  endpoint.searchParams.set("sort", "datedesc");
+  endpoint.searchParams.set("format", "rssarchive");
+  return endpoint;
+}
+
+function escapeXml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function normaliseNewsDate(value) {
+  const data = new Date(value || 0);
+  return Number.isNaN(data.getTime()) ? new Date().toUTCString() : data.toUTCString();
+}
+
+function normaliseNewsArticles(items) {
+  return (Array.isArray(items) ? items : [])
+    .map(item => ({
+      titulo: String(item.title || item.name || "").trim(),
+      link: String(item.url || item.link || "").trim(),
+      fonte: String(item.source?.name || item.source?.title || item.source || "").trim(),
+      publicadoEm: item.publishedAt || item.published_at || item.pubDate || "",
+      imagem: String(item.image || item.urlToImage || item.image_url || "").trim()
+    }))
+    .filter(item => item.titulo && /^https?:\/\//i.test(item.link));
+}
+
+function newsArticlesToRss(articles, provider) {
+  const items = articles.map(article => `
+    <item>
+      <title>${escapeXml(article.titulo)}</title>
+      <link>${escapeXml(article.link)}</link>
+      <guid isPermaLink="true">${escapeXml(article.link)}</guid>
+      <source>${escapeXml(article.fonte || provider)}</source>
+      <pubDate>${escapeXml(normaliseNewsDate(article.publicadoEm))}</pubDate>
+      ${article.imagem ? `<enclosure url="${escapeXml(article.imagem)}" type="image/jpeg" />` : ""}
+    </item>`).join("");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>NBX News</title>
+    <description>Notícias reunidas pelo NotaBook através de ${escapeXml(provider)}.</description>
+    <link>https://notabook.site</link>
+    ${items}
+  </channel>
+</rss>`;
+}
+
+async function fetchJsonNewsProvider(provider, endpoint) {
+  const response = await fetch(endpoint, {
+    headers: { Accept: "application/json" },
+    redirect: "follow"
+  });
+  const body = await response.text();
+  let data = {};
+  try {
+    data = JSON.parse(body);
+  } catch (_) {
+    throw new Error(`${provider} devolveu uma resposta que não é JSON.`);
+  }
+
+  if (!response.ok) {
+    throw new Error(`${provider} respondeu com HTTP ${response.status}.`);
+  }
+
+  if (data.status && data.status !== "ok") {
+    throw new Error(`${provider}: ${data.message || data.status}`);
+  }
+
+  const articles = normaliseNewsArticles(data.articles || data.data || data.results);
+  if (!articles.length) throw new Error(`${provider} não devolveu artigos.`);
+  return newsArticlesToRss(articles, provider);
+}
+
+async function fetchGdeltNewsProvider(endpoint) {
+  const response = await fetch(endpoint, {
+    headers: { Accept: "application/rss+xml, application/xml;q=0.9, */*;q=0.5" },
+    redirect: "follow"
+  });
+  const xml = await response.text();
+  if (!response.ok || !/<rss(?:\s|>)/i.test(xml)) {
+    throw new Error(`GDELT respondeu com um feed RSS inválido (HTTP ${response.status}).`);
+  }
+  return xml;
 }
 
 function rss(request, xml) {
@@ -686,29 +1567,17 @@ export default {
 
       const url = new URL(request.url);
 
-      if (url.pathname === "/health" && request.method === "GET") {
-        const result = await env.DB.prepare(`
-          SELECT name
-          FROM sqlite_master
-          WHERE type = 'table'
-            AND name NOT LIKE 'sqlite_%'
-          ORDER BY name
-        `).all();
-        const billing = await getBillingState(env);
+      if (url.pathname === "/favicon.ico" && request.method === "GET") {
+        return new Response(null, {
+          status: 204,
+          headers: headersFor(request, { "Content-Type": "image/x-icon" })
+        });
+      }
 
+      if (url.pathname === "/health" && request.method === "GET") {
         return json(request, {
           ok: true,
-          worker: "notabook-storage",
-          r2BindingConfigured: Boolean(env.FILES),
-          d1BindingConfigured: Boolean(env.DB),
-          firebaseConfigured: Boolean(env.FIREBASE_API_KEY),
-          stripeConfigured: Boolean(env.STRIPE_SECRET_KEY),
-          stripeMode: billing.stripeMode,
-          stripeLiveKeyConfigured: String(env.STRIPE_SECRET_KEY || "").startsWith("sk_live_"),
-          billingSettingsConfigured: billing.configured,
-          salesEnabled: billing.salesEnabled,
-          aiConfigured: Boolean(env.OPENROUTER_API_KEY),
-          tables: result.results.map(row => row.name)
+          worker: "notabook-storage"
         });
       }
 
@@ -743,7 +1612,61 @@ export default {
         return json(request, { received: true });
       }
 
+      const siteId = url.pathname.match(/^\/sites\/([A-Za-z0-9_-]{1,128})$/)?.[1];
+      if (siteId && request.method === "GET") {
+        await assertPublicSiteRateLimit(env, request, "site");
+        return json(request, await obterSiteAutorizado(env, siteId));
+      }
+
+      const siteCoverId = url.pathname.match(/^\/sites\/([A-Za-z0-9_-]{1,128})\/cover$/)?.[1];
+      if (siteCoverId && request.method === "GET") {
+        await assertPublicSiteRateLimit(env, request, "cover");
+        return await obterCapaSitePublica(env, request, siteCoverId);
+      }
+
       const uid = await authenticate(request, env);
+
+      if (url.pathname.startsWith("/gmail/")) {
+        await ensureGmailTables(env);
+        await assertGmailFeature(env, uid, request);
+      }
+
+      if (url.pathname === "/gmail/oauth/exchange" && request.method === "POST") {
+        if (request.headers.get("X-Requested-With") !== "XMLHttpRequest") {
+          throw new HttpError(400, "Pedido de autorização Gmail inválido.");
+        }
+        const body = await request.json().catch(() => ({}));
+        const code = String(body.code || "").trim();
+        if (!code || code.length > 4096) {
+          throw new HttpError(400, "Código de autorização Gmail inválido.");
+        }
+        const profile = await trocarCodigoGmail(env, request, uid, code);
+        return json(request, { connected: true, profile });
+      }
+
+      if (url.pathname === "/gmail/connection" && request.method === "GET") {
+        const connection = await obterLigacaoGmail(env, uid);
+        return json(request, {
+          connected: Boolean(connection),
+          profile: connection ? { email: connection.google_email } : null
+        });
+      }
+
+      if (url.pathname === "/gmail/connection" && request.method === "DELETE") {
+        await revogarLigacaoGmail(env, uid);
+        return json(request, { ok: true, connected: false });
+      }
+
+      if (url.pathname === "/gmail/messages" && request.method === "GET") {
+        return json(request, await listarMensagensGmail(env, uid, url));
+      }
+
+      const gmailMessageId = url.pathname.match(/^\/gmail\/messages\/([^/]+)$/)?.[1];
+      if (gmailMessageId && request.method === "GET") {
+        return json(request, {
+          message: await obterMensagemGmail(env, uid, decodeURIComponent(gmailMessageId))
+        });
+      }
 
       if (url.pathname === "/news/rss" && request.method === "GET") {
         const entitlement = await getEntitlement(env, uid, request);
@@ -753,24 +1676,66 @@ export default {
           throw new HttpError(403, "A ferramenta Notícias não está disponível no teu plano.");
         }
 
-        const feedUrl = buildBingNewsRssUrl(url);
-        const response = await fetch(feedUrl, {
-          headers: {
-            Accept: "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
-            "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
-            Referer: "https://www.bing.com/news/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
-          },
-          redirect: "follow"
+        const config = buildNewsSearchConfig(url);
+        const providers = [];
+
+        if (env.GNEWS_API_KEY) {
+          providers.push({
+            nome: "GNews",
+            executar: () => fetchJsonNewsProvider(
+              "GNews",
+              buildGNewsUrl(config, env.GNEWS_API_KEY)
+            )
+          });
+        }
+        if (env.NEWSAPI_API_KEY) {
+          providers.push({
+            nome: "NewsAPI",
+            executar: () => fetchJsonNewsProvider(
+              "NewsAPI",
+              buildNewsApiUrl(config, env.NEWSAPI_API_KEY)
+            )
+          });
+        }
+        if (env.MEDIASTACK_API_KEY) {
+          providers.push({
+            nome: "Mediastack",
+            executar: () => fetchJsonNewsProvider(
+              "Mediastack",
+              buildMediastackUrl(config, env.MEDIASTACK_API_KEY)
+            )
+          });
+        }
+
+        providers.push({
+          nome: "GDELT",
+          executar: () => fetchGdeltNewsProvider(buildGdeltUrl(config))
         });
-        if (!response.ok) {
-          throw new HttpError(502, "NBX News falhou. Tente Novamente.");
+
+        for (const provider of providers) {
+          try {
+            console.log("NBX News: a consultar fornecedor", {
+              fornecedor: provider.nome,
+              query: config.query
+            });
+            const xml = await provider.executar();
+            console.log("NBX News: fornecedor concluído", {
+              fornecedor: provider.nome,
+              tamanho: xml.length
+            });
+            return rss(request, xml);
+          } catch (erro) {
+            console.warn("NBX News: fornecedor indisponível", {
+              fornecedor: provider.nome,
+              mensagem: erro instanceof Error ? erro.message : String(erro)
+            });
+          }
         }
-        const xml = await response.text();
-        if (!xml.includes("<rss") || xml.length > 2_000_000) {
-          throw new HttpError(502, "NBX News falhou. Tente Novamente.");
-        }
-        return rss(request, xml);
+
+        throw new HttpError(
+          502,
+          "O NBX News não conseguiu obter notícias neste momento."
+        );
       }
 
       if (url.pathname === "/features" && request.method === "GET") {
@@ -927,6 +1892,7 @@ export default {
           salesEnabled: (await getBillingState(env)).salesEnabled,
           status: entitlement.status,
           quotaBytes: entitlement.quotaBytes,
+          maxCaixasPorNota: entitlement.maxCaixasPorNota,
           currentPeriodEnd: entitlement.currentPeriodEnd,
           cancelAtPeriodEnd: Boolean(entitlement.subscription?.cancel_at_period_end)
         });
@@ -1105,8 +2071,12 @@ export default {
           throw new HttpError(400, "É obrigatório indicar a nota e o contexto do ficheiro.");
         }
 
-        if (!["caixa", "tarefa"].includes(contextType)) {
+        if (!["caixa", "tarefa", "site"].includes(contextType)) {
           throw new HttpError(400, "O contexto deve ser caixa ou tarefa.");
+        }
+
+        if (contextType === "site" && contextId !== noteId) {
+          throw new HttpError(400, "O contexto da capa não corresponde à nota.");
         }
 
         const size = Number(request.headers.get("Content-Length"));
@@ -1114,7 +2084,25 @@ export default {
           throw new HttpError(411, "O tamanho do ficheiro não foi indicado.");
         }
 
+        const contentType = request.headers.get("Content-Type") || "application/octet-stream";
+        if (contextType === "site" && !contentType.toLowerCase().startsWith("image/")) {
+          throw new HttpError(415, "A capa tem de ser uma imagem.");
+        }
+        if (contextType === "site" && size > SITE_COVER_MAX_BYTES) {
+          throw new HttpError(413, "A imagem de capa não pode ultrapassar 10 MB.");
+        }
+
         const entitlement = await getEntitlement(env, uid, request);
+        if (contextType === "site") {
+          const feature = await env.DB.prepare(`
+            SELECT feature_key, min_plan, active
+            FROM feature_access
+            WHERE feature_key = ?
+          `).bind("sites_publicos").first();
+          if (!feature || !isFeatureAllowed(feature, entitlement.plan)) {
+            throw new HttpError(403, "A publicação de Sites não está disponível no plano actual.");
+          }
+        }
         const usage = await getUsage(env, uid);
         const currentUsage = Number(usage?.used_bytes || 0);
 
@@ -1124,7 +2112,6 @@ export default {
 
         const fileId = crypto.randomUUID();
         const fileName = cleanFileName(url.searchParams.get("name"));
-        const contentType = request.headers.get("Content-Type") || "application/octet-stream";
         const objectKey = `users/${uid}/files/${fileId}-${fileName}`;
 
         const reservation = await env.DB.prepare(`
@@ -1225,7 +2212,8 @@ export default {
       return json(
         request,
         { error: error.message || "Erro interno." },
-        error.status || 500
+        error.status || 500,
+        error.headers || {}
       );
     }
   }

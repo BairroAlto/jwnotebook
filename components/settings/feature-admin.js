@@ -13,6 +13,7 @@ const PLAN_LABELS = {
 const FEATURE_GROUPS = {
     painel: { label: 'Painel de Utilizador', icon: 'fa-user-gear' },
     ferramentas: { label: 'Ferramentas', icon: 'fa-toolbox' },
+    plugs: { label: 'Plugs', icon: 'fa-plug' },
     conexoes: { label: 'Centro de Conexões', icon: 'fa-diagram-project' },
     partilha: { label: 'Partilhar Secção', icon: 'fa-share-nodes' },
     personalizacao: { label: 'Personalização', icon: 'fa-palette' },
@@ -21,13 +22,17 @@ const FEATURE_GROUPS = {
     outros: { label: 'Outras', icon: 'fa-layer-group' }
 };
 
-const FEATURE_GROUP_ORDER = ['painel', 'ferramentas', 'conexoes', 'partilha', 'personalizacao', 'posto', 'ia', 'outros'];
+const FEATURE_GROUP_ORDER = ['painel', 'ferramentas', 'plugs', 'conexoes', 'partilha', 'personalizacao', 'posto', 'ia', 'outros'];
 const PAINEL_UTILIZADOR_CHAVES = new Set(PAINEL_UTILIZADOR_ABAS.map(aba => aba.key));
 const FEATURES_ESTRUTURAIS_CHAVES = new Set([
     ...PAINEL_UTILIZADOR_CHAVES,
     'ferramenta_noticias',
     'ferramenta_tempo',
-    'ferramenta_gmail'
+    'ferramenta_inspirador',
+    'ferramenta_gmail',
+    'plug_wikipedia',
+    'plug_wikidata',
+    'plug_wikimedia'
 ]);
 
 function isFeatureModoNota(feature) {
@@ -42,6 +47,7 @@ function grupoDaFeature(feature) {
     if (key.startsWith('personalizacao_') || key === 'centro_personalizacao') return 'personalizacao';
     if (key.startsWith('posto_') || key === 'posto_ligacao_bairro') return 'posto';
     if (key.startsWith('ai_')) return 'ia';
+    if (key.startsWith('plug_')) return 'plugs';
     if (key.startsWith('ferramenta_') || ['contentor', 'questao', 'google_calendar'].includes(key)) return 'ferramentas';
     return 'outros';
 }

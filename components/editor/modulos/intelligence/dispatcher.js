@@ -1,4 +1,6 @@
 // components/editor/modulos/intelligence/dispatcher.js
+import { ocultarEyeIdle } from '../../../direita/eye-idle.js';
+import { ocultarXSatIdle } from '../../../direita/xsat-idle.js';
 
 let timerDebounce = null;
 
@@ -9,6 +11,9 @@ let timerDebounce = null;
  */
 export function despacharInteligenciaEye(caixas, nota, db, auth) {
     if (!caixas || !nota) return;
+
+    ocultarEyeIdle();
+    ocultarXSatIdle();
 
     // Cancela atualizações pendentes para não sobrecarregar o sistema
     clearTimeout(timerDebounce);

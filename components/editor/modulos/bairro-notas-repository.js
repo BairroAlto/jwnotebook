@@ -1,5 +1,4 @@
 import {
-    addDoc,
     and,
     collection,
     doc,
@@ -9,10 +8,9 @@ import {
     query,
     serverTimestamp,
     updateDoc,
+    writeBatch,
     where
 } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
-import { guardarCaixasDaNota } from '../../local/caixas-repository.js';
-import { guardarCaixasShareDaNota } from '../../share/share-caixas-repository.js';
 import { notaEstaVisivel } from '../../notes/note-visibility.js';
 
 function criarCaixaInicial() {
@@ -31,6 +29,35 @@ function criarCaixaInicial() {
 function nomeDaNota(filho) {
     const tarefa = String(filho?.nome || '').trim();
     return tarefa ? `Notas · ${tarefa}` : 'Notas · Tarefa';
+}
+
+export function obterPastaPaiDaNotaActual(contextoNota, auth) {
+    const dadosNota = contextoNota?.dadosNota || {};
+    const uid = auth?.currentUser?.uid || contextoNota?.auth?.currentUser?.uid;
+    const onde = dadosNota?.onde === 'share' ? 'share' : 'local';
+
+    if (onde === 'share') return dadosNota?.[uid]?.pastapai || 'home';
+    return dadosNota?.pastapai || 'root';
+}
+
+function obterPastaDaNotaActual(contextoNota, onde, uid, pastaPaiForcada) {
+    if (pastaPaiForcada !== undefined && pastaPaiForcada !== null && String(pastaPaiForcada).trim()) {
+        return String(pastaPaiForcada);
+    }
+
+    const dadosNota = contextoNota?.dadosNota || {};
+    if (onde === 'share') return dadosNota?.[uid]?.pastapai || 'home';
+    return dadosNota?.pastapai || 'root';
+}
+
+function prepararCaixaParaEscrita(caixa, userId, campoNota, notaId) {
+    return Object.fromEntries(Object.entries({
+        ...caixa,
+        id: undefined,
+        userId,
+        [campoNota]: notaId,
+        estado: caixa.estado || 'on'
+    }).filter(([, valor]) => valor !== undefined));
 }
 
 export async function listarItensParaAnexar({ db, auth, onde }) {
@@ -61,11 +88,29 @@ export async function listarItensParaAnexar({ db, auth, onde }) {
         .filter(notaEstaVisivel);
 }
 
-export async function criarNotaOcultaDaTarefa({ db, auth, contextoNota, bairro, filho }) {
+export async function criarNotaOcultaDaTarefa({ db, auth, contextoNota, bairro, filho, pastaPai }) {
     const uid = auth?.currentUser?.uid;
-    if (!db || !uid || !bairro?.id || !filho?.id) throw new Error('Contexto insuficiente para criar a nota.');
+    if (!db || !uid || !bairro?.id || !filho?.id) {
+        console.error('[BAIRRO-NOTAS][CRIAR][FIREBASE] Contexto insuficiente:', {
+            temDb: Boolean(db),
+            userId: uid || null,
+            bairroId: bairro?.id || null,
+            tarefaId: filho?.id || null
+        });
+        throw new Error('Contexto insuficiente para criar a nota.');
+    }
 
     const onde = contextoNota?.dadosNota?.onde === 'share' ? 'share' : 'local';
+    const pastaPaiDaCriacao = obterPastaDaNotaActual(contextoNota, onde, uid, pastaPai);
+    const colecao = onde === 'share' ? 'Share' : 'Local';
+    console.info('[BAIRRO-NOTAS][CRIAR][FIREBASE] A criar nota:', {
+        colecao,
+        userId: uid,
+        bairroId: bairro.id,
+        tarefaId: filho.id,
+        pastaPai: pastaPaiDaCriacao,
+        nome: nomeDaNota(filho)
+    });
     const caixaInicial = criarCaixaInicial();
     const base = {
         userId: uid,
@@ -85,16 +130,26 @@ export async function criarNotaOcultaDaTarefa({ db, auth, contextoNota, bairro, 
             aprovado: [],
             convidado: [],
             vistoPor: [uid],
-            [uid]: { pastapai: 'home', ordem: 1 }
+            [uid]: { pastapai: pastaPaiDaCriacao, ordem: 1 }
         };
-        const referencia = await addDoc(collection(db, 'Share'), { ...dados, timestamp: serverTimestamp() });
-        await guardarCaixasShareDaNota({
-            db,
-            ownerId: uid,
-            notaId: referencia.id,
+        const referencia = doc(collection(db, 'Share'));
+        const idsCaixas = [String(caixaInicial.id)];
+        const batchCriacao = writeBatch(db);
+        batchCriacao.set(doc(db, 'Share', referencia.id), {
+            ...dados,
+            timestamp: serverTimestamp(),
             caixas: [caixaInicial],
-            removerLegacy: true
+            CaixasOut: idsCaixas,
+            caixaIds: idsCaixas,
+            caixasMigradas: true
         });
+        batchCriacao.set(
+            doc(db, 'ShareCaixas', String(caixaInicial.id)),
+            prepararCaixaParaEscrita(caixaInicial, uid, 'shareId', referencia.id),
+            { merge: true }
+        );
+        await batchCriacao.commit();
+        console.info('[BAIRRO-NOTAS][CRIAR][FIREBASE] Documento Share criado:', { id: referencia.id });
         return {
             id: referencia.id,
             onde,
@@ -113,17 +168,27 @@ export async function criarNotaOcultaDaTarefa({ db, auth, contextoNota, bairro, 
     const dados = {
         ...base,
         modo: 'normal',
-        pastapai: 'root',
+        pastapai: pastaPaiDaCriacao,
         ordem: 1
     };
-    const referencia = await addDoc(collection(db, 'Local'), { ...dados, timestamp: serverTimestamp() });
-    await guardarCaixasDaNota({
-        db,
-        userId: uid,
-        notaId: referencia.id,
+    const referencia = doc(collection(db, 'Local'));
+    const idsCaixas = [String(caixaInicial.id)];
+    const batchCriacao = writeBatch(db);
+    batchCriacao.set(doc(db, 'Local', referencia.id), {
+        ...dados,
+        timestamp: serverTimestamp(),
         caixas: [caixaInicial],
-        removerLegacy: true
+        CaixasOut: idsCaixas,
+        caixaIds: idsCaixas,
+        caixasMigradas: true
     });
+    batchCriacao.set(
+        doc(db, 'LocalCaixas', String(caixaInicial.id)),
+        prepararCaixaParaEscrita(caixaInicial, uid, 'localDocId', referencia.id),
+        { merge: true }
+    );
+    await batchCriacao.commit();
+    console.info('[BAIRRO-NOTAS][CRIAR][FIREBASE] Documento Local criado:', { id: referencia.id });
     return {
         id: referencia.id,
         onde,
@@ -138,6 +203,25 @@ export async function criarNotaOcultaDaTarefa({ db, auth, contextoNota, bairro, 
             timestamp: new Date().toISOString()
         }
     };
+}
+
+export async function removerNotaOcultaCriada({ db, nota }) {
+    const notaId = nota?.id;
+    if (!db || !notaId) return;
+
+    const dados = nota.dados || {};
+    const idsCaixas = new Set([
+        ...(Array.isArray(dados.CaixasOut) ? dados.CaixasOut : []),
+        ...(Array.isArray(dados.caixaIds) ? dados.caixaIds : []),
+        ...(Array.isArray(dados.caixas) ? dados.caixas.map(caixa => caixa?.id) : [])
+    ].filter(Boolean).map(String));
+    const colecao = nota.onde === 'share' ? 'Share' : 'Local';
+    const colecaoCaixas = nota.onde === 'share' ? 'ShareCaixas' : 'LocalCaixas';
+
+    const batchRemocao = writeBatch(db);
+    batchRemocao.delete(doc(db, colecao, notaId));
+    idsCaixas.forEach(caixaId => batchRemocao.delete(doc(db, colecaoCaixas, caixaId)));
+    await batchRemocao.commit();
 }
 
 export async function enviarNotaParaReciclagem({ db, auth, nota }) {
@@ -164,8 +248,27 @@ export async function enviarNotaParaReciclagem({ db, auth, nota }) {
 }
 
 export async function obterNotaPorId({ db, nota }) {
-    if (!db || !nota?.id) return null;
+    if (!db || !nota?.id) {
+        console.warn('[BAIRRO-NOTAS][FIREBASE][CONSULTA] Consulta ignorada por falta de contexto:', {
+            temDb: Boolean(db),
+            id: nota?.id || null,
+            onde: nota?.onde || null
+        });
+        return null;
+    }
     const colecao = nota.onde === 'share' ? 'Share' : 'Local';
-    const snapshot = await getDoc(doc(db, colecao, String(nota.id)));
-    return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+    const id = String(nota.id);
+    console.info('[BAIRRO-NOTAS][FIREBASE][CONSULTA] A consultar documento:', { colecao, id });
+    const snapshot = await getDoc(doc(db, colecao, id));
+    const dados = snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+    console.info('[BAIRRO-NOTAS][FIREBASE][CONSULTA] Documento consultado:', {
+        colecao,
+        id,
+        existe: Boolean(dados),
+        estado: dados?.estado ?? null,
+        tipo: dados?.tipo ?? null,
+        nome: dados?.nome ?? null,
+        userId: dados?.userId ?? null
+    });
+    return dados;
 }

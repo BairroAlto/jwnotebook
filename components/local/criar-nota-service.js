@@ -1,5 +1,4 @@
-import { guardarCaixasDaNota } from './caixas-repository.js';
-import { collection, addDoc, getDoc, getDocs, query, where, serverTimestamp, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { collection, getDoc, getDocs, query, where, serverTimestamp, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
 export async function criarNotaLocal(db, auth, { pastapai = 'root' } = {}) {
     const userId = auth?.currentUser?.uid;
@@ -11,13 +10,13 @@ export async function criarNotaLocal(db, auth, { pastapai = 'root' } = {}) {
     const ordem = 1;
 
     if (!querySnapshot.empty) {
-        const batch = writeBatch(db);
+        const batchOrdens = writeBatch(db);
         querySnapshot.forEach(item => {
-            batch.update(doc(db, 'Local', item.id), {
+            batchOrdens.update(doc(db, 'Local', item.id), {
                 ordem: (item.data().ordem || 0) + 1
             });
         });
-        await batch.commit();
+        await batchOrdens.commit();
     }
 
     const idNotaUnico = crypto.randomUUID();
@@ -45,18 +44,33 @@ export async function criarNotaLocal(db, auth, { pastapai = 'root' } = {}) {
     };
 
     const { caixas: caixasNovas, ...dadosNotaSemCaixas } = dadosNovaNota;
-    const docRef = await addDoc(localRef, {
+    const docRef = doc(localRef);
+    const idsCaixas = caixasNovas.map(caixa => String(caixa.id));
+    const batchCriacao = writeBatch(db);
+
+    // A nota e a primeira caixa são gravadas no mesmo batch. Se alguma
+    // escrita falhar, o Firestore não deixa o processo a meio.
+    batchCriacao.set(docRef, {
         ...dadosNotaSemCaixas,
-        timestamp: serverTimestamp()
+        timestamp: serverTimestamp(),
+        caixas: caixasNovas,
+        CaixasOut: idsCaixas,
+        caixaIds: idsCaixas,
+        caixasMigradas: true
     });
 
-    await guardarCaixasDaNota({
-        db,
-        userId,
-        notaId: docRef.id,
-        caixas: caixasNovas,
-        removerLegacy: true
+    caixasNovas.forEach(caixa => {
+        const dadosCaixa = Object.fromEntries(Object.entries({
+            ...caixa,
+            id: undefined,
+            userId,
+            localDocId: docRef.id,
+            estado: caixa.estado || "on"
+        }).filter(([, valor]) => valor !== undefined));
+        batchCriacao.set(doc(db, "LocalCaixas", String(caixa.id)), dadosCaixa, { merge: true });
     });
+
+    await batchCriacao.commit();
 
     let dadosNotaCriada = {
         ...dadosNovaNota,
@@ -70,4 +84,21 @@ export async function criarNotaLocal(db, auth, { pastapai = 'root' } = {}) {
     }
 
     return { id: docRef.id, dados: dadosNotaCriada };
+}
+
+export async function removerNotaLocalCriada(db, notaCriada) {
+    const notaId = notaCriada?.id;
+    if (!db || !notaId) return;
+
+    const dados = notaCriada.dados || {};
+    const idsCaixas = new Set([
+        ...(Array.isArray(dados.CaixasOut) ? dados.CaixasOut : []),
+        ...(Array.isArray(dados.caixaIds) ? dados.caixaIds : []),
+        ...(Array.isArray(dados.caixas) ? dados.caixas.map(caixa => caixa?.id) : [])
+    ].filter(Boolean).map(String));
+
+    const batchRemocao = writeBatch(db);
+    batchRemocao.delete(doc(db, 'Local', notaId));
+    idsCaixas.forEach(caixaId => batchRemocao.delete(doc(db, 'LocalCaixas', caixaId)));
+    await batchRemocao.commit();
 }

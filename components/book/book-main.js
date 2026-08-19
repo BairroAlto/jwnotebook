@@ -22,6 +22,8 @@ import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
 import { aplicarPreferenciaBotaoColapsoColunaEsquerda, iniciarControloColunaEsquerda } from '../ui/left-column-collapse.js';
 import { aplicarPreferenciaBotaoColapsoColunaDireita, iniciarControloColunaDireita } from '../ui/right-column-collapse.js';
 import './book-viewer.js';
+import { mostrarEyeIdle } from '../direita/eye-idle.js';
+import { mostrarXSatIdle, ocultarXSatIdle } from '../direita/xsat-idle.js';
 
 window.NotaBookMode = "book";
 
@@ -49,6 +51,9 @@ await Promise.all([
     carregarComponente('area-popup-ancora-nota', 'components/popup/popup-ancora-nota.html'),
     carregarComponente('area-popup-biblia-citacao', 'components/popup/popup-biblia-citacao.html')
 ]);
+
+mostrarEyeIdle();
+mostrarXSatIdle();
 
 ativarMenuBook();
 document.getElementById('area-direita')?.classList.add('book-readonly-panel');
@@ -80,6 +85,12 @@ onAuthStateChanged(auth, async user => {
     if (bootDone) return;
     bootDone = true;
     window.NotaBookUserPrefs = await carregarPreferenciasUtilizador(db, user.uid);
+    window.NotaBookPlugsInstalados = Array.isArray(window.NotaBookUserPrefs?.plugsInstalados)
+        ? window.NotaBookUserPrefs.plugsInstalados
+        : [];
+    import('../direita/eye-plugs.js')
+        .then(modulo => modulo.sincronizarIconePlugsEye(auth))
+        .catch(erro => console.info('[PLUGS] Estado indisponível no Book:', erro.message));
     MobileBibleBar.iniciar();
     aplicarPreferenciaBotaoColapsoColunaEsquerda(Boolean(window.NotaBookUserPrefs?.leftColumnCollapseButton));
     aplicarPreferenciaBotaoColapsoColunaDireita(Boolean(window.NotaBookUserPrefs?.rightColumnCollapseButton));
@@ -148,6 +159,14 @@ function bindRightPanelNavigation() {
             target.style.display = 'flex';
         }
         if (btn) btn.classList.add('active');
+
+        const temNotaAtiva = Boolean(window.bookNotaAtual?.id || window.notaAtualContext?.notaId);
+        if (panel === 'xsat' && !temNotaAtiva) {
+            mostrarXSatIdle();
+            return;
+        }
+        if (panel === 'xsat') ocultarXSatIdle();
+
         if (panel === 'bookai') {
             import('../direita/bookai-panel.js').then(m => {
                 m.renderizarPainelBookAI({
@@ -167,7 +186,8 @@ function bindRightPanelNavigation() {
             textos: 'textos-container',
             ancora: 'ancora-nota-container',
             fontes: 'fontes-nota-container',
-            caixas: 'caixas-associadas-container'
+            caixas: 'caixas-associadas-container',
+            plugs: 'plugs-eye-container'
         };
         Object.values(ids).forEach(id => {
             const el = document.getElementById(id);
@@ -192,6 +212,7 @@ function bindRightPanelNavigation() {
         if (tab === 'fontes') import('../direita/eye-fontes-nota.js').then(m => m.carregarFontesGlobaisDaNota(caixas));
         if (tab === 'indice') import('../direita/indice.js').then(m => m.renderizarIndice(caixas, modos.includes('post')));
         if (tab === 'ancora') import('../direita/eye-ancora.js').then(m => m.iniciarAbaAncora(window.itemSelecionadoId, window.db, window.auth));
+        if (tab === 'plugs') import('../direita/eye-plugs.js').then(m => m.renderizarPainelPlugs({ auth }));
     };
 }
 

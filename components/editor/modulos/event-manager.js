@@ -7,7 +7,7 @@ import { abrirPopupTags } from './tags/tags-controller.js';
 import { MobileBibleBar } from "./mobile-bible-bar.js";
 import { isMobileViewport } from "../../ui/mobile-device.js";
 import { abrirPopupImportarTexto } from './importar-texto.js';
-import { LabModelos } from './lab-modelos.js';
+import { LabModelos } from './lab-modelos.js?v=20260819-capa-altura-sinaletica';
 import { obterFeaturesDisponiveis } from '../../settings/feature-admin.js';
 import { obterDefinicaoModoNota, chaveAcessoModoNota } from './nota-modes.js';
 import { criarAjustadorAlturaAbas } from '../../ui/fixed-tabs-height.js';
@@ -150,7 +150,7 @@ export const EventManager = {
             return import('../../direita/eye-glosas.js').then(modulo => modulo.carregarGlosasDaNota(caixasLive));
         };
         window.switchEyeTab = (t) => {
-            const ids = ['indice-nota-container', 'textos-container', 'ancora-nota-container', 'fontes-nota-container', 'glosas-nota-container', 'caixas-associadas-container', 'ficheiros-nota-container'];
+            const ids = ['indice-nota-container', 'textos-container', 'ancora-nota-container', 'fontes-nota-container', 'glosas-nota-container', 'caixas-associadas-container', 'ficheiros-nota-container', 'plugs-eye-container'];
             ids.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
             document.querySelectorAll('#sub-tabs-eye i').forEach(i => i.classList.remove('active'));
 
@@ -158,12 +158,15 @@ export const EventManager = {
             const isSentinela = modos.includes('sentinela');
             
             // ðŸš€ FILTRO RIGOROSO: A direita sÃ³ vÃª o que o modo permite
-            const flt = ctx.caixasAtuais.filter(c => {
+            const caixasBase = Array.isArray(window.caixasAtuais)
+                ? window.caixasAtuais
+                : (Array.isArray(ctx.caixasAtuais) ? ctx.caixasAtuais : []);
+            const flt = caixasBase.filter(c => {
                 if (c.estado !== 'on') return false;
                 return isSentinela ? !!c.referenciacodex : !c.referenciacodex;
             });
 
-            const map = { 'indice':'indice-nota-container', 'textos':'textos-container', 'ancora':'ancora-nota-container', 'fontes':'fontes-nota-container', 'glosas':'glosas-nota-container', 'caixas':'caixas-associadas-container', 'ficheiros':'ficheiros-nota-container' }[t];
+            const map = { 'indice':'indice-nota-container', 'textos':'textos-container', 'ancora':'ancora-nota-container', 'fontes':'fontes-nota-container', 'glosas':'glosas-nota-container', 'caixas':'caixas-associadas-container', 'ficheiros':'ficheiros-nota-container', 'plugs':'plugs-eye-container' }[t];
             const target = document.getElementById(map);
             if (target) { target.style.display = 'flex'; target.style.flexDirection = 'column'; }
             document.getElementById(`btn-tab-${t}`)?.classList.add('active');
@@ -195,6 +198,9 @@ export const EventManager = {
                     focoContexto: window._ficheirosFocoContexto || null,
                     abrirNoBrowser: true
                 }));
+            }
+            if (t === 'plugs') {
+                import('../../direita/eye-plugs.js').then(m => m.renderizarPainelPlugs({ auth: ctx.authRef }));
             }
         };
 
@@ -288,7 +294,7 @@ export const EventManager = {
         };
 
         document.getElementById('btn-abrir-browser').onclick = () => {
-            import('./browser.js').then(m => {
+                import('./browser.js?browser-runtime=v8').then(m => {
                 m.iniciarSistemaBrowser(ctx.dbRef, ctx.authRef);
                 m.abrirPopupEscolha();
             });

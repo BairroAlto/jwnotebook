@@ -1,5 +1,7 @@
 import { collection, addDoc, getDocs, query, where, serverTimestamp, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
+let criacaoPastaLocalEmCurso = false;
+
 export function inicializarCriacaoPasta(db, auth) {
     const btnAbrir = document.getElementById('btn-abrir-criar-pasta');
     const popupOpcoes = document.getElementById('popup-criar-overlay'); 
@@ -14,6 +16,7 @@ export function inicializarCriacaoPasta(db, auth) {
         btnAbrir.addEventListener('click', () => {
             popupOpcoes.classList.remove('active'); 
             popupCriar.classList.add('active');
+            btnConfirmar.dataset.modo = "local";
             inputNome.focus();
         });
     }
@@ -31,6 +34,12 @@ export function inicializarCriacaoPasta(db, auth) {
             const nome = inputNome.value.trim();
             if (!nome) return alert("O nome da pasta não pode estar vazio.");
             if (!auth.currentUser) return alert("Tens de estar logado!");
+            if (criacaoPastaLocalEmCurso) return;
+
+            criacaoPastaLocalEmCurso = true;
+            btnConfirmar.disabled = true;
+            btnConfirmar.style.pointerEvents = "none";
+            btnConfirmar.innerText = "A preparar...";
 
             try {
                 btnConfirmar.innerText = "A criar...";
@@ -75,12 +84,15 @@ export function inicializarCriacaoPasta(db, auth) {
                 });
 
                 fecharPopup();
-                btnConfirmar.innerText = "Criar Pasta";
 
                 // No mobile, uma criação de pasta mantém a pasta-pai actual aberta.
-                } catch (error) {
+            } catch (error) {
                 console.error("Erro do Firestore:", error);
                 alert("Erro: " + error.message);
+            } finally {
+                criacaoPastaLocalEmCurso = false;
+                btnConfirmar.disabled = false;
+                btnConfirmar.style.pointerEvents = "auto";
                 btnConfirmar.innerText = "Criar Pasta";
             }
         });

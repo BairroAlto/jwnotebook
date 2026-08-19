@@ -53,7 +53,16 @@ function comTempoLimite(promessa, tempo, descricao) {
 }
 
 export async function processarAberturaNota(ctx) {
-    const { notaId, dadosNota, db, auth, idCaixaFoco, maeIdOverride, stateManager } = ctx;
+    const {
+        notaId,
+        dadosNota,
+        db,
+        auth,
+        idCaixaFoco,
+        maeIdOverride,
+        sincronizarBarraLateral = true,
+        stateManager
+    } = ctx;
     const aberturaId = ++aberturaAtual;
     const eAberturaActual = () => aberturaId === aberturaAtual;
 
@@ -72,7 +81,7 @@ export async function processarAberturaNota(ctx) {
     try {
         if (typeof MobileUI !== 'undefined') MobileUI.fecharColunaEsquerda();
 
-        if (typeof window.sincronizarBarraLateralComNota === 'function') {
+        if (sincronizarBarraLateral && typeof window.sincronizarBarraLateralComNota === 'function') {
             window.sincronizarBarraLateralComNota(notaId, dadosNota, auth);
         }
         if (dadosNota.onde === "share") {

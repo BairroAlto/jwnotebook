@@ -1,5 +1,5 @@
 // Incrementar esta versão força a criação de uma cache limpa em todos os clientes.
-const CACHE_NAME = 'notabook-x-v37-cache-reset';
+const CACHE_NAME = 'notabook-v61-sites-capa';
 
 const PRE_CACHE_ASSETS = [
   './',

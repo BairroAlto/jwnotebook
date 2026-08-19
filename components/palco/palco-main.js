@@ -3,6 +3,7 @@ import { doc, getDoc, getFirestore, setDoc } from "https://www.gstatic.com/fireb
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { firebaseConfig } from '../../firebase-config.js';
 import { iniciarAutenticacao } from '../biblioteca-brain/auth/auth.js';
+import { sincronizarPerfilPublico } from '../users/public-profile.js';
 import { initPalcoStore } from './palco-store.js';
 import { iniciarPalcoUI } from './palco-ui.js';
 import {
@@ -132,6 +133,7 @@ function ligarSettings(uid) {
 
 async function guardarPrefs(uid) {
     await setDoc(doc(db, "users", uid), { palco: palcoPrefs }, { merge: true });
+    await sincronizarPerfilPublico(db, auth);
 }
 
 function renderizarBadge(items) {

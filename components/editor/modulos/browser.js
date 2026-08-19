@@ -3,7 +3,7 @@ import {
     collection, query, where, getDocs, or, and
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { abrirNotaNoEditor, forcarGravacaoImediata } from '../editor.js';
-import { criarNotaLocal } from '../../local/criar-nota-service.js';
+import { criarNotaLocal, removerNotaLocalCriada } from '../../local/criar-nota-service.js';
 import {
     avaliarEspacoNasAbas,
     garantirAbaBrowser,
@@ -16,6 +16,7 @@ let authRef = null;
 let notaMaeIdLocal = null;
 let notaAtivaIdGlobal = null;
 let abaBrowserAtiva = "Local";
+let criacaoNotaAbaBrowserEmCurso = false;
 const browserFoldersOpen = new Set();
 
 export function iniciarSistemaBrowser(db, auth) {
@@ -213,6 +214,18 @@ export async function carregarAbasDaNota(maeId, dadosNota, notaAtivaId) {
 
     const resultados = await Promise.all(promessas);
     console.log("📂 [TABS-DEBUG] resultados Finais das Abas:", resultados);
+    const abasValidas = listaAbas.filter((_, indice) => resultados[indice]);
+    if (abasValidas.length !== listaAbas.length) {
+        const db = dbRef || window.db;
+        if (db) {
+            updateDoc(doc(db, resMae.colecao, maeId), { browser: abasValidas })
+                .then(() => console.info('[BROWSER] Referências de abas inexistentes removidas:', {
+                    antes: listaAbas.length,
+                    depois: abasValidas.length
+                }))
+                .catch(erro => console.warn('[BROWSER] Não foi possível limpar referências de abas inexistentes:', erro));
+        }
+    }
     resultados.forEach(item => {
         if (item) {
             console.log("📂 [TABS-DEBUG] Renderizando aba secundária:", item.id, "ActiveState:", (item.id === notaAtivaId));
@@ -230,6 +243,7 @@ function criarElementoAba(id, nome, isMae, canClose, onde, isActive) {
         : nome;
 
     const aba = document.createElement('div');
+    aba.dataset.browserNotaId = String(id);
     const corDestaque = (onde === "share") ? "#ef4444" : "#6366f1";
 
     aba.style.cssText = `
@@ -269,8 +283,22 @@ function criarElementoAba(id, nome, isMae, canClose, onde, isActive) {
 
     aba.onclick = () => {
         if (id !== notaAtivaIdGlobal) {
-            buscarNotaHibrida(id).then(res => {
-                if (res) abrirNotaNoEditor(id, res.dados, dbRef || window.db, authRef || window.auth, null, notaMaeIdLocal);
+            Promise.all([
+                buscarNotaHibrida(id),
+                buscarNotaHibrida(notaMaeIdLocal)
+            ]).then(async ([res, resMae]) => {
+                if (!res || !resMae) return;
+                sincronizarLateralComNotaMae(notaMaeIdLocal, resMae.dados, authRef || window.auth);
+                await abrirNotaNoEditor(
+                    id,
+                    res.dados,
+                    dbRef || window.db,
+                    authRef || window.auth,
+                    null,
+                    notaMaeIdLocal,
+                    { sincronizarBarraLateral: false }
+                );
+                sincronizarLateralComNotaMae(notaMaeIdLocal, resMae.dados, authRef || window.auth);
             });
         }
     };
@@ -279,21 +307,37 @@ function criarElementoAba(id, nome, isMae, canClose, onde, isActive) {
 }
 
 async function fecharAba(idAlvo, ondeAba) {
-    const db = dbRef || window.db;
-    const resMae = await buscarNotaHibrida(notaMaeIdLocal);
-    if (!resMae || !db) return;
-    const browser = normalizarAbasBrowser(resMae.dados.browser)
-        .filter(aba => aba.id !== idAlvo);
-    await updateDoc(doc(db, resMae.colecao, notaMaeIdLocal), { browser });
-    if (idAlvo === notaAtivaIdGlobal) {
-        buscarNotaHibrida(notaMaeIdLocal).then(r => abrirNotaNoEditor(notaMaeIdLocal, r.dados, db, authRef || window.auth, null, null));
-    } else {
-        buscarNotaHibrida(notaMaeIdLocal).then(r => carregarAbasDaNota(notaMaeIdLocal, r.dados, notaAtivaIdGlobal));
-    }
+    await fecharNotaEmAbaBrowser(idAlvo, notaMaeIdLocal);
 }
 
 function obterNotaMaeBrowserId() {
     return notaMaeIdLocal || window.notaAtualContext?.maeId || window.notaAtualContext?.notaId || null;
+}
+
+function aplicarPastaPaiNaNotaParaSincronizacao(dadosNotaMae, auth, pastaPaiForcada) {
+    if (pastaPaiForcada === undefined || pastaPaiForcada === null || !String(pastaPaiForcada).trim()) {
+        return dadosNotaMae;
+    }
+
+    const dados = { ...dadosNotaMae };
+    const onde = (dados.onde || 'local').toLowerCase();
+    const uid = auth?.currentUser?.uid || authRef?.currentUser?.uid || window.auth?.currentUser?.uid;
+
+    if (onde === 'share') {
+        if (!uid) return dados;
+        dados[uid] = { ...(dados[uid] || {}), pastapai: String(pastaPaiForcada) };
+    } else {
+        dados.pastapai = String(pastaPaiForcada);
+    }
+
+    return dados;
+}
+
+function sincronizarLateralComNotaMae(maeId, dadosNotaMae, auth, pastaPaiForcada = null) {
+    if (!maeId || !dadosNotaMae || typeof window.sincronizarBarraLateralComNota !== 'function') return;
+    const authActual = auth || authRef || window.auth;
+    const dadosParaSincronizar = aplicarPastaPaiNaNotaParaSincronizacao(dadosNotaMae, authActual, pastaPaiForcada);
+    window.sincronizarBarraLateralComNota(maeId, dadosParaSincronizar, authActual);
 }
 
 export async function verificarEspacoNasAbasBrowser(notaId = '__nova_nota__') {
@@ -304,10 +348,80 @@ export async function verificarEspacoNasAbasBrowser(notaId = '__nova_nota__') {
     return avaliarEspacoNasAbas(resMae.dados, notaId);
 }
 
-export async function abrirNotaEmAbaBrowser(notaId, ondePreferida = null) {
+export async function garantirNotaEmAbaBrowser(notaId, onde = 'local', maeIdOverride = null) {
+    const db = dbRef || window.db;
+    const maeId = maeIdOverride || obterNotaMaeBrowserId();
+    if (!db || !maeId || !notaId) return { ok: false, motivo: 'sem-contexto' };
+
+    const resMae = await buscarNotaHibrida(maeId);
+    if (!resMae) return { ok: false, motivo: 'nota-raiz-inexistente' };
+
+    const estado = await garantirAbaBrowser({
+        db,
+        colecaoMae: resMae.colecao,
+        maeId,
+        dadosNotaMae: resMae.dados,
+        notaId,
+        onde
+    });
+    if (!estado.disponivel) return { ok: false, motivo: 'limite', ...estado };
+
+    const browser = estado.browser || estado.abas;
+    const notaAtivaId = window.notaAtualContext?.notaId || notaAtivaIdGlobal || maeId;
+    await carregarAbasDaNota(maeId, { ...resMae.dados, browser }, notaAtivaId);
+    return { ok: true, ...estado };
+}
+
+export async function fecharNotaEmAbaBrowser(notaId, maeIdOverride = null) {
     const db = dbRef || window.db;
     const auth = authRef || window.auth;
-    const maeId = obterNotaMaeBrowserId();
+    const maeId = maeIdOverride || obterNotaMaeBrowserId();
+    if (!db || !maeId || !notaId) return { ok: false, motivo: 'sem-contexto' };
+
+    const abaVisual = Array.from(document.querySelectorAll('[data-browser-nota-id]'))
+        .find(elemento => elemento.dataset.browserNotaId === String(notaId));
+    if (abaVisual) abaVisual.hidden = true;
+
+    try {
+        const resMae = await buscarNotaHibrida(maeId);
+        if (!resMae) {
+            if (abaVisual) abaVisual.hidden = false;
+            return { ok: false, motivo: 'nota-raiz-inexistente' };
+        }
+
+        const abasActuais = normalizarAbasBrowser(resMae.dados.browser);
+        const browser = abasActuais.filter(aba => String(aba.id) !== String(notaId));
+        if (browser.length === abasActuais.length) return { ok: true, removida: false };
+
+        await updateDoc(doc(db, resMae.colecao, maeId), { browser });
+        const dadosMaeActualizados = { ...resMae.dados, browser };
+        const notaAtivaId = window.notaAtualContext?.notaId || notaAtivaIdGlobal;
+
+        if (String(notaAtivaId || '') === String(notaId)) {
+            sincronizarLateralComNotaMae(maeId, dadosMaeActualizados, auth);
+            await abrirNotaNoEditor(
+                maeId,
+                dadosMaeActualizados,
+                db,
+                auth,
+                null,
+                null,
+                { sincronizarBarraLateral: false }
+            );
+        } else {
+            await carregarAbasDaNota(maeId, dadosMaeActualizados, notaAtivaId || maeId);
+        }
+        return { ok: true, removida: true };
+    } catch (erro) {
+        if (abaVisual?.isConnected) abaVisual.hidden = false;
+        throw erro;
+    }
+}
+
+export async function abrirNotaEmAbaBrowser(notaId, ondePreferida = null, maeIdOverride = null, pastaPaiForcada = null) {
+    const db = dbRef || window.db;
+    const auth = authRef || window.auth;
+    const maeId = maeIdOverride || obterNotaMaeBrowserId();
     console.info('[BROWSER][BAIRRO-NOTAS] A preparar abertura:', {
         notaId,
         ondePreferida,
@@ -344,7 +458,17 @@ export async function abrirNotaEmAbaBrowser(notaId, ondePreferida = null) {
     console.info('[BROWSER][BAIRRO-NOTAS] Estado da aba:', estado);
     if (!estado.disponivel) return { ok: false, motivo: 'limite', ...estado };
 
-    await abrirNotaNoEditor(idAlvo, resAlvo.dados, db, auth, null, maeId);
+    sincronizarLateralComNotaMae(maeId, resMae.dados, auth, pastaPaiForcada);
+    await abrirNotaNoEditor(
+        idAlvo,
+        resAlvo.dados,
+        db,
+        auth,
+        null,
+        maeId,
+        { sincronizarBarraLateral: false }
+    );
+    sincronizarLateralComNotaMae(maeId, resMae.dados, auth, pastaPaiForcada);
     requestAnimationFrame(() => {
         document.querySelector('.center-col')?.scrollTo({ top: 0, behavior: 'auto' });
         window.scrollTo({ top: 0, behavior: 'auto' });
@@ -363,10 +487,15 @@ async function criarNotaEmAbaBrowser(btn) {
     const auth = authRef || window.auth;
     const maeId = obterNotaMaeBrowserId();
     if (!db || !auth?.currentUser || !maeId) return;
+    if (criacaoNotaAbaBrowserEmCurso) return;
 
     const textoOriginal = btn.innerHTML;
+    criacaoNotaAbaBrowserEmCurso = true;
     btn.disabled = true;
+    btn.style.pointerEvents = "none";
     btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> A criar...';
+    let notaCriada = null;
+    let abaBrowserCriada = false;
 
     try {
         const notaActualId = notaAtivaIdGlobal || window.notaAtualContext?.notaId || maeId;
@@ -386,7 +515,7 @@ async function criarNotaEmAbaBrowser(btn) {
         }
 
         await forcarGravacaoImediata();
-        const notaCriada = await criarNotaLocal(db, auth, {
+        notaCriada = await criarNotaLocal(db, auth, {
             pastapai: resActual.dados.pastapai || 'root'
         });
 
@@ -398,18 +527,48 @@ async function criarNotaEmAbaBrowser(btn) {
             notaId: notaCriada.id,
             onde: 'local'
         });
+        abaBrowserCriada = true;
 
-        window.pastaAtual = resActual.dados.pastapai || 'root';
-        window.itemSelecionadoId = notaCriada.id;
-        await abrirNotaNoEditor(notaCriada.id, notaCriada.dados, db, auth, null, maeId);
+        sincronizarLateralComNotaMae(maeId, resMae.dados, auth);
+        await abrirNotaNoEditor(
+            notaCriada.id,
+            notaCriada.dados,
+            db,
+            auth,
+            null,
+            maeId,
+            { sincronizarBarraLateral: false }
+        );
+        sincronizarLateralComNotaMae(maeId, resMae.dados, auth);
         document.getElementById('popup-browser-overlay')?.classList.remove('active');
     } catch (erro) {
         console.error('[BROWSER] Não foi possível criar a nota na aba:', erro);
+        if (notaCriada?.id) {
+            try {
+                if (abaBrowserCriada) await removerAbaBrowserCriada(db, maeId, notaCriada.id);
+                await removerNotaLocalCriada(db, notaCriada);
+            } catch (erroRollback) {
+                console.error('[BROWSER] Não foi possível desfazer a nota criada:', erroRollback);
+            }
+        }
         window.alert(erro.message || 'Não foi possível criar a nota.');
     } finally {
+        criacaoNotaAbaBrowserEmCurso = false;
         btn.disabled = false;
+        btn.style.pointerEvents = "auto";
         btn.innerHTML = textoOriginal;
     }
+}
+
+async function removerAbaBrowserCriada(db, maeId, notaId) {
+    const resMae = await buscarNotaHibrida(maeId);
+    if (!resMae || resMae.colecao !== 'Local') return;
+
+    const abasActuais = normalizarAbasBrowser(resMae.dados.browser);
+    const abasSemNota = abasActuais.filter(aba => String(aba.id) !== String(notaId));
+    if (abasSemNota.length === abasActuais.length) return;
+
+    await updateDoc(doc(db, resMae.colecao, maeId), { browser: abasSemNota });
 }
 
 export async function buscarNotaHibrida(id, ondePreferida = null) {

@@ -15,6 +15,7 @@ const NOMES_PLANOS = Object.freeze({
 let cachePlano = {
     uid: null,
     plano: null,
+    limite: null,
     expiraEm: 0
 };
 
@@ -24,16 +25,28 @@ function normalizarPlano(plano) {
         : 'free';
 }
 
+function normalizarLimite(limite, plano) {
+    const valor = Number(limite);
+    if (Number.isInteger(valor) && valor > 0) return valor;
+    return CAIXAS_POR_PLANO[plano] || CAIXAS_POR_PLANO.free;
+}
+
 async function obterPlanoComCache(uid) {
     const agora = Date.now();
-    if (cachePlano.uid === uid && cachePlano.plano && cachePlano.expiraEm > agora) {
-        return cachePlano.plano;
+    if (
+        cachePlano.uid === uid &&
+        cachePlano.plano &&
+        Number.isInteger(cachePlano.limite) &&
+        cachePlano.expiraEm > agora
+    ) {
+        return cachePlano;
     }
 
     const dados = await obterPlanoAtual();
     const plano = normalizarPlano(dados?.plan);
-    cachePlano = { uid, plano, expiraEm: agora + 30_000 };
-    return plano;
+    const limite = normalizarLimite(dados?.maxCaixasPorNota, plano);
+    cachePlano = { uid, plano, limite, expiraEm: agora + 30_000 };
+    return cachePlano;
 }
 
 export async function verificarLimiteCaixas(authRef, caixasAtuais, quantidadeAdicionar = 1) {
@@ -47,16 +60,17 @@ export async function verificarLimiteCaixas(authRef, caixasAtuais, quantidadeAdi
     const quantidade = Math.max(0, Number(quantidadeAdicionar) || 0);
     if (quantidade === 0) return true;
 
-    let plano;
+    let estadoPlano;
     try {
-        plano = await obterPlanoComCache(utilizador.uid);
+        estadoPlano = await obterPlanoComCache(utilizador.uid);
     } catch (erro) {
         console.error('[BOX-LIMITS] Não foi possível verificar o plano:', erro);
         window.alert('Não foi possível verificar o limite de caixas. Tenta novamente.');
         return false;
     }
 
-    const limite = CAIXAS_POR_PLANO[plano];
+    const plano = estadoPlano.plano;
+    const limite = estadoPlano.limite;
     if (totalAtual + quantidade <= limite) return true;
 
     const plural = quantidade === 1 ? 'caixa' : 'caixas';
@@ -68,5 +82,5 @@ export async function verificarLimiteCaixas(authRef, caixasAtuais, quantidadeAdi
 }
 
 export function limparCacheLimiteCaixas() {
-    cachePlano = { uid: null, plano: null, expiraEm: 0 };
+    cachePlano = { uid: null, plano: null, limite: null, expiraEm: 0 };
 }

@@ -1,12 +1,15 @@
 import { marcarFerramentaShareComoVista } from '../../share/share-notification-state.js';
 import { construirGruposFundidos, aplicarEstiloGrupoFundido } from './fundir-manager.js';
 import { obterFeaturesDisponiveis } from '../../settings/feature-admin.js';
+import { FERRAMENTAS_REGISTO } from '../../constants/ferramentas.js';
 
-const FEATURE_KEYS_POR_TIPO_CAIXA = Object.freeze({
-    noticias: 'ferramenta_noticias',
-    tempo: 'ferramenta_tempo',
-    gmail: 'ferramenta_gmail'
-});
+const FEATURE_KEYS_POR_TIPO_CAIXA = Object.freeze(
+    Object.fromEntries(
+        FERRAMENTAS_REGISTO
+            .filter(ferramenta => ferramenta.featureKey)
+            .map(ferramenta => [ferramenta.id, ferramenta.featureKey])
+    )
+);
 
 async function filtrarCaixasSemAcesso(caixas, authRef) {
     const tiposProtegidos = new Set(Object.keys(FEATURE_KEYS_POR_TIPO_CAIXA));
@@ -18,7 +21,8 @@ async function filtrarCaixasSemAcesso(caixas, authRef) {
         return caixas.filter(caixa => {
             const featureKey = FEATURE_KEYS_POR_TIPO_CAIXA[caixa.tipo];
             if (!featureKey) return true;
-            return acessos.get(featureKey)?.allowed !== false;
+            const acesso = acessos.get(featureKey);
+            return acesso?.allowed !== false && Number(acesso?.active) !== 0;
         });
     } catch (erro) {
         console.warn('[EDITOR-RENDER] Não foi possível verificar o acesso às ferramentas:', erro);
@@ -212,6 +216,9 @@ async function renderizarCaixa(caixa, raciociniosVivos, handlers) {
         case "tempo":
             modulo = await import('../ferramentas/tempo.js');
             return modulo.criarTempo(caixa, acionarGravacao, onApagar, moverCaixa, prepararInsercao);
+        case "inspirador":
+            modulo = await import('../ferramentas/inspirador.js');
+            return modulo.criarInspirador(caixa, acionarGravacao, onApagar, moverCaixa, prepararInsercao);
         case "gmail":
             modulo = await import('../ferramentas/gmail.js');
             return modulo.criarGmail(caixa, acionarGravacao, onApagar, moverCaixa, prepararInsercao);
@@ -227,9 +234,11 @@ async function renderizarCaixa(caixa, raciociniosVivos, handlers) {
                 alvo => abrirPaletaFirmamento(alvo, acionarGravacao)
             );
         }
-        default:
+        case "contentor":
             modulo = await import('../ferramentas/contentor.js');
             return modulo.criarContentorLaranja(caixa, acionarGravacao, onApagar, abrirPaleta, abrirPopupPartilhar, moverCaixa, abrirPopupTags, prepararInsercao);
+        default:
+            throw new Error(`Tipo de ferramenta não registado: ${caixa.tipo || 'sem tipo'}`);
     }
 }
 
@@ -337,7 +346,7 @@ function aplicarMarcadorNovidade(el, caixa, dadosNota, notaId, db, auth) {
     const uid = auth?.currentUser?.uid;
     if (!novidade || !uid || novidade.by === uid || (novidade.viewedBy || []).includes(uid)) return;
 
-    // Procura o input/textarea do tÃ­tulo da ferramenta
+    // Procura o input/textarea do título da ferramenta
     const titleInput = el.querySelector('.tool-title-input') || el.querySelector('textarea, input[type="text"]');
     
     // Ponto visual de novidade
@@ -350,7 +359,7 @@ function aplicarMarcadorNovidade(el, caixa, dadosNota, notaId, db, auth) {
 
     if (titleInput) {
         corOriginalTitulo = titleInput.style.color;
-        titleInput.style.color = "#ef4444"; // ðŸ”´ TÃ­tulo fica vermelho!
+        titleInput.style.color = "#ef4444"; // 🔴 Título fica vermelho!
         titleInput.style.transition = "color 0.4s ease";
     }
 
@@ -373,7 +382,7 @@ function aplicarMarcadorNovidade(el, caixa, dadosNota, notaId, db, auth) {
         }).catch(err => console.error("Erro ao atualizar viewedBy da ferramenta:", err));
     };
 
-    // ðŸ–±ï¸ / ðŸ“± Ao passar com o rato ou tocar no ecrÃ£ (mobile), limpa o vermelho!
+    // 🖱️ / 📱 Ao passar com o rato ou tocar no ecrã (mobile), limpa o vermelho!
     el.addEventListener('mouseenter', limparNovidade, { once: true });
     el.addEventListener('touchstart', limparNovidade, { once: true });
 }

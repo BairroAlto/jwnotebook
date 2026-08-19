@@ -53,6 +53,9 @@ async function carregarNotaPublica() {
                 } else if (caixa.tipo === "citacaobiblica") {
                     const m = await import('../editor/ferramentas/citacaobiblica.js');
                     elemento = m.criarCitacaoBiblica(caixa, noop, noop, noop);
+                } else if (caixa.tipo === "inspirador") {
+                    const m = await import('../editor/ferramentas/inspirador.js');
+                    elemento = m.criarInspirador(caixa, noop, noop, noop, noop);
                 } else {
                     const m = await import('../editor/ferramentas/contentor.js');
                     elemento = m.criarContentorLaranja(caixa, noop, noop, noop, noop, noop, noop, noop);

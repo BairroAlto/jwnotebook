@@ -2,7 +2,7 @@
 -- A aba Administração não entra nesta lista: é exclusiva do administrador.
 INSERT OR IGNORE INTO feature_access (feature_key, label, description, min_plan, active)
 VALUES
-  ('painel_geral', 'Painel — Geral', 'Perfil, avatar e identidade visual.', 'free', 1),
+  ('painel_geral', 'Painel — Avatar', 'Perfil, avatar e identidade visual.', 'free', 1),
   ('painel_planos', 'Painel — Planos', 'Consulta e gestão dos planos da conta.', 'free', 1),
   ('painel_loja', 'Painel — Loja', 'Ferramentas adicionais para instalar na nota.', 'free', 1),
   ('painel_amigos', 'Painel — Amigos', 'Convites e gestão de amizades.', 'free', 1),

@@ -63,6 +63,6 @@ export const FERRAMENTAS_MANUAL = Object.freeze([
 
 export const MANUAL_CATEGORIAS = Object.freeze([
     { id: 'caixas', nome: 'Caixas conectoras' },
-    { id: 'ligacao', nome: 'Central de ligação' },
+    { id: 'ligacao', nome: 'Centro de Conexões' },
     { id: 'personalizacao', nome: 'Central de personalização' }
 ]);

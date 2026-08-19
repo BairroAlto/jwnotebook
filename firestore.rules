@@ -28,7 +28,7 @@ service cloud.firestore {
     }
 
     function isSharingAtiva(rsc) {
-      return rsc.data.partilhado == "ativo" ||
+      return rsc.data.get("partilhado", "") == "ativo" ||
              ("shareSettings" in rsc.data && rsc.data.shareSettings.shared == true);
     }
 
@@ -42,8 +42,27 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function acceptanceUnchanged() {
-      return request.resource.data.get("aceite", null) == resource.data.get("aceite", null);
+    function userSecurityFieldsUnchanged() {
+      return request.resource.data.get("aceite", null) == resource.data.get("aceite", null) &&
+             request.resource.data.get("chave", null) == resource.data.get("chave", null) &&
+             request.resource.data.get("uid", null) == resource.data.get("uid", null) &&
+             request.resource.data.get("email", null) == resource.data.get("email", null) &&
+             request.resource.data.get("ativo", null) == resource.data.get("ativo", null) &&
+             request.resource.data.get("createdAt", null) == resource.data.get("createdAt", null);
+    }
+
+    function publicProfileValid(userId) {
+      return request.auth.token.email is string &&
+             request.resource.data.keys().hasOnly([
+               "uid", "nome", "email", "emailNormalizado", "palcoPartilha", "actualizadoEm"
+             ]) &&
+             request.resource.data.uid == userId &&
+             request.resource.data.nome is string &&
+             request.resource.data.nome.size() <= 80 &&
+             request.resource.data.email == request.auth.token.email.lower() &&
+             request.resource.data.emailNormalizado == request.auth.token.email.lower() &&
+             request.resource.data.palcoPartilha in ["on", "off"] &&
+             request.resource.data.actualizadoEm == request.time;
     }
 
     // ======================================================
@@ -51,17 +70,31 @@ service cloud.firestore {
     // ======================================================
 
     match /users/{userId} {
-      // O perfil guarda as preferências pessoais, incluindo o array calendarios.
-      allow get: if isCurrentUser(userId) || isApproved();
-      allow list: if isApproved();
+      // O documento users é privado: contém preferências, permissões e dados
+      // internos. Dados sociais mínimos vivem em PerfisPublicos.
+      allow get: if isCurrentUser(userId) || isRuler();
+      allow list: if isRuler();
       allow create: if isCurrentUser(userId) &&
-                    request.resource.data.aceite == "off";
-      allow update: if isCurrentUser(userId) &&
-                    (acceptanceUnchanged() || isApproved());
+                    request.auth.token.email is string &&
+                    request.resource.data.aceite == "off" &&
+                    request.resource.data.email == request.auth.token.email.lower() &&
+                    request.resource.data.get("uid", userId) == userId &&
+                    !("chave" in request.resource.data);
+      allow update: if isRuler() ||
+                    (isCurrentUser(userId) && userSecurityFieldsUnchanged());
 
       match /{allSubcollections=**} {
         allow read, write: if isSignedIn() && request.auth.uid == userId;
       }
+    }
+
+    match /PerfisPublicos/{userId} {
+      allow get: if isApproved();
+      allow list: if isApproved() && request.query.limit <= 1;
+      allow create, update: if isApproved() &&
+                            isCurrentUser(userId) &&
+                            publicProfileValid(userId);
+      allow delete: if isCurrentUser(userId) || isRuler();
     }
 
     match /configuracoes/{userId} {
@@ -73,15 +106,26 @@ service cloud.firestore {
     // ======================================================
 
     match /pastas/{pastaId} {
+      function pastaActual() {
+        return get(/databases/$(database)/documents/pastas/$(pastaId));
+      }
+
+      function podeAcederSubcoleccoesDaPasta() {
+        return isApproved() &&
+               (isOwner(pastaActual()) ||
+                isCollaborator(pastaActual()) ||
+                isSharingAtiva(pastaActual()));
+      }
+
       allow read: if isApproved() &&
                   (resource == null || isOwner(resource) || isCollaborator(resource) || isSharingAtiva(resource));
-      allow create: if isApproved();
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid;
       allow update: if isApproved() &&
                     (isOwner(resource) || isCollaborator(resource) || isSharingAtiva(resource));
       allow delete: if isApproved() && isOwner(resource);
 
       match /{allSubcollections=**} {
-        allow read, write: if isApproved();
+        allow read, write: if podeAcederSubcoleccoesDaPasta();
       }
     }
 
@@ -181,6 +225,33 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isApproved();
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // Snapshot público mínimo. Nunca expõe Local, Share ou caixas privadas.
+    match /SitesPublicos/{docId} {
+      // A leitura pública passa exclusivamente pelo Worker, que valida o plano.
+      allow read: if false;
+      // A colecção antiga já não recebe novas publicações.
+      allow create, update: if false;
+      allow delete: if isApproved() &&
+                    (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    // Publicações novas. A leitura externa é filtrada também pelo Worker,
+    // que confirma o plano actual do proprietário antes de servir o conteúdo.
+    match /sites/{docId} {
+      // Impede contornar a verificação do plano através da API Firestore.
+      allow read: if false;
+      allow create: if isApproved() && request.resource.data.userId == request.auth.uid &&
+                    request.resource.data.estado == "on" && request.resource.data.notaId == docId;
+      allow update: if isApproved() && resource.data.userId == request.auth.uid &&
+                    request.resource.data.userId == resource.data.userId &&
+                    request.resource.data.notaId == resource.data.notaId &&
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                      "estado", "titulo", "capaUrl", "capaFileId", "capaAltura", "largura", "mostrarBrowser", "browserIds", "caixas", "actualizadoEm"
+                    ]);
+      allow delete: if isApproved() &&
+                    (resource == null || resource.data.userId == request.auth.uid);
     }
 
     // --- COLEÇÃO ATALHO (PINS) ---

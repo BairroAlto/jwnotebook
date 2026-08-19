@@ -2,6 +2,26 @@
 import { SharedUI } from '../editor/modulos/shared/shared-ui.js';
 import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
 
+function definirVisibilidadeAbaFontes(visivel) {
+    const botao = document.getElementById('btn-tab-fontes');
+    if (!botao) return;
+
+    botao.style.display = visivel ? 'inline-flex' : 'none';
+
+    if (!visivel && botao.classList.contains('active')) {
+        botao.classList.remove('active');
+        document.getElementById('btn-tab-indice')?.classList.add('active');
+
+        const fontes = document.getElementById('fontes-nota-container');
+        const indice = document.getElementById('indice-nota-container');
+        if (fontes) fontes.style.display = 'none';
+        if (indice) {
+            indice.style.display = 'flex';
+            indice.style.flexDirection = 'column';
+        }
+    }
+}
+
 /**
  * CARREGA O RESUMO DE FONTES DA NOTA ATUAL
  * @param {Array} caixasFiltradas - Lista de caixas enviada pelo Dispatcher
@@ -11,9 +31,25 @@ export function carregarFontesGlobaisDaNota(caixasFiltradas, append = false) {
     const container = document.getElementById('fontes-nota-container');
     if (!container) return;
 
+    const caixas = Array.isArray(caixasFiltradas) ? caixasFiltradas : [];
+    const temFontes = caixas.some(caixa => {
+        const links = Array.isArray(caixa?.referencias) ? caixa.referencias : [];
+        const codices = Array.isArray(caixa?.codex)
+            ? caixa.codex.filter(item => item?.estado === 'on')
+            : [];
+        const temPalco = Boolean(caixa?.palcoMeta?.title);
+        return links.length > 0 || codices.length > 0 || temPalco;
+    });
+
+    definirVisibilidadeAbaFontes(temFontes || (append && Boolean(document.getElementById('lista-fontes-nota')?.children.length)));
+
     // 1. Limpeza Inicial do Registo Global (Usado para o "Salto" para a Biblioteca)
     if (!append) {
         window.__codexGlobalRegistry = {};
+        if (!temFontes) {
+            container.replaceChildren();
+            return;
+        }
         container.innerHTML = `
             <div style="padding: 10px; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05);">
                 <p style="font-size: 10px; color: var(--primary); font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin: 0;">
@@ -25,10 +61,11 @@ export function carregarFontesGlobaisDaNota(caixasFiltradas, append = false) {
     }
 
     const listaAlvo = document.getElementById('lista-fontes-nota');
+    if (!listaAlvo) return;
     let encontrouQualquerCoisa = false;
 
     // 2. Processar caixas permitidas
-    caixasFiltradas.forEach(caixa => {
+    caixas.forEach(caixa => {
         const links = caixa.referencias || [];
         const codices = (caixa.codex || []).filter(cx => cx.estado === 'on');
         const palcoMeta = caixa.palcoMeta || null;

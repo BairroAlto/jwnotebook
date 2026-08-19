@@ -9,7 +9,21 @@ function definirVisibilidadeAbaTextos(visivel) {
     const botao = document.getElementById('btn-tab-textos');
     if (!botao) return;
     botao.style.display = visivel ? 'inline-flex' : 'none';
-    if (!visivel && botao.classList.contains('active')) window.switchEyeTab?.('indice');
+    // O detetor é chamado pelo Dispatcher enquanto o Índice pode estar a ser
+    // renderizado. Não chamar switchEyeTab aqui evita uma reentrada que limpa
+    // o Índice ou tenta filtrá-lo antes de ctx.caixasAtuais estar disponível.
+    if (!visivel && botao.classList.contains('active')) {
+        botao.classList.remove('active');
+        document.getElementById('btn-tab-indice')?.classList.add('active');
+
+        const indice = document.getElementById('indice-nota-container');
+        const textos = document.getElementById('textos-container');
+        if (textos) textos.style.display = 'none';
+        if (indice) {
+            indice.style.display = 'flex';
+            indice.style.flexDirection = 'column';
+        }
+    }
 }
 
 function mostrarAvisoNavegacao(mensagem) {

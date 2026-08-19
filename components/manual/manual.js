@@ -1,5 +1,7 @@
 import { FERRAMENTAS_MANUAL } from './manual-data.js';
 import { renderManualDemo } from './manual-demos.js';
+import { MANUAL_ACOES } from './manual-actions.js';
+import { inicializarTutorialLigacao } from './manual-connection-tutorial.js';
 
 let manualInicializado = false;
 let fecharAnterior = null;
@@ -51,7 +53,17 @@ function atualizarFerramenta(tipo) {
     if (elementos.nota) elementos.nota.textContent = ferramenta.nota;
 
     limparDemoAtual();
-    limparDemoAtual = renderManualDemo(elementos.demo, ferramenta.id);
+    limparDemoAtual = renderManualDemo(elementos.demo, ferramenta.id, {
+        onAction: executarAcaoDemo
+    });
+}
+
+function executarAcaoDemo(acao) {
+    if (acao === MANUAL_ACOES.LIGACAO || acao === MANUAL_ACOES.PERSONALIZACAO) {
+        selecionarCategoria(acao);
+        if (acao === MANUAL_ACOES.LIGACAO) window.selecionarAbaManualLigacao?.('hub');
+        document.querySelector(`[data-manual-category="${acao}"]`)?.focus();
+    }
 }
 
 function criarBotaoFerramenta(ferramenta) {
@@ -101,6 +113,7 @@ export function inicializarManual() {
     if (!elementos.overlay || !elementos.btnAbrir) return;
 
     manualInicializado = true;
+    inicializarTutorialLigacao({ onNavigate: selecionarCategoria });
     renderizarListaFerramentas(elementos.lista);
     elementos.btnAbrir.addEventListener('click', abrirManual);
     elementos.btnFechar?.addEventListener('click', fecharManual);
@@ -110,7 +123,11 @@ export function inicializarManual() {
     });
 
     document.querySelectorAll('[data-manual-category]').forEach(botao => {
-        botao.addEventListener('click', () => selecionarCategoria(botao.dataset.manualCategory));
+        botao.addEventListener('click', () => {
+            const categoria = botao.dataset.manualCategory;
+            selecionarCategoria(categoria);
+            if (categoria === 'ligacao') window.selecionarAbaManualLigacao?.('hub');
+        });
     });
 
     elementos.overlay.addEventListener('click', evento => {
@@ -123,4 +140,11 @@ export function inicializarManual() {
 
     window.abrirManual = abrirManual;
     window.fecharManual = fecharManual;
+    window.abrirManualParaCategoria = categoria => {
+        abrirManual();
+        if (categoria === 'ligacao' || categoria === 'personalizacao') {
+            selecionarCategoria(categoria);
+            if (categoria === 'ligacao') window.selecionarAbaManualLigacao?.('hub');
+        }
+    };
 }

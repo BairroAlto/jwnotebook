@@ -10,6 +10,7 @@ import {
     browserLocalPersistence 
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { criarGuardaDeAutenticacao } from './auth-guard.js';
+import { sincronizarPerfilPublico } from '../../users/public-profile.js';
 
 /**
  * Inicializa o sistema de autenticação e vigia o estado do utilizador.
@@ -39,9 +40,14 @@ export function iniciarAutenticacao(app, db, { gerirLoading = true } = {}) {
     const loginError = document.getElementById('login-error');
 
     // 1. VIGIAR ESTADO DE LOGIN (Tempo Real)
-    onAuthStateChanged(auth, (user) => {
+    onAuthStateChanged(auth, async (user) => {
         if (user) {
             console.log("✅ AUTH: Bem-vindo,", user.email);
+            try {
+                await sincronizarPerfilPublico(db, auth);
+            } catch (erro) {
+                console.warn('[AUTH] Não foi possível sincronizar o perfil público mínimo.', erro);
+            }
             
             // Esconder ecrãs de acesso
             if(loginScreen) loginScreen.style.display = 'none';

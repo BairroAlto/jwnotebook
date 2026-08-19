@@ -6,12 +6,13 @@ let isManualScrolling = false;
 let notaIdCacheIndice = ""; 
 let frameScrollIndice = null;
 let idIndiceAtivo = "";
+let editorScrollIndice = null;
+let handlerScrollIndice = null;
 
 export function renderizarIndice(caixasFiltradas, isModoPost = false) {
     const container = document.getElementById('indice-nota-container');
     if (!container) return;
 
-    idIndiceAtivo = "";
     if (frameScrollIndice !== null) {
         cancelAnimationFrame(frameScrollIndice);
         frameScrollIndice = null;
@@ -24,12 +25,21 @@ export function renderizarIndice(caixasFiltradas, isModoPost = false) {
     ativas.sort((a, b) => isModoPost ? (b.ordem - a.ordem) : (a.ordem - b.ordem));
 
     if (ativas.length === 0) {
-        container.innerHTML = `<div style="text-align:center; padding:40px; color:var(--text-muted); font-size:11px; opacity:0.5;">Nenhum conteúdo visível neste modo.</div>`;
+        container.innerHTML = `<div data-indice-vazio style="text-align:center; padding:40px; color:var(--text-muted); font-size:11px; opacity:0.5;">Nenhum conteúdo visível neste modo.</div>`;
         return;
     }
 
-    const fragmento = document.createDocumentFragment();
     const CORES_IDENTIDADE = { webcard: "#8b5cf6", cartaovisita: "#d4af37", citacaobiblica: "#94a3b8", elevador: "#ef4444", firmamento: "#cbd5e1" };
+    const idsAtivos = new Set(ativas.map(caixa => String(caixa.id)));
+
+    // Mantém o cartão activo quando a actualização é apenas uma alteração de texto.
+    // O índice é actualizado por reconciliação, em vez de apagar/recriar todos os cartões.
+    if (idIndiceAtivo && !idsAtivos.has(String(idIndiceAtivo))) idIndiceAtivo = "";
+
+    const cartoesExistentes = new Map(
+        [...container.querySelectorAll('.indice-card[id^="nav-card-"]')]
+            .map(card => [card.id.slice('nav-card-'.length), card])
+    );
 
     ativas.forEach(caixa => {
         const config = IDENTIDADE_FERRAMENTAS[caixa.tipo] || IDENTIDADE_FERRAMENTAS.contentor;
@@ -52,40 +62,79 @@ export function renderizarIndice(caixasFiltradas, isModoPost = false) {
             default: resumo = caixa.titulo || (caixa.conteudo ? caixa.conteudo.substring(0, 80) : `Nova ${config.nome}`);
         }
 
-        const card = document.createElement('div');
-        card.id = `nav-card-${caixa.id}`;
-        card.className = "indice-card";
-        card.style.borderLeftColor = corFinal;
+        const idCaixa = String(caixa.id);
+        const card = cartoesExistentes.get(idCaixa) || criarCardIndice(caixa);
+        actualizarCardIndice(card, caixa, config, corFinal, resumo, CORES_IDENTIDADE);
 
-        const fKey = caixa.foco || "original";
-        const labelParaMostrar = (fKey !== "original" && !CORES_IDENTIDADE[caixa.tipo]) ? fKey.toUpperCase().replace('_', ' ') : config.nome;
-
-        card.innerHTML = `
-            <div class="label-tipo" style="color:${corFinal}">
-                <i class="${config.icon}"></i>
-                <span>${labelParaMostrar}</span>
-            </div>
-            <div class="resumo-texto">${resumo}</div>
-        `;
-
-        card.onclick = () => {
-            const el = document.getElementById(`bloco-${caixa.id}`);
-            if (el) {
-                isManualScrolling = true;
-                aplicarDestaqueVisual(caixa.id);
-                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                setTimeout(() => { isManualScrolling = false; }, 800);
-            }
-        };
-
-        fragmento.appendChild(card);
+        // Reordena apenas quando a ordem da lista mudou; cartões já existentes
+        // continuam a ser os mesmos nós DOM.
+        const cartaoNaPosicao = container.children[ativas.indexOf(caixa)];
+        if (cartaoNaPosicao !== card) {
+            container.insertBefore(card, cartaoNaPosicao || null);
+        }
+        cartoesExistentes.delete(idCaixa);
     });
 
-    container.innerHTML = "";
-    container.appendChild(fragmento);
+    // Remove cartões que deixaram de estar visíveis, sem tocar nos restantes.
+    cartoesExistentes.forEach(card => card.remove());
+    container.querySelector('[data-indice-vazio]')?.remove();
     
     // Reiniciar o ScrollSpy com a lista de blocos ativos atualizada
     configurarScrollSpy(ativas);
+}
+
+function criarCardIndice(caixa) {
+    const card = document.createElement('div');
+    card.id = `nav-card-${caixa.id}`;
+    card.className = "indice-card";
+    card.onclick = () => {
+        const el = document.getElementById(`bloco-${caixa.id}`);
+        if (el) {
+            isManualScrolling = true;
+            aplicarDestaqueVisual(caixa.id);
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            setTimeout(() => { isManualScrolling = false; }, 800);
+        }
+    };
+    return card;
+}
+
+function actualizarCardIndice(card, caixa, config, corFinal, resumo, coresIdentidade) {
+    const fKey = caixa.foco || "original";
+    const labelParaMostrar = (fKey !== "original" && !coresIdentidade[caixa.tipo])
+        ? fKey.toUpperCase().replace('_', ' ')
+        : config.nome;
+    const assinatura = `${config.icon}|${labelParaMostrar}|${corFinal}`;
+
+    card.style.borderLeftColor = corFinal;
+    if (card.dataset.indiceCabecalho !== assinatura) {
+        card.dataset.indiceCabecalho = assinatura;
+        let cabecalho = card.querySelector('.label-tipo');
+        if (!cabecalho) {
+            cabecalho = document.createElement('div');
+            cabecalho.className = 'label-tipo';
+            const icon = document.createElement('i');
+            const label = document.createElement('span');
+            cabecalho.append(icon, label);
+            card.appendChild(cabecalho);
+        }
+        cabecalho.style.color = corFinal;
+        cabecalho.querySelector('i').className = config.icon;
+        cabecalho.querySelector('span').textContent = labelParaMostrar;
+    }
+
+    // O resumo só é escrito quando os seus dados mudam. Quando o texto novo
+    // já está fora das duas linhas visíveis, nem sequer há repintura do card.
+    if (card.dataset.indiceResumo !== resumo) {
+        card.dataset.indiceResumo = resumo;
+        let resumoEl = card.querySelector('.resumo-texto');
+        if (!resumoEl) {
+            resumoEl = document.createElement('div');
+            resumoEl.className = 'resumo-texto';
+            card.appendChild(resumoEl);
+        }
+        resumoEl.textContent = resumo;
+    }
 }
 
 /**
@@ -93,9 +142,15 @@ export function renderizarIndice(caixasFiltradas, isModoPost = false) {
  */
 function configurarScrollSpy(ativas) {
     const editor = document.querySelector('.center-col');
-    if (!editor || window._indiceScrollInited) return;
+    if (!editor) return;
 
-    editor.addEventListener('scroll', () => {
+    // O Índice é redesenhado quando as caixas mudam. Remover o listener
+    // anterior impede que o scroll fique ligado a uma lista antiga.
+    if (editorScrollIndice && handlerScrollIndice) {
+        editorScrollIndice.removeEventListener('scroll', handlerScrollIndice);
+    }
+
+    handlerScrollIndice = () => {
         if (isManualScrolling) return;
 
         if (frameScrollIndice !== null) return;
@@ -107,18 +162,20 @@ function configurarScrollSpy(ativas) {
 
             // --- 1. SENSOR DE TOPO ABSOLUTO (PRIMEIRO ITEM) ---
             if (scrollPos < 50) {
-                if (ativas[0]) aplicarDestaqueVisual(ativas[0].id, { deslocarIndice: false });
+                if (ativas[0]) aplicarDestaqueVisual(ativas[0].id);
                 return;
             }
 
             // --- 2. SENSOR DE FUNDO ABSOLUTO (ÚLTIMO ITEM) ---
             if (scrollPos >= scrollTotal - 50) {
-                if (ativas.length > 0) aplicarDestaqueVisual(ativas[ativas.length - 1].id, { deslocarIndice: false });
+                if (ativas.length > 0) aplicarDestaqueVisual(ativas[ativas.length - 1].id);
                 return;
             }
 
             // --- 3. LÓGICA DE PROXIMIDADE (ITENS INTERMÉDIOS) ---
-            const blocos = document.querySelectorAll('[id^="bloco-"]');
+            const blocos = ativas
+                .map(caixa => document.getElementById(`bloco-${caixa.id}`))
+                .filter(Boolean);
             let blocoMaisProximo = null;
             let menorDistancia = Infinity;
 
@@ -133,12 +190,18 @@ function configurarScrollSpy(ativas) {
             });
 
             if (blocoMaisProximo) {
-                aplicarDestaqueVisual(blocoMaisProximo, { deslocarIndice: false });
+                aplicarDestaqueVisual(blocoMaisProximo);
             }
         });
-    }, { passive: true });
+    };
 
+    editor.addEventListener('scroll', handlerScrollIndice, { passive: true });
+    editorScrollIndice = editor;
     window._indiceScrollInited = true;
+
+    // Atualiza também ao abrir/reconstruir a aba, sem esperar pelo próximo
+    // movimento manual do editor.
+    handlerScrollIndice();
 }
 
 /**

@@ -2,6 +2,9 @@
 -- Pode ser executado em instalações existentes sem alterar as restantes features.
 INSERT OR IGNORE INTO feature_access (feature_key, label, description, min_plan, active)
 VALUES
+  ('aba_laboratorio', 'Aba Laboratório', 'Acesso ao Laboratório de ferramentas e opções.', 'free', 1),
+  ('aba_modelos', 'Aba Modelos', 'Acesso aos modelos guardados pelo utilizador.', 'free', 1),
+  ('sites_publicos', 'Sites públicos', 'Publicação segura de notas em páginas Sites sem login', 'free', 1),
   ('modo_normal', 'Modo Normal', 'Modo de nota com escrita sequencial padrão', 'free', 1),
   ('modo_arquivo', 'Modo Arquivo', 'Modo de nota com gavetas e prateleiras', 'free', 1),
   ('modo_post', 'Modo Post', 'Modo de nota com feed invertido', 'free', 1),
