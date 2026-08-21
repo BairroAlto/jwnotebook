@@ -1,5 +1,6 @@
 import { BIBLIA_METADATA } from '../lists/biblia.js';
 import { obterTextoSimplesRico } from '../editor/modulos/rich-text-editor.js';
+import { textoBairroBook } from './book-bairro.js';
 
 const BOOK_ALIASES = new Map();
 BIBLIA_METADATA.forEach(livro => {
@@ -31,12 +32,14 @@ export function textoDaCaixa(caixa) {
     const partes = [];
     if (caixa.titulo) partes.push(caixa.titulo);
     if (caixa.conteudo) partes.push(obterTextoSimplesRico(caixa.conteudo));
+    if (caixa.tipo === 'bairro') partes.push(textoBairroBook(caixa));
     if (Array.isArray(caixa.textosanexados)) {
         caixa.textosanexados.forEach(item => partes.push(`${item.livro} ${item.cap}:${item.ver} ${item.texto || ""}`));
     }
     if (caixa.url) partes.push(caixa.url);
     return partes.filter(Boolean).join("\n");
 }
+
 
 export function textoDaNota(dadosNota, caixas) {
     const linhas = [dadosNota?.nome || "Sem titulo"];

@@ -3,6 +3,7 @@ import { BookState } from './book-state.js';
 import { escapeHtml, linkarReferencias } from './book-utils.js';
 import { construirGruposFundidos } from '../editor/modulos/fundir-manager.js';
 import { ehHtmlRico, sanitizarHtmlRico } from '../editor/modulos/rich-text-editor.js';
+import { renderizarBairroBook } from './book-bairro.js';
 
 const TIPOS = {
     contentor: { nome: 'Contentor', icon: 'fa-box-archive', cor: '#f97316' },
@@ -10,7 +11,9 @@ const TIPOS = {
     subnota: { nome: 'Subnota', icon: 'fa-file-pen', cor: '#3b82f6' },
     raciocinio: { nome: 'Raciocinio', icon: 'fa-brain', cor: '#f59e0b' },
     caixatexto: { nome: 'Anotacao', icon: 'fa-note-sticky', cor: '#818cf8' },
-    citacaobiblica: { nome: 'Citação Bíblica', icon: 'fa-book-open', cor: '#94a3b8' }
+    citacaobiblica: { nome: 'Citação Bíblica', icon: 'fa-book-open', cor: '#94a3b8' },
+    firmamento: { nome: 'Firmamento', icon: 'fa-aquarius', cor: '#d4af37' },
+    bairro: { nome: 'Bairro Tarefas', icon: 'fa-city', cor: '#c084fc' }
 };
 
 export function getVisibleBookBoxes() {
@@ -54,6 +57,8 @@ function obterDadosCaixa(caixa, index, settings) {
     const id = String(caixa.id || 'caixa-' + index);
     const titulo = caixa.titulo || meta.nome;
     const texto = caixa.conteudo || caixa.texto || '';
+    const isFirmamento = caixa.tipo === 'firmamento';
+    const isBairro = caixa.tipo === 'bairro';
     const textoBiblicoHtml = renderizarTextosBiblicos(caixa);
     const imagens = obterImagensCaixa(caixa);
     const destaque = caixa.destaques || caixa.destaque || '';
@@ -61,11 +66,22 @@ function obterDadosCaixa(caixa, index, settings) {
     const tags = [caixa.foco, nomeDestaque]
         .filter(Boolean)
         .filter(tag => String(tag).trim().toLowerCase() !== 'original');
-    const style = '--book-accent:' + (caixa.corFocus || meta.cor) + ';' + (destaque ? '--book-highlight:' + destaque + ';' : '');
+    const corFirmamento = obterCorSegura(caixa.corFirmamento, '#050505');
+    const textoFirmamento = obterCorSegura(caixa.textoFirmamento, '#ffffff');
+    const corBairro = obterCorSegura(caixa.corBairro, '#c084fc');
+    const style = isFirmamento
+        ? `--book-accent:${corFirmamento};--book-firmamento-fundo:${corFirmamento};--book-firmamento-texto:${textoFirmamento};--book-firmamento-destaque:${obterCorSegura(destaque, 'transparent')};`
+        : isBairro
+            ? `--book-accent:${corBairro};--book-bairro-cor:${corBairro};${destaque ? '--book-highlight:' + destaque + ';' : ''}`
+            : '--book-accent:' + (caixa.corFocus || meta.cor) + ';' + (destaque ? '--book-highlight:' + destaque + ';' : '');
     const tagHtml = tags.length
         ? '<div class="book-tags">' + tags.map(tag => '<span class="book-piccard" style="--tag-color:' + escapeHtml(meta.cor) + '">' + escapeHtml(tag) + '</span>').join('') + '</div>'
         : '';
-    const content = textoBiblicoHtml || prepararConteudoLivro(texto);
+    const content = isFirmamento
+        ? (prepararConteudoLivro(texto) || '<p><span class="book-inline-empty">Caixa vazia.</span></p>')
+        : isBairro
+            ? renderizarBairroBook(caixa)
+            : (textoBiblicoHtml || prepararConteudoLivro(texto));
     const imagensHtml = imagens.length
         ? '<div class="book-gallery ' + obterClasseGaleria(caixa.urldimensao) + '">' + imagens.map(url =>
             '<div class="book-gallery-card"><img src="' + escapeHtml(url) + '" alt="" loading="lazy"></div>'
@@ -74,7 +90,25 @@ function obterDadosCaixa(caixa, index, settings) {
     const topTags = settings.tagPosition === 'top' ? tagHtml : '';
     const bottomTags = settings.tagPosition === 'top' ? '' : tagHtml;
 
-    return { meta, id, style, destaque, topTags, bottomTags, content, imagensHtml, titulo, temTexto: Boolean(texto || textoBiblicoHtml) };
+    return {
+        meta,
+        id,
+        style,
+        destaque,
+        topTags,
+        bottomTags,
+        content,
+        imagensHtml,
+        titulo,
+        contentClass: isFirmamento ? 'book-firmamento-content' : isBairro ? 'book-bairro-content' : 'book-box-content',
+        boxClass: isFirmamento ? 'book-box-firmamento' : isBairro ? 'book-box-bairro' : '',
+        temTexto: isFirmamento || isBairro || Boolean(texto || textoBiblicoHtml)
+    };
+}
+
+function obterCorSegura(valor, fallback) {
+    const cor = String(valor || '').trim();
+    return /^#[0-9a-f]{3,8}$/i.test(cor) ? cor : fallback;
 }
 
 function prepararConteudoLivro(texto) {
@@ -145,7 +179,7 @@ function renderConteudoCaixa(dados, mostrarTitulo = true, { incluirRodape = true
         ? '<header class="book-box-title"><div><i class="fa-solid ' + dados.meta.icon + '"></i><span>' + escapeHtml(dados.titulo) + '</span></div><small>' + escapeHtml(dados.meta.nome) + '</small></header>'
         : '';
     const corpo = dados.imagensHtml + (dados.temTexto
-        ? '<div class="book-box-content">' + dados.content + '</div>'
+        ? '<div class="' + dados.contentClass + '">' + dados.content + '</div>'
         : (dados.imagensHtml ? '' : '<div class="book-box-content"><p><span class="book-inline-empty">Caixa vazia.</span></p></div>'));
 
     return titulo + dados.topTags + corpo + (incluirRodape ? rodapeHtml : '');
@@ -155,7 +189,7 @@ function renderCaixa(caixa, index, settings) {
     const dados = obterDadosCaixa(caixa, index, settings);
     const mediaClass = dados.imagensHtml && !dados.temTexto ? ' book-box-media-only' : '';
 
-    return '<article id="bloco-' + escapeHtml(dados.id) + '" class="book-box' + mediaClass + ' ' + (dados.destaque ? 'book-box-highlighted' : '') + '" data-caixa-id="' + escapeHtml(dados.id) + '" style="' + escapeHtml(dados.style) + '">' +
+    return '<article id="bloco-' + escapeHtml(dados.id) + '" class="book-box' + (dados.boxClass ? ' ' + dados.boxClass : '') + mediaClass + ' ' + (dados.destaque ? 'book-box-highlighted' : '') + '" data-caixa-id="' + escapeHtml(dados.id) + '" style="' + escapeHtml(dados.style) + '">' +
         renderConteudoCaixa(dados) +
         '</article>';
 }
@@ -168,7 +202,7 @@ function renderGrupoFundido(caixas, index, settings) {
 
     return '<article class="book-box book-box-fundido" data-fundir-ids="' + escapeHtml(ids) + '" style="' + escapeHtml(primeiro.style) + '">' +
         grupo.map((dados, indice) =>
-            '<section id="bloco-' + escapeHtml(dados.id) + '" class="book-box-fundido-membro' + (dados.imagensHtml && !dados.temTexto ? ' book-box-media-only' : '') + ' ' + (dados.destaque ? 'book-box-highlighted' : '') + '" data-caixa-id="' + escapeHtml(dados.id) + '" style="' + escapeHtml(dados.style) + '">' +
+            '<section id="bloco-' + escapeHtml(dados.id) + '" class="book-box-fundido-membro' + (dados.boxClass ? ' ' + dados.boxClass : '') + (dados.imagensHtml && !dados.temTexto ? ' book-box-media-only' : '') + ' ' + (dados.destaque ? 'book-box-highlighted' : '') + '" data-caixa-id="' + escapeHtml(dados.id) + '" style="' + escapeHtml(dados.style) + '">' +
                 renderConteudoCaixa(dados, indice === 0, {
                     incluirRodape: indice === grupo.length - 1,
                     rodapeHtml: indice === grupo.length - 1 ? rodapeGrupo : ''
