@@ -681,7 +681,7 @@ export async function abrirPopupTagsNota(notaId, db, auth) {
     configurarToggleArranqueDaNota(notaId, { onde: "local" });
     configurarAbasPopupTagsNota({
         aoAbrirAgenda: async () => {
-            const modulo = await import('../agenda/agenda-controller.js?v=20260820-note-options-2');
+            const modulo = await import('../agenda/agenda-controller.js?v=20260821-agenda-dispositivos-1');
             return modulo.abrirAgendaDaNota({ notaId, auth });
         }
     });

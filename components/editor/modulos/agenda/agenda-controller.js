@@ -1,5 +1,9 @@
 import { exigirAcessoFerramenta } from '../../../settings/feature-admin.js';
-import { ativarNotificacoes, obterEstadoNotificacoes } from '../../../notifications/push-client.js';
+import {
+    alterarNotificacoesDispositivo,
+    listarDispositivosNotificacao,
+    obterEstadoNotificacoes
+} from '../../../notifications/push-client.js';
 import {
     cancelarLembreteDaNota,
     guardarLembreteDaNota,
@@ -60,13 +64,16 @@ function definirOcupado(ocupado) {
             const campo = elemento(id);
             if (campo) campo.disabled = ocupado;
         });
+    document.querySelectorAll('.agenda-nota-dispositivo-switch').forEach(botao => {
+        botao.disabled = ocupado || botao.dataset.indisponivel === 'true';
+    });
 }
 
 function mensagemPermissao(estado) {
     const mensagens = {
-        granted: 'Notificações autorizadas neste dispositivo.',
-        denied: 'As notificações estão bloqueadas nas definições do dispositivo.',
-        default: 'A autorização será pedida quando guardares o primeiro lembrete.',
+        granted: 'Este dispositivo pode receber notificações quando estiver ligado na lista abaixo.',
+        denied: 'As notificações estão bloqueadas nas definições deste dispositivo.',
+        default: 'Liga este dispositivo abaixo para autorizares as notificações.',
         insecure: 'As notificações requerem uma ligação HTTPS segura.',
         unsupported: 'Este dispositivo não suporta notificações da aplicação.'
     };
@@ -94,15 +101,15 @@ function apresentarLembrete(lembrete) {
     guardar.hidden = !ativo;
     cancelar.hidden = !ativo;
 
-    if (lembrete?.remindAt) preencherDataHora(lembrete.remindAt);
+    if (lembrete?.remindAt && ativo) preencherDataHora(lembrete.remindAt);
     else preencherDataInicial();
 
-    if (!lembrete) {
-        definirEstado('Ainda não existe um lembrete para esta nota.');
+    if (!lembrete || lembrete.status === 'cancelled') {
+        definirEstado('Ainda não existe um lembrete ativo para esta nota.');
     } else if (lembrete.status === 'paused_plan') {
         definirEstado('O lembrete está suspenso porque o plano atual deixou de permitir esta funcionalidade.', 'error');
     } else if (lembrete.status === 'waiting_device') {
-        definirEstado('Lembrete guardado. Falta ativar as notificações num dispositivo.', 'error');
+        definirEstado('Lembrete guardado. Liga pelo menos um dispositivo para o receberes.', 'error');
     } else if (lembrete.status === 'sent') {
         definirEstado('O último lembrete desta nota já foi enviado.', 'success');
     } else if (lembrete.status === 'failed') {
@@ -110,6 +117,99 @@ function apresentarLembrete(lembrete) {
     } else {
         const data = new Date(Number(lembrete.remindAt) * 1000);
         definirEstado(`Lembrete agendado para ${data.toLocaleString('pt-PT', { dateStyle: 'medium', timeStyle: 'short' })}.`, 'success');
+    }
+}
+
+function iconeDoDispositivo(dispositivo) {
+    const descricao = `${dispositivo.platform} ${dispositivo.label}`.toLowerCase();
+    if (/iphone|ipad|android|mobile/.test(descricao)) return 'fa-mobile-screen-button';
+    return 'fa-laptop';
+}
+
+function mostrarListaEmEspera() {
+    const lista = elemento('agenda-nota-dispositivos-lista');
+    if (!lista) return;
+    const estado = document.createElement('div');
+    estado.className = 'agenda-nota-dispositivos-loading';
+    estado.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" aria-hidden="true"></i><span>A carregar dispositivos...</span>';
+    lista.replaceChildren(estado);
+}
+
+function mostrarErroDispositivos(mensagem) {
+    const lista = elemento('agenda-nota-dispositivos-lista');
+    if (!lista) return;
+    const estado = document.createElement('div');
+    estado.className = 'agenda-nota-dispositivos-vazio';
+    estado.textContent = mensagem;
+    lista.replaceChildren(estado);
+}
+
+function renderizarDispositivos(dispositivos, aoAlterar) {
+    const lista = elemento('agenda-nota-dispositivos-lista');
+    if (!lista) return;
+    lista.replaceChildren();
+
+    if (!dispositivos.length) {
+        mostrarErroDispositivos('Não foram encontrados dispositivos com sessão iniciada.');
+        return;
+    }
+
+    dispositivos.forEach(dispositivo => {
+        const linha = document.createElement('div');
+        linha.className = 'agenda-nota-dispositivo';
+
+        const icone = document.createElement('span');
+        icone.className = 'agenda-nota-dispositivo-icone';
+        icone.innerHTML = `<i class="fa-solid ${iconeDoDispositivo(dispositivo)}" aria-hidden="true"></i>`;
+
+        const texto = document.createElement('span');
+        texto.className = 'agenda-nota-dispositivo-texto';
+        const nome = document.createElement('span');
+        nome.className = 'agenda-nota-dispositivo-nome';
+        nome.textContent = dispositivo.label || 'Dispositivo sem nome';
+        if (dispositivo.atual) {
+            const atual = document.createElement('span');
+            atual.className = 'agenda-nota-dispositivo-atual';
+            atual.textContent = 'Este dispositivo';
+            nome.appendChild(atual);
+        }
+
+        const detalhe = document.createElement('small');
+        detalhe.className = 'agenda-nota-dispositivo-detalhe';
+        detalhe.textContent = dispositivo.enabled
+            ? 'Notificações ligadas'
+            : (!dispositivo.atual && !dispositivo.canEnable
+                ? 'Abre este dispositivo para poderes ligá-lo'
+                : 'Notificações desligadas');
+        texto.append(nome, detalhe);
+
+        const botao = document.createElement('button');
+        const indisponivel = !dispositivo.enabled && !dispositivo.atual && !dispositivo.canEnable;
+        botao.type = 'button';
+        botao.className = 'agenda-nota-dispositivo-switch';
+        botao.setAttribute('role', 'switch');
+        botao.setAttribute('aria-checked', String(Boolean(dispositivo.enabled)));
+        botao.setAttribute('aria-label', `${dispositivo.enabled ? 'Desligar' : 'Ligar'} notificações em ${dispositivo.label}`);
+        botao.dataset.indisponivel = String(indisponivel);
+        botao.disabled = indisponivel;
+        botao.innerHTML = `<span>${dispositivo.enabled ? 'On' : 'Off'}</span>`;
+        botao.onclick = () => aoAlterar(dispositivo);
+
+        linha.append(icone, texto, botao);
+        lista.appendChild(linha);
+    });
+}
+
+async function carregarDispositivos(auth, abertura, aoAlterar, { mostrarEspera = true } = {}) {
+    if (mostrarEspera) mostrarListaEmEspera();
+    try {
+        const dispositivos = await listarDispositivosNotificacao(auth);
+        if (abertura !== aberturaAtual) return [];
+        renderizarDispositivos(dispositivos, aoAlterar);
+        return dispositivos;
+    } catch (erro) {
+        if (abertura === aberturaAtual) mostrarErroDispositivos(erro.message);
+        return [];
     }
 }
 
@@ -129,11 +229,37 @@ export async function abrirAgendaDaNota({ notaId, auth = window.auth } = {}) {
     conteudo.hidden = true;
 
     let lembreteAtual = null;
+    let aoAlterarDispositivo;
+
+    aoAlterarDispositivo = async (dispositivo) => {
+        if (abertura !== aberturaAtual) return;
+        const ligar = !dispositivo.enabled;
+        definirOcupado(true);
+        definirEstado(`${ligar ? 'A ligar' : 'A desligar'} as notificações neste dispositivo...`);
+        try {
+            await alterarNotificacoesDispositivo(dispositivo, ligar, auth);
+            await Promise.all([
+                carregarDispositivos(auth, abertura, aoAlterarDispositivo, { mostrarEspera: false }),
+                atualizarPermissao()
+            ]);
+            lembreteAtual = await obterLembreteDaNota(notaId, auth);
+            if (abertura === aberturaAtual) apresentarLembrete(lembreteAtual);
+        } catch (erro) {
+            definirEstado(erro.message, 'error');
+        } finally {
+            if (abertura === aberturaAtual) definirOcupado(false);
+        }
+    };
+
     try {
-        lembreteAtual = await obterLembreteDaNota(notaId, auth);
+        const [resultadoLembrete] = await Promise.all([
+            obterLembreteDaNota(notaId, auth),
+            atualizarPermissao(),
+            carregarDispositivos(auth, abertura, aoAlterarDispositivo)
+        ]);
         if (abertura !== aberturaAtual) return false;
+        lembreteAtual = resultadoLembrete;
         apresentarLembrete(lembreteAtual);
-        await atualizarPermissao();
     } catch (erro) {
         if (abertura !== aberturaAtual) return false;
         apresentarLembrete(null);
@@ -185,16 +311,14 @@ export async function abrirAgendaDaNota({ notaId, auth = window.auth } = {}) {
 
     guardar.onclick = async () => {
         definirOcupado(true);
-        definirEstado('A ativar as notificações e a guardar o lembrete...');
+        definirEstado('A guardar o lembrete...');
         try {
             const instante = obterInstanteEscolhido();
-            await ativarNotificacoes(auth);
             lembreteAtual = await guardarLembreteDaNota(notaId, {
                 remindAt: Math.floor(instante.getTime() / 1000),
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
             }, auth);
             apresentarLembrete(lembreteAtual);
-            await atualizarPermissao();
         } catch (erro) {
             definirEstado(erro.message, 'error');
         } finally {
