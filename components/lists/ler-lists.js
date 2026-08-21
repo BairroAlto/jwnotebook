@@ -12,6 +12,9 @@ import { abrirPopupMarcadores } from '../direita/biblia-marcador.js';
 import { iniciarNavegacaoTextosBiblicos } from './textos-biblicos.js';
 import { iniciarNavegacaoMarcadores } from './marcadores-list.js';
 import { iniciarNavegacaoPalco } from './palco.js';
+import { iniciarSites, pararSites, renderizarNavegacaoSites } from './sites.js';
+import { carregarAcessoFuseisList, fusivelDisponivelNoPlano } from './list-fuseis.js';
+import { podeMostrarListItem } from '../settings/preferences.js';
 
 let dbRef, authRef;
 let nomesCoresCustom = {};
@@ -20,6 +23,19 @@ let escutaPesquisaAtual = null;
 let corAtivaPesquisa = null;
 let unsubPalcoNotifications = null;
 let unsubPalcoPersistido = null;
+let escutaAcessoListAtiva = false;
+
+function sincronizarSitesComPlano() {
+    if (fusivelDisponivelNoPlano('sites')) iniciarSites(dbRef, authRef);
+    else pararSites();
+
+    const container = document.getElementById('lista-lists');
+    if (!container) return;
+    const estaNosSitesSemAcesso = container.dataset.listView === 'sites'
+        && !fusivelDisponivelNoPlano('sites');
+    const estaNoMenuPrincipal = Boolean(container.querySelector('#menu-list-cosmos, #menu-list-sites'));
+    if (estaNosSitesSemAcesso || estaNoMenuPrincipal) window.renderizarMenuPrincipalLists?.();
+}
 
 /**
  * INICIALIZADOR PRINCIPAL DA ABA LISTS
@@ -31,6 +47,16 @@ export async function inicializarLists(db, auth) {
     // Iniciar subsistemas modulares
     iniciarCosmos(db, auth);
     iniciarTopicos(db, auth); 
+    if (!escutaAcessoListAtiva) {
+        window.addEventListener('notabook:list-feature-access-updated', sincronizarSitesComPlano);
+        escutaAcessoListAtiva = true;
+    }
+    try {
+        await carregarAcessoFuseisList(auth);
+    } catch (erro) {
+        console.info('[LISTS] A opção Sites ficou oculta porque não foi possível validar o plano:', erro.message);
+    }
+    sincronizarSitesComPlano();
  
     // 1. Carregar nomes das cores personalizados para a aba Destaques
     try {
@@ -68,6 +94,9 @@ export async function inicializarLists(db, auth) {
 
             // --- COSMOS ---
             if (e.target.closest('#menu-list-cosmos')) renderizarNavegacaoCosmos();
+
+            // --- SITES ---
+            if (e.target.closest('#menu-list-sites')) renderizarNavegacaoSites();
 
             // --- PALCO ---
             if (e.target.closest('#menu-list-palco')) iniciarNavegacaoPalco(window.__palcoPersistedItems || []);
@@ -229,62 +258,16 @@ async function pesquisarDestaquesNoBrain(corHex, corNome) {
     });
 }
 
-window.renderizarMenuPrincipalLists = () => {
-    const container = document.getElementById('lista-lists');
-    if (!container) return;
-
-    // Reset de estados de navegação
-    window.htmlListaAntiga = null; 
-
-    container.innerHTML = `
-        <div class="menu-item-list" id="menu-list-topicos">
-            <i class="fa-solid fa-layer-group" style="color: #818cf8;"></i> Tópicos
-        </div>
-        <div class="menu-item-list" id="menu-list-destaques">
-            <i class="fa-solid fa-palette" style="color: #fbbf24;"></i> Destaques
-        </div>
-        <div class="menu-separador-list"></div>
-        <div class="menu-item-list" id="menu-list-biblia">
-            <i class="fa-solid fa-book-open" style="color: #e879f9;"></i> Bíblia
-        </div>
-        <div class="menu-item-list" id="menu-list-textos-biblicos">
-            <i class="fa-solid fa-scroll" style="color: #8b5cf6;"></i> Textos Bíblicos
-        </div>
-        <div class="menu-item-list" id="menu-list-marcadores">
-            <i class="fa-solid fa-bookmark" style="color: #ef4444;"></i> Marcadores
-        </div>
-        <div class="menu-separador-list"></div>
-        <div class="menu-item-list" id="menu-list-livros">
-            <i class="fa-solid fa-book" style="color: #60a5fa;"></i> Livros
-        </div>
-        <div class="menu-separador-list"></div>
-        <div class="menu-item-list" id="menu-list-cosmos">
-            <i class="fa-solid fa-meteor" style="color: #d49d06;"></i> Cosmos
-        </div>
-    `;
-};
-
-const FUSEIS_LISTS_DEFAULT = {
-    topicos: true,
-    destaques: true,
-    biblia: true,
-    textosBiblicos: true,
-    marcadores: true,
-    livros: true,
-    cosmos: true,
-    palco: true
-};
-
 function canShowListItem(key, contexto = "default") {
-    const fuseis = { ...FUSEIS_LISTS_DEFAULT, ...(window.NotaBookUserPrefs?.listsFuseis || {}) };
-    if (contexto === "office" && key === "livros") return false;
-    return Boolean(fuseis[key]);
+    if (!fusivelDisponivelNoPlano(key)) return false;
+    return podeMostrarListItem(window.NotaBookUserPrefs?.listsFuseis, key, contexto);
 }
 
 window.renderizarMenuPrincipalLists = () => {
     const container = document.getElementById('lista-lists');
     if (!container) return;
     window.htmlListaAntiga = null;
+    delete container.dataset.listView;
 
     const blocos = [];
     if (canShowListItem('topicos')) {
@@ -315,8 +298,14 @@ window.renderizarMenuPrincipalLists = () => {
         }
         blocos.push(`<div class="menu-item-list" id="menu-list-cosmos"><i class="fa-solid fa-meteor" style="color: #d49d06;"></i> Cosmos</div>`);
     }
-    if (canShowListItem('palco')) {
+    if (canShowListItem('sites')) {
         if (blocos[blocos.length - 1] !== `<div class="menu-separador-list"></div>`) {
+            blocos.push(`<div class="menu-separador-list"></div>`);
+        }
+        blocos.push(`<div class="menu-item-list" id="menu-list-sites"><i class="fa-solid fa-globe" style="color: #22c55e;"></i> Sites</div>`);
+    }
+    if (canShowListItem('palco')) {
+        if (!canShowListItem('sites') && blocos[blocos.length - 1] !== `<div class="menu-separador-list"></div>`) {
             blocos.push(`<div class="menu-separador-list"></div>`);
         }
         blocos.push(`<div class="menu-item-list" id="menu-list-palco" style="${window.__palcoNotificationHasItems ? 'color:#ef4444; font-weight:900;' : ''}"><i class="fa-solid fa-masks-theater" style="color: ${window.__palcoNotificationHasItems ? '#ef4444' : '#f97316'};"></i> Palco <span id="badge-list-palco" style="display:${window.__palcoNotificationHasItems ? 'inline-block' : 'none'}; margin-left:auto; width:8px; height:8px; border-radius:999px; background:#ef4444;"></span></div>`);

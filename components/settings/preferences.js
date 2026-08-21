@@ -9,6 +9,7 @@ export const DEFAULT_LIST_FUSEIS = {
     marcadores: true,
     livros: true,
     cosmos: true,
+    sites: true,
     palco: true
 };
 

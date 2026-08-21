@@ -21,17 +21,7 @@ import { inicializarAdminFeatures, obterFeaturesDisponiveis } from './feature-ad
 import { PAINEL_UTILIZADOR_ABAS } from './user-panel-tabs.js';
 import { inicializarLoja } from '../store/tool-store.js';
 import { criarAjustadorAlturaAbas } from '../ui/fixed-tabs-height.js';
-
-const FUSEIS_META = [
-    { key: "topicos", label: "Tópicos", desc: "Taxonomia e vínculos de tópico" },
-    { key: "destaques", label: "Destaques", desc: "Pesquisa por cores e destaques" },
-    { key: "biblia", label: "Bíblia", desc: "Mosaico e navegação bíblica" },
-    { key: "textosBiblicos", label: "Textos Bíblicos", desc: "Versículos estudados" },
-    { key: "marcadores", label: "Marcadores", desc: "Marcadores rápidos" },
-    { key: "livros", label: "Livros", desc: "Biblioteca e publicações" },
-    { key: "cosmos", label: "Cosmos", desc: "Temas e constelações" },
-    { key: "palco", label: "Palco", desc: "Portal cultural e registos do PALCO" }
-];
+import { carregarAcessoFuseisList, filtrarFuseisDisponiveis } from '../lists/list-fuseis.js';
 
 let userPrefs = null;
 
@@ -85,6 +75,7 @@ export async function inicializarSettings(db, auth) {
     aplicarSliders(userPrefs.tamanholetra || {});
     aplicarToggles(userPrefs);
     renderFuseis(db, auth);
+    window.addEventListener('notabook:list-feature-access-updated', () => renderFuseis(db, auth));
     aplicarAcessoAbasPainel(auth).catch(erro => {
         console.info('[SETTINGS] Não foi possível validar as abas do Painel de Utilizador:', erro.message);
     });
@@ -619,13 +610,20 @@ function bindLogout(auth) {
     if (btnSair) btnSair.onclick = () => signOut(auth).then(() => window.location.reload());
 }
 
-function renderFuseis(db, auth) {
+async function renderFuseis(db, auth) {
     const container = document.getElementById('fuseis-list');
     if (!container) return;
 
+    container.textContent = 'A validar as funcionalidades do teu plano…';
+    try {
+        await carregarAcessoFuseisList(auth);
+    } catch (erro) {
+        console.info('[SETTINGS] Não foi possível validar os fusíveis condicionados pelo plano:', erro.message);
+    }
+
     const fuseis = normalizarFuseis(userPrefs?.listsFuseis);
     container.innerHTML = "";
-    FUSEIS_META.forEach(item => {
+    filtrarFuseisDisponiveis().forEach(item => {
         const row = document.createElement('div');
         row.className = 'fuse-row';
         row.innerHTML = `
