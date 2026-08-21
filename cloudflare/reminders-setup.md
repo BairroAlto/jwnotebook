@@ -58,13 +58,25 @@ O Worker verifica o plano quando o lembrete é criado e novamente antes do
 envio. Uma descida de plano suspende o lembrete com `paused_plan`; não apaga os
 dados do utilizador.
 
-## 5. Teste mínimo
+## 5. Dispositivos
+
+Cada instalação autenticada regista um identificador local na tabela
+`push_devices`. Um dispositivo novo fica desligado por predefinição e só obtém
+um token FCM quando o utilizador o liga no popup da Agenda. Terminar a sessão
+remove esse dispositivo da conta.
+
+Os registos antigos de `push_subscriptions` são migrados uma única vez e ficam
+desligados, para que a escolha das plataformas seja sempre explícita. O token
+nunca é devolvido ao navegador quando a lista de dispositivos é consultada.
+
+## 6. Teste mínimo
 
 1. Instala ou atualiza a PWA.
 2. Abre uma nota → Opções da Nota → Agenda.
-3. Agenda um lembrete para alguns minutos depois e autoriza notificações.
-4. Fecha a aplicação e confirma a entrega.
-5. Clica na notificação e confirma que abre `index.html?nota=...`.
+3. Confirma que o dispositivo aparece desligado e liga-o.
+4. Agenda um lembrete para alguns minutos depois e autoriza notificações.
+5. Fecha a aplicação e confirma a entrega apenas nos dispositivos ligados.
+6. Clica na notificação e confirma que abre `index.html?nota=...`.
 
 Em iPhone ou iPad, a aplicação deve estar adicionada ao ecrã principal para
 receber Web Push.

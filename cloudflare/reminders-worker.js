@@ -1,6 +1,7 @@
 export const REMINDER_FEATURE_KEY = 'ferramenta_agenda_nota';
 
 const NOTE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const DEVICE_CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 const MAX_REMINDER_SECONDS = 5 * 365 * 24 * 60 * 60;
 const MAX_DEVICE_TOKENS = 8;
 const FCM_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
@@ -65,6 +66,36 @@ async function ensureReminderTables(env) {
       CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user
       ON push_subscriptions(user_id, enabled, updated_at)
     `),
+    env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS push_devices (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        client_id TEXT NOT NULL,
+        token TEXT UNIQUE,
+        device_label TEXT NOT NULL DEFAULT '',
+        platform TEXT NOT NULL DEFAULT '',
+        browser TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, client_id)
+      )
+    `),
+    env.DB.prepare(`
+      CREATE INDEX IF NOT EXISTS idx_push_devices_user
+      ON push_devices(user_id, enabled, last_seen_at)
+    `),
+    env.DB.prepare(`
+      INSERT OR IGNORE INTO push_devices (
+        id, user_id, client_id, token, device_label, enabled,
+        created_at, last_seen_at, updated_at
+      )
+      SELECT id, user_id, id, token, device_label, 0,
+             created_at, updated_at, updated_at
+      FROM push_subscriptions
+    `),
+    env.DB.prepare(`DELETE FROM push_subscriptions`),
     env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS note_reminders (
         id TEXT PRIMARY KEY,
@@ -158,53 +189,113 @@ async function assertOwnedLocalNote(uid, noteId, readNote) {
   return note;
 }
 
-async function countActiveSubscriptions(env, uid) {
+async function countActiveDevices(env, uid) {
   const row = await env.DB.prepare(`
     SELECT COUNT(*) AS total
-    FROM push_subscriptions
-    WHERE user_id = ? AND enabled = 1
+    FROM push_devices
+    WHERE user_id = ? AND enabled = 1 AND token IS NOT NULL
   `).bind(uid).first();
   return Number(row?.total || 0);
 }
 
-async function registerSubscription(env, uid, body) {
-  const token = text(body.token, 4096);
+function mapDevice(row) {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    label: row.device_label || 'Dispositivo sem nome',
+    platform: row.platform || '',
+    browser: row.browser || '',
+    enabled: Number(row.enabled) === 1,
+    canEnable: Boolean(row.token),
+    lastSeenAt: row.last_seen_at || row.updated_at
+  };
+}
+
+async function legacyClientId(token) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  const hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  return `legacy-${hex.slice(0, 48)}`;
+}
+
+async function registerDevice(env, uid, body) {
+  const clientId = text(body.clientId, 128);
+  if (!DEVICE_CLIENT_ID_PATTERN.test(clientId)) {
+    throw new ReminderError(400, 'Identificador do dispositivo inválido.');
+  }
+
+  const token = text(body.token, 4096) || null;
   const deviceLabel = text(body.deviceLabel, 80);
-  if (token.length < 20) throw new ReminderError(400, 'Token de notificações inválido.');
+  const platform = text(body.platform, 60);
+  const browser = text(body.browser, 60);
+  if (token && token.length < 20) throw new ReminderError(400, 'Token de notificações inválido.');
 
   const existing = await env.DB.prepare(`
-    SELECT id FROM push_subscriptions WHERE token = ?
-  `).bind(token).first();
+    SELECT id FROM push_devices WHERE user_id = ? AND client_id = ?
+  `).bind(uid, clientId).first();
   const id = existing?.id || crypto.randomUUID();
 
-  await env.DB.prepare(`
-    INSERT INTO push_subscriptions (
-      id, user_id, token, device_label, enabled, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    ON CONFLICT(token) DO UPDATE SET
-      user_id = excluded.user_id,
-      device_label = excluded.device_label,
-      enabled = 1,
-      updated_at = CURRENT_TIMESTAMP
-  `).bind(id, uid, token, deviceLabel).run();
+  if (token) {
+    await env.DB.prepare(`
+      UPDATE push_devices
+      SET token = NULL, enabled = 0, updated_at = CURRENT_TIMESTAMP
+      WHERE token = ? AND id <> ?
+    `).bind(token, id).run();
+  }
 
   await env.DB.prepare(`
-    DELETE FROM push_subscriptions
+    INSERT INTO push_devices (
+      id, user_id, client_id, token, device_label, platform, browser,
+      enabled, created_at, last_seen_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, client_id) DO UPDATE SET
+      token = COALESCE(excluded.token, push_devices.token),
+      device_label = excluded.device_label,
+      platform = excluded.platform,
+      browser = excluded.browser,
+      last_seen_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP
+  `).bind(id, uid, clientId, token, deviceLabel, platform, browser).run();
+
+  await env.DB.prepare(`
+    DELETE FROM push_devices
     WHERE user_id = ? AND id NOT IN (
-      SELECT id FROM push_subscriptions
+      SELECT id FROM push_devices
       WHERE user_id = ?
-      ORDER BY updated_at DESC
+      ORDER BY last_seen_at DESC
       LIMIT ?
     )
   `).bind(uid, uid, MAX_DEVICE_TOKENS).run();
 
-  await env.DB.prepare(`
-    UPDATE note_reminders
-    SET status = 'pending', next_attempt_at = NULL, updated_at = CURRENT_TIMESTAMP
-    WHERE user_id = ? AND status = 'waiting_device'
-  `).bind(uid).run();
+  const row = await env.DB.prepare(`
+    SELECT * FROM push_devices WHERE id = ? AND user_id = ?
+  `).bind(id, uid).first();
+  return mapDevice(row);
+}
 
-  return { id, deviceLabel };
+async function setDeviceEnabled(env, uid, id, enabled) {
+  const device = await env.DB.prepare(`
+    SELECT * FROM push_devices WHERE id = ? AND user_id = ?
+  `).bind(id, uid).first();
+  if (!device) throw new ReminderError(404, 'Dispositivo não encontrado.');
+  if (enabled && !device.token) {
+    throw new ReminderError(409, 'Abre o NotaBook nesse dispositivo e autoriza primeiro as notificações.');
+  }
+
+  await env.DB.prepare(`
+    UPDATE push_devices
+    SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND user_id = ?
+  `).bind(enabled ? 1 : 0, id, uid).run();
+
+  if (enabled) {
+    await env.DB.prepare(`
+      UPDATE note_reminders
+      SET status = 'pending', next_attempt_at = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND status = 'waiting_device'
+    `).bind(uid).run();
+  }
+
+  return mapDevice({ ...device, enabled: enabled ? 1 : 0 });
 }
 
 async function saveReminder(env, uid, noteId, note, body) {
@@ -220,7 +311,7 @@ async function saveReminder(env, uid, noteId, note, body) {
   }
 
   const id = crypto.randomUUID();
-  const status = await countActiveSubscriptions(env, uid) > 0 ? 'pending' : 'waiting_device';
+  const status = await countActiveDevices(env, uid) > 0 ? 'pending' : 'waiting_device';
   const title = text(note.nome || note.titulo || 'Nota sem título', 160);
 
   await env.DB.prepare(`
@@ -268,18 +359,62 @@ export async function handleReminderRequest({
     return json(request, { vapidKey });
   }
 
+  if (url.pathname === '/push/devices' && request.method === 'GET') {
+    await assertFeatureAllowed(env, uid, request, getEntitlement, isFeatureAllowed);
+    const result = await env.DB.prepare(`
+      SELECT * FROM push_devices
+      WHERE user_id = ?
+      ORDER BY last_seen_at DESC
+      LIMIT ?
+    `).bind(uid, MAX_DEVICE_TOKENS).all();
+    return json(request, { devices: (result.results || []).map(mapDevice) });
+  }
+
+  if (url.pathname === '/push/devices' && request.method === 'POST') {
+    await assertFeatureAllowed(env, uid, request, getEntitlement, isFeatureAllowed);
+    const body = await request.json().catch(() => ({}));
+    const device = await registerDevice(env, uid, body);
+    return json(request, { ok: true, device }, 201);
+  }
+
+  const deviceId = url.pathname.match(/^\/push\/devices\/([A-Za-z0-9-]{1,80})$/)?.[1];
+  if (deviceId && request.method === 'PUT') {
+    await assertFeatureAllowed(env, uid, request, getEntitlement, isFeatureAllowed);
+    const body = await request.json().catch(() => ({}));
+    if (typeof body.enabled !== 'boolean') {
+      throw new ReminderError(400, 'Estado do dispositivo inválido.');
+    }
+    const device = await setDeviceEnabled(env, uid, deviceId, body.enabled);
+    return json(request, { ok: true, device });
+  }
+
+  if (deviceId && request.method === 'DELETE') {
+    await env.DB.prepare(`
+      DELETE FROM push_devices WHERE id = ? AND user_id = ?
+    `).bind(deviceId, uid).run();
+    return json(request, { ok: true });
+  }
+
+  // Compatibilidade temporária com clientes anteriores à lista de dispositivos.
   if (url.pathname === '/push/subscriptions' && request.method === 'POST') {
     await assertFeatureAllowed(env, uid, request, getEntitlement, isFeatureAllowed);
     const body = await request.json().catch(() => ({}));
-    const subscription = await registerSubscription(env, uid, body);
-    return json(request, { ok: true, subscription }, 201);
+    const token = text(body.token, 4096);
+    let clientId = text(body.clientId, 128);
+    if (!DEVICE_CLIENT_ID_PATTERN.test(clientId) && token) {
+      clientId = await legacyClientId(token);
+    }
+    const device = await registerDevice(env, uid, { ...body, clientId });
+    const activeDevice = await setDeviceEnabled(env, uid, device.id, true);
+    return json(request, { ok: true, subscription: activeDevice }, 201);
   }
 
   const subscriptionId = url.pathname.match(/^\/push\/subscriptions\/([A-Za-z0-9-]{1,80})$/)?.[1];
   if (subscriptionId && request.method === 'DELETE') {
-    await env.DB.prepare(`
-      DELETE FROM push_subscriptions WHERE id = ? AND user_id = ?
-    `).bind(subscriptionId, uid).run();
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM push_subscriptions WHERE id = ? AND user_id = ?`).bind(subscriptionId, uid),
+      env.DB.prepare(`DELETE FROM push_devices WHERE id = ? AND user_id = ?`).bind(subscriptionId, uid)
+    ]);
     return json(request, { ok: true });
   }
 
@@ -470,8 +605,8 @@ async function processReminder(env, reminder, getEntitlement, isFeatureAllowed) 
   }
 
   const subscriptions = await env.DB.prepare(`
-    SELECT id, token FROM push_subscriptions
-    WHERE user_id = ? AND enabled = 1
+    SELECT id, token FROM push_devices
+    WHERE user_id = ? AND enabled = 1 AND token IS NOT NULL
     ORDER BY updated_at DESC
     LIMIT ?
   `).bind(reminder.user_id, MAX_DEVICE_TOKENS).all();
@@ -495,8 +630,8 @@ async function processReminder(env, reminder, getEntitlement, isFeatureAllowed) 
       if (result.sent) sent += 1;
       if (result.invalidToken) {
         await env.DB.prepare(`
-          UPDATE push_subscriptions
-          SET enabled = 0, updated_at = CURRENT_TIMESTAMP
+          UPDATE push_devices
+          SET token = NULL, enabled = 0, updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `).bind(subscription.id).run();
       }
@@ -516,7 +651,7 @@ async function processReminder(env, reminder, getEntitlement, isFeatureAllowed) 
     return;
   }
 
-  const active = await countActiveSubscriptions(env, reminder.user_id);
+  const active = await countActiveDevices(env, reminder.user_id);
   if (!active) {
     await env.DB.prepare(`
       UPDATE note_reminders

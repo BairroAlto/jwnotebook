@@ -1,7 +1,7 @@
 importScripts('./components/notifications/push-service-worker.js');
 
 // Incrementar esta versão força a criação de uma cache limpa em todos os clientes.
-const CACHE_NAME = 'notabook-v90-book-colors';
+const CACHE_NAME = 'notabook-v91-agenda-dispositivos';
 
 const PRE_CACHE_ASSETS = [
   './',
@@ -35,16 +35,16 @@ const PRE_CACHE_ASSETS = [
   './components/editor/modulos/mobile-bible-bar.css',
   './components/editor/modulos/mobile-bible-bar.js',
   './components/editor/modulos/tags/tags-nota.css?v=20260820-note-options-2',
-  './components/editor/modulos/agenda/agenda.css?v=20260820-note-options-2',
+  './components/editor/modulos/agenda/agenda.css?v=20260821-agenda-dispositivos-1',
   './components/editor/modulos/agenda/agenda-client.js',
-  './components/editor/modulos/agenda/agenda-controller.js?v=20260820-note-options-2',
+  './components/editor/modulos/agenda/agenda-controller.js?v=20260821-agenda-dispositivos-1',
   './components/editor/ferramentas/habito.css?v=20260821-habito-10',
   './components/editor/ferramentas/habito.js?v=20260821-habito-10',
   './components/editor/ferramentas/habito-model.js',
   './components/editor/ferramentas/habito-view.js',
   './components/editor/ferramentas/habito-categorias.js',
   './components/editor/ferramentas/habito-popup.js',
-  './components/popup/popup-tags-nota.html?v=20260820-note-options-2',
+  './components/popup/popup-tags-nota.html?v=20260821-agenda-dispositivos-1',
   './components/notifications/push-client.js',
   './components/notifications/push-service-worker.js',
   './components/updates/checker.js',
