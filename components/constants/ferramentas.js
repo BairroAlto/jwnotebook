@@ -14,7 +14,8 @@ const DEFINICOES_FERRAMENTAS = [
     { id: "noticias", nome: "Notícias", icon: "fa-solid fa-square-rss", cor: "#d6a47f", featureKey: "ferramenta_noticias", disponivelNaLoja: true, descricao: "Cria um feed de notícias a partir dos temas, país e idioma escolhidos pelo utilizador." },
     { id: "tempo", nome: "Tempo", icon: "fa-solid fa-cloud-sun", cor: "#7dd3fc", featureKey: "ferramenta_tempo", disponivelNaLoja: true, descricao: "Mostra o estado do tempo da cidade escolhida e actualiza uma vez por dia." },
     { id: "inspirador", nome: "Inspirador", icon: "fa-solid fa-quote-left", cor: "#86efac", featureKey: "ferramenta_inspirador", disponivelNaLoja: true, descricao: "Mostra citações da Wikiquote por autor, tema ou de forma aleatória." },
-    { id: "gmail", nome: "Gmail", icon: "fa-solid fa-envelope", cor: "#f87171", featureKey: "ferramenta_gmail", disponivelNaLoja: true, descricao: "Mostra os emails recentes da conta Google ligada, em modo somente leitura." }
+    { id: "gmail", nome: "Gmail", icon: "fa-solid fa-envelope", cor: "#f87171", featureKey: "ferramenta_gmail", disponivelNaLoja: true, descricao: "Mostra os emails recentes da conta Google ligada, em modo somente leitura." },
+    { id: "habito", nome: "Hábito", icon: "fa-solid fa-calendar-check", cor: "#a78bfa", featureKey: "ferramenta_habito", disponivelNaLoja: true, descricao: "Organiza hábitos por categorias e regista o progresso num calendário mensal." }
 ];
 
 export const FERRAMENTAS_REGISTO = Object.freeze(

@@ -3,6 +3,7 @@ import { obterCaixasSharePorIds, obterIdsCaixasShare } from '../../share/share-c
 // components/editor/modulos/ai-search-indexer.js
 import { doc, setDoc, updateDoc, deleteField } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { notaEstaOculta } from '../../notes/note-visibility.js';
+import { obterTextoSimplesRico } from './rich-text-editor.js';
 
 export async function dispararIndexacao(db, userId, notaId, dadosNota) {
     if (!db || !userId || !notaId) return;
@@ -30,7 +31,7 @@ export async function dispararIndexacao(db, userId, notaId, dadosNota) {
     .filter(c => c.estado === 'on') 
     .map(c => {
         const titulo = c.titulo ? `[${c.titulo}] ` : "";
-        const conteudo = c.conteudo ? c.conteudo.substring(0, 1000) : "";
+        const conteudo = c.conteudo ? obterTextoSimplesRico(c.conteudo).substring(0, 1000) : "";
         // 🚀 Formato ultra-claro: {ID:uuid} Conteúdo...
         return `{ID:${c.id}} ${titulo}${conteudo}`;
     })

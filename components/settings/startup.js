@@ -239,6 +239,7 @@ function confirmarSubstituicaoArranque(nomeAtual) {
 export function configurarToggleArranqueDaNota(notaId, dadosNota = {}) {
     const wrapper = document.getElementById("arranque-nota-toggle-wrap");
     const toggle = document.getElementById("check-arranque-nota");
+    const indisponivel = document.getElementById("arranque-nota-indisponivel");
     if (!wrapper || !toggle) return;
 
     estado.limparToggleNota?.();
@@ -247,6 +248,7 @@ export function configurarToggleArranqueDaNota(notaId, dadosNota = {}) {
         const entrada = obterEntrada(dispositivo);
         const visivel = dadosNota.onde !== "share" && entrada?.arraque === "on";
         wrapper.hidden = !visivel;
+        if (indisponivel) indisponivel.hidden = visivel || dadosNota.onde === "share";
         toggle.checked = visivel && entrada?.arrancarem === notaId;
     };
 

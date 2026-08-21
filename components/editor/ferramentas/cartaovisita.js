@@ -1,5 +1,6 @@
 // components/editor/ferramentas/cartaovisita.js
 import { abrirPopupImagemCartao } from '../modulos/tags/tags-utils.js';
+import { criarEditorRico } from '../modulos/rich-text-editor.js';
 
 /**
  * Fábrica de Cartões de Visita (Dourado/Cinza com Imagem e Título dinâmico)
@@ -108,12 +109,19 @@ export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onA
     };
 
     // CONTEÚDO / DESCRIÇÃO
-    const areaTexto = document.createElement("textarea");
-    areaTexto.value = caixa.conteudo || "";
+    const areaTexto = criarEditorRico({
+        valor: caixa.conteudo || '',
+        placeholder: 'Descrição...',
+        className: 'cartao-visita-conteudo',
+        onInput: ({ html }) => {
+            ajustarAlturaCorpo();
+            caixa.conteudo = html;
+            onTextoAlterado(caixa);
+        }
+    });
     if (typeof window.aplicarEscudoBloqueio === 'function') {
         window.aplicarEscudoBloqueio(caixa, areaTexto, caixaDiv);
     }
-    areaTexto.placeholder = "Descrição...";
     areaTexto.style.cssText = `
         background: transparent; border: none; 
         color: var(--text-main); font-size: var(--fs-note-texto, var(--fs-editor-texto)); 
@@ -129,12 +137,6 @@ export function criarCartaoVisita(caixa, onTextoAlterado, onApagar, onMover, onA
         requestAnimationFrame(() => { caixaDiv.style.minHeight = ''; }); // Destranca
     };
     
-    areaTexto.oninput = () => { 
-        ajustarAlturaCorpo();
-        caixa.conteudo = areaTexto.value; 
-        onTextoAlterado(caixa);
-    };
-
     colDir.appendChild(inputTit);
     colDir.appendChild(areaTexto);
     

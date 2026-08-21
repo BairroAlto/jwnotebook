@@ -104,6 +104,9 @@ export const ToolManager = {
         if (tipo === "gmail") {
             novaCaixa.gmailPreferencias = { limite: 25, filtro: "todos" };
         }
+        if (tipo === "habito") {
+            novaCaixa.habito = null;
+        }
         if (tipo !== "firmamento" && noteConfig.defaultFocos?.[tipo]) novaCaixa.foco = noteConfig.defaultFocos[tipo];
 
         // 4. Lógica de Posicionamento Inteligente
@@ -175,7 +178,7 @@ export const ToolManager = {
                 // Scroll suave para o novo bloco
                 elNovo.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 // Focar no campo de texto para escrita imediata
-                elNovo.querySelector('textarea, input')?.focus();
+                elNovo.querySelector('textarea, input, [contenteditable="true"]')?.focus();
             }
         }, 300);
     }

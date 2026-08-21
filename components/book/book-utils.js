@@ -1,4 +1,5 @@
 import { BIBLIA_METADATA } from '../lists/biblia.js';
+import { obterTextoSimplesRico } from '../editor/modulos/rich-text-editor.js';
 
 const BOOK_ALIASES = new Map();
 BIBLIA_METADATA.forEach(livro => {
@@ -29,7 +30,7 @@ export function textoDaCaixa(caixa) {
     if (!caixa) return "";
     const partes = [];
     if (caixa.titulo) partes.push(caixa.titulo);
-    if (caixa.conteudo) partes.push(caixa.conteudo);
+    if (caixa.conteudo) partes.push(obterTextoSimplesRico(caixa.conteudo));
     if (Array.isArray(caixa.textosanexados)) {
         caixa.textosanexados.forEach(item => partes.push(`${item.livro} ${item.cap}:${item.ver} ${item.texto || ""}`));
     }

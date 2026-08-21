@@ -1,4 +1,5 @@
 import { obterTextoFirmamento } from '../modulos/firmamento-paleta.js';
+import { criarEditorRico, obterTextoSimplesRico } from '../modulos/rich-text-editor.js';
 
 let gestorSelecaoIniciado = false;
 
@@ -47,10 +48,16 @@ export function criarFirmamento(caixa, onTextoAlterado, onApagar, onMover, onAdd
         </div>
     `;
 
-    const conteudo = document.createElement('textarea');
-    conteudo.className = 'firmamento-conteudo';
-    conteudo.value = caixa.conteudo || '';
-    conteudo.placeholder = 'Escreve o subtópico...';
+    const conteudo = criarEditorRico({
+        valor: caixa.conteudo || '',
+        placeholder: 'Escreve o subtópico...',
+        className: 'firmamento-conteudo',
+        onInput: ({ html }) => {
+            caixa.conteudo = html;
+            ajustarAltura();
+            onTextoAlterado(caixa);
+        }
+    });
 
     if (typeof window.aplicarEscudoBloqueio === 'function') {
         window.aplicarEscudoBloqueio(caixa, conteudo, bloco);
@@ -61,16 +68,10 @@ export function criarFirmamento(caixa, onTextoAlterado, onApagar, onMover, onAdd
         conteudo.style.height = `${conteudo.scrollHeight + 2}px`;
     };
 
-    conteudo.addEventListener('input', () => {
-        caixa.conteudo = conteudo.value;
-        ajustarAltura();
-        onTextoAlterado(caixa);
-    });
-
     barra.querySelector('.btn-cima').onclick = () => onMover(caixa, 'cima');
     barra.querySelector('.btn-baixo').onclick = () => onMover(caixa, 'baixo');
     barra.querySelector('.btn-add-abaixo').onclick = () => onAddAbaixo(caixa.id);
-    barra.querySelector('.btn-parabolica').onclick = () => window.dispararPesquisaParabolica?.(caixa.conteudo || '');
+    barra.querySelector('.btn-parabolica').onclick = () => window.dispararPesquisaParabolica?.(obterTextoSimplesRico(caixa.conteudo || ''));
     barra.querySelector('.btn-paleta').onclick = () => onPaleta(caixa);
     barra.querySelector('.btn-lixeira').onclick = () => onApagar(caixa);
 

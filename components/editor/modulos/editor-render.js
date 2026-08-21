@@ -222,6 +222,9 @@ async function renderizarCaixa(caixa, raciociniosVivos, handlers) {
         case "gmail":
             modulo = await import('../ferramentas/gmail.js');
             return modulo.criarGmail(caixa, acionarGravacao, onApagar, moverCaixa, prepararInsercao);
+        case "habito":
+            modulo = await import('../ferramentas/habito.js?v=20260821-habito-10');
+            return modulo.criarHabito(caixa, acionarGravacao, onApagar, moverCaixa, prepararInsercao);
         case "firmamento": {
             modulo = await import('../ferramentas/firmamento.js');
             const { abrirPaletaFirmamento } = await import('./firmamento-paleta.js');

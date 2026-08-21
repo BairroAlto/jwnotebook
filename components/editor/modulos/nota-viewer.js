@@ -4,7 +4,7 @@ import { aplicarPreferenciasDeNota, obterConfigNota } from '../../settings/prefe
 import { marcarNovidadesShareDaNotaComoVistas } from '../../share/share-notification-state.js';
 
 export function ajustarAlturasCampos() {
-    const campos = document.querySelectorAll('.tool-title-input, #editor-feed textarea');
+    const campos = document.querySelectorAll('.tool-title-input, #editor-feed textarea, #editor-feed [contenteditable="true"]');
     campos.forEach(el => {
         el.style.height = 'auto';
         el.style.height = el.scrollHeight + 'px';
@@ -137,7 +137,7 @@ export async function processarAberturaNota(ctx) {
             !(dadosNota.caixas?.[0]?.titulo || "").trim();
         if (!idCaixaFoco && primeiraCaixaVazia) {
             setTimeout(() => {
-                if (eAberturaActual()) container.querySelector('#editor-feed textarea, #editor-feed input')?.focus();
+                if (eAberturaActual()) container.querySelector('#editor-feed textarea, #editor-feed input, #editor-feed [contenteditable="true"]')?.focus();
             }, 80);
         }
 

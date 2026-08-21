@@ -1,5 +1,6 @@
 // components/editor/ferramentas/raciocinio.js
 import { FOCOS_RACIOCINIO } from '../modulos/paleta-cores.js';
+import { criarEditorRico, obterTextoSimplesRico } from '../modulos/rich-text-editor.js';
 
 /**
  * Fábrica de Raciocínios (Blocos Amarelos numerados com Título dinâmico)
@@ -97,14 +98,20 @@ export function criarRaciocinioAmarelo(caixa, numeroRaciocinio, onTextoAlterado,
     tituloContainer.appendChild(numeroEl);
     tituloContainer.appendChild(inputTitulo);
 
-    // --- CORPO (ÁREA DE TEXTO) ---
-    const corpo = document.createElement("textarea");
-    corpo.value = caixa.conteudo || "";
+    // --- CORPO (EDITOR DE TEXTO RICO) ---
+    const corpo = criarEditorRico({
+        valor: caixa.conteudo || '',
+        placeholder: 'Desenvolve o raciocínio...',
+        className: 'raciocinio-conteudo',
+        onInput: ({ html }) => {
+            ajustarAlturaCorpo();
+            caixa.conteudo = html;
+            onTextoAlterado(caixa);
+        }
+    });
     if (typeof window.aplicarEscudoBloqueio === 'function') {
         window.aplicarEscudoBloqueio(caixa, corpo, caixaDiv);
     }
-    corpo.placeholder = "Desenvolve o raciocínio...";
-    
     let corTxt = caixa.destaques ? "#000" : "var(--text-main)";
 
     corpo.style.cssText = `
@@ -123,12 +130,6 @@ export function criarRaciocinioAmarelo(caixa, numeroRaciocinio, onTextoAlterado,
         requestAnimationFrame(() => { caixaDiv.style.minHeight = ''; }); // Destranca
     };
 
-    corpo.addEventListener("input", (e) => {
-        ajustarAlturaCorpo(); 
-        caixa.conteudo = e.target.value; 
-        onTextoAlterado(caixa);
-    });
-
     // Eventos da Toolbar
     header.querySelector('.btn-cima').onclick = () => onMover(caixa, "cima");
     header.querySelector('.btn-baixo').onclick = () => onMover(caixa, "baixo");
@@ -137,7 +138,7 @@ export function criarRaciocinioAmarelo(caixa, numeroRaciocinio, onTextoAlterado,
     header.querySelector('.btn-partilhar').onclick = () => onPartilhar(caixa);
     header.querySelector('.btn-paleta').onclick = () => onPaleta(caixa);
     header.querySelector('.btn-lixeira').onclick = () => onApagar(caixa);
-    header.querySelector('.btn-parabolica').onclick = () => window.dispararPesquisaParabolica(caixa.conteudo + " " + (caixa.titulo || ""));
+    header.querySelector('.btn-parabolica').onclick = () => window.dispararPesquisaParabolica(obterTextoSimplesRico(caixa.conteudo) + " " + (caixa.titulo || ""));
 
     // Ajustes iniciais
     setTimeout(() => {

@@ -1,5 +1,6 @@
 // components/editor/modulos/event-manager.js
 import { doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { obterTextoSimplesRico } from './rich-text-editor.js';
 import { moverCaixa, prepararInsercao } from './editor-actions.js';
 import { abrirPaleta } from './paleta-cores.js';
 import { abrirPopupPartilhar } from './partilhar.js';
@@ -7,7 +8,7 @@ import { abrirPopupTags } from './tags/tags-controller.js';
 import { MobileBibleBar } from "./mobile-bible-bar.js";
 import { isMobileViewport } from "../../ui/mobile-device.js";
 import { abrirPopupImportarTexto } from './importar-texto.js';
-import { LabModelos } from './lab-modelos.js?v=20260819-capa-altura-sinaletica';
+import { LabModelos } from './lab-modelos.js?v=20260820-sites-tabs';
 import { obterFeaturesDisponiveis } from '../../settings/feature-admin.js';
 import { obterDefinicaoModoNota, chaveAcessoModoNota } from './nota-modes.js';
 import { criarAjustadorAlturaAbas } from '../../ui/fixed-tabs-height.js';
@@ -224,7 +225,7 @@ export const EventManager = {
             // A) TRATAMENTO DA PESQUISA GLOBAL (FERRAMENTA ÃšNICA)
             if (m === 'global') {
                 const caixasVivas = ctx.caixasAtuais.filter(c => c.estado === 'on');
-                const textoFull = caixasVivas.map(c => `${c.titulo || ""} ${c.conteudo || ""}`).join(" [BLOCK] ");
+                const textoFull = caixasVivas.map(c => `${c.titulo || ""} ${obterTextoSimplesRico(c.conteudo || "")}`).join(" [BLOCK] ");
                 if (textoFull) window.dispararPesquisaParabolica(textoFull, true);
                 document.getElementById('popup-lab-overlay')?.classList.remove('active');
                 return; 
@@ -684,7 +685,7 @@ export const EventManager = {
             if (ctx.dadosNotaOriginal.onde !== "share" && m === "social") return;
             if (m === 'global') {
                 const caixasVivas = ctx.caixasAtuais.filter(c => c.estado === 'on');
-                const textoFull = caixasVivas.map(c => `${c.titulo || ""} ${c.conteudo || ""}`).join(" [BLOCK] ");
+                const textoFull = caixasVivas.map(c => `${c.titulo || ""} ${obterTextoSimplesRico(c.conteudo || "")}`).join(" [BLOCK] ");
                 if (textoFull) window.dispararPesquisaParabolica(textoFull, true);
                 document.getElementById('popup-lab-overlay')?.classList.remove('active');
                 return;

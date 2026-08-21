@@ -23,7 +23,7 @@ import { abrirPesquisaCodex } from '../codex-browser.js';
 import { perguntarRemocaoHub } from './tags-utils.js';
 import { removerLigacaoBairroDoAlvo } from '../bairro-ligacoes.js';
 import { configurarToggleArranqueDaNota } from '../../../settings/startup.js';
-import { exigirAcessoFerramenta } from '../../../settings/feature-admin.js';
+import { exigirAcessoFerramenta, obterAcessoFerramenta } from '../../../settings/feature-admin.js';
 import * as GlosaController from '../glosa/glosa-controller.js';
 import { montarPainelFicheiros } from '../../../storage/storage-ui.js';
 
@@ -679,6 +679,13 @@ export async function abrirPopupTagsNota(notaId, db, auth) {
         renderizarVinculosNotaUI(notaSnap.data().vincTopicos || []);
     }
     configurarToggleArranqueDaNota(notaId, { onde: "local" });
+    configurarAbasPopupTagsNota({
+        aoAbrirAgenda: async () => {
+            const modulo = await import('../agenda/agenda-controller.js?v=20260820-note-options-2');
+            return modulo.abrirAgendaDaNota({ notaId, auth });
+        }
+    });
+    atualizarIndicadorPlanoAgenda();
 
     // 2. Evento de fecho
     document.getElementById('btn-fechar-tags-nota').onclick = () => overlay.classList.remove('active');
@@ -709,6 +716,81 @@ export async function abrirPopupTagsNota(notaId, db, auth) {
         renderizarResultadosPesquisaNota(resultados, 'results-tags-nota-unified', 'vincularSubtopicoANotaFinal');
     };
 
+}
+
+async function atualizarIndicadorPlanoAgenda() {
+    const tab = document.getElementById('tab-tags-nota-agenda');
+    if (!tab) return;
+    tab.querySelector('.tags-nota-plan-lock')?.remove();
+    try {
+        const permitido = await obterAcessoFerramenta(authRef || window.auth, 'ferramenta_agenda_nota');
+        tab.classList.toggle('plan-locked', !permitido);
+        if (permitido) return;
+        const lock = document.createElement('i');
+        lock.className = 'fa-solid fa-lock tags-nota-plan-lock';
+        lock.setAttribute('aria-label', 'Requer outro plano');
+        tab.appendChild(lock);
+    } catch (_) {
+        tab.classList.remove('plan-locked');
+    }
+}
+
+function configurarAbasPopupTagsNota({ aoAbrirAgenda } = {}) {
+    const tabs = document.querySelectorAll('[data-tags-nota-tab]');
+    const paineis = document.querySelectorAll('.tags-nota-panel');
+    if (!tabs.length || !paineis.length) return;
+
+    const ativarAba = (nome) => {
+        tabs.forEach(tab => {
+            const ativa = tab.dataset.tagsNotaTab === nome;
+            tab.classList.toggle('active', ativa);
+            tab.setAttribute('aria-selected', String(ativa));
+            tab.tabIndex = ativa ? 0 : -1;
+        });
+
+        paineis.forEach(painel => {
+            const ativo = painel.id === `panel-tags-nota-${nome}`;
+            painel.classList.toggle('active', ativo);
+            painel.hidden = !ativo;
+        });
+    };
+
+    tabs.forEach(tab => {
+        tab.onclick = async () => {
+            const nome = tab.dataset.tagsNotaTab;
+            if (nome !== 'agenda') {
+                ativarAba(nome);
+                return;
+            }
+
+            tab.disabled = true;
+            try {
+                if (!aoAbrirAgenda || await aoAbrirAgenda()) ativarAba(nome);
+            } catch (erro) {
+                console.error('[AGENDA] Não foi possível abrir a Agenda da Nota:', erro);
+                window.alert('Não foi possível abrir a Agenda da Nota. Tenta novamente.');
+            } finally {
+                tab.disabled = false;
+            }
+        };
+
+        tab.onkeydown = (evento) => {
+            const teclas = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+            if (!teclas.includes(evento.key)) return;
+            evento.preventDefault();
+            const lista = Array.from(tabs);
+            const atual = lista.indexOf(tab);
+            const destino = evento.key === 'Home'
+                ? 0
+                : evento.key === 'End'
+                    ? lista.length - 1
+                    : (atual + (evento.key === 'ArrowRight' ? 1 : -1) + lista.length) % lista.length;
+            lista[destino].focus();
+            lista[destino].click();
+        };
+    });
+
+    ativarAba('etiqueta');
 }
 
 /**

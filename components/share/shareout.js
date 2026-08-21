@@ -67,9 +67,10 @@ async function carregarNotaPublica() {
                     elemento.style.pointerEvents = "none"; // Desativa cliques em tudo por seguranÃ§a
 
                     // ForÃ§ar expansÃ£o de todos os campos de texto
-                    const textAreas = elemento.querySelectorAll('textarea, input');
+                    const textAreas = elemento.querySelectorAll('textarea, input, [contenteditable="true"]');
                     textAreas.forEach(ta => {
-                        ta.readOnly = true;
+                        if (ta.isContentEditable || ta.hasAttribute('contenteditable')) ta.contentEditable = 'false';
+                        else ta.readOnly = true;
                         // ForÃ§ar altura baseada no conteÃºdo
                         ta.style.height = 'auto';
                         setTimeout(() => {

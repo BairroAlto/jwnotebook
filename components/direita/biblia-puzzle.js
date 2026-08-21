@@ -8,6 +8,7 @@ import { SharedPuzzleUI } from './shared-puzzle-ui.js';
 import { isMobileViewport } from '../ui/mobile-device.js';
 import { subscreverCaixasPorIds, subscreverCaixasAssociadas } from './biblia-associadas-cache.js';
 import { mostrarCarregamentoCaixas, mostrarErroCarregamentoCaixas } from './biblia-carregamento-ui.js';
+import { abrirPopupCodexBiblia } from '../bible-portal/bible-codex.js';
 
 let unsubPuzzle = null;
 let unsubPuzzleCapitulo = null;
@@ -580,6 +581,7 @@ function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) 
                 <i class="fa-solid fa-chevron-up btn-up" title="Subir" style="cursor:pointer; transition:0.2s;"></i>
                 <i class="fa-solid fa-chevron-down btn-down" title="Descer" style="cursor:pointer; transition:0.2s;"></i>
                 <i class="fa-solid fa-palette btn-palette" title="Mutar caixa" style="cursor:pointer; transition:0.2s;"></i>
+                <i class="fa-brands fa-artstation btn-codex" title="Adicionar ao Codex" style="color:#a78bfa; cursor:pointer; transition:0.2s;"></i>
                 <i class="fa-solid fa-paper-plane btn-send" title="Enviar para uma nota" style="cursor:pointer; transition:0.2s;"></i>
                 <i class="fa-solid fa-trash-can btn-remove" title="Eliminar" style="color:#f87171; font-size:11px; cursor:pointer; opacity:0.6; transition:0.2s;"></i>
             </div>
@@ -640,6 +642,7 @@ function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) 
     const btnUp = card.querySelector(".btn-up");
     const btnDown = card.querySelector(".btn-down");
     const btnPalette = card.querySelector(".btn-palette");
+    const btnCodex = card.querySelector(".btn-codex");
     const btnRemove = card.querySelector(".btn-remove");
     btnUp.onclick = event => { event.stopPropagation(); moverItemBiblia(index, -1, listaCompleta, docRef, container); };
     btnDown.onclick = event => { event.stopPropagation(); moverItemBiblia(index, 1, listaCompleta, docRef, container); };
@@ -654,6 +657,8 @@ function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) 
     };
     btnPalette.onmouseenter = () => { btnPalette.style.color = "#fbbf24"; };
     btnPalette.onmouseleave = () => { btnPalette.style.color = ""; };
+    btnCodex.onmouseenter = () => { btnCodex.style.color = "#c4b5fd"; };
+    btnCodex.onmouseleave = () => { btnCodex.style.color = "#a78bfa"; };
     btnSend.onmouseenter = () => { btnSend.style.color = "#a5b4fc"; };
     btnSend.onmouseleave = () => { btnSend.style.color = ""; };
     btnRemove.onmouseenter = () => { btnRemove.style.opacity = "1"; };
@@ -664,9 +669,23 @@ function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) 
         abrirPaleta(c, "tab-mutacao", guardarEstadoVisual, { apenasFocosMutacao: true });
     };
 
+    btnCodex.onclick = event => {
+        event.stopPropagation();
+        abrirPopupCodexBiblia({
+            livro: infoVersiculoAtivo?.livro,
+            cap: infoVersiculoAtivo?.cap,
+            ver: infoVersiculoAtivo?.ver,
+            texto: infoVersiculoAtivo?.texto,
+            docRef
+        });
+    };
+
     btnSend.onclick = event => {
         event.stopPropagation();
-        abrirPopupPartilhar(c, "__PUZZLE__", () => {}, currentDb, currentAuth);
+        abrirPopupPartilhar({
+            ...c,
+            __bibliaCodexDocId: docRef?.id || null
+        }, "__PUZZLE__", () => {}, currentDb, currentAuth);
     };
 
     btnRemove.onclick = async event => {
@@ -722,7 +741,10 @@ function renderFerramentaVinculadaUI(item, index, listaCompleta, docRef, db, aut
 
     card.querySelector('.btn-enviar').onclick = (e) => {
         e.stopPropagation();
-        abrirPopupPartilhar(item, "__PUZZLE__", () => {}, currentDb, currentAuth);
+        abrirPopupPartilhar({
+            ...item,
+            __bibliaCodexDocId: docRef?.id || null
+        }, "__PUZZLE__", () => {}, currentDb, currentAuth);
     };
     card.querySelector('.btn-viajar').onclick = (e) => {
         e.stopPropagation();

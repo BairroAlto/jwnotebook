@@ -10,16 +10,17 @@ export const LockUI = {
 
         // 1. REMOVER O CURSOR DE QUALQUER CAMPO (O truque do Blur)
         // Se o utilizador estava a escrever, o cursor desaparece instantaneamente.
-        if (document.activeElement && 
-           (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT')) {
+        if (document.activeElement &&
+           (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT' || document.activeElement.isContentEditable)) {
             document.activeElement.blur();
         }
 
         // 2. DESATIVAR FISICAMENTE TODOS OS TEXTAREAS E INPUTS
         // Isto garante que, mesmo que o foco tente voltar, o browser não deixa escrever.
-        const todosInputs = document.querySelectorAll('#editor-feed textarea, #editor-feed input, #editor-titulo');
+        const todosInputs = document.querySelectorAll('#editor-feed textarea, #editor-feed input, #editor-feed [contenteditable="true"], #editor-feed [contenteditable="false"], #editor-titulo');
         todosInputs.forEach(el => {
-            el.disabled = true;
+            if (el.isContentEditable || el.hasAttribute('contenteditable')) el.contentEditable = 'false';
+            else el.disabled = true;
             el.style.cursor = "not-allowed";
         });
 
@@ -67,9 +68,10 @@ export const LockUI = {
         console.log("🔓 [UI] Restaurando inputs para modo edição.");
 
         // 1. REATIVAR TODOS OS INPUTS
-        const todosInputs = document.querySelectorAll('#editor-feed textarea, #editor-feed input, #editor-titulo');
+        const todosInputs = document.querySelectorAll('#editor-feed textarea, #editor-feed input, #editor-feed [contenteditable="true"], #editor-feed [contenteditable="false"], #editor-titulo');
         todosInputs.forEach(el => {
-            el.disabled = false;
+            if (el.isContentEditable || el.hasAttribute('contenteditable')) el.contentEditable = 'true';
+            else el.disabled = false;
             el.style.cursor = "text";
         });
 

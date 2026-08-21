@@ -1,5 +1,7 @@
 // components/biblioteca-brain/biblio-transmitter.js
 
+import { sanitizarHtmlRico } from '../editor/modulos/rich-text-editor.js';
+
 export async function transmitirParaEditorVivo(camposNovos, estudoMestre) {
     if (!window.caixasAtuais) return;
 
@@ -37,9 +39,12 @@ export async function transmitirParaEditorVivo(camposNovos, estudoMestre) {
 
         } else {
             // 3. MUDANÇA VISUAL (Destaques ou Conteúdo) -> Manipulação Direta
-            const txt = elementoAntigo.querySelector('textarea:not(.tool-title-input)');
+            const txt = elementoAntigo.querySelector('.nb-rich-editor, textarea:not(.tool-title-input)');
             if (txt) {
-                if (camposNovos.conteudo !== undefined) txt.value = camposNovos.conteudo;
+                if (camposNovos.conteudo !== undefined) {
+                    if (txt.isContentEditable || txt.hasAttribute('contenteditable')) txt.innerHTML = sanitizarHtmlRico(camposNovos.conteudo);
+                    else txt.value = camposNovos.conteudo;
+                }
                 if (camposNovos.destaques !== undefined) {
                     txt.style.backgroundColor = camposNovos.destaques || "transparent";
                     txt.style.color = camposNovos.destaques ? "#000" : "white";

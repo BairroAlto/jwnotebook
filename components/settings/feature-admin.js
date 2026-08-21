@@ -26,10 +26,12 @@ const FEATURE_GROUP_ORDER = ['painel', 'ferramentas', 'plugs', 'conexoes', 'part
 const PAINEL_UTILIZADOR_CHAVES = new Set(PAINEL_UTILIZADOR_ABAS.map(aba => aba.key));
 const FEATURES_ESTRUTURAIS_CHAVES = new Set([
     ...PAINEL_UTILIZADOR_CHAVES,
+    'ferramenta_agenda_nota',
     'ferramenta_noticias',
     'ferramenta_tempo',
     'ferramenta_inspirador',
     'ferramenta_gmail',
+    'ferramenta_habito',
     'plug_wikipedia',
     'plug_wikidata',
     'plug_wikimedia'

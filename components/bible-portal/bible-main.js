@@ -21,6 +21,7 @@ import { carregarPreferenciasUtilizador } from '../settings/preferences.js';
 import { aquecerCaixasAssociadas } from '../direita/biblia-associadas-cache.js';
 import { MobilePanelManager } from '../ui/mobile-panel-manager.js';
 import { iniciarEstadoAnotacoesBiblia, versiculoTemAnotacao } from './bible-annotation-state.js';
+import { iniciarCodexBiblia } from './bible-codex.js';
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -31,6 +32,7 @@ window.auth = auth;
 window.livroAtivo = null;
 window.capAtivo = null;
 window.referenciaAtiva = null;
+window.bibleVersiculoAtivo = null;
 window.textoCapituloAtual = "";
 
 let bootDone = false;
@@ -82,8 +84,11 @@ await Promise.all([
     carregarComponente('area-popup-cosmos', 'components/popup/popup-cosmos.html'),
     carregarComponente('area-popup-cosmos-fontes', 'components/popup/popup-cosmos-fontes.html'),
     carregarComponente('area-popup-cores', 'components/popup/popup-cores.html'),
-    carregarComponente('area-popup-editar-cor', 'components/popup/popup-editar-cor.html')
+    carregarComponente('area-popup-editar-cor', 'components/popup/popup-editar-cor.html'),
+    carregarComponente('area-popup-codex-biblia', 'components/popup/popup-codex-biblia.html')
 ]);
+
+iniciarCodexBiblia({ db, auth });
 
 iniciarAutenticacao(app, db);
 
@@ -165,6 +170,7 @@ function renderizarMosaicoInicial() {
     window.livroAtivo = null;
     window.capAtivo = null;
     window.referenciaAtiva = null;
+    window.bibleVersiculoAtivo = null;
     window.textoCapituloAtual = "";
     versiculosAtuais = null;
     BibleHighlights.limparCapitulo();
@@ -236,6 +242,7 @@ async function carregarCapituloNoPortal(livroNome, cap, verAlvo = null) {
     window.livroAtivo = livro.nome;
     window.capAtivo = Number(cap);
     window.referenciaAtiva = `${livro.nome} ${cap}`;
+    window.bibleVersiculoAtivo = null;
     document.body.classList.remove('bible-book-select-active');
 
     BibleUI.mostrarLoadingLeitura(true);

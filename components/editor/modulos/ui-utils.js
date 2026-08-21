@@ -19,7 +19,7 @@ export const EditorUI = {
      */
 forçarAjusteAlturas: () => {
         // Seleciona todos os títulos e corpos de texto
-        const elementos = document.querySelectorAll('.tool-title-input, #editor-feed textarea');
+        const elementos = document.querySelectorAll('.tool-title-input, #editor-feed textarea, #editor-feed [contenteditable="true"]');
         elementos.forEach(el => {
             el.style.height = 'auto';
             // O segredo: scrollHeight dá-nos o tamanho real do texto, mesmo com quebras

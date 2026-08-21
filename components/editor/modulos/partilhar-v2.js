@@ -1,6 +1,7 @@
 // components/editor/modulos/partilhar-v2.js
 import { getFirestore, collection, query, where, getDocs, addDoc, serverTimestamp, onSnapshot, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { IDENTIDADE_FERRAMENTAS } from '../../constants/ferramentas.js';
+import { obterTextoSimplesRico } from './rich-text-editor.js';
 
 let db, auth;
 let notaOriginal = null;
@@ -145,7 +146,7 @@ function abrirPersonalizacao() {
         div.innerHTML = `
             <div style="flex:1; overflow:hidden;">
                 <p style="font-size:9px; color:${config.cor}; font-weight:800; text-transform:uppercase; margin-bottom:3px;">${config.nome}</p>
-                <p style="font-size:12px; color:white; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${c.titulo || (c.conteudo ? c.conteudo.substring(0,60) : 'Sem título')}</p>
+                <p style="font-size:12px; color:white; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${c.titulo || (c.conteudo ? obterTextoSimplesRico(c.conteudo).substring(0,60) : 'Sem título')}</p>
             </div>
             <label class="switch-container">
                 <input type="checkbox" class="toggle-cache" data-id="${c.id}" ${c.protecao === 'aberto' ? 'checked' : ''}>

@@ -1,3 +1,8 @@
+import {
+  handleReminderRequest,
+  processDueReminders
+} from './reminders-worker.js';
+
 const FREE_QUOTA_BYTES = 3 * 1024 * 1024 * 1024;
 const PREMIUM_DEFAULT_QUOTA_BYTES = 25 * 1024 * 1024 * 1024;
 const PREMIUM_PLUS_DEFAULT_QUOTA_BYTES = 100 * 1024 * 1024 * 1024;
@@ -37,10 +42,12 @@ const USER_PANEL_FEATURES = [
   ['painel_sair', 'Painel — Sair', 'Terminar a sessão da conta.']
 ];
 const STORE_FEATURES = [
+  ['ferramenta_agenda_nota', 'Agenda da Nota', 'Lembretes para regressar a uma nota através de notificações da aplicação.', 'premium'],
   ['ferramenta_noticias', 'Notícias', 'Ferramenta de notícias RSS disponível na Loja.', 'free'],
   ['ferramenta_tempo', 'Tempo', 'Ferramenta meteorológica com atualização diária disponível na Loja.', 'free'],
   ['ferramenta_inspirador', 'Inspirador', 'Citações da Wikiquote por autor, tema ou aleatórias.', 'free'],
   ['ferramenta_gmail', 'Gmail', 'Consulta os emails recentes da conta Google em modo somente leitura.', 'free'],
+  ['ferramenta_habito', 'Hábito', 'Categorias e calendário mensal para acompanhar hábitos.', 'free'],
   ['plug_wikipedia', 'Wikipédia', 'Pesquisa artigos da Wikipédia na coluna EYE.', 'free'],
   ['plug_wikidata', 'Wikidata', 'Pesquisa dados estruturados do Wikidata na coluna EYE.', 'free'],
   ['plug_wikimedia', 'Wikimedia', 'Pesquisa imagens do Wikimedia Commons na coluna EYE.', 'free']
@@ -1626,6 +1633,18 @@ export default {
 
       const uid = await authenticate(request, env);
 
+      const reminderResponse = await handleReminderRequest({
+        request,
+        env,
+        uid,
+        url,
+        json,
+        getEntitlement,
+        isFeatureAllowed,
+        readNote: (noteId) => lerDocumentoFirestore(env, 'Local', noteId)
+      });
+      if (reminderResponse) return reminderResponse;
+
       if (url.pathname.startsWith("/gmail/")) {
         await ensureGmailTables(env);
         await assertGmailFeature(env, uid, request);
@@ -2216,5 +2235,9 @@ export default {
         error.headers || {}
       );
     }
+  },
+
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(processDueReminders({ env, getEntitlement, isFeatureAllowed }));
   }
 };

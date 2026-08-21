@@ -252,5 +252,5 @@ async function listarLivrosDiretos(path, btnVoltar) {
 
 function atualizarUIBloqueio() {
     const info = document.getElementById('codex-selecionados-info');
-    if (info) info.innerText = `${itensSelecionados.length} selecionado(s)`;
+    if (info) info.innerText = `${itensSelecionados.length} item${itensSelecionados.length === 1 ? '' : 's'} seleccionado${itensSelecionados.length === 1 ? '' : 's'}`;
 }

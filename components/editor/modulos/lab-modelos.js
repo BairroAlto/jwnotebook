@@ -206,6 +206,27 @@ export const LabModelos = {
         const sitesLink = document.getElementById('lab-sites-link');
         const sitesLinkUrl = document.getElementById('lab-sites-link-url');
         const sitesLinkOpen = document.getElementById('lab-sites-link-open');
+        const sitesSubtabs = [...document.querySelectorAll('.lab-sites-subtab')];
+        const sitesSubpanels = [...document.querySelectorAll('.lab-sites-subpanel')];
+        const activarSitesSubtab = (nome) => {
+            sitesSubtabs.forEach(botao => {
+                const activo = botao.dataset.sitesSubtab === nome;
+                botao.classList.toggle('active', activo);
+                botao.setAttribute('aria-selected', String(activo));
+            });
+            sitesSubpanels.forEach(painel => {
+                painel.hidden = painel.dataset.sitesSubpanel !== nome;
+            });
+            ajustadorAlturaLab.atualizar();
+        };
+        sitesSubtabs.forEach(botao => {
+            botao.dataset.sitesSubtab = botao.id.endsWith('topo') ? 'topo' : 'generico';
+            botao.addEventListener('click', () => activarSitesSubtab(botao.dataset.sitesSubtab));
+        });
+        sitesSubpanels.forEach(painel => {
+            painel.dataset.sitesSubpanel = painel.id.endsWith('topo') ? 'topo' : 'generico';
+        });
+        activarSitesSubtab('generico');
         const sitesConfig = ctx.dadosNotaOriginal?.sites || {};
         let sitesCapaFileId = typeof sitesConfig.capaFileId === 'string' ? sitesConfig.capaFileId : '';
         let sitesCapaPublicadaFileId = sitesCapaFileId;

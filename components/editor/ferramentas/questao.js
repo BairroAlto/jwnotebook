@@ -1,5 +1,6 @@
 // components/editor/ferramentas/questao.js
 import { FOCOS_QUESTAO } from '../modulos/paleta-cores.js';
+import { criarEditorRico, obterTextoSimplesRico, sanitizarHtmlRico } from '../modulos/rich-text-editor.js';
 
 /**
  * Fábrica de Questões (Blocos Verdes com Título dinâmico)
@@ -101,15 +102,30 @@ export function criarQuestaoVerde(caixa, onTextoAlterado, onApagar, onPaleta, on
     }
 });
 
-    // --- CORPO (ÁREA DE TEXTO) ---
-    const corpo = document.createElement("textarea");
-    corpo.value = caixa.conteudo || "";
+    // --- CORPO (EDITOR DE TEXTO RICO) ---
+    const corpo = criarEditorRico({
+        valor: caixa.conteudo || '',
+        placeholder: 'Escreve a pergunta ou dilema...',
+        className: 'questao-conteudo',
+        onInput: ({ html }) => {
+            ajustarAlturaCorpo();
+            caixa.conteudo = html;
+            onTextoAlterado(caixa);
+
+            const brainTxt = document.getElementById('txt-especial');
+            if (brainTxt && caixa.referenciacodex) {
+                const refCaixa = `${caixa.referenciacodex[0]}|${caixa.referenciacodex[1]}`;
+                if (window._brainRefAtiva === refCaixa) {
+                    if (brainTxt.isContentEditable) brainTxt.innerHTML = sanitizarHtmlRico(html);
+                    else brainTxt.value = obterTextoSimplesRico(html);
+                }
+            }
+        }
+    });
     
     if (typeof window.aplicarEscudoBloqueio === 'function') {
         window.aplicarEscudoBloqueio(caixa, corpo, caixaDiv);
     }
-    
-    corpo.placeholder = "Escreve a pergunta ou dilema...";
     
     let corTxt = caixa.destaques ? "#000" : "var(--text-main)";
 
@@ -129,19 +145,6 @@ export function criarQuestaoVerde(caixa, onTextoAlterado, onApagar, onPaleta, on
         requestAnimationFrame(() => { caixaDiv.style.minHeight = ''; });
     };
 
-   corpo.addEventListener("input", (e) => {
-    ajustarAlturaCorpo(); 
-    caixa.conteudo = e.target.value; 
-    onTextoAlterado(caixa);
-
-    // 🚀 BRIDGE: EDITOR -> BRAIN (Instantâneo)
-    const brainTxt = document.getElementById('txt-especial');
-    if (brainTxt && caixa.referenciacodex) {
-        const refCaixa = `${caixa.referenciacodex[0]}|${caixa.referenciacodex[1]}`;
-        if (window._brainRefAtiva === refCaixa) brainTxt.value = e.target.value;
-    }
-});
-
     // Atribuição de Funções da Toolbar
     header.querySelector('.btn-cima').onclick = () => onMover(caixa, "cima");
     header.querySelector('.btn-baixo').onclick = () => onMover(caixa, "baixo");
@@ -154,7 +157,7 @@ export function criarQuestaoVerde(caixa, onTextoAlterado, onApagar, onPaleta, on
     header.querySelector('.btn-partilhar').onclick = () => onPartilhar(caixa);
     header.querySelector('.btn-paleta').onclick = () => onPaleta(caixa);
     header.querySelector('.btn-lixeira').onclick = () => onApagar(caixa);
-    header.querySelector('.btn-parabolica').onclick = () => window.dispararPesquisaParabolica(caixa.conteudo + " " + (caixa.titulo || ""));
+    header.querySelector('.btn-parabolica').onclick = () => window.dispararPesquisaParabolica(obterTextoSimplesRico(caixa.conteudo) + " " + (caixa.titulo || ""));
 
     // Ajustes de altura iniciais
     setTimeout(() => {

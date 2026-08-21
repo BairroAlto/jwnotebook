@@ -9,6 +9,7 @@ import { transmitirParaEditorVivo } from './biblio-transmitter.js';
 import { salvarNaBiblioteca, replicarParaNotaSentinela } from './biblio-persistence.js';
 import { executarMutacaoCores, executarApagar } from './biblio-actions.js';
 import { obterAcessoFerramenta } from '../settings/feature-admin.js';
+import { criarEditorRico, sanitizarHtmlRico } from '../editor/modulos/rich-text-editor.js';
 
 /**
  * CACHE DE CONTROLO DE INTERFACE
@@ -182,10 +183,26 @@ function renderCaixaAtiva(container, caixa, docRef, estudoMestre) {
             </div>
             <div style="padding: 20px; background-color: ${corFundo}; transition: background 0.3s; min-height: 450px;">
                 ${caixa.tipo !== 'contentor' ? `<input type="text" id="tit-especial" value="${caixa.titulo || ''}" placeholder="Título..." style="width:100%; background:transparent; border:none; border-bottom:1px solid rgba(255,255,255,0.05); color:${corTexto}; font-weight:700; margin-bottom:12px; outline:none; font-size:16px;">` : ''}
-                <textarea id="txt-especial" style="width:100%; min-height:400px; background:transparent; border:none; color:${corTexto}; outline:none; resize:none; font-size:15px; line-height:1.7; font-family:inherit;" placeholder="Escreve aqui as tuas anotações...">${caixa.conteudo || ""}</textarea>
+                <div id="txt-especial-mount"></div>
             </div>
         </div>
     `;
+
+    const editorRico = criarEditorRico({
+        valor: caixa.conteudo || '',
+        placeholder: 'Escreve aqui as tuas anotações...',
+        className: 'brain-rich-editor',
+        onInput: ({ html }) => {
+            caixa.conteudo = html;
+        }
+    });
+    editorRico.id = 'txt-especial';
+    editorRico.style.cssText = `
+        width: 100%; min-height: 400px; padding: 0; background: transparent;
+        border: none; color: ${corTexto}; outline: none; font-size: 15px;
+        line-height: 1.7; font-family: inherit; overflow-wrap: anywhere;
+    `;
+    container.querySelector('#txt-especial-mount')?.replaceWith(editorRico);
 
     vincularEventosUI(container, caixa, docRef, estudoMestre);
 }
@@ -198,8 +215,11 @@ function sincronizarCamposAtivos(container, caixa) {
         inputTit.value = caixa.titulo || "";
     }
 
-    if (inputTxt && inputTxt.value !== (caixa.conteudo || "")) {
-        inputTxt.value = caixa.conteudo || "";
+    const conteudoActual = inputTxt?.isContentEditable ? inputTxt.innerHTML : inputTxt?.value;
+    const conteudoNovo = inputTxt?.isContentEditable ? sanitizarHtmlRico(caixa.conteudo || '') : (caixa.conteudo || '');
+    if (inputTxt && conteudoActual !== conteudoNovo) {
+        if (inputTxt.isContentEditable) inputTxt.innerHTML = conteudoNovo;
+        else inputTxt.value = conteudoNovo;
     }
 }
 
@@ -213,8 +233,9 @@ function vincularEventosUI(container, caixa, docRef, estudoMestre) {
 
     // Função de auto-save interna
     const salvarAutomatico = () => {
+        const conteudo = inputTxt?.isContentEditable ? sanitizarHtmlRico(inputTxt.innerHTML) : inputTxt.value;
         const dados = { 
-            conteudo: inputTxt.value, 
+            conteudo,
             titulo: inputTit ? inputTit.value : (caixa.titulo || "") 
         };
         
@@ -254,7 +275,7 @@ function vincularEventosUI(container, caixa, docRef, estudoMestre) {
         const p = { 
             ...caixa, 
             titulo: inputTit ? inputTit.value : (caixa.titulo || ""), 
-            conteudo: inputTxt.value, 
+            conteudo: inputTxt?.isContentEditable ? sanitizarHtmlRico(inputTxt.innerHTML) : inputTxt.value,
             onde: "biblioteca", 
             idReferencia: estudoMestre.id 
         };

@@ -1,5 +1,6 @@
 // components/editor/modulos/arquivo-controller.js
 import { doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { obterTextoSimplesRico } from './rich-text-editor.js';
 import { renderizarFeed } from './editor-render.js';
 import { ArquivoTemplates } from './arquivo-ui-templates.js';
 
@@ -555,7 +556,7 @@ function abrirSeletorVinculo(gId, pId) {
             <div style="max-height:400px; overflow-y:auto; background:var(--bg-body); padding:15px; display:flex; flex-direction:column; gap:8px;">
                 ${listaCaixas.map(c => {
                     const meta = getMeta(c);
-                    const resumo = c.titulo || c.conteudo.substring(0, 45) + "...";
+                    const resumo = c.titulo || obterTextoSimplesRico(c.conteudo).substring(0, 45) + "...";
                     
                     // 2. APLICAR O ATRIBUTO 'checked' SE O ID JÁ ESTIVER NA LISTA
                     const estaMarcado = idsJaVinculados.includes(c.id) ? 'checked' : '';

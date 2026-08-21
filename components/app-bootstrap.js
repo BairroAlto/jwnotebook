@@ -37,7 +37,7 @@ import { inicializarSeletorFerramentas } from './editor/modulos/tool-picker.js';
 
      // 2. LOGO A SEGUIR, O MONITOR DE INTERNET
     const banner = document.getElementById('offline-banner');
-    const VERSAO_COMPONENTES = '20260819-sites-capa';
+    const VERSAO_COMPONENTES = '20260820-note-options-2';
 
     function atualizarEstadoConexao() {
         if (navigator.onLine) {
@@ -183,6 +183,12 @@ import { inicializarSeletorFerramentas } from './editor/modulos/tool-picker.js';
 
         if (user) {
             console.log("🚀 Sessão ativa:", user.email);
+
+            if ('Notification' in window && Notification.permission === 'granted') {
+                import('./notifications/push-client.js')
+                    .then(modulo => modulo.sincronizarNotificacoesAutorizadas(authInstance))
+                    .catch(erro => console.info('[PUSH] Sincronização do dispositivo adiada:', erro.message));
+            }
             
             // 1. Esconder ecrã de login
             if (loginScreen) loginScreen.style.display = 'none';

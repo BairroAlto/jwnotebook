@@ -2,6 +2,7 @@ import { isMobileViewport } from '../ui/mobile-device.js';
 import { BookState } from './book-state.js';
 import { escapeHtml, linkarReferencias } from './book-utils.js';
 import { construirGruposFundidos } from '../editor/modulos/fundir-manager.js';
+import { ehHtmlRico, sanitizarHtmlRico } from '../editor/modulos/rich-text-editor.js';
 
 const TIPOS = {
     contentor: { nome: 'Contentor', icon: 'fa-box-archive', cor: '#f97316' },
@@ -64,7 +65,7 @@ function obterDadosCaixa(caixa, index, settings) {
     const tagHtml = tags.length
         ? '<div class="book-tags">' + tags.map(tag => '<span class="book-piccard" style="--tag-color:' + escapeHtml(meta.cor) + '">' + escapeHtml(tag) + '</span>').join('') + '</div>'
         : '';
-    const content = textoBiblicoHtml || (texto ? linkarReferencias(texto) : '');
+    const content = textoBiblicoHtml || prepararConteudoLivro(texto);
     const imagensHtml = imagens.length
         ? '<div class="book-gallery ' + obterClasseGaleria(caixa.urldimensao) + '">' + imagens.map(url =>
             '<div class="book-gallery-card"><img src="' + escapeHtml(url) + '" alt="" loading="lazy"></div>'
@@ -74,6 +75,14 @@ function obterDadosCaixa(caixa, index, settings) {
     const bottomTags = settings.tagPosition === 'top' ? '' : tagHtml;
 
     return { meta, id, style, destaque, topTags, bottomTags, content, imagensHtml, titulo, temTexto: Boolean(texto || textoBiblicoHtml) };
+}
+
+function prepararConteudoLivro(texto) {
+    if (!texto) return '';
+    if (!ehHtmlRico(texto)) return `<p>${linkarReferencias(texto)}</p>`;
+
+    const html = sanitizarHtmlRico(texto);
+    return /<(p|div|ul|ol|blockquote)\b/i.test(html) ? html : `<p>${html}</p>`;
 }
 
 function renderizarTextosBiblicos(caixa) {
@@ -136,7 +145,7 @@ function renderConteudoCaixa(dados, mostrarTitulo = true, { incluirRodape = true
         ? '<header class="book-box-title"><div><i class="fa-solid ' + dados.meta.icon + '"></i><span>' + escapeHtml(dados.titulo) + '</span></div><small>' + escapeHtml(dados.meta.nome) + '</small></header>'
         : '';
     const corpo = dados.imagensHtml + (dados.temTexto
-        ? '<div class="book-box-content"><p>' + dados.content + '</p></div>'
+        ? '<div class="book-box-content">' + dados.content + '</div>'
         : (dados.imagensHtml ? '' : '<div class="book-box-content"><p><span class="book-inline-empty">Caixa vazia.</span></p></div>'));
 
     return titulo + dados.topTags + corpo + (incluirRodape ? rodapeHtml : '');

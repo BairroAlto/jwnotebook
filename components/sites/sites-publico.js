@@ -1,3 +1,5 @@
+import { sanitizarHtmlRico } from '../editor/modulos/rich-text-sanitizer.js';
+
 const root = document.getElementById('site-publico');
 const partesDoCaminho = window.location.pathname.split('/').filter(Boolean);
 const FEATURE_API_URL = 'https://storage.notabook.site';
@@ -122,7 +124,12 @@ async function iniciar() {
       if (tituloCaixa) { const h = document.createElement('h2'); h.textContent = tituloCaixa; article.append(h); }
       const bairro = caixa.tipo === 'bairro' ? criarBairroPublico(caixa) : null;
       if (bairro) article.appendChild(bairro);
-      if (texto(caixa.conteudo)) { const p = document.createElement('p'); p.textContent = texto(caixa.conteudo); article.append(p); }
+      if (texto(caixa.conteudo)) {
+        const conteudo = document.createElement('div');
+        conteudo.className = 'site-caixa-conteudo';
+        conteudo.innerHTML = sanitizarHtmlRico(caixa.conteudo);
+        article.append(conteudo);
+      }
       if (article.childNodes.length) root.append(article);
     }
     if (site.mostrarBrowser && Array.isArray(site.browserIds) && site.browserIds.length) {

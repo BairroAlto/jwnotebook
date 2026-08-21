@@ -13,12 +13,19 @@ window.aplicarEscudoBloqueio = (caixa, elementoInput, containerFisico) => {
     const user = auth.currentUser;
     if (!user) return;
 
+    const eEditorRico = elementoInput.isContentEditable || elementoInput.getAttribute('contenteditable') === 'true';
+
     const bloqueio = caixa.bloqueio;
 
     // 1. VERIFICAR SE ESTÁ BLOQUEADO POR OUTREM
     if (bloqueio && bloqueio.userId !== user.uid) {
         // Bloquear UI
-        elementoInput.disabled = true;
+        if (eEditorRico) {
+            elementoInput.contentEditable = 'false';
+            elementoInput.setAttribute('aria-disabled', 'true');
+        } else {
+            elementoInput.disabled = true;
+        }
         elementoInput.style.cursor = "not-allowed";
         elementoInput.title = `Bloqueado por ${bloqueio.userName}`;
         containerFisico.style.opacity = "0.7";
@@ -35,7 +42,12 @@ window.aplicarEscudoBloqueio = (caixa, elementoInput, containerFisico) => {
         }
     } else {
         // 2. ESTÁ LIVRE OU É MEU - ATIVAR EVENTOS DE SESSÃO
-        elementoInput.disabled = false;
+        if (eEditorRico) {
+            elementoInput.contentEditable = 'true';
+            elementoInput.setAttribute('aria-disabled', 'false');
+        } else {
+            elementoInput.disabled = false;
+        }
         elementoInput.style.cursor = "text";
         
         elementoInput.onfocus = () => {

@@ -114,8 +114,14 @@ export function iniciarAutenticacao(app, db, { gerirLoading = true } = {}) {
     configurarLoginGoogle(auth, btnLogin, loginError);
 
     // 3. LÓGICA DE SAIR (LOGOUT)
-    window.executarLogout = () => {
+    window.executarLogout = async () => {
         if (confirm("Desejas realmente encerrar a sessão?")) {
+            try {
+                const push = await import('../../notifications/push-client.js');
+                await push.desativarNotificacoesNesteDispositivo(auth);
+            } catch (erro) {
+                console.info('[PUSH] O dispositivo será invalidado no próximo envio:', erro.message);
+            }
             signOut(auth).then(() => {
                 console.log("👋 AUTH: Sessão encerrada.");
                 location.reload(); 

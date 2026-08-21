@@ -40,7 +40,7 @@ export const MobileBibleBar = {
         bar.querySelector('.mobile-bible-helper-back').addEventListener('click', () => this.mostrarReferencias());
 
         document.addEventListener('focusin', (event) => {
-            const input = event.target.closest?.('#editor-container textarea, #editor-container input, #editor-titulo');
+            const input = event.target.closest?.('#editor-container textarea, #editor-container input, #editor-container [contenteditable="true"], #editor-titulo');
             if (!input) return;
             state.activeInput = input;
             this.atualizarReferencias();
@@ -54,7 +54,7 @@ export const MobileBibleBar = {
         document.addEventListener('focusout', (event) => {
             if (event.target === state.activeInput) {
                 setTimeout(() => {
-                    if (!document.activeElement?.matches('#editor-container textarea, #editor-container input, #editor-titulo')) {
+                    if (!document.activeElement?.matches('#editor-container textarea, #editor-container input, #editor-container [contenteditable="true"], #editor-titulo')) {
                         state.activeInput = null;
                         this.atualizarVisibilidade();
                     }
@@ -87,11 +87,12 @@ export const MobileBibleBar = {
         const mobile = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 768;
         const keyboardOpen = window.visualViewport ? (window.innerHeight - window.visualViewport.height > 120) : Boolean(state.activeInput);
         const visible = state.enabled && mobile && (Boolean(state.activeInput) || keyboardOpen);
-        bar.style.bottom = "0px";
         bar.style.display = visible ? "flex" : "none";
         bar.style.transform = visible ? "translateY(0)" : "translateY(120%)";
         bar.classList.toggle('is-visible', visible);
         bar.classList.toggle('is-expanded', visible && state.expanded);
+        document.documentElement.style.setProperty('--mobile-bible-helper-height', visible ? `${bar.offsetHeight + 8}px` : '0px');
+        document.body.dispatchEvent(new Event('mobile-bible-helper-layout'));
     },
 
     mostrarReferencias() {
@@ -107,7 +108,7 @@ export const MobileBibleBar = {
 
     atualizarReferencias() {
         if (!state.activeInput) return;
-        const inputs = [...document.querySelectorAll('#editor-container textarea, #editor-container input, #editor-titulo')];
+        const inputs = [...document.querySelectorAll('#editor-container textarea, #editor-container input, #editor-container [contenteditable="true"], #editor-titulo')];
         const index = inputs.indexOf(state.activeInput);
         const fontes = (index < 0 ? [state.activeInput] : inputs.slice(0, index + 1))
             .map(input => input.value || input.textContent || '')

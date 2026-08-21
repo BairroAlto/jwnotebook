@@ -1,5 +1,6 @@
 // components/editor/ferramentas/subnota.js
 import { FOCOS_SUBNOTA } from '../modulos/paleta-cores.js';
+import { criarEditorRico, obterTextoSimplesRico, sanitizarHtmlRico } from '../modulos/rich-text-editor.js';
 
 /**
  * Fábrica de SubNotas (Blocos Azuis com Título dinâmico)
@@ -102,15 +103,30 @@ export function criarSubNotaAzul(caixa, onTextoAlterado, onApagar, onPaleta, onP
         }
     });
 
-    // --- CORPO (ÁREA DE TEXTO) ---
-    const corpo = document.createElement("textarea");
-    corpo.value = caixa.conteudo || "";
+    // --- CORPO (EDITOR DE TEXTO RICO) ---
+    const corpo = criarEditorRico({
+        valor: caixa.conteudo || '',
+        placeholder: 'Escreve aqui as tuas notas...',
+        className: 'subnota-conteudo',
+        onInput: ({ html }) => {
+            ajustarAlturaCorpo();
+            caixa.conteudo = html;
+            onTextoAlterado(caixa);
+
+            const brainTxt = document.getElementById('txt-especial');
+            if (brainTxt && caixa.referenciacodex) {
+                const refCaixa = `${caixa.referenciacodex[0]}|${caixa.referenciacodex[1]}`;
+                if (window._brainRefAtiva === refCaixa) {
+                    if (brainTxt.isContentEditable) brainTxt.innerHTML = sanitizarHtmlRico(html);
+                    else brainTxt.value = obterTextoSimplesRico(html);
+                }
+            }
+        }
+    });
     
     if (typeof window.aplicarEscudoBloqueio === 'function') {
         window.aplicarEscudoBloqueio(caixa, corpo, caixaDiv);
     }
-    
-    corpo.placeholder = "Escreve aqui as tuas notas...";
     
     let corTxt = caixa.destaques ? "#000" : "var(--text-main)";
 
@@ -130,19 +146,6 @@ export function criarSubNotaAzul(caixa, onTextoAlterado, onApagar, onPaleta, onP
         requestAnimationFrame(() => { caixaDiv.style.minHeight = ''; });
     };
 
-   corpo.addEventListener("input", (e) => {
-        ajustarAlturaCorpo();
-        caixa.conteudo = e.target.value;
-        onTextoAlterado(caixa);
-
-        // 🚀 BRIDGE: EDITOR -> BRAIN (Conteúdo)
-        const brainTxt = document.getElementById('txt-especial');
-        if (brainTxt && caixa.referenciacodex) {
-            const refCaixa = `${caixa.referenciacodex[0]}|${caixa.referenciacodex[1]}`;
-            if (window._brainRefAtiva === refCaixa) brainTxt.value = e.target.value;
-        }
-    });
-
     // Eventos da Toolbar
     header.querySelector('.btn-cima').onclick = () => onMover(caixa, "cima");
     header.querySelector('.btn-baixo').onclick = () => onMover(caixa, "baixo");
@@ -155,7 +158,7 @@ export function criarSubNotaAzul(caixa, onTextoAlterado, onApagar, onPaleta, onP
     header.querySelector('.btn-partilhar').onclick = () => onPartilhar(caixa);
     header.querySelector('.btn-paleta').onclick = () => onPaleta(caixa);
     header.querySelector('.btn-lixeira').onclick = () => onApagar(caixa);
-    header.querySelector('.btn-parabolica').onclick = () => window.dispararPesquisaParabolica(caixa.conteudo + " " + (caixa.titulo || ""));
+    header.querySelector('.btn-parabolica').onclick = () => window.dispararPesquisaParabolica(obterTextoSimplesRico(caixa.conteudo) + " " + (caixa.titulo || ""));
 
     // Ajustes iniciais de altura após renderização
     setTimeout(() => {
