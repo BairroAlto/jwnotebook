@@ -25,10 +25,17 @@ function textoParaHtml(valor) {
     return escaparTexto(valor).replace(/\r\n?/g, '\n').replace(/\n/g, '<br>');
 }
 
+function corCssSegura(valor) {
+    const cor = String(valor || '').trim();
+    if (/^#[0-9a-f]{3,8}$/i.test(cor) || /^[a-z]+$/i.test(cor)) return true;
+    if (!/^(?:rgb|rgba|hsl|hsla)\([^)]*\)$/i.test(cor)) return false;
+    return typeof CSS === 'undefined' || typeof CSS.supports !== 'function' || CSS.supports('color', cor);
+}
+
 function copiarEstiloSeguro(origem, destino) {
     const cor = String(origem.style?.color || '').trim();
     const tamanho = String(origem.style?.fontSize || '').trim();
-    if (/^(#[0-9a-f]{3,8}|rgb\(|rgba\(|hsl\(|hsla\(|[a-z]+)$/i.test(cor)) {
+    if (corCssSegura(cor)) {
         destino.style.color = cor;
     }
     if (/^\d+(\.\d+)?(px|em|rem|%)$/i.test(tamanho)) {
@@ -47,7 +54,7 @@ function limparNode(node, destino) {
     if (tag === 'FONT') {
         const span = document.createElement('span');
         const cor = node.getAttribute('color');
-        if (cor && /^(#[0-9a-f]{3,8}|[a-z]+)$/i.test(cor)) span.style.color = cor;
+        if (cor && corCssSegura(cor)) span.style.color = cor;
         const tamanho = node.getAttribute('size');
         if (tamanho === '1' || tamanho === '2') span.classList.add('nb-rich-size-small');
         if (tamanho === '4' || tamanho === '5' || tamanho === '6' || tamanho === '7') span.classList.add('nb-rich-size-large');
