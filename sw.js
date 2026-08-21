@@ -1,7 +1,7 @@
 importScripts('./components/notifications/push-service-worker.js');
 
 // Incrementar esta versão força a criação de uma cache limpa em todos os clientes.
-const CACHE_NAME = 'notabook-v88-habito';
+const CACHE_NAME = 'notabook-v89-book-cache-clean';
 
 const PRE_CACHE_ASSETS = [
   './',
@@ -23,6 +23,14 @@ const PRE_CACHE_ASSETS = [
   './components/editor/editor.html?v=20260820-note-options-2',
   './components/editor/modulos/rich-text-editor.css',
   './components/editor/modulos/rich-text-editor.js',
+  './components/book/book-main.js',
+  './components/book/book-renderer.js',
+  './components/book/book-utils.js',
+  './components/book/book-bairro.js',
+  './components/book/book.css',
+  './components/book/book-firmamento.css',
+  './components/book/book-bairro.css',
+  './components/book/book-mobile.css',
   './components/editor/modulos/mobile-bible-bar.css',
   './components/editor/modulos/mobile-bible-bar.js',
   './components/editor/modulos/tags/tags-nota.css?v=20260820-note-options-2',
