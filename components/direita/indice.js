@@ -1,6 +1,7 @@
 // components/direita/indice.js
 import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
 import { FOCOS_BASE, FOCOS_SUBNOTA, FOCOS_QUESTAO, FOCOS_RACIOCINIO } from '../editor/modulos/paleta-cores.js';
+import { obterTextoSimplesRico } from '../editor/modulos/rich-text-editor.js';
 
 let isManualScrolling = false; 
 let notaIdCacheIndice = ""; 
@@ -59,7 +60,13 @@ export function renderizarIndice(caixasFiltradas, isModoPost = false) {
             case "citacaobiblica": resumo = (caixa.textosanexados && caixa.textosanexados.length > 0) ? caixa.textosanexados.map(v => `${v.livro} ${v.cap}:${v.ver}`).join(", ") : "Citação Bíblica"; break;
             case "elevador": resumo = (caixa.pastapai && caixa.pastapai[0]) ? caixa.pastapai[0].nome : "Elevador"; break;
             case "cartaovisita": resumo = caixa.titulo || "Cartão de Visita"; break;
-            default: resumo = caixa.titulo || (caixa.conteudo ? caixa.conteudo.substring(0, 80) : `Nova ${config.nome}`);
+            default: {
+                const texto = obterTextoSimplesRico(caixa.conteudo || '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                resumo = caixa.titulo || (texto ? texto.substring(0, 80) : `Nova ${config.nome}`);
+                break;
+            }
         }
 
         const idCaixa = String(caixa.id);

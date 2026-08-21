@@ -3,6 +3,7 @@ import { NexoEngine } from './ai-engine.js';
 import { AIView } from './ai-view.js';
 import { AIInteraction } from './ai-interaction.js';
 import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
+import { obterTextoSimplesRico } from '../editor/modulos/rich-text-editor.js';
 
 let state = {
     notaId: "",
@@ -213,7 +214,10 @@ export const AIController = {
         lista.forEach(c => {
             const el = document.getElementById(`ai-txt-${c.id}`);
             if (el) {
-                const resumo = c.titulo || (c.conteudo ? c.conteudo.substring(0, 80) : `Vazio`);
+                const texto = obterTextoSimplesRico(c.conteudo || '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                const resumo = c.titulo || (texto ? texto.substring(0, 80) : `Vazio`);
                 if (el.innerText !== resumo) el.innerText = resumo;
             }
         });
