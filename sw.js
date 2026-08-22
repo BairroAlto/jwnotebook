@@ -1,7 +1,7 @@
 importScripts('./components/notifications/push-service-worker.js');
 
 // Incrementar esta versão força a criação de uma cache limpa em todos os clientes.
-const CACHE_NAME = 'notabook-v91-agenda-dispositivos';
+const CACHE_NAME = 'notabook-v92-book-text-sequence';
 
 const PRE_CACHE_ASSETS = [
   './',
@@ -28,9 +28,11 @@ const PRE_CACHE_ASSETS = [
   './components/book/book-renderer.js',
   './components/book/book-utils.js',
   './components/book/book-bairro.js',
+  './components/book/book-text-sequence.js',
   './components/book/book.css',
   './components/book/book-firmamento.css',
   './components/book/book-bairro.css',
+  './components/book/book-text-sequence.css',
   './components/book/book-mobile.css',
   './components/editor/modulos/mobile-bible-bar.css',
   './components/editor/modulos/mobile-bible-bar.js',
