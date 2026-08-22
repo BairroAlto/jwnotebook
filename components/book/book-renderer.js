@@ -4,6 +4,7 @@ import { escapeHtml, linkarReferencias } from './book-utils.js';
 import { construirGruposFundidos } from '../editor/modulos/fundir-manager.js';
 import { ehHtmlRico, sanitizarHtmlRico } from '../editor/modulos/rich-text-editor.js';
 import { renderizarBairroBook } from './book-bairro.js';
+import { renderizarSequenciaApenasTexto } from './book-text-sequence.js';
 
 const TIPOS = {
     contentor: { nome: 'Contentor', icon: 'fa-box-archive', cor: '#f97316' },
@@ -36,12 +37,19 @@ export function renderBookFeed() {
 
     title.textContent = nota.nome || 'Sem titulo';
     info.textContent = caixas.length + ' ' + (caixas.length === 1 ? 'caixa' : 'caixas') + ' · ' + (nota.onde === 'share' ? 'Share' : 'Local');
-    container.classList.toggle('book-sequence-mode', settings.viewMode === 'sequence');
+    const modoApenasTexto = settings.viewMode === 'text-sequence';
+    container.classList.toggle('book-sequence-mode', settings.viewMode === 'sequence' || modoApenasTexto);
+    container.classList.toggle('book-text-sequence-mode', modoApenasTexto);
     container.classList.toggle('book-dotted-tools', settings.marginStyle === 'dotted');
     container.classList.toggle('book-solid-tools', settings.marginStyle !== 'dotted');
 
     if (!caixas.length) {
         feed.innerHTML = '<p class="book-inline-empty">Esta nota ainda nao tem caixas visiveis.</p>';
+        return;
+    }
+
+    if (modoApenasTexto) {
+        feed.innerHTML = renderizarSequenciaApenasTexto(caixas);
         return;
     }
 

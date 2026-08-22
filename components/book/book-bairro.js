@@ -100,6 +100,19 @@ export function textoBairroBook(caixa) {
     if (caixa?.mostrarDataTarefa) linhas.push('Mostra a data da tarefa.');
     if (caixa?.mostrarDataRealizacaoTarefa) linhas.push('Mostra a data de realização.');
 
+    linhas.push(...obterLinhasConteudoBairro(caixa));
+
+    return linhas.join('\n');
+}
+
+export function textoConteudoBairroBook(caixa) {
+    const linhas = obterLinhasConteudoBairro(caixa);
+    return linhas.length ? linhas.join('\n') : 'Este modelo ainda não tem grupos.';
+}
+
+function obterLinhasConteudoBairro(caixa) {
+    const linhas = [];
+
     obterGrupos(caixa).forEach((pai, indicePai) => {
         linhas.push(`Grupo ${indicePai + 1}: ${pai.nome || 'Grupo sem nome'}.`);
         pai.pastafilho.forEach((filho, indiceFilho) => {
@@ -111,5 +124,5 @@ export function textoBairroBook(caixa) {
         });
     });
 
-    return linhas.join('\n');
+    return linhas;
 }
