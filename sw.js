@@ -1,7 +1,7 @@
 importScripts('./components/notifications/push-service-worker.js');
 
 // Incrementar esta versão força a criação de uma cache limpa em todos os clientes.
-const CACHE_NAME = 'notabook-v92-book-text-sequence';
+const CACHE_NAME = 'notabook-v93-lists-mobile';
 
 const PRE_CACHE_ASSETS = [
   './',
@@ -19,12 +19,12 @@ const PRE_CACHE_ASSETS = [
   './styles/global.css',
   './styles/typography.css',
   './styles/mobile.css',
-  './components/app-bootstrap.js?v=20260820-note-options-2',
+  './components/app-bootstrap.js?v=20260824-lists-mobile-1',
   './components/editor/editor.html?v=20260820-note-options-2',
   './components/editor/modulos/rich-text-editor.css',
   './components/editor/modulos/rich-text-editor.js',
   './components/editor/modulos/rich-text-sanitizer.js',
-  './components/book/book-main.js',
+  './components/book/book-main.js?v=20260824-lists-mobile-1',
   './components/book/book-renderer.js',
   './components/book/book-utils.js',
   './components/book/book-bairro.js',
