@@ -3,7 +3,7 @@ import { BookState } from './book-state.js';
 export async function baixarPdfNota() {
     const printWindow = window.open('', '_blank', 'width=1100,height=860');
     if (!printWindow) {
-        window.print();
+        imprimirPaginaActual();
         return;
     }
 
@@ -22,6 +22,7 @@ export async function baixarPdfNota() {
             <link rel="stylesheet" href="styles/global.css">
             <link rel="stylesheet" href="styles/typography.css">
             <link rel="stylesheet" href="components/book/book.css">
+            <link rel="stylesheet" href="components/book/book-pdf.css?v=20260824-pdf-white-2">
             <link rel="stylesheet" href="components/book/book-mobile.css">
             <style>
                 body {
@@ -153,6 +154,18 @@ export async function baixarPdfNota() {
     setTimeout(() => {
         printWindow.print();
     }, 150);
+}
+
+function imprimirPaginaActual() {
+    document.body.classList.add('book-pdf');
+
+    const limpar = () => {
+        document.body.classList.remove('book-pdf');
+        window.removeEventListener('afterprint', limpar);
+    };
+
+    window.addEventListener('afterprint', limpar, { once: true });
+    window.print();
 }
 
 function escapeHtml(value) {
