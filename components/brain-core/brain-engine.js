@@ -967,7 +967,7 @@ function renderizarInteriorMicaLocal(mica, container, docRef, callbackRedraw) {
 
                 // 1. Mudar aba lateral para LISTS
                 const btnLists = Array.from(document.querySelectorAll('#left-buttons button'))
-                                      .find(b => b.innerText.trim().toUpperCase() === 'LISTS');
+                                      .find(b => (b.dataset.leftTab || b.textContent).trim().toUpperCase() === 'LISTS');
                 if (btnLists) btnLists.click();
 
                 // 2. Executar salto na Bíblia

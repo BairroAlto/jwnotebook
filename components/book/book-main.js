@@ -33,6 +33,7 @@ const auth = getAuth(app);
 window.db = db;
 window.auth = auth;
 let bootDone = false;
+const VERSAO_COMPONENTES = '20260824-lists-mobile-1';
 
 iniciarAutenticacao(app, db);
 
@@ -114,7 +115,9 @@ onAuthStateChanged(auth, async user => {
 async function carregarComponente(id, path) {
     const el = document.getElementById(id);
     if (!el) return;
-    const res = await fetch(path);
+    const url = new URL(path, document.baseURI);
+    url.searchParams.set('v', VERSAO_COMPONENTES);
+    const res = await fetch(url);
     el.innerHTML = await res.text();
 }
 

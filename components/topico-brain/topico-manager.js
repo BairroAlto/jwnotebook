@@ -394,7 +394,7 @@ window.saltarParaBiblioteca = (idCard) => {
 
     // 3. Força a abertura da aba LISTS na esquerda
     const btnLists = Array.from(document.querySelectorAll('#left-buttons button'))
-                          .find(b => b.innerText.trim().toUpperCase() === 'LISTS');
+                          .find(b => (b.dataset.leftTab || b.textContent).trim().toUpperCase() === 'LISTS');
     if (btnLists) btnLists.click();
 
     // 4. Puxa os motores existentes (bridge-main.js)
