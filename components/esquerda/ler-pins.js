@@ -210,7 +210,7 @@ async function viajarParaItem(data, db, auth) {
     const uid = auth.currentUser.uid;
 
     const botoesEsquerda = document.querySelectorAll('#left-buttons button');
-    const btnAlvo = Array.from(botoesEsquerda).find(b => b.innerText.trim().toUpperCase() === onde.toUpperCase());
+    const btnAlvo = Array.from(botoesEsquerda).find(b => (b.dataset.leftTab || b.textContent).trim().toUpperCase() === onde.toUpperCase());
     if (btnAlvo) btnAlvo.click();
 
     try {

@@ -9,7 +9,7 @@ window.sincronizarBarraLateralComNota = async (idNota, dados, auth) => {
     // 1. CLICAR NA ABA CERTA (LOCAL ou SHARE)
     const botoesAba = document.querySelectorAll('#left-buttons button');
     const nomeProcurado = onde.toUpperCase();
-    const btnAlvo = Array.from(botoesAba).find(b => b.innerText.trim().toUpperCase() === nomeProcurado);
+    const btnAlvo = Array.from(botoesAba).find(b => (b.dataset.leftTab || b.textContent).trim().toUpperCase() === nomeProcurado);
     
     if (btnAlvo && !btnAlvo.classList.contains('active')) {
         btnAlvo.click(); // Muda de aba automaticamente

@@ -44,9 +44,45 @@ export async function inicializarLists(db, auth) {
     dbRef = db;
     authRef = auth;
 
+    // Regista a navegação imediatamente. A validação remota dos fusíveis
+    // pode demorar ou falhar, mas não deve deixar a aba Lists sem resposta.
+    if (!listenersAtivos) {
+        document.body.addEventListener('click', (e) => {
+            const alvo = e.target instanceof Element ? e.target : null;
+
+            // --- TÓPICOS ---
+            if (alvo?.closest('#menu-list-topicos')) renderizarNavegacaoTopicos();
+
+            // --- DESTAQUES (CORES) ---
+            if (alvo?.closest('#menu-list-destaques')) renderizarMenuCores();
+
+            // --- BÍBLIA ---
+            if (alvo?.closest('#menu-list-biblia')) iniciarNavegacaoBiblia(dbRef, authRef);
+
+            // --- MARCADORES ---
+            if (alvo?.closest('#menu-list-marcadores')) iniciarNavegacaoMarcadores(dbRef, authRef);
+
+            // --- TEXTOS BÍBLICOS ---
+            if (alvo?.closest('#menu-list-textos-biblicos')) iniciarNavegacaoTextosBiblicos(dbRef, authRef);
+
+            // --- LIVROS E PUBLICAÇÕES ---
+            if (alvo?.closest('#menu-list-livros')) iniciarNavegacaoLivros();
+
+            // --- COSMOS ---
+            if (alvo?.closest('#menu-list-cosmos')) renderizarNavegacaoCosmos();
+
+            // --- SITES ---
+            if (alvo?.closest('#menu-list-sites')) renderizarNavegacaoSites();
+
+            // --- PALCO ---
+            if (alvo?.closest('#menu-list-palco')) iniciarNavegacaoPalco(window.__palcoPersistedItems || []);
+        });
+        listenersAtivos = true;
+    }
+
     // Iniciar subsistemas modulares
     iniciarCosmos(db, auth);
-    iniciarTopicos(db, auth); 
+    iniciarTopicos(db, auth);
     if (!escutaAcessoListAtiva) {
         window.addEventListener('notabook:list-feature-access-updated', sincronizarSitesComPlano);
         escutaAcessoListAtiva = true;
@@ -57,7 +93,7 @@ export async function inicializarLists(db, auth) {
         console.info('[LISTS] A opção Sites ficou oculta porque não foi possível validar o plano:', erro.message);
     }
     sincronizarSitesComPlano();
- 
+
     // 1. Carregar nomes das cores personalizados para a aba Destaques
     try {
         const snap = await getDoc(doc(db, "users", auth.currentUser.uid));
@@ -65,45 +101,6 @@ export async function inicializarLists(db, auth) {
             nomesCoresCustom = snap.data().caixadestaques;
         }
     } catch (e) { console.error("Erro ao carregar cores custom:", e); }
-
-    // 2. GESTOR DE CLIQUES (DELEGAÇÃO)
-    if (!listenersAtivos) {
-        document.body.addEventListener('click', (e) => {
-            
-            // --- TÓPICOS ---
-            if (e.target.closest('#menu-list-topicos')) renderizarNavegacaoTopicos();
-
-            // --- DESTAQUES (CORES) ---
-            if (e.target.closest('#menu-list-destaques')) renderizarMenuCores();
-            
-            // --- BÍBLIA ---
-            // Passamos db e auth para o versículo conseguir abrir o Brain depois
-            if (e.target.closest('#menu-list-biblia')) iniciarNavegacaoBiblia(dbRef, authRef);
-            
-            // --- MARCADORES (NOVO) ---
-           if (e.target.closest('#menu-list-marcadores')) {
-    iniciarNavegacaoMarcadores(dbRef, authRef);
-}
-
-            if (e.target.closest('#menu-list-textos-biblicos')) {
-    iniciarNavegacaoTextosBiblicos(dbRef, authRef);
-}
-
-            // --- LIVROS E PUBLICAÇÕES ---
-            if (e.target.closest('#menu-list-livros')) iniciarNavegacaoLivros();
-
-            // --- COSMOS ---
-            if (e.target.closest('#menu-list-cosmos')) renderizarNavegacaoCosmos();
-
-            // --- SITES ---
-            if (e.target.closest('#menu-list-sites')) renderizarNavegacaoSites();
-
-            // --- PALCO ---
-            if (e.target.closest('#menu-list-palco')) iniciarNavegacaoPalco(window.__palcoPersistedItems || []);
-
-        });
-        listenersAtivos = true;
-    }
 
     vigiarPalcoPersistido();
     vigiarNotificacoesPalco();
@@ -327,7 +324,7 @@ function vigiarNotificacoesPalco() {
     if (!dbRef || !authRef?.currentUser) return;
     if (unsubPalcoNotifications) unsubPalcoNotifications();
     const btnLists = Array.from(document.querySelectorAll('#left-buttons button'))
-        .find(btn => btn.innerText.trim().toUpperCase() === 'LISTS');
+        .find(btn => btn.textContent.trim().toUpperCase() === 'LISTS');
     const q = query(
         collection(dbRef, "PalcoNotificacoes"),
         where("userId", "==", authRef.currentUser.uid),

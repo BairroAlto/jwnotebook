@@ -228,7 +228,12 @@ function definirEstadoFolha(novoEstado) {
 
 export const MobilePanelManager = {
     iniciar: () => {
-        if (!mobileActivo()) return;
+        // Mantém o gestor disponível mesmo quando a viewport muda depois do
+        // arranque (por exemplo, rotação ou modo responsivo do navegador).
+        if (!mobileActivo()) {
+            window.MobilePanelManager = MobilePanelManager;
+            return;
+        }
         configurarControlos();
         actualizarDock();
         window.abrirFonteXSatMobile = abrirFonteXSatMobile;

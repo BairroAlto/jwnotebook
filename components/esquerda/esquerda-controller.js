@@ -7,6 +7,10 @@ let timeoutDestaque = null;
 
 window._syncLateralTimeout = null;
 
+function obterNomeAba(elemento) {
+    return (elemento?.dataset?.leftTab || elemento?.textContent || '').trim().toUpperCase();
+}
+
 /**
  * Controlador principal da navegação lateral esquerda.
  * Gere a troca de estados entre Local, Share, Pins e Lists.
@@ -18,11 +22,13 @@ export function iniciarControladorEsquerda() {
     const auth = getAuth();
 
     document.addEventListener('click', async (e) => {
-        const btnAba = e.target.closest('#left-buttons button');
+        const btnAba = e.target instanceof Element
+            ? e.target.closest('#left-buttons button')
+            : null;
         if (!btnAba) return;
 
         // 1. IDENTIFICAÇÃO DA ABA CLICADA
-        const nomeAbaAlvo = btnAba.innerText.trim().toUpperCase();
+        const nomeAbaAlvo = obterNomeAba(btnAba);
 
         // Se a aba clicada já for a ativa, voltamos à raiz da mesma (se aplicável)
         const jaEstavaAtiva = btnAba.classList.contains('active');
@@ -155,7 +161,7 @@ window.sincronizarBarraLateralComNota = (idNota, dados, auth) => {
     // Procuramos o botão da aba e clicamos apenas se ele não estiver ativo
     const botoesAba = document.querySelectorAll('#left-buttons button');
     botoesAba.forEach(btn => {
-        if (btn.innerText.trim().toUpperCase() === onde) {
+        if (obterNomeAba(btn) === onde) {
             if (!btn.classList.contains('active')) {
                 console.log(`📑 [SYNC] Trocando para aba ${onde}`);
                 btn.click();
