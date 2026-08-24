@@ -28,6 +28,55 @@ export async function baixarPdfNota() {
                     background: white !important;
                     color: #111827 !important;
                     overflow: visible !important;
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
+                }
+                .book-pdf,
+                .book-pdf .book-container,
+                .book-pdf .book-feed,
+                .book-pdf .book-box,
+                .book-pdf .book-box-fundido,
+                .book-pdf .book-box-fundido-membro,
+                .book-pdf .book-box-content,
+                .book-pdf .book-firmamento-content,
+                .book-pdf .book-bairro-content,
+                .book-pdf .book-gallery-card,
+                .book-pdf .book-tags {
+                    background: #ffffff !important;
+                    color: #111827 !important;
+                }
+                .book-pdf .book-box,
+                .book-pdf .book-box-fundido,
+                .book-pdf .book-box-fundido-membro {
+                    border-color: #cbd5e1 !important;
+                    box-shadow: none !important;
+                }
+                .book-pdf .book-box-title {
+                    background: #f8fafc !important;
+                    border-bottom-color: #cbd5e1 !important;
+                    color: #111827 !important;
+                }
+                .book-pdf .book-box-title i,
+                .book-pdf .book-box-title span,
+                .book-pdf .book-box-title small,
+                .book-pdf .book-box-content,
+                .book-pdf .book-box-content p,
+                .book-pdf .book-box-content li,
+                .book-pdf .book-bairro-content,
+                .book-pdf .book-bairro-content * {
+                    color: #111827 !important;
+                }
+                .book-pdf .book-box-content a,
+                .book-pdf .book-box-content a strong {
+                    color: #1d4ed8 !important;
+                }
+                .book-pdf .book-tags {
+                    border-top: 1px solid #e5e7eb;
+                }
+                .book-pdf .book-piccard {
+                    background: #f3f4f6 !important;
+                    border-color: #cbd5e1 !important;
+                    color: #111827 !important;
                 }
                 .book-container {
                     max-width: 1000px;
@@ -81,7 +130,7 @@ export async function baixarPdfNota() {
                 }
             </style>
         </head>
-        <body class="${escapeHtml(bodyClasses)}">
+        <body class="${escapeHtml(bodyClasses)} book-pdf">
             ${container?.outerHTML || ''}
         </body>
         </html>
