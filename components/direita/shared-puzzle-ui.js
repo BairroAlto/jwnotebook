@@ -9,12 +9,13 @@ export const SharedPuzzleUI = {
      * RENDERIZA O QUADRO MANUAL USANDO A FÁBRICA PADRONIZADA
      */
     renderQuadroManual: (q, index, listaCompleta, refDoc, callbacks) => {
-        const { setEstaAEscrever, moverItem, apagarItem, enviarItem, atualizarItem } = callbacks;
+        const { setEstaAEscrever, moverItem, apagarItem, enviarItem, atualizarItem, atualizarRascunho } = callbacks;
 
         return BrainBoxFactory.criar(q, index, {
             onUpdate: (novoTexto) => {
                 setEstaAEscrever(true);
                 q.conteudo = novoTexto;
+                atualizarRascunho?.(q, novoTexto);
 
                 if (window._puzzleTimers.has(q.id)) clearTimeout(window._puzzleTimers.get(q.id));
 
@@ -24,13 +25,16 @@ export const SharedPuzzleUI = {
                             await atualizarItem(q, novoTexto);
                         } else {
                             const snap = await getDoc(refDoc);
-                        const novosQuadros = snap.data().Puzzle.quadros.map(item => 
-                            item.id === q.id ? { ...item, conteudo: novoTexto } : item
-                        );
-                        await updateDoc(refDoc, { "Puzzle.quadros": novosQuadros });
+                            const novosQuadros = snap.data().Puzzle.quadros.map(item =>
+                                item.id === q.id ? { ...item, conteudo: novoTexto } : item
+                            );
+                            await updateDoc(refDoc, { "Puzzle.quadros": novosQuadros });
                         }
+                    } catch (err) {
+                        console.error(err);
+                    } finally {
                         setEstaAEscrever(false);
-                    } catch (err) { console.error(err); }
+                    }
                 }, 1200);
 
                 window._puzzleTimers.set(q.id, timer);

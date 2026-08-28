@@ -1,5 +1,5 @@
 // components/direita/biblia-puzzle.js
-import { collection, query, where, getDocs, addDoc, doc, updateDoc, onSnapshot, serverTimestamp, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { collection, query, where, getDocs, addDoc, updateDoc, onSnapshot, serverTimestamp, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 import { IDENTIDADE_FERRAMENTAS } from '../constants/ferramentas.js';
 import { FOCOS_BASE, FOCOS_SUBNOTA, FOCOS_QUESTAO, FOCOS_RACIOCINIO, abrirPaleta } from '../editor/modulos/paleta-cores.js';
 import { abrirNotaNoEditor } from '../editor/editor.js';
@@ -9,13 +9,15 @@ import { isMobileViewport } from '../ui/mobile-device.js';
 import { subscreverCaixasPorIds, subscreverCaixasAssociadas } from './biblia-associadas-cache.js';
 import { mostrarCarregamentoCaixas, mostrarErroCarregamentoCaixas } from './biblia-carregamento-ui.js';
 import { abrirPopupCodexBiblia } from '../bible-portal/bible-codex.js';
+import { agendarGravacaoPuzzle, cancelarGravacaoPuzzle, executarGravacaoPuzzle, limparGravacoesPuzzle } from './bible-puzzle-editor.js';
+import { criarEstadoCaixasSublinhado } from './bible-puzzle-highlight-status.js';
+import { ajustarAlturaTextarea } from '../ui/textarea-autosize.js';
 
 let unsubPuzzle = null;
 let unsubPuzzleCapitulo = null;
 let cancelLocalSub = null;
 let cancelVerseSub = null;
 let dadosEstruturaVersiculo = null; 
-let estaAEscrever = false;
 let ferramentasMapaInterno = {};
 let ultimoJsonRenderizado = "";
 let infoVersiculoAtivo = null;
@@ -28,15 +30,17 @@ let caixasVersiculoProntas = false;
 let caixasAssociadasVersiculo = {};
 let filtroSublinhado = null;
 let estruturasCapitulo = [];
+let assinaturaCaixasLigadas = null;
+const rascunhosItens = new Map();
 
 export function limparPuzzleBiblia() {
+    limparGravacoesPuzzle({ gravar: true });
     if (unsubPuzzle) { unsubPuzzle(); unsubPuzzle = null; }
     if (unsubPuzzleCapitulo) { unsubPuzzleCapitulo(); unsubPuzzleCapitulo = null; }
     if (cancelLocalSub) { cancelLocalSub(); cancelLocalSub = null; }
     if (cancelVerseSub) { cancelVerseSub(); cancelVerseSub = null; }
     dadosEstruturaVersiculo = null;
     ultimoJsonRenderizado = "";
-    estaAEscrever = false;
     ferramentasMapaInterno = {};
     estruturaVersiculoPronta = false;
     caixasAssociadasProntas = false;
@@ -44,7 +48,41 @@ export function limparPuzzleBiblia() {
     caixasAssociadasVersiculo = {};
     filtroSublinhado = null;
     estruturasCapitulo = [];
-    estruturasCapitulo = [];
+    assinaturaCaixasLigadas = null;
+    rascunhosItens.clear();
+}
+
+function aplicarRascunhos(data = {}) {
+    const listas = [data.Puzzle?.quadros, data.caixas].filter(Array.isArray);
+
+    rascunhosItens.forEach((patch, id) => {
+        listas.forEach(lista => {
+            const item = lista.find(elemento => String(elemento?.id) === String(id));
+            if (item) Object.assign(item, patch);
+        });
+    });
+
+    return data;
+}
+
+function registarRascunho(id, patch) {
+    const chave = String(id);
+    rascunhosItens.set(chave, {
+        ...(rascunhosItens.get(chave) || {}),
+        ...patch
+    });
+
+    const dadosConhecidos = [
+        dadosEstruturaVersiculo?.data,
+        ...estruturasCapitulo.map(estrutura => estrutura.data)
+    ].filter(Boolean);
+
+    dadosConhecidos.forEach(data => {
+        [data.Puzzle?.quadros, data.caixas].filter(Array.isArray).forEach(lista => {
+            const item = lista.find(elemento => String(elemento?.id) === chave);
+            if (item) Object.assign(item, patch);
+        });
+    });
 }
 
 function ligarCaixasDoPuzzle(container, db, auth, tStart) {
@@ -56,17 +94,34 @@ function ligarCaixasDoPuzzle(container, db, auth, tStart) {
         }),
         ...(data.Puzzle?.caixas || [])
     ];
-    const ids = referencias.map(item => typeof item === "string" ? item : item?.id).filter(Boolean);
+    const ids = [...new Set(referencias
+        .map(item => typeof item === "string" ? item : item?.id)
+        .filter(Boolean)
+        .map(String))].sort();
+    const assinaturaIds = JSON.stringify(ids);
 
     if (!ids.length) {
+        cancelLocalSub?.();
+        cancelLocalSub = null;
+        assinaturaCaixasLigadas = assinaturaIds;
         ferramentasMapaInterno = {};
         caixasAssociadasProntas = true;
         rebuildPuzzleUI(container, db, auth, tStart);
         return;
     }
 
+    // O documento TextosBiblia recebe snapshots em cada autosave. As caixas
+    // externas só precisam de nova leitura quando os respectivos IDs mudam.
+    if (assinaturaCaixasLigadas === assinaturaIds) {
+        if (caixasAssociadasProntas) rebuildPuzzleUI(container, db, auth, tStart);
+        return;
+    }
+
+    assinaturaCaixasLigadas = assinaturaIds;
     caixasAssociadasProntas = false;
-    mostrarCarregamentoCaixas(container, { area: "Puzzle", cor: "#818cf8", mensagem: "A carregar caixas associadas..." });
+    if (!container.contains(document.activeElement)) {
+        mostrarCarregamentoCaixas(container, { area: "Puzzle", cor: "#818cf8", mensagem: "A carregar caixas associadas..." });
+    }
     cancelLocalSub?.();
     cancelLocalSub = subscreverCaixasPorIds(ids, db, currentUid, (mapa, meta) => {
         if (meta?.erro) {
@@ -109,7 +164,9 @@ export async function renderizarPuzzleBiblia(info, container, db, auth, referenc
     
     const qCapitulo = query(collection(db, "TextosBiblia"), where("userId", "==", uid), where("livro", "==", info.livro));
     unsubPuzzleCapitulo = onSnapshot(qCapitulo, { includeMetadataChanges: true }, (snapshot) => {
-        estruturasCapitulo = snapshot.docs.filter(docSnap => Number(docSnap.data()?.capitulo) === Number(info.cap)).map(docSnap => ({ ref: docSnap.ref, data: docSnap.data() }));
+        estruturasCapitulo = snapshot.docs
+            .filter(docSnap => Number(docSnap.data()?.capitulo) === Number(info.cap))
+            .map(docSnap => ({ ref: docSnap.ref, data: aplicarRascunhos(docSnap.data()) }));
         rebuildPuzzleUI(container, db, auth, tStart);
     });
     unsubPuzzle = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
@@ -125,7 +182,7 @@ export async function renderizarPuzzleBiblia(info, container, db, auth, referenc
         }
 
         const docSnap = snapshot.docs[0];
-        const dadosServidor = docSnap.data();
+        const dadosServidor = aplicarRascunhos(docSnap.data());
 
         if (docSnap.metadata.hasPendingWrites) {
             dadosEstruturaVersiculo = { ref: docSnap.ref, data: dadosServidor, isNew: false };
@@ -133,13 +190,6 @@ export async function renderizarPuzzleBiblia(info, container, db, auth, referenc
             ligarCaixasDoPuzzle(container, db, auth, tStart);
             rebuildPuzzleUI(container, db, auth, tStart);
             return;
-        }
-
-        if (estaAEscrever && dadosEstruturaVersiculo) {
-            dadosServidor.Puzzle.quadros = dadosServidor.Puzzle.quadros.map(sq => {
-                const itemNaRam = dadosEstruturaVersiculo.data.Puzzle.quadros.find(l => l.id === sq.id);
-                return itemNaRam ? { ...sq, conteudo: itemNaRam.conteudo } : sq;
-            });
         }
 
         dadosEstruturaVersiculo = { ref: docSnap.ref, data: dadosServidor, isNew: false };
@@ -176,7 +226,6 @@ async function acaoBotaoPlusBiblia(container, referenciaSublinhado = null, tipoF
         if (!escolha) return;
 
         console.log("➕ [PUZZLE] A criar item do tipo:", escolha);
-        estaAEscrever = true;
         ultimoJsonRenderizado = "";
         capturarQuadrosEmEdicao(container);
 
@@ -188,7 +237,6 @@ async function acaoBotaoPlusBiblia(container, referenciaSublinhado = null, tipoF
     } catch (erro) {
         console.error("Erro ao adicionar item ao Puzzle:", erro);
     } finally {
-        estaAEscrever = false;
         window._brainLock = false;
     }
 }
@@ -207,7 +255,7 @@ function capturarQuadrosEmEdicao(container) {
 
     container.querySelectorAll('textarea[data-id]').forEach(textarea => {
         const quadro = quadros.find(item => item.id === textarea.dataset.id);
-        if (quadro) quadro.conteudo = textarea.value;
+        if (quadro) registarRascunho(quadro.id, { conteudo: textarea.value });
     });
 }
 
@@ -295,29 +343,39 @@ async function sincronizarItemNosVersiculos(item, campo, referenciaSublinhado = 
     }
 }
 
-async function atualizarItemSincronizado(id, campo, patch, referenciaSublinhado) {
-    if (dadosEstruturaVersiculo?.ref) {
-        const dataAtual = dadosEstruturaVersiculo.data || {};
-        const listaAtual = campo === "caixas"
-            ? (Array.isArray(dataAtual.caixas) ? dataAtual.caixas : [])
-            : (Array.isArray(dataAtual.Puzzle?.quadros) ? dataAtual.Puzzle.quadros : []);
-        const listaNova = listaAtual.some(item => item?.id === id)
-            ? listaAtual.map(item => item?.id === id ? { ...item, ...patch } : item)
-            : [...listaAtual, { id, ...patch }];
+function obterListaItem(data, campo) {
+    return campo === "caixas"
+        ? (Array.isArray(data?.caixas) ? data.caixas : [])
+        : (Array.isArray(data?.Puzzle?.quadros) ? data.Puzzle.quadros : []);
+}
 
-        dadosEstruturaVersiculo.data = campo === "caixas"
-            ? { ...dataAtual, caixas: listaNova }
-            : { ...dataAtual, Puzzle: { ...(dataAtual.Puzzle || {}), quadros: listaNova } };
+async function atualizarItemSincronizado(id, campo, patch, docRefOrigem = null) {
+    const documentos = new Map();
+    const adicionarDocumento = (ref, data) => {
+        if (!ref?.id || !obterListaItem(data, campo).some(item => String(item?.id) === String(id))) return;
+        documentos.set(ref.id, { ref, data });
+    };
 
-        await updateDoc(dadosEstruturaVersiculo.ref, campo === "caixas"
+    adicionarDocumento(dadosEstruturaVersiculo?.ref, dadosEstruturaVersiculo?.data);
+    estruturasCapitulo.forEach(estrutura => adicionarDocumento(estrutura.ref, estrutura.data));
+
+    if (docRefOrigem?.id && !documentos.has(docRefOrigem.id)) {
+        const snap = await getDoc(docRefOrigem);
+        if (snap.exists()) adicionarDocumento(docRefOrigem, snap.data());
+    }
+
+    await Promise.all([...documentos.values()].map(async ({ ref, data }) => {
+        const listaNova = obterListaItem(data, campo).map(item =>
+            String(item?.id) === String(id) ? { ...item, ...patch } : item
+        );
+
+        if (campo === "caixas") data.caixas = listaNova;
+        else data.Puzzle = { ...(data.Puzzle || {}), quadros: listaNova };
+
+        await updateDoc(ref, campo === "caixas"
             ? { caixas: listaNova }
             : { "Puzzle.quadros": listaNova });
-    }
-
-    if (referenciaSublinhado?.fragmentos?.length) {
-        const base = { id, ...patch, referenciaSublinhado };
-        await sincronizarItemNosVersiculos(base, campo, referenciaSublinhado);
-    }
+    }));
 }
 async function adicionarNotaSimplesBiblia(container, referenciaSublinhado = null) {
     const temReferenciaSublinhado = Boolean(
@@ -375,6 +433,7 @@ async function adicionarCaixaConectoraBiblia(container, referenciaSublinhado = n
         timestamp: agora,
         tipo: "contentor",
         titulo: "",
+        codex: [],
         ...(temReferenciaSublinhado ? { referenciaSublinhado } : {})
     };
 
@@ -507,20 +566,23 @@ function rebuildPuzzleUI(container, db, auth, tStart = performance.now()) {
 
         container.innerHTML = "";
         if (gruposFiltro.length) {
-            const faixa = document.createElement("div");
-            faixa.style.cssText = "display:flex; align-items:center; gap:9px; margin:-3px 0 14px; padding:10px 12px; border-radius:9px; background:rgba(129,140,248,0.12); border:1px solid rgba(129,140,248,0.24); color:#c4b5fd; font-size:11px;";
-            faixa.innerHTML = '<i class="fa-solid fa-highlighter"></i><span><strong>' + listaFinal.length + '</strong> ' + (listaFinal.length === 1 ? "caixa anexada" : "caixas anexadas") + ' ao sublinhado seleccionado</span>';
-            container.appendChild(faixa);
+            container.appendChild(criarEstadoCaixasSublinhado(filtroSublinhado, listaFinal.length));
         }
         listaFinal.forEach((item, index) => {
             if (item._tipoItem === 'caixa-directa') {
                 container.appendChild(renderCaixaConectoraBiblia(item, index, listaFinal, item._docRef || dadosEstruturaVersiculo?.ref, container));
             } else if (item._tipoItem === 'quadro') {
                 const el = SharedPuzzleUI.renderQuadroManual(item, index, listaFinal, dadosEstruturaVersiculo?.ref, {
-                    setEstaAEscrever: (val) => { estaAEscrever = val; },
-                    atualizarItem: (quadro, conteudo) => atualizarItemSincronizado(quadro.id, "Puzzle.quadros", { conteudo }, quadro.referenciaSublinhado),
+                    setEstaAEscrever: () => {},
+                    atualizarRascunho: (quadro, conteudo) => registarRascunho(quadro.id, { conteudo }),
+                    atualizarItem: (quadro, conteudo) => atualizarItemSincronizado(
+                        quadro.id,
+                        "Puzzle.quadros",
+                        { conteudo },
+                        quadro._docRef || dadosEstruturaVersiculo?.ref
+                    ),
                     moverItem: (idx, dir) => moverItemBiblia(idx, dir, listaFinal, dadosEstruturaVersiculo?.ref, container),
-                    apagarItem: (id) => executarApagarManual(id, dadosEstruturaVersiculo?.ref),
+                    apagarItem: (id, quadro) => executarApagarManual(id, quadro?._docRef || dadosEstruturaVersiculo?.ref),
                     enviarItem: (item) => abrirPopupPartilhar(item, "__PUZZLE__", () => {}, currentDb, currentAuth)
                 });
                 container.appendChild(el);
@@ -535,11 +597,8 @@ function rebuildPuzzleUI(container, db, auth, tStart = performance.now()) {
 
     let faixaZero = null;
     if (gruposFiltro.length) {
-        const faixa = document.createElement("div");
-        faixaZero = faixa;
-        faixa.style.cssText = "display:flex; align-items:center; gap:9px; margin:-3px 0 14px; padding:10px 12px; border-radius:9px; background:rgba(129,140,248,0.12); border:1px solid rgba(129,140,248,0.24); color:#c4b5fd; font-size:11px;";
-        faixa.innerHTML = '<i class="fa-solid fa-highlighter"></i><span><strong>0</strong> caixas anexadas ao sublinhado seleccionado</span>';
-        container.appendChild(faixa);
+        faixaZero = criarEstadoCaixasSublinhado(filtroSublinhado, 0);
+        container.appendChild(faixaZero);
     }
     if (dadosEstruturaVersiculo) {
         console.log("ℹ️ [BRAIN-PERF] Lista de caixas vazia. Exibindo estado inicial.");
@@ -602,30 +661,32 @@ function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) 
         txtArea.parentNode.insertBefore(titulo, txtArea);
         titulo.oninput = () => {
             c.titulo = titulo.value;
-            atualizarItemSincronizado(c.id, "caixas", { titulo: titulo.value }, c.referenciaSublinhado);
+            registarRascunho(c.id, { titulo: titulo.value });
+            agendarGravacaoPuzzle(`${c.id}:titulo`, async () => {
+                try {
+                    await atualizarItemSincronizado(c.id, "caixas", { titulo: titulo.value }, docRef);
+                } catch (erro) {
+                    console.error("Erro ao guardar o título da Caixa Conectora:", erro);
+                }
+            }, 1000);
         };
+        titulo.onblur = () => executarGravacaoPuzzle(`${c.id}:titulo`);
     }
     txtArea.value = c.conteudo || "";
-    const ajustarAltura = () => {
-        txtArea.style.height = "auto";
-        txtArea.style.height = txtArea.scrollHeight + "px";
-    };
+    const ajustarAltura = () => ajustarAlturaTextarea(txtArea);
     const agendarSalvar = () => {
-        estaAEscrever = true;
-        window._puzzleTimers = window._puzzleTimers || new Map();
-        clearTimeout(window._puzzleTimers.get(c.id));
-        const timer = setTimeout(async () => {
+        agendarGravacaoPuzzle(c.id, async () => {
             try {
-                await atualizarItemSincronizado(c.id, "caixas", { conteudo: txtArea.value }, c.referenciaSublinhado);
-                estaAEscrever = false;
+                await atualizarItemSincronizado(c.id, "caixas", { conteudo: txtArea.value }, docRef);
             } catch (erro) {
                 console.error("Erro ao guardar a Caixa Conectora:", erro);
             }
         }, 1000);
-        window._puzzleTimers.set(c.id, timer);
     };
 
     txtArea.oninput = () => {
+        c.conteudo = txtArea.value;
+        registarRascunho(c.id, { conteudo: txtArea.value });
         ajustarAltura();
         agendarSalvar();
     };
@@ -636,6 +697,7 @@ function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) 
     txtArea.onblur = () => {
         card.style.borderColor = "rgba(255,255,255,0.1)";
         card.style.background = "rgba(255,255,255,0.03)";
+        executarGravacaoPuzzle(c.id);
     };
 
     const btnSend = card.querySelector(".btn-send");
@@ -651,7 +713,7 @@ function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) 
             tipo: c.tipo || "contentor",
             foco: c.foco || "original",
             destaques: c.destaques || ""
-        }, c.referenciaSublinhado);
+        }, docRef);
         ultimoJsonRenderizado = "";
         rebuildPuzzleUI(container, currentDb, currentAuth);
     };
@@ -676,15 +738,22 @@ function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) 
             cap: infoVersiculoAtivo?.cap,
             ver: infoVersiculoAtivo?.ver,
             texto: infoVersiculoAtivo?.texto,
-            docRef
+            docRef,
+            codex: Array.isArray(c.codex) ? c.codex : [],
+            contextoCaixa: nomeVisual,
+            guardarCodex: lista => atualizarItemSincronizado(
+                c.id,
+                "caixas",
+                { codex: lista },
+                docRef
+            )
         });
     };
 
     btnSend.onclick = event => {
         event.stopPropagation();
         abrirPopupPartilhar({
-            ...c,
-            __bibliaCodexDocId: docRef?.id || null
+            ...c
         }, "__PUZZLE__", () => {}, currentDb, currentAuth);
     };
 
@@ -696,7 +765,12 @@ function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) 
         );
         if (!confirmou) return;
 
-        await atualizarItemSincronizado(c.id, "caixas", { estado: "off", timedelete: new Date().toISOString() }, c.referenciaSublinhado);
+        await atualizarItemSincronizado(
+            c.id,
+            "caixas",
+            { estado: "off", timedelete: new Date().toISOString() },
+            docRef
+        );
     };
 
     setTimeout(ajustarAltura, 20);
@@ -742,8 +816,7 @@ function renderFerramentaVinculadaUI(item, index, listaCompleta, docRef, db, aut
     card.querySelector('.btn-enviar').onclick = (e) => {
         e.stopPropagation();
         abrirPopupPartilhar({
-            ...item,
-            __bibliaCodexDocId: docRef?.id || null
+            ...item
         }, "__PUZZLE__", () => {}, currentDb, currentAuth);
     };
     card.querySelector('.btn-viajar').onclick = (e) => {
@@ -801,8 +874,37 @@ async function moverItemBiblia(index, direcao, listaCompleta, docRef, container)
 }
 
 async function executarApagarManual(id, docRef) {
-    if (!dadosEstruturaVersiculo?.data) return;
-    const quadros = dadosEstruturaVersiculo.data.Puzzle.quadros.filter(q => q.id !== id);
-    dadosEstruturaVersiculo.data.Puzzle.quadros = quadros;
-    await updateDoc(docRef, { "Puzzle.quadros": quadros });
+    const documentos = new Map();
+    const adicionarDocumento = (ref, data) => {
+        if (!ref?.id || !Array.isArray(data?.Puzzle?.quadros)) return;
+        if (!data.Puzzle.quadros.some(quadro => String(quadro?.id) === String(id))) return;
+        documentos.set(ref.id, { ref, data });
+    };
+
+    adicionarDocumento(dadosEstruturaVersiculo?.ref, dadosEstruturaVersiculo?.data);
+    estruturasCapitulo.forEach(estrutura => adicionarDocumento(estrutura.ref, estrutura.data));
+
+    // Mantém a referência recebida como salvaguarda para caixas antigas que
+    // ainda não tenham entrado no snapshot do capítulo.
+    if (docRef?.id && !documentos.has(docRef.id)) {
+        const snap = await getDoc(docRef);
+        if (snap.exists()) adicionarDocumento(docRef, snap.data());
+    }
+
+    if (!documentos.size) return;
+
+    cancelarGravacaoPuzzle(id);
+    const temporizadorAntigo = window._puzzleTimers?.get(String(id));
+    if (temporizadorAntigo) clearTimeout(temporizadorAntigo);
+    window._puzzleTimers?.delete(String(id));
+    rascunhosItens.delete(String(id));
+
+    await Promise.all([...documentos.values()].map(async ({ ref, data }) => {
+        const quadros = data.Puzzle.quadros.filter(quadro => String(quadro?.id) !== String(id));
+        data.Puzzle = { ...(data.Puzzle || {}), quadros };
+        await updateDoc(ref, { "Puzzle.quadros": quadros });
+    }));
+
+    ultimoJsonRenderizado = "";
+    rebuildPuzzleUI(document.getElementById("biblia-dynamic-content"), currentDb, currentAuth);
 }

@@ -13,6 +13,7 @@ let dbAtual = null;
 let authAtual = null;
 let referenciaAtual = null;
 let contextoAtual = null;
+let listaCaixaAtual = null;
 let exploradorCodexPromise = null;
 
 function escaparHtml(valor = "") {
@@ -94,10 +95,13 @@ function renderizarListaCodex(lista = []) {
 
     const ativos = lista.filter(item => item && item.estado !== "off");
     if (!ativos.length) {
+        const alvo = typeof contextoAtual?.guardarCodex === "function"
+            ? "nesta caixa"
+            : "neste versículo";
         container.innerHTML = `
             <div style="padding:35px 15px; text-align:center; color:var(--text-muted); opacity:.65; font-size:12px;">
                 <i class="fa-solid fa-book-open" style="display:block; font-size:26px; margin-bottom:10px;"></i>
-                Ainda não existem mapeamentos Codex neste versículo.
+                Ainda não existem mapeamentos Codex ${alvo}.
             </div>`;
         return;
     }
@@ -130,6 +134,9 @@ function renderizarListaCodex(lista = []) {
 }
 
 async function lerListaCodex() {
+    if (typeof contextoAtual?.guardarCodex === "function") {
+        return Array.isArray(listaCaixaAtual) ? listaCaixaAtual : [];
+    }
     if (!referenciaAtual) return [];
     const snap = await getDoc(referenciaAtual);
     if (!snap.exists()) return [];
@@ -137,13 +144,22 @@ async function lerListaCodex() {
     return Array.isArray(dados.Fontes?.codex) ? dados.Fontes.codex : [];
 }
 
+async function gravarListaCodex(lista) {
+    if (typeof contextoAtual?.guardarCodex === "function") {
+        await contextoAtual.guardarCodex(lista);
+        listaCaixaAtual = lista;
+        return;
+    }
+
+    await updateDoc(referenciaAtual, { "Fontes.codex": lista });
+}
+
 async function removerCodex(id) {
     if (!referenciaAtual || !id) return;
     const lista = await lerListaCodex();
-    await updateDoc(referenciaAtual, {
-        "Fontes.codex": lista.filter(item => item.id !== id)
-    });
-    renderizarListaCodex(lista.filter(item => item.id !== id));
+    const listaNova = lista.filter(item => item.id !== id);
+    await gravarListaCodex(listaNova);
+    renderizarListaCodex(listaNova);
 }
 
 async function adicionarCodex() {
@@ -167,8 +183,9 @@ async function adicionarCodex() {
                 partilha: "off"
             };
             const lista = await lerListaCodex();
-            await updateDoc(referenciaAtual, { "Fontes.codex": [...lista, item] });
-            renderizarListaCodex([...lista, item]);
+            const listaNova = [...lista, item];
+            await gravarListaCodex(listaNova);
+            renderizarListaCodex(listaNova);
             popup?.classList.add("active");
         });
     } catch (erro) {
@@ -186,11 +203,17 @@ export async function abrirPopupCodexBiblia(contexto = obterContextoVersiculo())
     }
 
     contextoAtual = contexto;
+    listaCaixaAtual = typeof contexto.guardarCodex === "function"
+        ? [...(Array.isArray(contexto.codex) ? contexto.codex : [])]
+        : null;
     const popup = document.getElementById("popup-codex-biblia-overlay");
     const contextoEl = document.getElementById("bible-codex-context");
     if (!popup || !contextoEl) return;
 
-    contextoEl.textContent = `${contexto.livro} ${contexto.cap}:${contexto.ver}`;
+    contextoEl.textContent = [
+        `${contexto.livro} ${contexto.cap}:${contexto.ver}`,
+        contexto.contextoCaixa || ""
+    ].filter(Boolean).join(" · ");
     referenciaAtual = await obterOuCriarDocumentoVersiculo(contexto);
     renderizarListaCodex(await lerListaCodex());
     popup.classList.add("active");
