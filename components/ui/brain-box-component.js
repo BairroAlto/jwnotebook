@@ -1,4 +1,5 @@
 // components/ui/brain-box-component.js
+import { ajustarAlturaTextarea } from './textarea-autosize.js';
 
 /**
  * FÁBRICA PADRONIZADA DE CAIXAS DE TEXTO (BRAIN STYLE)
@@ -74,10 +75,7 @@ export const BrainBoxFactory = {
         `;
 
         // --- LÓGICA DE AUTO-RESIZE ---
-        const ajustarAltura = () => {
-            textarea.style.height = 'auto';
-            textarea.style.height = textarea.scrollHeight + 'px';
-        };
+        const ajustarAltura = () => ajustarAlturaTextarea(textarea);
 
         // --- EVENTOS DE INTERAÇÃO ---
         textarea.oninput = (e) => {
