@@ -203,24 +203,6 @@ function renderizarNivelArvore(container, listaCompleta, paiId) {
     });
 }
 
-async function obterCodexBibliaParaCopia(caixa) {
-    const docId = caixa?.__bibliaCodexDocId;
-    if (!docId || !partilhaDb) return [];
-
-    try {
-        const snap = await getDoc(doc(partilhaDb, "TextosBiblia", String(docId)));
-        if (!snap.exists()) return [];
-
-        const codex = snap.data()?.Fontes?.codex;
-        return Array.isArray(codex)
-            ? codex.filter(item => item && item.estado !== "off")
-            : [];
-    } catch (erro) {
-        console.warn("[PARTILHA] Não foi possível carregar o Codex bíblico da caixa.", erro);
-        return [];
-    }
-}
-
 /**
  * 6. MOTOR DE CLONAGEM (AÇÃO FINAL COM ATUALIZAÇÃO DE ÍNDICE)
  */
@@ -245,17 +227,9 @@ async function enviarCopiaParaNota(idDestino, nomeDestino, abaAlvo) {
             // Criar o clone com um novo ID e com a nota de destino como proprietária.
             // A cópia pertence apenas à nota de destino. As ligações ao
             // versículo não podem ser copiadas, senão volta a aparecer na Bíblia.
-            const codexBiblia = await obterCodexBibliaParaCopia(caixaAtual);
             const dadosCopia = JSON.parse(JSON.stringify(caixaAtual));
             delete dadosCopia.neuroniosBiba;
             delete dadosCopia.referenciaSublinhado;
-            delete dadosCopia.__bibliaCodexDocId;
-
-            if (codexBiblia.length) {
-                const codexExistente = Array.isArray(dadosCopia.codex) ? dadosCopia.codex : [];
-                const porId = new Map([...codexExistente, ...codexBiblia].map(item => [item.id, item]));
-                dadosCopia.codex = [...porId.values()];
-            }
 
             const novaCopia = dadosCopia;
             novaCopia.id = crypto.randomUUID();
