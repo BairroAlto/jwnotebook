@@ -8,7 +8,22 @@ function temItensAtivos(valor) {
     if (!Array.isArray(valor)) return false;
     return valor.some(item => {
         if (typeof item === "string") return item.trim().length > 0;
-        return Boolean(item && item.estado !== "off");
+        if (!item || item.estado === "off") return false;
+
+        // Uma caixa criada mas ainda vazia não deve pintar o número do
+        // versículo. Mantemos como activa uma caixa com texto, título,
+        // ligação externa ou Codex próprio.
+        const camposComConteudo = [item.conteudo, item.titulo, item.texto, item.descricao];
+        if (camposComConteudo.some(campo => typeof campo === "string" && campo.trim())) return true;
+
+        const temCodex = Array.isArray(item.codex) && item.codex.some(codex => codex && codex.estado !== "off");
+        const temLigacao = Boolean(item.localDocId || item.shareId || item.referenciacodex);
+        const tiposDeCaixaVazia = new Set(["caixatexto", "contentor", "questao", "subnota", "raciocinio"]);
+        if (tiposDeCaixaVazia.has(String(item.tipo || "").toLowerCase())) return temCodex || temLigacao;
+
+        // Estruturas de fontes, marcadores e referências sem campo de texto
+        // continuam a ser anotações válidas.
+        return true;
     });
 }
 
