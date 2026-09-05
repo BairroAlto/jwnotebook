@@ -20,8 +20,7 @@ export function criarEstadoCaixasSublinhado(referencia, quantidade) {
     faixa.style.setProperty("--bible-highlight-status-color", cor);
     faixa.style.backgroundColor = obterFundoTranslucido(cor);
     faixa.innerHTML = `
-        <i class="fa-solid fa-highlighter" aria-hidden="true"></i>
-        <span><strong>${Number(quantidade) || 0}</strong> ${singular ? "caixa anexada" : "caixas anexadas"} ao sublinhado seleccionado</span>
+        <span><strong>${Number(quantidade) || 0}</strong> ${singular ? "caixa anexada" : "caixas anexadas"} ao sublinhado</span>
     `;
 
     return faixa;

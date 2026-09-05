@@ -9,6 +9,7 @@ import { isMobileViewport } from '../ui/mobile-device.js';
 import { subscreverCaixasPorIds, subscreverCaixasAssociadas } from './biblia-associadas-cache.js';
 import { mostrarCarregamentoCaixas, mostrarErroCarregamentoCaixas } from './biblia-carregamento-ui.js';
 import { abrirPopupCodexBiblia } from '../bible-portal/bible-codex.js';
+import { BibleSettings } from '../bible-portal/bible-settings.js';
 import { agendarGravacaoPuzzle, cancelarGravacaoPuzzle, executarGravacaoPuzzle, limparGravacoesPuzzle } from './bible-puzzle-editor.js';
 import { criarEstadoCaixasSublinhado } from './bible-puzzle-highlight-status.js';
 import { ajustarAlturaTextarea } from '../ui/textarea-autosize.js';
@@ -31,6 +32,7 @@ let caixasAssociadasVersiculo = {};
 let filtroSublinhado = null;
 let estruturasCapitulo = [];
 let assinaturaCaixasLigadas = null;
+let handlerVisibilidadeCodex = null;
 const rascunhosItens = new Map();
 
 export function limparPuzzleBiblia() {
@@ -39,6 +41,10 @@ export function limparPuzzleBiblia() {
     if (unsubPuzzleCapitulo) { unsubPuzzleCapitulo(); unsubPuzzleCapitulo = null; }
     if (cancelLocalSub) { cancelLocalSub(); cancelLocalSub = null; }
     if (cancelVerseSub) { cancelVerseSub(); cancelVerseSub = null; }
+    if (handlerVisibilidadeCodex) {
+        window.removeEventListener('bible:codex-visibility-change', handlerVisibilidadeCodex);
+        handlerVisibilidadeCodex = null;
+    }
     dadosEstruturaVersiculo = null;
     ultimoJsonRenderizado = "";
     ferramentasMapaInterno = {};
@@ -146,6 +152,11 @@ export async function renderizarPuzzleBiblia(info, container, db, auth, referenc
     currentDb = db;
     currentAuth = auth;
     filtroSublinhado = referenciaSublinhado;
+    handlerVisibilidadeCodex = () => {
+        ultimoJsonRenderizado = "";
+        rebuildPuzzleUI(container, db, auth, tStart);
+    };
+    window.addEventListener('bible:codex-visibility-change', handlerVisibilidadeCodex);
 
     mostrarCarregamentoCaixas(container, { area: "Puzzle", cor: "#818cf8" });
 
@@ -557,7 +568,11 @@ function rebuildPuzzleUI(container, db, auth, tStart = performance.now()) {
     console.log(`⏱️ [BRAIN-PERF] rebuildPuzzleUI executado. Total itens: ${listaFinal.length} (Manuais: ${quadrosManuais.length}, RAM: ${ferramentasLigadas.length}). Skeleton visível: ${temSkeleton}`);
 
     if (listaFinal.length > 0) {
-        const assinatura = JSON.stringify(listaFinal.map(i => ({id: i.id, txt: i.conteudo})));
+        const assinatura = JSON.stringify(listaFinal.map(i => ({
+            id: i.id,
+            txt: i.conteudo,
+            codex: Array.isArray(i.codex) ? i.codex.flat() : []
+        })));
         if (!temSkeleton && assinatura === ultimoJsonRenderizado) {
             console.log("⏱️ [BRAIN-PERF] Ignorado render: conteúdo idêntico já no DOM.");
             return;
@@ -608,6 +623,50 @@ function rebuildPuzzleUI(container, db, auth, tStart = performance.now()) {
     } else {
         console.log("⏳ [BRAIN-PERF] Lista vazia e dadosEstruturaVersiculo pendente. Skeleton mantido.");
     }
+}
+
+function renderizarRodapeCodex(caixa) {
+    if (!BibleSettings.state.showCodex) return null;
+
+    const codices = (Array.isArray(caixa.codex) ? caixa.codex.flat() : [])
+        .filter(item => item && item.estado !== "off");
+    if (!codices.length) return null;
+
+    const rodape = document.createElement("div");
+    rodape.className = "bible-connector-codex-footer";
+    rodape.setAttribute("aria-label", "Codex associado");
+
+    const titulo = document.createElement("div");
+    titulo.className = "bible-connector-codex-footer-title";
+    titulo.innerHTML = '<i class="fa-solid fa-book-open" aria-hidden="true"></i><span>Codex associado</span>';
+    rodape.appendChild(titulo);
+
+    codices.forEach((item, index) => {
+        const entrada = document.createElement("div");
+        entrada.className = "bible-connector-codex-entry";
+
+        const referencia = document.createElement("strong");
+        referencia.textContent = item.referencia || item.titulo || item.artigo || `Referência ${index + 1}`;
+        entrada.appendChild(referencia);
+
+        const sequencia = Array.isArray(item.sequencia) ? item.sequencia.join(", ") : item.sequencia;
+        const paginas = Array.isArray(item.paginas) ? item.paginas.join(", ") : item.paginas;
+        const detalhes = [
+            item.oque,
+            sequencia ? `Seq. ${sequencia}` : "",
+            paginas ? `Pág. ${paginas}` : "",
+            item.tempo ? `Tempo ${item.tempo}` : "",
+            item.ano ? `Ano ${item.ano}` : ""
+        ].filter(Boolean);
+        if (detalhes.length) {
+            const detalhe = document.createElement("span");
+            detalhe.textContent = detalhes.join(" · ");
+            entrada.appendChild(detalhe);
+        }
+        rodape.appendChild(entrada);
+    });
+
+    return rodape;
 }
 
 function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) {
@@ -741,12 +800,12 @@ function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) 
             docRef,
             codex: Array.isArray(c.codex) ? c.codex : [],
             contextoCaixa: nomeVisual,
-            guardarCodex: lista => atualizarItemSincronizado(
-                c.id,
-                "caixas",
-                { codex: lista },
-                docRef
-            )
+            guardarCodex: async lista => {
+                c.codex = lista;
+                await atualizarItemSincronizado(c.id, "caixas", { codex: lista }, docRef);
+                ultimoJsonRenderizado = "";
+                rebuildPuzzleUI(container, currentDb, currentAuth);
+            }
         });
     };
 
@@ -772,6 +831,9 @@ function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) 
             docRef
         );
     };
+
+    const rodapeCodex = renderizarRodapeCodex(c);
+    if (rodapeCodex) card.appendChild(rodapeCodex);
 
     setTimeout(ajustarAltura, 20);
     return card;
@@ -842,6 +904,9 @@ function renderFerramentaVinculadaUI(item, index, listaCompleta, docRef, db, aut
             await updateDoc(docRef, { caixas: novasCaixas });
         }
     };
+
+    const rodapeCodex = renderizarRodapeCodex(item);
+    if (rodapeCodex) card.appendChild(rodapeCodex);
 
     return card;
 }
