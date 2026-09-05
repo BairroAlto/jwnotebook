@@ -1,7 +1,7 @@
 importScripts('./components/notifications/push-service-worker.js');
 
 // Incrementar esta versão força a criação de uma cache limpa em todos os clientes.
-const CACHE_NAME = 'notabook-v93-lists-mobile';
+const CACHE_NAME = 'notabook-v100-bible-codex';
 
 const PRE_CACHE_ASSETS = [
   './',
