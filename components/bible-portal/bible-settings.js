@@ -55,10 +55,20 @@ export const BibleSettings = {
         const uid = window.auth?.currentUser?.uid;
         if (!window.NotaBookUserPrefs) window.NotaBookUserPrefs = {};
         window.NotaBookUserPrefs.bibleSettings = { ...BibleSettings.state };
-        if (!uid || !window.db) return;
-        await guardarPreferenciasUtilizador(window.db, uid, {
-            bibleSettings: { ...BibleSettings.state }
-        });
+        if (!uid || !window.db) {
+            console.warn('[BIBLE-SETTINGS] Preferências não guardadas: utilizador ou Firebase indisponível.');
+            return false;
+        }
+
+        try {
+            await guardarPreferenciasUtilizador(window.db, uid, {
+                bibleSettings: { ...BibleSettings.state }
+            });
+            return true;
+        } catch (erro) {
+            console.error('[BIBLE-SETTINGS] Falha ao guardar preferências do utilizador.', erro);
+            return false;
+        }
     },
 
     vincularAbas: () => {
@@ -236,10 +246,10 @@ export const BibleSettings = {
         if (!check) return;
 
         check.checked = Boolean(BibleSettings.state.showCodex);
-        check.onchange = e => {
+        check.onchange = async e => {
             BibleSettings.state.showCodex = Boolean(e.target.checked);
             window.dispatchEvent(new CustomEvent('bible:codex-visibility-change'));
-            void BibleSettings.persistir();
+            await BibleSettings.persistir();
         };
     }
 };
