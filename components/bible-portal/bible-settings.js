@@ -12,7 +12,8 @@ export const BibleSettings = {
         rightFontSizeMobile: 14,
         titleSize: 65,
         viewMode: 'grid',
-        aiFloating: false
+        aiFloating: false,
+        showCodex: false
     },
 
     iniciar: () => {
@@ -21,6 +22,7 @@ export const BibleSettings = {
         BibleSettings.vincularSliders();
         BibleSettings.vincularModoVisao();
         BibleSettings.vincularFloatingAI();
+        BibleSettings.vincularExibicaoCodex();
         BibleSettings.aplicarTamanhoVersiculos();
         BibleSettings.aplicarTamanhoGrelha();
         BibleSettings.aplicarTamanhoColunaDireita();
@@ -44,7 +46,8 @@ export const BibleSettings = {
             rightFontSizeDesktop: Number(prefs.rightFontSizeDesktop ?? BibleSettings.state.rightFontSizeDesktop),
             rightFontSizeMobile: Number(prefs.rightFontSizeMobile ?? BibleSettings.state.rightFontSizeMobile),
             aiFloating: Boolean(prefs.aiFloating),
-            viewMode: prefs.viewMode || BibleSettings.state.viewMode
+            viewMode: prefs.viewMode || BibleSettings.state.viewMode,
+            showCodex: Boolean(prefs.showCodex)
         };
     },
 
@@ -143,10 +146,18 @@ export const BibleSettings = {
     vincularModoVisao: () => {
         const btns = document.querySelectorAll('.view-opt');
         const feed = document.getElementById('bible-feed');
+        const previews = document.querySelectorAll('[data-preview-mode]');
+
+        const atualizarMiniatura = mode => {
+            previews.forEach(preview => {
+                preview.classList.toggle('active', preview.dataset.previewMode === mode);
+            });
+        };
 
         btns.forEach(btn => {
             btn.classList.toggle('active', btn.dataset.mode === BibleSettings.state.viewMode);
         });
+        atualizarMiniatura(BibleSettings.state.viewMode);
 
         const obterClasseModo = (mode) => {
             if (mode === 'sequence') return 'view-sequence';
@@ -164,6 +175,7 @@ export const BibleSettings = {
                 btns.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 BibleSettings.state.viewMode = mode;
+                atualizarMiniatura(mode);
 
                 if (feed && window.capAtivo) {
                     feed.className = obterClasseModo(mode);
@@ -217,6 +229,18 @@ export const BibleSettings = {
         document.getElementById('btn-bookai-float-close')?.addEventListener('click', () => {
             document.getElementById('bookai-floating-chat')?.classList.add('hidden');
         });
+    },
+
+    vincularExibicaoCodex: () => {
+        const check = document.getElementById('check-codex-visible');
+        if (!check) return;
+
+        check.checked = Boolean(BibleSettings.state.showCodex);
+        check.onchange = e => {
+            BibleSettings.state.showCodex = Boolean(e.target.checked);
+            window.dispatchEvent(new CustomEvent('bible:codex-visibility-change'));
+            void BibleSettings.persistir();
+        };
     }
 };
 
