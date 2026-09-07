@@ -732,7 +732,15 @@ function renderCaixaConectoraBiblia(c, index, listaCompleta, docRef, container) 
         titulo.onblur = () => executarGravacaoPuzzle(`${c.id}:titulo`);
     }
     txtArea.value = c.conteudo || "";
-    const ajustarAltura = () => ajustarAlturaTextarea(txtArea);
+    const ajustarAltura = () => {
+        ajustarAlturaTextarea(txtArea, { preservarScroll: true });
+
+        // Uma segunda medição após o layout corrige colagens grandes e texto
+        // que muda de linha depois de a largura final da coluna ser aplicada.
+        requestAnimationFrame(() => {
+            if (txtArea.isConnected) ajustarAlturaTextarea(txtArea, { preservarScroll: true });
+        });
+    };
     const agendarSalvar = () => {
         agendarGravacaoPuzzle(c.id, async () => {
             try {
