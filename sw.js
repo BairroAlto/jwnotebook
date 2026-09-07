@@ -1,7 +1,7 @@
 importScripts('./components/notifications/push-service-worker.js');
 
 // Incrementar esta versão força a criação de uma cache limpa em todos os clientes.
-const CACHE_NAME = 'notabook-v100-bible-codex';
+const CACHE_NAME = 'notabook-v100-floating-scroll';
 
 const PRE_CACHE_ASSETS = [
   './',
@@ -10,6 +10,7 @@ const PRE_CACHE_ASSETS = [
   './book.html',
   './office.html',
   './xray.html',
+  './whitebook.html',
   './flecha.html',
   './manifest.json',
   './manifest-book.json',
@@ -19,8 +20,28 @@ const PRE_CACHE_ASSETS = [
   './styles/global.css',
   './styles/typography.css',
   './styles/mobile.css',
-  './components/app-bootstrap.js?v=20260824-lists-mobile-1',
-  './components/editor/editor.html?v=20260820-note-options-2',
+  './components/app-bootstrap.js?v=20260826-whitebook-1',
+  './components/editor/editor.html?v=20260826-whitebook-1',
+  './components/whitebook/whitebook.css',
+  './components/whitebook/whitebook-base.css',
+  './components/whitebook/whitebook-canvas.css',
+  './components/whitebook/whitebook-picker.css',
+  './components/whitebook/whitebook-responsive.css',
+  './components/whitebook/whitebook-page.js',
+  './components/whitebook/whitebook-editor.js',
+  './components/whitebook/whitebook-canvas.js',
+  './components/whitebook/whitebook-element-view.js',
+  './components/whitebook/whitebook-model.js',
+  './components/whitebook/whitebook-store.js',
+  './components/whitebook/whitebook-cache.js',
+  './components/whitebook/whitebook-persistence.js',
+  './components/whitebook/whitebook-repository.js',
+  './components/whitebook/whitebook-connectors.js',
+  './components/whitebook/whitebook-connector-picker.js',
+  './components/whitebook/whitebook-connector-tree.js',
+  './components/whitebook/whitebook-note-mode.js',
+  './components/whitebook/whitebook-note-tabs.js',
+  './components/whitebook/whitebook-plan-access.js',
   './components/editor/modulos/rich-text-editor.css',
   './components/editor/modulos/rich-text-editor.js',
   './components/editor/modulos/rich-text-sanitizer.js',
@@ -82,7 +103,10 @@ self.addEventListener('fetch', (event) => {
       caches.match(event.request).then((cachedResponse) => {
         const atualizacao = fetch(event.request).then((response) => {
           if (response && response.status === 200 && response.type === 'basic') {
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, response.clone()));
+            const copy = response.clone();
+            caches.open(CACHE_NAME)
+              .then((cache) => cache.put(event.request, copy))
+              .catch(() => {});
           }
           return response;
         }).catch(() => null);
@@ -105,7 +129,11 @@ self.addEventListener('fetch', (event) => {
       .catch(() => {
         return caches.match(event.request).then((cachedResponse) => {
           if (cachedResponse) return cachedResponse;
-          if (event.request.mode === 'navigate') return caches.match('./index.html');
+          if (event.request.mode === 'navigate') {
+            const caminho = new URL(event.request.url).pathname;
+            if (caminho.endsWith('/whitebook.html')) return caches.match('./whitebook.html');
+            return caches.match('./index.html');
+          }
           return Response.error();
         });
       })
