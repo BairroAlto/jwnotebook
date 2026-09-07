@@ -9,14 +9,15 @@ import {
     where
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
-const HIGHLIGHT_COLORS = [
+export const HIGHLIGHT_COLORS = [
     "#92400e", // Castanho
     "#f97316", // Laranja
     "#fb7185", // Rosa
     "#facc15", // Amarelo
     "#34d399", // Verde
     "#38bdf8", // Azul
-    "#a78bfa"  // Lilás
+    "#a78bfa", // Lilás
+    "#94a3b8"  // Cinzento
 ];
 
 const state = {
@@ -74,6 +75,46 @@ export const BibleHighlights = {
     renderizarTextoVersiculo: (verseNum, texto) => {
         const highlights = state.highlights.get(String(verseNum)) || [];
         return montarHtmlComHighlights(String(texto || ""), highlights);
+    },
+
+    alterarCorSublinhado: async ({ groupIds = [], color } = {}) => {
+        const ids = [...new Set(groupIds.filter(Boolean))];
+        if (!ids.length || !HIGHLIGHT_COLORS.includes(color)) return false;
+
+        let encontrouGrupo = false;
+        state.highlights.forEach((items, verseKey) => {
+            const atualizados = items.map(item => {
+                if (!ids.includes(item?.groupId)) return item;
+                encontrouGrupo = true;
+                return { ...item, cor: color };
+            });
+            state.highlights.set(verseKey, atualizados);
+        });
+
+        if (!encontrouGrupo) return false;
+        state.onRender?.();
+
+        const uid = state.auth?.currentUser?.uid;
+        if (!uid || !state.livro || !state.cap) return true;
+
+        const docsCapitulo = await carregarDocsCapitulo(uid);
+        await Promise.all(docsCapitulo.map(async docSnap => {
+            const data = docSnap.data();
+            const current = Array.isArray(data.Sublinhado) ? data.Sublinhado : [];
+            const next = current.map(item => ids.includes(item?.groupId)
+                ? { ...item, cor: color }
+                : item
+            );
+
+            if (JSON.stringify(next) !== JSON.stringify(current)) {
+                await updateDoc(docSnap.ref, {
+                    Sublinhado: next,
+                    timestamp: serverTimestamp()
+                });
+            }
+        }));
+
+        return true;
     }
 };
 

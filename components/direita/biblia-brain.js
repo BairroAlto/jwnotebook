@@ -35,7 +35,7 @@ export function abrirVersiculoNoBrain(livro, cap, ver, texto, db, auth, tStart =
     stickyHeader.innerHTML = `
         <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 20px; background: #1e293b; border-bottom: 1px solid rgba(255,255,255,0.05); gap: 15px;">
             <div style="display:flex; align-items:center; gap:10px; overflow: hidden; flex: 1;">
-                <i class="fa-solid fa-book-bible" style="color: #818cf8; font-size: 16px; flex-shrink: 0;"></i>
+                <i class="fa-solid fa-book-open" style="color: #818cf8; font-size: 16px; flex-shrink: 0;"></i>
                 <span style="font-size: 13px; font-weight: 800; color: white; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; letter-spacing: 0.5px;">
                     ${livro} ${cap}:${ver}
                 </span>
