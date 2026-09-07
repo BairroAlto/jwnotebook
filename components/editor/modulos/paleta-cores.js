@@ -133,7 +133,38 @@ function vincularCliquesAbas() {
  * ABRIR POPUP DE CORES E MUTAÃ‡ÃƒO (CENTRO DE PERSONALIZAÃ‡ÃƒO)
  * VersÃ£o Master: Auto-vÃ­nculo de abas e correÃ§Ã£o de Z-Index para popups sobrepostos.
  */
+function prepararCarregamentoPaleta(overlay) {
+    const carregamento = overlay.querySelector('#popup-cores-loading');
+    overlay.classList.add('active', 'is-loading');
+    overlay.setAttribute('aria-busy', 'true');
+    if (carregamento) carregamento.hidden = false;
+
+    return () => {
+        if (carregamento) carregamento.hidden = true;
+        overlay.classList.remove('is-loading');
+        overlay.removeAttribute('aria-busy');
+    };
+}
+
 export async function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callbackTemporario = null, opcoes = {}) {
+    const overlay = document.getElementById('popup-cores-overlay');
+    if (!overlay) {
+        console.error("❌ Erro: Contentor #popup-cores-overlay não encontrado no DOM.");
+        return;
+    }
+
+    const terminarCarregamento = prepararCarregamentoPaleta(overlay);
+    try {
+        return await abrirPaletaInterna(caixaAlvo, abaAlvo, callbackTemporario, opcoes);
+    } catch (erro) {
+        overlay.classList.remove('active');
+        console.error("[PALETA] Falha ao abrir o painel de cores:", erro);
+    } finally {
+        terminarCarregamento();
+    }
+}
+
+async function abrirPaletaInterna(caixaAlvo, abaAlvo = "tab-destaques", callbackTemporario = null, opcoes = {}) {
     console.log("ðŸŽ¨ [PALETA] Iniciando painel para:", caixaAlvo.tipo);
     caixaParaColorir = caixaAlvo;
 
@@ -171,25 +202,24 @@ export async function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callback
     // Re-vincula os cliques sempre que a paleta abre para garantir que as abas nÃ£o ficam mortas.
     // ========================================================
     const todasAsAbas = document.querySelectorAll('.tab-cor');
+    const ativarAba = async (tab, verificarAcesso = true) => {
+        const targetId = tab.getAttribute('data-target');
+        if (verificarAcesso && !(await permitirAbaPaleta(targetId))) return false;
+        console.log("ðŸ“‘ [PALETA] Trocando para aba:", targetId);
+
+        todasAsAbas.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        document.querySelectorAll('.cor-tab-content').forEach(c => c.style.display = 'none');
+        const targetEl = document.getElementById(targetId);
+        if (targetEl) targetEl.style.display = 'block';
+        return true;
+    };
+
     todasAsAbas.forEach(tab => {
         tab.onclick = async (e) => {
             e.preventDefault();
             e.stopPropagation();
-            
-            const targetId = tab.getAttribute('data-target');
-            if (!(await permitirAbaPaleta(targetId))) return;
-            console.log("ðŸ“‘ [PALETA] Trocando para aba:", targetId);
-
-            // Alternar estado visual dos botÃµes
-            todasAsAbas.forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-            
-            // Alternar visibilidade dos painÃ©is
-            document.querySelectorAll('.cor-tab-content').forEach(c => c.style.display = 'none');
-            const targetEl = document.getElementById(targetId);
-            if (targetEl) {
-                targetEl.style.display = 'block';
-            }
+            await ativarAba(tab);
         };
     });
 
@@ -361,9 +391,7 @@ export async function abrirPaleta(caixaAlvo, abaAlvo = "tab-destaques", callback
     
     // ðŸš€ ATIVAÃ‡ÃƒO AUTOMÃTICA: Simula o clique na aba solicitada para desenhar o conteÃºdo
     const selectorAba = document.querySelector(`.tab-cor[data-target="${abaAlvo}"]`);
-    if (selectorAba) {
-        selectorAba.click();
-    }
+    if (selectorAba) await ativarAba(selectorAba, false);
 }
 
 function abrirPopupEditarNomeCor(hex, nomeAtual) {
