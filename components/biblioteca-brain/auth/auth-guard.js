@@ -19,17 +19,39 @@ export function criarGuardaDeAutenticacao({
     const loginRoot = document.querySelector(loginSelector);
     const protectedRoots = protectedSelector
         ? [...document.querySelectorAll(protectedSelector)]
-        : [];
+        : loginRoot
+            ? [...document.body.children].filter((root) => (
+                root !== loginRoot &&
+                root.id !== 'loading-screen' &&
+                root.tagName !== 'SCRIPT'
+            ))
+            : [];
 
+    const aplicarBloqueioDom = (bloqueado) => {
+        if (!hideProtected) return;
+
+        protectedRoots.forEach((root) => {
+            root.classList.toggle('auth-protected-blocked', bloqueado);
+            root.toggleAttribute('inert', bloqueado);
+
+            if (bloqueado) {
+                root.setAttribute('aria-hidden', 'true');
+            } else {
+                root.removeAttribute('aria-hidden');
+            }
+        });
+    };
+
+    // Default deny: a página autenticada começa bloqueada antes de qualquer
+    // callback assíncrono do Firebase ou carregamento de componentes.
     document.body.classList.add(blockedClass);
+    aplicarBloqueioDom(true);
 
     const actualizarEstado = (novoUtilizador) => {
         utilizador = novoUtilizador || null;
+        aplicarBloqueioDom(!utilizador);
         document.body.classList.remove('auth-page-booting');
         document.body.classList.toggle(blockedClass, !utilizador);
-        if (hideProtected) {
-            protectedRoots.forEach((root) => root.classList.toggle('auth-protected-blocked', !utilizador));
-        }
     };
 
     const removerCliqueAnonimo = (event) => {

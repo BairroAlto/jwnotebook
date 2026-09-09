@@ -1,8 +1,10 @@
 // components/bible-portal/bible-search.js
 import { BIBLIA_METADATA } from '../lists/biblia.js';
+import { versiculoTemAnotacao } from './bible-annotation-state.js';
 
 let currentTestamento = "tudo";
 let resultadosGlobais = [];
+let queryRenderizada = "";
 let searchRunId = 0;
 let bibleIndexPromise = null;
 let bibleIndex = null;
@@ -118,6 +120,7 @@ export const BibleSearch = {
         resultadosGlobais = achados;
         BibleSearch.renderBookFilters(Array.from(livrosComSucesso));
         BibleSearch.renderLista(achados);
+        queryRenderizada = query;
     },
 
     renderBookFilters: (livros) => {
@@ -162,9 +165,10 @@ export const BibleSearch = {
 
         container.innerHTML = lista.map(item => {
             const marcado = marcarTextoNormalizado(item.texto, item.termoNorm);
+            const temAnotacao = versiculoTemAnotacao(item.livro, item.cap, item.ver);
 
             return `
-                <button class="search-result-item" onclick="window.viajarParaVersiculo('${item.livro}', '${item.cap}', '${item.ver}')">
+                <button class="search-result-item${temAnotacao ? ' has-annotation' : ''}" onclick="window.viajarParaVersiculo('${item.livro}', '${item.cap}', '${item.ver}')">
                     <span class="search-result-ref">${item.ref}</span>
                     <span class="search-result-text">${marcado}</span>
                 </button>
@@ -174,6 +178,8 @@ export const BibleSearch = {
 
     limpar: () => {
         searchRunId++;
+        resultadosGlobais = [];
+        queryRenderizada = "";
         document.getElementById('bible-search-results')?.replaceChildren();
         const bookFilterRow = document.getElementById('filter-books-found');
         if (bookFilterRow) {
@@ -182,6 +188,19 @@ export const BibleSearch = {
         }
     }
 };
+
+function atualizarResultadosComAnotacoes() {
+    const input = document.getElementById('input-bible-query');
+    if (!resultadosGlobais.length || !input || input.value.trim() !== queryRenderizada) return;
+
+    const livroAtivo = document.querySelector('#filter-books-found .book-found-pill.active')?.dataset.book;
+    const lista = livroAtivo
+        ? resultadosGlobais.filter(resultado => resultado.livro === livroAtivo)
+        : resultadosGlobais;
+    BibleSearch.renderLista(lista);
+}
+
+window.addEventListener('bible:annotations-updated', atualizarResultadosComAnotacoes);
 
 function marcarTextoNormalizado(texto, termoNorm) {
     if (!termoNorm) return texto;

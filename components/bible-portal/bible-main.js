@@ -35,6 +35,10 @@ window.referenciaAtiva = null;
 window.bibleVersiculoAtivo = null;
 window.textoCapituloAtual = "";
 
+// Instalar a guarda antes de carregar componentes ou iniciar qualquer UI.
+// A página permanece bloqueada até o Firebase confirmar a sessão.
+iniciarAutenticacao(app, db);
+
 let bootDone = false;
 let versiculosAtuais = null;
 let moduloBrainPromise = null;
@@ -90,8 +94,6 @@ await Promise.all([
 
 iniciarCodexBiblia({ db, auth });
 
-iniciarAutenticacao(app, db);
-
 onAuthStateChanged(auth, async (user) => {
     if (!user) {
         setTimeout(() => {
@@ -107,6 +109,7 @@ onAuthStateChanged(auth, async (user) => {
     await iniciarSistemaCores(db, user, () => {});
 
     iniciarEstadoAnotacoesBiblia(db, auth, () => {
+        window.dispatchEvent(new CustomEvent('bible:annotations-updated'));
         if (versiculosAtuais && window.livroAtivo && window.capAtivo) {
             renderizarVersiculosNoFeed({ preserveScroll: true });
         }
